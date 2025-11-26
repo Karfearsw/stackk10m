@@ -21,65 +21,63 @@ import {
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Filter, Plus, Search, Building2 } from "lucide-react";
-import { Link, useLocation } from "wouter";
-import propertyImage from "@assets/generated_images/modern_suburban_house_exterior_for_real_estate_placeholder.png";
-import interiorImage from "@assets/generated_images/interior_of_a_modern_living_room_for_real_estate_placeholder.png";
-
-const leads = [
-  {
-    id: "L-1023",
-    address: "123 Maple Street, Orlando, FL",
-    owner: "John Doe",
-    status: "New Lead",
-    score: 85,
-    price: "$245,000",
-    lastContact: "2 days ago",
-    image: propertyImage
-  },
-  {
-    id: "L-1024",
-    address: "456 Oak Avenue, Tampa, FL",
-    owner: "Jane Smith",
-    status: "Negotiation",
-    score: 92,
-    price: "$310,000",
-    lastContact: "4 hours ago",
-    image: interiorImage
-  },
-  {
-    id: "L-1025",
-    address: "789 Pine Lane, Miami, FL",
-    owner: "Robert Johnson",
-    status: "Follow Up",
-    score: 64,
-    price: "$185,000",
-    lastContact: "1 week ago",
-    image: null
-  },
-  {
-    id: "L-1026",
-    address: "321 Elm St, Jacksonville, FL",
-    owner: "Maria Garcia",
-    status: "Contract Sent",
-    score: 78,
-    price: "$275,000",
-    lastContact: "Yesterday",
-    image: null
-  },
-  {
-    id: "L-1027",
-    address: "555 Cedar Dr, Tallahassee, FL",
-    owner: "David Wilson",
-    status: "Dead",
-    score: 20,
-    price: "$150,000",
-    lastContact: "3 days ago",
-    image: null
-  },
-];
+import { useLocation } from "wouter";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 
 export default function Leads() {
   const [, setLocation] = useLocation();
+  const queryClient = useQueryClient();
+  const [newLead, setNewLead] = useState({
+    address: "",
+    city: "",
+    state: "FL",
+    zipCode: "",
+    ownerName: "",
+    ownerPhone: "",
+    ownerEmail: "",
+    estimatedValue: 0,
+    status: "new"
+  });
+
+  const { data: leads = [], isLoading } = useQuery({
+    queryKey: ["leads"],
+    queryFn: async () => {
+      const res = await fetch("/api/leads");
+      if (!res.ok) throw new Error("Failed to fetch leads");
+      return res.json();
+    }
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (lead: any) => {
+      const res = await fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(lead)
+      });
+      if (!res.ok) throw new Error("Failed to create lead");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["leads"] });
+      setNewLead({ address: "", city: "", state: "FL", zipCode: "", ownerName: "", ownerPhone: "", ownerEmail: "", estimatedValue: 0, status: "new" });
+    }
+  });
+
+  const handleAddLead = async () => {
+    if (newLead.address && newLead.city && newLead.ownerName) {
+      await createMutation.mutateAsync(newLead);
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <Layout>
+        <div className="text-center py-12">Loading leads...</div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>
@@ -91,15 +89,10 @@ export default function Leads() {
         <div className="flex items-center gap-2">
           <div className="relative hidden md:block">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              type="search"
-              placeholder="Filter leads..."
-              className="w-[200px] pl-9 bg-background"
-            />
+            <Input placeholder="Filter leads..." className="w-[200px] pl-9" />
           </div>
           <Button variant="outline" size="sm">
-            <Filter className="mr-2 h-4 w-4" />
-            Filter
+            <Filter className="mr-2 h-4 w-4" /> Filter
           </Button>
           
           <Dialog>
@@ -112,38 +105,30 @@ export default function Leads() {
             <DialogContent className="sm:max-w-[425px]">
               <DialogHeader>
                 <DialogTitle>Add New Lead</DialogTitle>
-                <DialogDescription>
-                  Enter the property details manually or import from RELAS.
-                </DialogDescription>
+                <DialogDescription>Enter property details to create a new lead.</DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="address" className="text-right">
-                    Address
-                  </Label>
-                  <Input id="address" placeholder="123 Main St" className="col-span-3" />
+                  <Label htmlFor="address" className="text-right">Address</Label>
+                  <Input id="address" placeholder="123 Main St" className="col-span-3" value={newLead.address} onChange={(e) => setNewLead({...newLead, address: e.target.value})} />
                 </div>
                 <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="city" className="text-right">
-                    City
-                  </Label>
-                  <Input id="city" placeholder="Orlando" className="col-span-3" />
+                  <Label htmlFor="city" className="text-right">City</Label>
+                  <Input id="city" placeholder="Orlando" className="col-span-3" value={newLead.city} onChange={(e) => setNewLead({...newLead, city: e.target.value})} />
                 </div>
                 <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="owner" className="text-right">
-                    Owner
-                  </Label>
-                  <Input id="owner" placeholder="John Doe" className="col-span-3" />
+                  <Label htmlFor="owner" className="text-right">Owner</Label>
+                  <Input id="owner" placeholder="John Doe" className="col-span-3" value={newLead.ownerName} onChange={(e) => setNewLead({...newLead, ownerName: e.target.value})} />
                 </div>
                 <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="phone" className="text-right">
-                    Phone
-                  </Label>
-                  <Input id="phone" placeholder="(555) 123-4567" className="col-span-3" />
+                  <Label htmlFor="phone" className="text-right">Phone</Label>
+                  <Input id="phone" placeholder="(555) 123-4567" className="col-span-3" value={newLead.ownerPhone} onChange={(e) => setNewLead({...newLead, ownerPhone: e.target.value})} />
                 </div>
               </div>
               <DialogFooter>
-                <Button type="submit">Create Lead</Button>
+                <Button onClick={handleAddLead} disabled={createMutation.isPending} className="bg-primary hover:bg-primary/90 text-white">
+                  {createMutation.isPending ? "Creating..." : "Create Lead"}
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -154,79 +139,32 @@ export default function Leads() {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[80px]">Image</TableHead>
-              <TableHead>Property Address</TableHead>
+              <TableHead>Address</TableHead>
               <TableHead>Owner</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>RELAS Score</TableHead>
-              <TableHead>Est. Value</TableHead>
-              <TableHead className="text-right">Last Contact</TableHead>
+              <TableHead>Score</TableHead>
+              <TableHead>Value</TableHead>
+              <TableHead className="text-right">Contact</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {leads.map((lead) => (
-              <TableRow 
-                key={lead.id} 
-                className="hover:bg-muted/50 cursor-pointer transition-colors"
-                onClick={() => setLocation(`/properties/${lead.id}`)}
-              >
+            {leads.map((lead: any) => (
+              <TableRow key={lead.id} className="hover:bg-muted/50 cursor-pointer transition-colors" onClick={() => setLocation(`/properties/${lead.id}`)}>
+                <TableCell className="font-medium">{lead.address}, {lead.city}</TableCell>
+                <TableCell>{lead.ownerName}</TableCell>
                 <TableCell>
-                  <div className="h-10 w-14 overflow-hidden rounded-sm bg-muted border border-border/50">
-                    {lead.image ? (
-                      <img 
-                        src={lead.image} 
-                        alt="Property" 
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div className="h-full w-full flex items-center justify-center bg-secondary text-secondary-foreground">
-                        <Building2 className="h-4 w-4 opacity-50" />
-                      </div>
-                    )}
-                  </div>
+                  <Badge className={lead.status === "negotiation" ? "bg-primary text-primary-foreground" : "bg-secondary"}>{lead.status}</Badge>
                 </TableCell>
-                <TableCell className="font-medium">{lead.address}</TableCell>
-                <TableCell>{lead.owner}</TableCell>
-                <TableCell>
-                  <Badge 
-                    variant={
-                      lead.status === "New Lead" ? "secondary" :
-                      lead.status === "Negotiation" ? "default" :
-                      lead.status === "Contract Sent" ? "outline" :
-                      lead.status === "Dead" ? "destructive" :
-                      "secondary"
-                    }
-                    className={
-                      lead.status === "Negotiation" ? "bg-accent text-accent-foreground hover:bg-accent/80" : 
-                      lead.status === "Contract Sent" ? "border-accent text-accent font-medium" : ""
-                    }
-                  >
-                    {lead.status}
-                  </Badge>
-                </TableCell>
-                <TableCell>
-                  <div className="flex items-center gap-2">
-                    <div className="h-2 w-full max-w-[80px] rounded-full bg-secondary overflow-hidden">
-                      <div 
-                        className={`h-full rounded-full ${
-                          lead.score > 80 ? 'bg-accent' : 
-                          lead.score > 50 ? 'bg-yellow-500' : 'bg-destructive'
-                        }`}
-                        style={{ width: `${lead.score}%` }}
-                      />
-                    </div>
-                    <span className={`text-xs font-bold ${
-                      lead.score > 80 ? 'text-accent' : 
-                      lead.score > 50 ? 'text-yellow-600' : 'text-destructive'
-                    }`}>{lead.score}</span>
-                  </div>
-                </TableCell>
-                <TableCell>{lead.price}</TableCell>
-                <TableCell className="text-right text-muted-foreground">{lead.lastContact}</TableCell>
+                <TableCell>{lead.relasScore || "—"}</TableCell>
+                <TableCell>${lead.estimatedValue ? parseInt(lead.estimatedValue).toLocaleString() : "—"}</TableCell>
+                <TableCell className="text-right text-muted-foreground">{lead.ownerPhone || "—"}</TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
+        {leads.length === 0 && (
+          <div className="text-center py-8 text-muted-foreground">No leads yet. Create one to get started!</div>
+        )}
       </div>
     </Layout>
   );

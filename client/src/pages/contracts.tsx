@@ -11,47 +11,31 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-
-const contracts = [
-  {
-    id: "C-1001",
-    property: "456 Oak Avenue, Tampa",
-    seller: "Jane Smith",
-    amount: "$310,000",
-    status: "Signed",
-    date: "Nov 15, 2024",
-    daysOpen: 3
-  },
-  {
-    id: "C-1002",
-    property: "123 Maple Street, Orlando",
-    seller: "John Doe",
-    amount: "$245,000",
-    status: "Pending",
-    date: "Nov 18, 2024",
-    daysOpen: 1
-  },
-  {
-    id: "C-1003",
-    property: "789 Pine Lane, Miami",
-    seller: "Robert Johnson",
-    amount: "$185,000",
-    status: "Completed",
-    date: "Oct 22, 2024",
-    daysOpen: 27
-  },
-  {
-    id: "C-1004",
-    property: "321 Elm St, Jacksonville",
-    seller: "Maria Garcia",
-    amount: "$275,000",
-    status: "Signed",
-    date: "Nov 10, 2024",
-    daysOpen: 8
-  },
-];
+import { useQuery } from "@tanstack/react-query";
 
 export default function Contracts() {
+  const { data: contracts = [], isLoading } = useQuery({
+    queryKey: ["contracts"],
+    queryFn: async () => {
+      const res = await fetch("/api/contracts");
+      if (!res.ok) throw new Error("Failed to fetch contracts");
+      return res.json();
+    }
+  });
+
+  if (isLoading) {
+    return (
+      <Layout>
+        <div className="text-center py-12">Loading contracts...</div>
+      </Layout>
+    );
+  }
+
+  const totalContracts = contracts.length;
+  const signedContracts = contracts.filter((c: any) => c.status === "signed").length;
+  const pendingContracts = contracts.filter((c: any) => c.status === "pending").length;
+  const completedContracts = contracts.filter((c: any) => c.status === "completed").length;
+
   return (
     <Layout>
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -75,8 +59,7 @@ export default function Contracts() {
             <CardTitle className="text-sm text-muted-foreground">Total Contracts</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">4</div>
-            <p className="text-xs text-muted-foreground mt-1">Active & Completed</p>
+            <div className="text-3xl font-bold">{totalContracts}</div>
           </CardContent>
         </Card>
         <Card>
@@ -84,8 +67,7 @@ export default function Contracts() {
             <CardTitle className="text-sm text-muted-foreground">Pending Signature</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold text-primary">1</div>
-            <p className="text-xs text-muted-foreground mt-1">Awaiting seller</p>
+            <div className="text-3xl font-bold text-primary">{pendingContracts}</div>
           </CardContent>
         </Card>
         <Card>
@@ -93,8 +75,7 @@ export default function Contracts() {
             <CardTitle className="text-sm text-muted-foreground">Signed</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">2</div>
-            <p className="text-xs text-muted-foreground mt-1">Ready to close</p>
+            <div className="text-3xl font-bold">{signedContracts}</div>
           </CardContent>
         </Card>
         <Card>
@@ -102,8 +83,7 @@ export default function Contracts() {
             <CardTitle className="text-sm text-muted-foreground">Completed</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl font-bold">1</div>
-            <p className="text-xs text-muted-foreground mt-1">Closed deals</p>
+            <div className="text-3xl font-bold">{completedContracts}</div>
           </CardContent>
         </Card>
       </div>
@@ -113,35 +93,31 @@ export default function Contracts() {
           <TableHeader>
             <TableRow>
               <TableHead>Contract ID</TableHead>
-              <TableHead>Property</TableHead>
-              <TableHead>Seller</TableHead>
+              <TableHead>Property ID</TableHead>
               <TableHead>Amount</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead>Date</TableHead>
-              <TableHead className="text-right">Days Open</TableHead>
+              <TableHead>Sign Date</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {contracts.map((contract) => (
+            {contracts.map((contract: any) => (
               <TableRow key={contract.id} className="hover:bg-muted/50">
-                <TableCell className="font-medium">{contract.id}</TableCell>
-                <TableCell>{contract.property}</TableCell>
-                <TableCell>{contract.seller}</TableCell>
-                <TableCell className="font-medium text-primary">{contract.amount}</TableCell>
+                <TableCell className="font-medium">C-{contract.id}</TableCell>
+                <TableCell>{contract.propertyId}</TableCell>
+                <TableCell className="font-medium text-primary">${contract.amount ? parseInt(contract.amount).toLocaleString() : "—"}</TableCell>
                 <TableCell>
                   <Badge 
                     className={
-                      contract.status === "Signed" ? "bg-primary text-primary-foreground" :
-                      contract.status === "Pending" ? "bg-yellow-600 text-white" :
+                      contract.status === "signed" ? "bg-primary text-primary-foreground" :
+                      contract.status === "pending" ? "bg-yellow-600 text-white" :
                       "bg-green-600 text-white"
                     }
                   >
                     {contract.status}
                   </Badge>
                 </TableCell>
-                <TableCell>{contract.date}</TableCell>
-                <TableCell className="text-right">{contract.daysOpen}</TableCell>
+                <TableCell>{contract.signDate ? new Date(contract.signDate).toLocaleDateString() : "—"}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex justify-end gap-1">
                     <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
@@ -156,6 +132,9 @@ export default function Contracts() {
             ))}
           </TableBody>
         </Table>
+        {contracts.length === 0 && (
+          <div className="text-center py-8 text-muted-foreground">No contracts yet.</div>
+        )}
       </div>
     </Layout>
   );
