@@ -51,10 +51,14 @@ export default function Leads() {
 
   const createMutation = useMutation({
     mutationFn: async (lead: any) => {
+      const payload = {
+        ...lead,
+        estimatedValue: lead.estimatedValue || null,
+      };
       const res = await fetch("/api/leads", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(lead)
+        body: JSON.stringify(payload)
       });
       if (!res.ok) throw new Error("Failed to create lead");
       return res.json();

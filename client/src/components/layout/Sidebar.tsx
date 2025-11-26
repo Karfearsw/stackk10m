@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { useQuery } from "@tanstack/react-query";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -27,8 +28,20 @@ const navigation = [
 ];
 
 export function Sidebar() {
-  const [location] = useLocation();
+  const [location, setLocation] = useLocation();
   const { user, logout } = useAuth();
+
+  // Fetch user goals
+  const { data: goals = [] } = useQuery<any[]>({
+    queryKey: [`/api/users/${user?.id}/goals`],
+    enabled: !!user?.id,
+  });
+
+  // Get the first active goal
+  const activeGoal = goals.length > 0 ? goals[0] : null;
+  const goalProgress = activeGoal 
+    ? (activeGoal.currentValue / activeGoal.targetValue) * 100 
+    : 0;
 
   return (
     <div className="flex h-full w-64 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border shadow-xl z-10">
@@ -92,15 +105,32 @@ export function Sidebar() {
           </div>
         )}
         
-        <div className="bg-sidebar-accent/50 rounded-lg p-3 mb-4">
+        <div 
+          className="bg-sidebar-accent/50 rounded-lg p-3 mb-4 cursor-pointer hover:bg-sidebar-accent/70 transition-colors"
+          onClick={() => setLocation('/settings')}
+        >
           <p className="text-xs font-medium text-sidebar-foreground/60 uppercase tracking-wider mb-1">Current Goal</p>
-          <div className="flex justify-between items-end mb-1">
-            <span className="text-sm font-bold text-white">8/12 Deals</span>
-            <span className="text-xs text-accent">66%</span>
-          </div>
-          <div className="h-1.5 w-full bg-sidebar-border rounded-full overflow-hidden">
-            <div className="h-full bg-accent w-2/3 rounded-full" />
-          </div>
+          {activeGoal ? (
+            <>
+              <div className="flex justify-between items-end mb-1">
+                <span className="text-sm font-bold text-white">
+                  {activeGoal.currentValue}/{activeGoal.targetValue} {activeGoal.unit}
+                </span>
+                <span className="text-xs text-accent">{goalProgress.toFixed(0)}%</span>
+              </div>
+              <div className="h-1.5 w-full bg-sidebar-border rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-accent rounded-full transition-all" 
+                  style={{ width: `${Math.min(goalProgress, 100)}%` }}
+                />
+              </div>
+              <p className="text-xs text-sidebar-foreground/50 mt-1 truncate">{activeGoal.title}</p>
+            </>
+          ) : (
+            <div className="text-xs text-sidebar-foreground/50">
+              No active goals. Click to create one!
+            </div>
+          )}
         </div>
 
         <button 
