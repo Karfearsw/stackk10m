@@ -44,9 +44,9 @@ export function Sidebar() {
             
             return (
               <Link key={item.name} href={item.href}>
-                <a
+                <div
                   className={cn(
-                    "group relative flex items-center rounded-md px-3 py-2.5 text-sm font-medium transition-all duration-200 ease-in-out",
+                    "group relative flex items-center rounded-md px-3 py-2.5 text-sm font-medium transition-all duration-200 ease-in-out cursor-pointer",
                     isActive
                       ? "bg-primary text-primary-foreground shadow-md shadow-primary/20"
                       : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-white"
@@ -63,7 +63,7 @@ export function Sidebar() {
                   {isActive && (
                     <div className="absolute right-2 h-1.5 w-1.5 rounded-full bg-white/30" />
                   )}
-                </a>
+                </div>
               </Link>
             );
           })}

@@ -9,6 +9,7 @@ import Leads from "@/pages/leads";
 import PropertyDetail from "@/pages/property-detail";
 import Properties from "@/pages/properties";
 import Contracts from "@/pages/contracts";
+import ContractGenerator from "@/pages/contract-generator";
 import Analytics from "@/pages/analytics";
 import Settings from "@/pages/settings";
 import Calculator from "@/pages/calculator";
@@ -21,7 +22,8 @@ function Router() {
       <Route path="/leads" component={Leads} />
       <Route path="/properties" component={Properties} />
       <Route path="/properties/:id" component={PropertyDetail} />
-      <Route path="/contracts" component={Contracts} />
+      <Route path="/contracts" component={ContractGenerator} />
+      <Route path="/contracts-old" component={Contracts} />
       <Route path="/analytics" component={Analytics} />
       <Route path="/settings" component={Settings} />
       <Route path="/calculator" component={Calculator} />
