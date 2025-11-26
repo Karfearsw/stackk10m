@@ -30,9 +30,11 @@ export function Sidebar() {
     <div className="flex h-full w-64 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border shadow-xl z-10">
       <div className="flex h-16 items-center px-6 border-b border-sidebar-border bg-sidebar-accent/10">
         <div className="flex items-center gap-3 font-display font-bold text-2xl tracking-tight text-white">
-          <div className="h-8 w-8 rounded bg-primary flex items-center justify-center text-primary-foreground shadow-lg shadow-primary/20">
-            F
-          </div>
+          <img 
+            src="/logo.jpg" 
+            alt="FlipStackk Logo" 
+            className="h-10 w-10 object-contain"
+          />
           Flipstackk
         </div>
       </div>
