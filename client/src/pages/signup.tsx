@@ -8,7 +8,7 @@ import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Signup() {
-  const [, navigate] = useLocation();
+  const [, setLocation] = useLocation();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
@@ -67,7 +67,7 @@ export default function Signup() {
       }
 
       toast.success('Account created! Redirecting to login...');
-      setTimeout(() => navigate('/login'), 1500);
+      setTimeout(() => setLocation('/login'), 1500);
     } catch (error: any) {
       toast.error(error.message || 'Signup failed');
     } finally {
