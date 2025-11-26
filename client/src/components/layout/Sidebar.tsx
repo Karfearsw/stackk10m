@@ -6,7 +6,9 @@ import {
   FileText, 
   Settings, 
   PieChart, 
-  LogOut 
+  LogOut,
+  Calculator,
+  Clock
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +18,8 @@ const navigation = [
   { name: "Properties", href: "/properties", icon: Building2 },
   { name: "Contracts", href: "/contracts", icon: FileText },
   { name: "Analytics", href: "/analytics", icon: PieChart },
+  { name: "Calculator", href: "/calculator", icon: Calculator },
+  { name: "Timesheet", href: "/timesheet", icon: Clock },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
@@ -36,7 +40,6 @@ export function Sidebar() {
       <div className="flex-1 overflow-y-auto py-6">
         <nav className="space-y-1.5 px-3">
           {navigation.map((item) => {
-            // Check if active (exact match or starts with for sub-routes)
             const isActive = location === item.href || (item.href !== '/' && location.startsWith(item.href));
             
             return (

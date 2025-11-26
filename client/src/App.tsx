@@ -11,6 +11,8 @@ import Properties from "@/pages/properties";
 import Contracts from "@/pages/contracts";
 import Analytics from "@/pages/analytics";
 import Settings from "@/pages/settings";
+import Calculator from "@/pages/calculator";
+import Timesheet from "@/pages/timesheet";
 
 function Router() {
   return (
@@ -22,6 +24,8 @@ function Router() {
       <Route path="/contracts" component={Contracts} />
       <Route path="/analytics" component={Analytics} />
       <Route path="/settings" component={Settings} />
+      <Route path="/calculator" component={Calculator} />
+      <Route path="/timesheet" component={Timesheet} />
       {/* Fallback to 404 */}
       <Route component={NotFound} />
     </Switch>
