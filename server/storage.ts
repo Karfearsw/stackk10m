@@ -1,5 +1,8 @@
 import { db } from "./db";
-import { leads, properties, contacts, contracts, contractTemplates, contractDocuments, documentVersions, lois } from "@shared/schema";
+import { 
+  leads, properties, contacts, contracts, contractTemplates, contractDocuments, documentVersions, lois,
+  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, offers
+} from "@shared/schema";
 import { 
   type Lead, type InsertLead, 
   type Property, type InsertProperty, 
@@ -8,7 +11,16 @@ import {
   type ContractTemplate, type InsertContractTemplate,
   type ContractDocument, type InsertContractDocument,
   type DocumentVersion, type InsertDocumentVersion,
-  type Loi, type InsertLoi
+  type Loi, type InsertLoi,
+  type User, type InsertUser,
+  type TwoFactorAuth, type InsertTwoFactorAuth,
+  type BackupCode, type InsertBackupCode,
+  type Team, type InsertTeam,
+  type TeamMember, type InsertTeamMember,
+  type TeamActivityLog, type InsertTeamActivityLog,
+  type NotificationPreference, type InsertNotificationPreference,
+  type UserGoal, type InsertUserGoal,
+  type Offer, type InsertOffer
 } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
@@ -65,6 +77,66 @@ export interface IStorage {
   createLoi(loi: InsertLoi): Promise<Loi>;
   updateLoi(id: number, loi: Partial<InsertLoi>): Promise<Loi>;
   deleteLoi(id: number): Promise<void>;
+
+  // Users
+  getUsers(): Promise<User[]>;
+  getUserById(id: number): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
+  createUser(user: InsertUser): Promise<User>;
+  updateUser(id: number, user: Partial<InsertUser>): Promise<User>;
+  deleteUser(id: number): Promise<void>;
+
+  // Two Factor Auth
+  getTwoFactorAuthByUserId(userId: number): Promise<TwoFactorAuth | undefined>;
+  createTwoFactorAuth(auth: InsertTwoFactorAuth): Promise<TwoFactorAuth>;
+  updateTwoFactorAuth(userId: number, auth: Partial<InsertTwoFactorAuth>): Promise<TwoFactorAuth>;
+  deleteTwoFactorAuth(userId: number): Promise<void>;
+
+  // Backup Codes
+  getBackupCodesByUserId(userId: number): Promise<BackupCode[]>;
+  createBackupCode(code: InsertBackupCode): Promise<BackupCode>;
+  useBackupCode(userId: number, code: string): Promise<boolean>;
+  deleteBackupCodes(userId: number): Promise<void>;
+
+  // Teams
+  getTeams(): Promise<Team[]>;
+  getTeamById(id: number): Promise<Team | undefined>;
+  getTeamsByOwnerId(ownerId: number): Promise<Team[]>;
+  createTeam(team: InsertTeam): Promise<Team>;
+  updateTeam(id: number, team: Partial<InsertTeam>): Promise<Team>;
+  deleteTeam(id: number): Promise<void>;
+
+  // Team Members
+  getTeamMembers(teamId: number): Promise<TeamMember[]>;
+  getTeamMemberById(id: number): Promise<TeamMember | undefined>;
+  createTeamMember(member: InsertTeamMember): Promise<TeamMember>;
+  updateTeamMember(id: number, member: Partial<InsertTeamMember>): Promise<TeamMember>;
+  deleteTeamMember(id: number): Promise<void>;
+
+  // Team Activity Logs
+  getTeamActivityLogs(teamId: number, limit?: number): Promise<TeamActivityLog[]>;
+  createTeamActivityLog(log: InsertTeamActivityLog): Promise<TeamActivityLog>;
+
+  // Notification Preferences
+  getNotificationPreferencesByUserId(userId: number): Promise<NotificationPreference | undefined>;
+  createNotificationPreferences(prefs: InsertNotificationPreference): Promise<NotificationPreference>;
+  updateNotificationPreferences(userId: number, prefs: Partial<InsertNotificationPreference>): Promise<NotificationPreference>;
+
+  // User Goals
+  getUserGoals(userId: number): Promise<UserGoal[]>;
+  getUserGoalById(id: number): Promise<UserGoal | undefined>;
+  createUserGoal(goal: InsertUserGoal): Promise<UserGoal>;
+  updateUserGoal(id: number, goal: Partial<InsertUserGoal>): Promise<UserGoal>;
+  deleteUserGoal(id: number): Promise<void>;
+
+  // Offers
+  getOffers(): Promise<Offer[]>;
+  getOfferById(id: number): Promise<Offer | undefined>;
+  getOffersByUserId(userId: number): Promise<Offer[]>;
+  getOffersByPropertyId(propertyId: number): Promise<Offer[]>;
+  createOffer(offer: InsertOffer): Promise<Offer>;
+  updateOffer(id: number, offer: Partial<InsertOffer>): Promise<Offer>;
+  deleteOffer(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -244,6 +316,213 @@ export class DatabaseStorage implements IStorage {
 
   async deleteLoi(id: number): Promise<void> {
     await db.delete(lois).where(eq(lois.id, id));
+  }
+
+  // Users
+  async getUsers(): Promise<User[]> {
+    return db.select().from(users);
+  }
+
+  async getUserById(id: number): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    return result[0];
+  }
+
+  async createUser(user: InsertUser): Promise<User> {
+    const result = await db.insert(users).values(user as any).returning();
+    return result[0];
+  }
+
+  async updateUser(id: number, user: Partial<InsertUser>): Promise<User> {
+    const result = await db.update(users).set(user as any).where(eq(users.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteUser(id: number): Promise<void> {
+    await db.delete(users).where(eq(users.id, id));
+  }
+
+  // Two Factor Auth
+  async getTwoFactorAuthByUserId(userId: number): Promise<TwoFactorAuth | undefined> {
+    const result = await db.select().from(twoFactorAuth).where(eq(twoFactorAuth.userId, userId)).limit(1);
+    return result[0];
+  }
+
+  async createTwoFactorAuth(auth: InsertTwoFactorAuth): Promise<TwoFactorAuth> {
+    const result = await db.insert(twoFactorAuth).values(auth as any).returning();
+    return result[0];
+  }
+
+  async updateTwoFactorAuth(userId: number, auth: Partial<InsertTwoFactorAuth>): Promise<TwoFactorAuth> {
+    const result = await db.update(twoFactorAuth).set(auth as any).where(eq(twoFactorAuth.userId, userId)).returning();
+    return result[0];
+  }
+
+  async deleteTwoFactorAuth(userId: number): Promise<void> {
+    await db.delete(twoFactorAuth).where(eq(twoFactorAuth.userId, userId));
+  }
+
+  // Backup Codes
+  async getBackupCodesByUserId(userId: number): Promise<BackupCode[]> {
+    return db.select().from(backupCodes).where(eq(backupCodes.userId, userId));
+  }
+
+  async createBackupCode(code: InsertBackupCode): Promise<BackupCode> {
+    const result = await db.insert(backupCodes).values(code as any).returning();
+    return result[0];
+  }
+
+  async useBackupCode(userId: number, code: string): Promise<boolean> {
+    const result = await db.update(backupCodes)
+      .set({ isUsed: true, usedAt: new Date() } as any)
+      .where(eq(backupCodes.userId, userId))
+      .where(eq(backupCodes.code, code))
+      .where(eq(backupCodes.isUsed, false))
+      .returning();
+    return result.length > 0;
+  }
+
+  async deleteBackupCodes(userId: number): Promise<void> {
+    await db.delete(backupCodes).where(eq(backupCodes.userId, userId));
+  }
+
+  // Teams
+  async getTeams(): Promise<Team[]> {
+    return db.select().from(teams);
+  }
+
+  async getTeamById(id: number): Promise<Team | undefined> {
+    const result = await db.select().from(teams).where(eq(teams.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getTeamsByOwnerId(ownerId: number): Promise<Team[]> {
+    return db.select().from(teams).where(eq(teams.ownerId, ownerId));
+  }
+
+  async createTeam(team: InsertTeam): Promise<Team> {
+    const result = await db.insert(teams).values(team as any).returning();
+    return result[0];
+  }
+
+  async updateTeam(id: number, team: Partial<InsertTeam>): Promise<Team> {
+    const result = await db.update(teams).set(team as any).where(eq(teams.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteTeam(id: number): Promise<void> {
+    await db.delete(teams).where(eq(teams.id, id));
+  }
+
+  // Team Members
+  async getTeamMembers(teamId: number): Promise<TeamMember[]> {
+    return db.select().from(teamMembers).where(eq(teamMembers.teamId, teamId));
+  }
+
+  async getTeamMemberById(id: number): Promise<TeamMember | undefined> {
+    const result = await db.select().from(teamMembers).where(eq(teamMembers.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createTeamMember(member: InsertTeamMember): Promise<TeamMember> {
+    const result = await db.insert(teamMembers).values(member as any).returning();
+    return result[0];
+  }
+
+  async updateTeamMember(id: number, member: Partial<InsertTeamMember>): Promise<TeamMember> {
+    const result = await db.update(teamMembers).set(member as any).where(eq(teamMembers.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteTeamMember(id: number): Promise<void> {
+    await db.delete(teamMembers).where(eq(teamMembers.id, id));
+  }
+
+  // Team Activity Logs
+  async getTeamActivityLogs(teamId: number, limit: number = 50): Promise<TeamActivityLog[]> {
+    return db.select().from(teamActivityLogs).where(eq(teamActivityLogs.teamId, teamId)).limit(limit);
+  }
+
+  async createTeamActivityLog(log: InsertTeamActivityLog): Promise<TeamActivityLog> {
+    const result = await db.insert(teamActivityLogs).values(log as any).returning();
+    return result[0];
+  }
+
+  // Notification Preferences
+  async getNotificationPreferencesByUserId(userId: number): Promise<NotificationPreference | undefined> {
+    const result = await db.select().from(notificationPreferences).where(eq(notificationPreferences.userId, userId)).limit(1);
+    return result[0];
+  }
+
+  async createNotificationPreferences(prefs: InsertNotificationPreference): Promise<NotificationPreference> {
+    const result = await db.insert(notificationPreferences).values(prefs as any).returning();
+    return result[0];
+  }
+
+  async updateNotificationPreferences(userId: number, prefs: Partial<InsertNotificationPreference>): Promise<NotificationPreference> {
+    const result = await db.update(notificationPreferences).set(prefs as any).where(eq(notificationPreferences.userId, userId)).returning();
+    return result[0];
+  }
+
+  // User Goals
+  async getUserGoals(userId: number): Promise<UserGoal[]> {
+    return db.select().from(userGoals).where(eq(userGoals.userId, userId));
+  }
+
+  async getUserGoalById(id: number): Promise<UserGoal | undefined> {
+    const result = await db.select().from(userGoals).where(eq(userGoals.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createUserGoal(goal: InsertUserGoal): Promise<UserGoal> {
+    const result = await db.insert(userGoals).values(goal as any).returning();
+    return result[0];
+  }
+
+  async updateUserGoal(id: number, goal: Partial<InsertUserGoal>): Promise<UserGoal> {
+    const result = await db.update(userGoals).set(goal as any).where(eq(userGoals.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteUserGoal(id: number): Promise<void> {
+    await db.delete(userGoals).where(eq(userGoals.id, id));
+  }
+
+  // Offers
+  async getOffers(): Promise<Offer[]> {
+    return db.select().from(offers);
+  }
+
+  async getOfferById(id: number): Promise<Offer | undefined> {
+    const result = await db.select().from(offers).where(eq(offers.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getOffersByUserId(userId: number): Promise<Offer[]> {
+    return db.select().from(offers).where(eq(offers.userId, userId));
+  }
+
+  async getOffersByPropertyId(propertyId: number): Promise<Offer[]> {
+    return db.select().from(offers).where(eq(offers.propertyId, propertyId));
+  }
+
+  async createOffer(offer: InsertOffer): Promise<Offer> {
+    const result = await db.insert(offers).values(offer as any).returning();
+    return result[0];
+  }
+
+  async updateOffer(id: number, offer: Partial<InsertOffer>): Promise<Offer> {
+    const result = await db.update(offers).set(offer as any).where(eq(offers.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteOffer(id: number): Promise<void> {
+    await db.delete(offers).where(eq(offers.id, id));
   }
 }
 

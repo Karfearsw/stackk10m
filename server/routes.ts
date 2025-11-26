@@ -9,7 +9,16 @@ import {
   insertContractTemplateSchema,
   insertContractDocumentSchema,
   insertDocumentVersionSchema,
-  insertLoiSchema
+  insertLoiSchema,
+  insertUserSchema,
+  insertTwoFactorAuthSchema,
+  insertBackupCodeSchema,
+  insertTeamSchema,
+  insertTeamMemberSchema,
+  insertTeamActivityLogSchema,
+  insertNotificationPreferenceSchema,
+  insertUserGoalSchema,
+  insertOfferSchema
 } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -345,6 +354,353 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteLoi(parseInt(req.params.id));
       res.json({ message: "LOI deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // USERS ENDPOINTS
+  app.get("/api/users", async (req, res) => {
+    try {
+      const users = await storage.getUsers();
+      res.json(users);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/users/:id", async (req, res) => {
+    try {
+      const user = await storage.getUserById(parseInt(req.params.id));
+      if (!user) return res.status(404).json({ message: "User not found" });
+      res.json(user);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/users", async (req, res) => {
+    try {
+      const validated = insertUserSchema.parse(req.body);
+      const user = await storage.createUser(validated);
+      res.status(201).json(user);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/users/:id", async (req, res) => {
+    try {
+      const partial = insertUserSchema.partial().parse(req.body);
+      const user = await storage.updateUser(parseInt(req.params.id), partial);
+      res.json(user);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // TWO FACTOR AUTH ENDPOINTS
+  app.get("/api/users/:userId/2fa", async (req, res) => {
+    try {
+      const auth = await storage.getTwoFactorAuthByUserId(parseInt(req.params.userId));
+      res.json(auth || { isEnabled: false });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/users/:userId/2fa", async (req, res) => {
+    try {
+      const validated = insertTwoFactorAuthSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const auth = await storage.createTwoFactorAuth(validated);
+      res.status(201).json(auth);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/users/:userId/2fa", async (req, res) => {
+    try {
+      const partial = insertTwoFactorAuthSchema.partial().parse(req.body);
+      const auth = await storage.updateTwoFactorAuth(parseInt(req.params.userId), partial);
+      res.json(auth);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/users/:userId/2fa", async (req, res) => {
+    try {
+      await storage.deleteTwoFactorAuth(parseInt(req.params.userId));
+      res.json({ message: "2FA disabled" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // BACKUP CODES ENDPOINTS
+  app.get("/api/users/:userId/backup-codes", async (req, res) => {
+    try {
+      const codes = await storage.getBackupCodesByUserId(parseInt(req.params.userId));
+      res.json(codes);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/users/:userId/backup-codes", async (req, res) => {
+    try {
+      const validated = insertBackupCodeSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const code = await storage.createBackupCode(validated);
+      res.status(201).json(code);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // TEAMS ENDPOINTS
+  app.get("/api/teams", async (req, res) => {
+    try {
+      const teams = await storage.getTeams();
+      res.json(teams);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/teams/:id", async (req, res) => {
+    try {
+      const team = await storage.getTeamById(parseInt(req.params.id));
+      if (!team) return res.status(404).json({ message: "Team not found" });
+      res.json(team);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/teams", async (req, res) => {
+    try {
+      const validated = insertTeamSchema.parse(req.body);
+      const team = await storage.createTeam(validated);
+      res.status(201).json(team);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/teams/:id", async (req, res) => {
+    try {
+      const partial = insertTeamSchema.partial().parse(req.body);
+      const team = await storage.updateTeam(parseInt(req.params.id), partial);
+      res.json(team);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/teams/:id", async (req, res) => {
+    try {
+      await storage.deleteTeam(parseInt(req.params.id));
+      res.json({ message: "Team deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // TEAM MEMBERS ENDPOINTS
+  app.get("/api/teams/:teamId/members", async (req, res) => {
+    try {
+      const members = await storage.getTeamMembers(parseInt(req.params.teamId));
+      res.json(members);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/teams/:teamId/members", async (req, res) => {
+    try {
+      const validated = insertTeamMemberSchema.parse({ ...req.body, teamId: parseInt(req.params.teamId) });
+      const member = await storage.createTeamMember(validated);
+      res.status(201).json(member);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/team-members/:id", async (req, res) => {
+    try {
+      const partial = insertTeamMemberSchema.partial().parse(req.body);
+      const member = await storage.updateTeamMember(parseInt(req.params.id), partial);
+      res.json(member);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/team-members/:id", async (req, res) => {
+    try {
+      await storage.deleteTeamMember(parseInt(req.params.id));
+      res.json({ message: "Team member removed" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // TEAM ACTIVITY LOGS ENDPOINTS
+  app.get("/api/teams/:teamId/activity", async (req, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const logs = await storage.getTeamActivityLogs(parseInt(req.params.teamId), limit);
+      res.json(logs);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/teams/:teamId/activity", async (req, res) => {
+    try {
+      const validated = insertTeamActivityLogSchema.parse({ ...req.body, teamId: parseInt(req.params.teamId) });
+      const log = await storage.createTeamActivityLog(validated);
+      res.status(201).json(log);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // NOTIFICATION PREFERENCES ENDPOINTS
+  app.get("/api/users/:userId/notifications", async (req, res) => {
+    try {
+      const prefs = await storage.getNotificationPreferencesByUserId(parseInt(req.params.userId));
+      res.json(prefs || {});
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/users/:userId/notifications", async (req, res) => {
+    try {
+      const validated = insertNotificationPreferenceSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const prefs = await storage.createNotificationPreferences(validated);
+      res.status(201).json(prefs);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/users/:userId/notifications", async (req, res) => {
+    try {
+      const partial = insertNotificationPreferenceSchema.partial().parse(req.body);
+      const prefs = await storage.updateNotificationPreferences(parseInt(req.params.userId), partial);
+      res.json(prefs);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // USER GOALS ENDPOINTS
+  app.get("/api/users/:userId/goals", async (req, res) => {
+    try {
+      const goals = await storage.getUserGoals(parseInt(req.params.userId));
+      res.json(goals);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/goals/:id", async (req, res) => {
+    try {
+      const goal = await storage.getUserGoalById(parseInt(req.params.id));
+      if (!goal) return res.status(404).json({ message: "Goal not found" });
+      res.json(goal);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/users/:userId/goals", async (req, res) => {
+    try {
+      const validated = insertUserGoalSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const goal = await storage.createUserGoal(validated);
+      res.status(201).json(goal);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/goals/:id", async (req, res) => {
+    try {
+      const partial = insertUserGoalSchema.partial().parse(req.body);
+      const goal = await storage.updateUserGoal(parseInt(req.params.id), partial);
+      res.json(goal);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/goals/:id", async (req, res) => {
+    try {
+      await storage.deleteUserGoal(parseInt(req.params.id));
+      res.json({ message: "Goal deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // OFFERS ENDPOINTS
+  app.get("/api/offers", async (req, res) => {
+    try {
+      const userId = req.query.userId ? parseInt(req.query.userId as string) : undefined;
+      const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
+      
+      if (userId) {
+        const offers = await storage.getOffersByUserId(userId);
+        return res.json(offers);
+      }
+      if (propertyId) {
+        const offers = await storage.getOffersByPropertyId(propertyId);
+        return res.json(offers);
+      }
+      const offers = await storage.getOffers();
+      res.json(offers);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/offers/:id", async (req, res) => {
+    try {
+      const offer = await storage.getOfferById(parseInt(req.params.id));
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
+      res.json(offer);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/offers", async (req, res) => {
+    try {
+      const validated = insertOfferSchema.parse(req.body);
+      const offer = await storage.createOffer(validated);
+      res.status(201).json(offer);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/offers/:id", async (req, res) => {
+    try {
+      const partial = insertOfferSchema.partial().parse(req.body);
+      const offer = await storage.updateOffer(parseInt(req.params.id), partial);
+      res.json(offer);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/offers/:id", async (req, res) => {
+    try {
+      await storage.deleteOffer(parseInt(req.params.id));
+      res.json({ message: "Offer deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
