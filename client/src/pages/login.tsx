@@ -32,9 +32,11 @@ export default function Login() {
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center mb-4">
-            <div className="w-16 h-16 bg-primary rounded-lg flex items-center justify-center">
-              <span className="text-2xl font-bold text-white">FS</span>
-            </div>
+            <img 
+              src="/flipstackk-logo.jpg" 
+              alt="FlipStackk Logo" 
+              className="h-24 w-auto object-contain"
+            />
           </div>
           <CardTitle className="text-3xl font-bold">FlipStackk 6.0</CardTitle>
           <CardDescription>

@@ -31,13 +31,12 @@ export function Sidebar() {
   return (
     <div className="flex h-full w-64 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border shadow-xl z-10">
       <div className="flex h-16 items-center px-6 border-b border-sidebar-border bg-sidebar-accent/10">
-        <div className="flex items-center gap-3 font-display font-bold text-2xl tracking-tight text-white">
+        <div className="flex items-center gap-3">
           <img 
-            src="/logo.jpg" 
+            src="/flipstackk-logo.jpg" 
             alt="FlipStackk Logo" 
-            className="h-10 w-10 object-contain"
+            className="h-12 w-auto object-contain"
           />
-          Flipstackk
         </div>
       </div>
       
