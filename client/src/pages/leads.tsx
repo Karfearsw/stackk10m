@@ -53,7 +53,7 @@ export default function Leads() {
     mutationFn: async (lead: any) => {
       const payload = {
         ...lead,
-        estimatedValue: lead.estimatedValue || null,
+        estimatedValue: lead.estimatedValue ? parseFloat(lead.estimatedValue) : null,
       };
       const res = await fetch("/api/leads", {
         method: "POST",

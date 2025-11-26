@@ -39,8 +39,8 @@ export function Sidebar() {
 
   // Get the first active goal
   const activeGoal = goals.length > 0 ? goals[0] : null;
-  const goalProgress = activeGoal 
-    ? (activeGoal.currentValue / activeGoal.targetValue) * 100 
+  const goalProgress = activeGoal && activeGoal.targetValue > 0
+    ? Math.min(100, (activeGoal.currentValue / activeGoal.targetValue) * 100)
     : 0;
 
   return (
