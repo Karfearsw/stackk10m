@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { leads, properties, contacts, contracts, insertLeadSchema, insertPropertySchema, insertContactSchema, insertContractSchema } from "@shared/schema";
+import { leads, properties, contacts, contracts } from "@shared/schema";
 import { type Lead, type InsertLead, type Property, type InsertProperty, type Contact, type InsertContact, type Contract, type InsertContract } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
@@ -45,12 +45,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createLead(lead: InsertLead): Promise<Lead> {
-    const result = await db.insert(leads).values(lead).returning();
+    const result = await db.insert(leads).values(lead as any).returning();
     return result[0];
   }
 
   async updateLead(id: number, lead: Partial<InsertLead>): Promise<Lead> {
-    const result = await db.update(leads).set(lead).where(eq(leads.id, id)).returning();
+    const result = await db.update(leads).set(lead as any).where(eq(leads.id, id)).returning();
     return result[0];
   }
 
@@ -69,12 +69,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createProperty(property: InsertProperty): Promise<Property> {
-    const result = await db.insert(properties).values(property).returning();
+    const result = await db.insert(properties).values(property as any).returning();
     return result[0];
   }
 
   async updateProperty(id: number, property: Partial<InsertProperty>): Promise<Property> {
-    const result = await db.update(properties).set(property).where(eq(properties.id, id)).returning();
+    const result = await db.update(properties).set(property as any).where(eq(properties.id, id)).returning();
     return result[0];
   }
 
@@ -93,12 +93,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createContact(contact: InsertContact): Promise<Contact> {
-    const result = await db.insert(contacts).values(contact).returning();
+    const result = await db.insert(contacts).values(contact as any).returning();
     return result[0];
   }
 
   async updateContact(id: number, contact: Partial<InsertContact>): Promise<Contact> {
-    const result = await db.update(contacts).set(contact).where(eq(contacts.id, id)).returning();
+    const result = await db.update(contacts).set(contact as any).where(eq(contacts.id, id)).returning();
     return result[0];
   }
 
@@ -117,12 +117,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createContract(contract: InsertContract): Promise<Contract> {
-    const result = await db.insert(contracts).values(contract).returning();
+    const result = await db.insert(contracts).values(contract as any).returning();
     return result[0];
   }
 
   async updateContract(id: number, contract: Partial<InsertContract>): Promise<Contract> {
-    const result = await db.update(contracts).set(contract).where(eq(contracts.id, id)).returning();
+    const result = await db.update(contracts).set(contract as any).where(eq(contracts.id, id)).returning();
     return result[0];
   }
 
