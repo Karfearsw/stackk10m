@@ -16,6 +16,7 @@ import { useAuth } from "@/contexts/AuthContext";
 function SettingsContent() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("account");
+  const [showCreateGoal, setShowCreateGoal] = useState(false);
   const { user } = useAuth();
 
   // Hardcoded team ID for now - would come from user's team membership
@@ -95,6 +96,28 @@ function SettingsContent() {
     },
     onError: () => {
       toast.error('Failed to update notification preferences');
+    },
+  });
+
+  // Create goal mutation
+  const createGoalMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await fetch(`/api/users/${user!.id}/goals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to create goal');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${user!.id}/goals`] });
+      toast.success('Goal created successfully');
+      setShowCreateGoal(false);
+    },
+    onError: () => {
+      toast.error('Failed to create goal');
     },
   });
 
@@ -624,8 +647,15 @@ function SettingsContent() {
                       );
                     })
                   )}
-                  <Button className="w-full bg-primary hover:bg-primary/90 text-white" data-testid="button-add-goal">
-                    Create New Goal
+                  
+                  {showCreateGoal && <GoalCreator onClose={() => setShowCreateGoal(false)} onSubmit={createGoalMutation} />}
+                  
+                  <Button 
+                    className="w-full bg-primary hover:bg-primary/90 text-white" 
+                    data-testid="button-add-goal"
+                    onClick={() => setShowCreateGoal(!showCreateGoal)}
+                  >
+                    {showCreateGoal ? 'Cancel' : 'Create New Goal'}
                   </Button>
                 </CardContent>
               </Card>
@@ -725,6 +755,118 @@ function SettingsContent() {
         </TabsContent>
       </Tabs>
     </Layout>
+  );
+}
+
+// Goal Creator Component
+function GoalCreator({ onClose, onSubmit }: { onClose: () => void, onSubmit: any }) {
+  const [formData, setFormData] = useState({
+    title: "",
+    description: "",
+    targetValue: "",
+    currentValue: "",
+    unit: "deals",
+    period: "month",
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSubmit.mutate({
+      ...formData,
+      targetValue: parseFloat(formData.targetValue),
+      currentValue: parseFloat(formData.currentValue) || 0,
+    });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4 p-4 bg-accent/5 rounded-lg mb-4">
+      <h3 className="font-semibold text-lg">Create New Goal</h3>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="goal-title">Goal Title</Label>
+          <Input
+            id="goal-title"
+            data-testid="input-goal-title"
+            value={formData.title}
+            onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+            placeholder="e.g., Close 12 deals"
+            required
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="goal-period">Period</Label>
+          <Select value={formData.period} onValueChange={(value) => setFormData({ ...formData, period: value })}>
+            <SelectTrigger data-testid="select-goal-period">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="week">Week</SelectItem>
+              <SelectItem value="month">Month</SelectItem>
+              <SelectItem value="quarter">Quarter</SelectItem>
+              <SelectItem value="year">Year</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="goal-description">Description</Label>
+        <Input
+          id="goal-description"
+          data-testid="input-goal-description"
+          value={formData.description}
+          onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+          placeholder="Brief description of your goal"
+        />
+      </div>
+      <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="goal-target">Target Value</Label>
+          <Input
+            id="goal-target"
+            data-testid="input-goal-target"
+            type="number"
+            value={formData.targetValue}
+            onChange={(e) => setFormData({ ...formData, targetValue: e.target.value })}
+            placeholder="12"
+            required
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="goal-current">Current Value</Label>
+          <Input
+            id="goal-current"
+            data-testid="input-goal-current"
+            type="number"
+            value={formData.currentValue}
+            onChange={(e) => setFormData({ ...formData, currentValue: e.target.value })}
+            placeholder="0"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="goal-unit">Unit</Label>
+          <Select value={formData.unit} onValueChange={(value) => setFormData({ ...formData, unit: value })}>
+            <SelectTrigger data-testid="select-goal-unit">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="deals">Deals</SelectItem>
+              <SelectItem value="dollars">Dollars</SelectItem>
+              <SelectItem value="leads">Leads</SelectItem>
+              <SelectItem value="contracts">Contracts</SelectItem>
+              <SelectItem value="properties">Properties</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="flex gap-3">
+        <Button type="submit" data-testid="button-save-goal" disabled={onSubmit.isPending}>
+          {onSubmit.isPending ? "Creating..." : "Create Goal"}
+        </Button>
+        <Button type="button" variant="outline" onClick={onClose} data-testid="button-cancel-goal">
+          Cancel
+        </Button>
+      </div>
+    </form>
   );
 }
 

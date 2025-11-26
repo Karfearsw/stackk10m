@@ -314,6 +314,8 @@ function ContractCreator({ templates, properties }: { templates: any[], properti
 
 // Templates Manager Component
 function TemplatesManager({ templates, isLoading }: { templates: any[], isLoading: boolean }) {
+  const [showCreate, setShowCreate] = useState(false);
+
   return (
     <Card>
       <CardHeader>
@@ -322,26 +324,28 @@ function TemplatesManager({ templates, isLoading }: { templates: any[], isLoadin
             <CardTitle>Contract Templates</CardTitle>
             <CardDescription>Manage reusable contract templates</CardDescription>
           </div>
-          <Button data-testid="button-new-template">
+          <Button onClick={() => setShowCreate(!showCreate)} data-testid="button-new-template">
             <Plus className="w-4 h-4 mr-2" />
             New Template
           </Button>
         </div>
       </CardHeader>
       <CardContent>
+        {showCreate && <TemplateCreator onClose={() => setShowCreate(false)} />}
+        
         {isLoading ? (
           <div className="text-center py-8 text-muted-foreground">Loading templates...</div>
         ) : templates.length === 0 ? (
           <div className="text-center py-12">
             <FileSignature className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
             <p className="text-muted-foreground mb-4">No templates yet</p>
-            <Button data-testid="button-create-first-template">
+            <Button onClick={() => setShowCreate(true)} data-testid="button-create-first-template">
               <Plus className="w-4 h-4 mr-2" />
               Create Your First Template
             </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
             {templates.map((template: any) => (
               <div
                 key={template.id}
@@ -367,6 +371,122 @@ function TemplatesManager({ templates, isLoading }: { templates: any[], isLoadin
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// Template Creator Component
+function TemplateCreator({ onClose }: { onClose: () => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [formData, setFormData] = useState({
+    name: "",
+    description: "",
+    category: "purchase",
+    content: "",
+    mergeFields: "",
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const response = await fetch('/api/contract-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) throw new Error('Failed to create template');
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Template created successfully" });
+      queryClient.invalidateQueries({ queryKey: ['/api/contract-templates'] });
+      onClose();
+    },
+    onError: () => {
+      toast({ title: "Failed to create template", variant: "destructive" });
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    createMutation.mutate({
+      ...formData,
+      mergeFields: formData.mergeFields ? formData.mergeFields.split(',').map(f => f.trim()) : [],
+    });
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4 p-4 bg-accent/5 rounded-lg mb-4">
+      <h3 className="font-semibold text-lg">Create New Template</h3>
+      <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="template-name">Template Name</Label>
+          <Input
+            id="template-name"
+            data-testid="input-template-name"
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            placeholder="e.g., Standard Purchase Agreement"
+            required
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="template-category">Category</Label>
+          <Select value={formData.category} onValueChange={(value) => setFormData({ ...formData, category: value })}>
+            <SelectTrigger data-testid="select-template-category">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="purchase">Purchase Agreement</SelectItem>
+              <SelectItem value="assignment">Assignment Contract</SelectItem>
+              <SelectItem value="option">Option Contract</SelectItem>
+              <SelectItem value="loi">Letter of Intent</SelectItem>
+              <SelectItem value="other">Other</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="template-description">Description</Label>
+        <Input
+          id="template-description"
+          data-testid="input-template-description"
+          value={formData.description}
+          onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+          placeholder="Brief description of this template"
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="template-content">Template Content</Label>
+        <Textarea
+          id="template-content"
+          data-testid="textarea-template-content"
+          value={formData.content}
+          onChange={(e) => setFormData({ ...formData, content: e.target.value })}
+          placeholder="Enter template content with merge fields like {{buyerName}}, {{sellerName}}, etc."
+          className="min-h-[200px] font-mono text-sm"
+          required
+        />
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="template-merge-fields">Merge Fields (comma-separated)</Label>
+        <Input
+          id="template-merge-fields"
+          data-testid="input-template-merge-fields"
+          value={formData.mergeFields}
+          onChange={(e) => setFormData({ ...formData, mergeFields: e.target.value })}
+          placeholder="e.g., buyerName, sellerName, propertyAddress, purchasePrice"
+        />
+      </div>
+      <div className="flex gap-3">
+        <Button type="submit" data-testid="button-save-template" disabled={createMutation.isPending}>
+          <Save className="w-4 h-4 mr-2" />
+          {createMutation.isPending ? "Saving..." : "Save Template"}
+        </Button>
+        <Button type="button" variant="outline" onClick={onClose} data-testid="button-cancel-template">
+          Cancel
+        </Button>
+      </div>
+    </form>
   );
 }
 
