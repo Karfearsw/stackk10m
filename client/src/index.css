@@ -56,105 +56,105 @@
   --font-display: 'Barlow', sans-serif;
 }
 
-/* LIGHT MODE - Clean, Professional, Wholesaler Focused */
+/* LIGHT MODE - Black, White, Red Theme */
 :root {
   --radius: 0.5rem;
   
   /* Clean White Background */
-  --background: 210 20% 98%;
-  --foreground: 222 47% 11%;
+  --background: 0 0% 100%;
+  --foreground: 0 0% 0%;
 
-  /* White Cards with subtle borders */
+  /* White Cards */
   --card: 0 0% 100%;
-  --card-foreground: 222 47% 11%;
+  --card-foreground: 0 0% 0%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 222 47% 11%;
+  --popover-foreground: 0 0% 0%;
 
-  /* Primary: Deep Professional Blue */
-  --primary: 221 83% 53%;
-  --primary-foreground: 210 40% 98%;
+  /* Primary: Bold Red */
+  --primary: 0 84% 50%;
+  --primary-foreground: 0 0% 100%;
 
-  /* Secondary: Soft Blue/Gray */
-  --secondary: 210 40% 96.1%;
-  --secondary-foreground: 222 47% 11.2%;
+  /* Secondary: Light Gray */
+  --secondary: 0 0% 95%;
+  --secondary-foreground: 0 0% 0%;
 
   /* Muted: For subtext */
-  --muted: 210 40% 96.1%;
-  --muted-foreground: 215.4 16.3% 46.9%;
+  --muted: 0 0% 92%;
+  --muted-foreground: 0 0% 40%;
 
-  /* Accent: Success Green (Money/Deals) */
-  --accent: 150 80% 40%;
+  /* Accent: Red for emphasis */
+  --accent: 0 84% 50%;
   --accent-foreground: 0 0% 100%;
 
-  --destructive: 0 84.2% 60.2%;
-  --destructive-foreground: 210 40% 98%;
+  --destructive: 0 84% 50%;
+  --destructive-foreground: 0 0% 100%;
 
-  --border: 214.3 31.8% 91.4%;
-  --input: 214.3 31.8% 91.4%;
-  --ring: 221 83% 53%;
+  --border: 0 0% 90%;
+  --input: 0 0% 93%;
+  --ring: 0 84% 50%;
 
   /* Charts */
-  --chart-1: 221 83% 53%; /* Primary Blue */
-  --chart-2: 150 80% 40%; /* Success Green */
-  --chart-3: 340 75% 55%; /* Alert Red/Pink */
-  --chart-4: 45 90% 55%;  /* Warning Yellow */
-  --chart-5: 260 60% 60%; /* Purple */
+  --chart-1: 0 84% 50%; /* Red */
+  --chart-2: 0 0% 30%; /* Black */
+  --chart-3: 0 0% 60%; /* Gray */
+  --chart-4: 0 84% 65%;  /* Light Red */
+  --chart-5: 0 0% 20%; /* Dark Black */
 
-  /* Sidebar: Dark Navy for contrast */
-  --sidebar: 222 47% 11%;
-  --sidebar-foreground: 210 40% 98%;
-  --sidebar-primary: 221 83% 53%;
+  /* Sidebar: Pure Black for dramatic contrast */
+  --sidebar: 0 0% 0%;
+  --sidebar-foreground: 0 0% 100%;
+  --sidebar-primary: 0 84% 50%;
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 217 33% 17%;
-  --sidebar-accent-foreground: 210 40% 98%;
-  --sidebar-border: 217 33% 17%;
-  --sidebar-ring: 224.3 76.3% 48%;
+  --sidebar-accent: 0 0% 15%;
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-border: 0 0% 10%;
+  --sidebar-ring: 0 84% 50%;
 }
 
 .dark {
-  --background: 222 47% 11%;
-  --foreground: 210 40% 98%;
+  --background: 0 0% 8%;
+  --foreground: 0 0% 100%;
 
-  --card: 222 47% 11%;
-  --card-foreground: 210 40% 98%;
+  --card: 0 0% 12%;
+  --card-foreground: 0 0% 100%;
 
-  --popover: 222 47% 11%;
-  --popover-foreground: 210 40% 98%;
+  --popover: 0 0% 12%;
+  --popover-foreground: 0 0% 100%;
 
-  --primary: 217 91% 60%;
-  --primary-foreground: 222 47% 11%;
+  --primary: 0 84% 55%;
+  --primary-foreground: 0 0% 100%;
 
-  --secondary: 217 33% 17%;
-  --secondary-foreground: 210 40% 98%;
+  --secondary: 0 0% 20%;
+  --secondary-foreground: 0 0% 100%;
 
-  --muted: 217 33% 17%;
-  --muted-foreground: 215 20.2% 65.1%;
+  --muted: 0 0% 25%;
+  --muted-foreground: 0 0% 70%;
 
-  --accent: 150 70% 45%;
+  --accent: 0 84% 55%;
   --accent-foreground: 0 0% 100%;
 
-  --destructive: 0 62.8% 30.6%;
-  --destructive-foreground: 210 40% 98%;
+  --destructive: 0 84% 55%;
+  --destructive-foreground: 0 0% 100%;
 
-  --border: 217 33% 17%;
-  --input: 217 33% 17%;
-  --ring: 224.3 76.3% 48%;
+  --border: 0 0% 20%;
+  --input: 0 0% 18%;
+  --ring: 0 84% 55%;
 
-  --chart-1: 220 70% 50%;
-  --chart-2: 160 60% 45%;
-  --chart-3: 30 80% 55%;
-  --chart-4: 280 65% 60%;
-  --chart-5: 340 75% 55%;
+  --chart-1: 0 84% 55%;
+  --chart-2: 0 0% 50%;
+  --chart-3: 0 0% 70%;
+  --chart-4: 0 84% 60%;
+  --chart-5: 0 0% 80%;
 
-  --sidebar: 222 47% 11%;
-  --sidebar-foreground: 210 40% 98%;
-  --sidebar-primary: 224.3 76.3% 48%;
+  --sidebar: 0 0% 0%;
+  --sidebar-foreground: 0 0% 100%;
+  --sidebar-primary: 0 84% 55%;
   --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 217 33% 17%;
-  --sidebar-accent-foreground: 210 40% 98%;
-  --sidebar-border: 217 33% 17%;
-  --sidebar-ring: 217.2 91.2% 59.8%;
+  --sidebar-accent: 0 0% 15%;
+  --sidebar-accent-foreground: 0 0% 100%;
+  --sidebar-border: 0 0% 10%;
+  --sidebar-ring: 0 84% 55%;
 }
 
 @layer base {

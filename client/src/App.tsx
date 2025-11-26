@@ -7,13 +7,21 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Leads from "@/pages/leads";
 import PropertyDetail from "@/pages/property-detail";
+import Properties from "@/pages/properties";
+import Contracts from "@/pages/contracts";
+import Analytics from "@/pages/analytics";
+import Settings from "@/pages/settings";
 
 function Router() {
   return (
     <Switch>
       <Route path="/" component={Dashboard} />
       <Route path="/leads" component={Leads} />
+      <Route path="/properties" component={Properties} />
       <Route path="/properties/:id" component={PropertyDetail} />
+      <Route path="/contracts" component={Contracts} />
+      <Route path="/analytics" component={Analytics} />
+      <Route path="/settings" component={Settings} />
       {/* Fallback to 404 */}
       <Route component={NotFound} />
     </Switch>
