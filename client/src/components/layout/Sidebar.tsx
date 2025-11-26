@@ -11,6 +11,7 @@ import {
   Clock
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/contexts/AuthContext";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -25,6 +26,7 @@ const navigation = [
 
 export function Sidebar() {
   const [location] = useLocation();
+  const { user, logout } = useAuth();
 
   return (
     <div className="flex h-full w-64 flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border shadow-xl z-10">
@@ -73,6 +75,22 @@ export function Sidebar() {
       </div>
 
       <div className="p-4 mt-auto border-t border-sidebar-border bg-sidebar-accent/5">
+        {user && (
+          <div className="bg-sidebar-accent/50 rounded-lg p-3 mb-3">
+            <p className="text-xs font-medium text-sidebar-foreground/60 uppercase tracking-wider mb-1">
+              Logged in as
+            </p>
+            <p className="text-sm font-bold text-white truncate">
+              {user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.email}
+            </p>
+            {user.isSuperAdmin && (
+              <span className="inline-block mt-1 text-xs px-2 py-0.5 bg-primary/20 text-primary rounded">
+                Super Admin
+              </span>
+            )}
+          </div>
+        )}
+        
         <div className="bg-sidebar-accent/50 rounded-lg p-3 mb-4">
           <p className="text-xs font-medium text-sidebar-foreground/60 uppercase tracking-wider mb-1">Current Goal</p>
           <div className="flex justify-between items-end mb-1">
@@ -84,7 +102,11 @@ export function Sidebar() {
           </div>
         </div>
 
-        <button className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/70 hover:bg-destructive/10 hover:text-destructive transition-colors">
+        <button 
+          onClick={logout}
+          className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/70 hover:bg-destructive/10 hover:text-destructive transition-colors"
+          data-testid="button-logout"
+        >
           <LogOut className="h-5 w-5" />
           Sign Out
         </button>

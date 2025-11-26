@@ -1,6 +1,9 @@
 import { type Server } from "node:http";
 
 import express, { type Express, type Request, Response, NextFunction } from "express";
+import session from "express-session";
+import connectPgSimple from "connect-pg-simple";
+import { db } from "./db";
 import { registerRoutes } from "./routes";
 
 export function log(message: string, source = "express") {
@@ -21,6 +24,48 @@ declare module 'http' {
     rawBody: unknown
   }
 }
+
+declare module 'express-session' {
+  interface SessionData {
+    userId?: number;
+    email?: string;
+  }
+}
+
+// Require SESSION_SECRET in production
+if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
+  throw new Error('SESSION_SECRET environment variable is required in production');
+}
+
+const sessionSecret = process.env.SESSION_SECRET || 
+  (process.env.NODE_ENV === 'development' ? 'flipstackk-development-secret-DO-NOT-USE-IN-PRODUCTION' : '');
+
+if (!sessionSecret) {
+  throw new Error('SESSION_SECRET must be set');
+}
+
+// Use PostgreSQL-backed session store for production-ready persistence
+const PgSession = connectPgSimple(session);
+
+app.use(session({
+  store: new PgSession({
+    conObject: {
+      connectionString: process.env.DATABASE_URL,
+    },
+    tableName: 'session',
+    createTableIfMissing: true,
+  }),
+  secret: sessionSecret,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+    sameSite: 'lax',
+  }
+}));
+
 app.use(express.json({
   verify: (req, _res, buf) => {
     req.rawBody = buf;

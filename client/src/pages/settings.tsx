@@ -11,28 +11,29 @@ import { toast } from "sonner";
 import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useAuth } from "@/contexts/AuthContext";
 
-// For demo purposes, using hardcoded user ID. In production, this would come from auth context
-const CURRENT_USER_ID = 1;
-const CURRENT_TEAM_ID = 1;
-
-export default function Settings() {
+function SettingsContent() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("account");
+  const { user } = useAuth();
+
+  // Hardcoded team ID for now - would come from user's team membership
+  const CURRENT_TEAM_ID = 1;
 
   // Fetch user data
   const { data: userData, isLoading: userLoading } = useQuery<any>({
-    queryKey: [`/api/users/${CURRENT_USER_ID}`],
+    queryKey: [`/api/users/${user.id}`],
   });
 
   // Fetch 2FA status
   const { data: twoFactorData } = useQuery<any>({
-    queryKey: [`/api/users/${CURRENT_USER_ID}/2fa`],
+    queryKey: [`/api/users/${user.id}/2fa`],
   });
 
   // Fetch notification preferences
   const { data: notificationPrefs, isLoading: notifsLoading } = useQuery<any>({
-    queryKey: [`/api/users/${CURRENT_USER_ID}/notifications`],
+    queryKey: [`/api/users/${user.id}/notifications`],
   });
 
   // Fetch team members
@@ -42,14 +43,14 @@ export default function Settings() {
 
   // Fetch goals
   const { data: goals = [], isLoading: goalsLoading } = useQuery<any[]>({
-    queryKey: [`/api/users/${CURRENT_USER_ID}/goals`],
+    queryKey: [`/api/users/${user.id}/goals`],
   });
 
   // Fetch offers
   const { data: offers = [], isLoading: offersLoading } = useQuery<any[]>({
     queryKey: [`/api/offers`],
     queryFn: async () => {
-      const res = await fetch(`/api/offers?userId=${CURRENT_USER_ID}`, { credentials: 'include' });
+      const res = await fetch(`/api/offers?userId=${user.id}`, { credentials: 'include' });
       if (!res.ok) throw new Error('Failed to fetch offers');
       return res.json();
     },
@@ -58,7 +59,7 @@ export default function Settings() {
   // Update user mutation
   const updateUserMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch(`/api/users/${CURRENT_USER_ID}`, {
+      const res = await fetch(`/api/users/${user!.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -68,7 +69,7 @@ export default function Settings() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/users/${CURRENT_USER_ID}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${user!.id}`] });
       toast.success('Profile updated successfully');
     },
     onError: () => {
@@ -79,7 +80,7 @@ export default function Settings() {
   // Update notifications mutation
   const updateNotificationsMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch(`/api/users/${CURRENT_USER_ID}/notifications`, {
+      const res = await fetch(`/api/users/${user!.id}/notifications`, {
         method: notificationPrefs ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -89,7 +90,7 @@ export default function Settings() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/users/${CURRENT_USER_ID}/notifications`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${user!.id}/notifications`] });
       toast.success('Notification preferences updated');
     },
     onError: () => {
@@ -103,7 +104,7 @@ export default function Settings() {
       if (enable) {
         // In production, this would generate a secret and return QR code data
         const secret = Math.random().toString(36).substring(7);
-        const res = await fetch(`/api/users/${CURRENT_USER_ID}/2fa`, {
+        const res = await fetch(`/api/users/${user!.id}/2fa`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ secret, isEnabled: true, method: 'totp' }),
@@ -112,7 +113,7 @@ export default function Settings() {
         if (!res.ok) throw new Error('Failed to enable 2FA');
         return res.json();
       } else {
-        const res = await fetch(`/api/users/${CURRENT_USER_ID}/2fa`, {
+        const res = await fetch(`/api/users/${user!.id}/2fa`, {
           method: 'DELETE',
           credentials: 'include',
         });
@@ -121,7 +122,7 @@ export default function Settings() {
       }
     },
     onSuccess: (_, enable) => {
-      queryClient.invalidateQueries({ queryKey: [`/api/users/${CURRENT_USER_ID}/2fa`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${user!.id}/2fa`] });
       toast.success(enable ? '2FA enabled successfully' : '2FA disabled successfully');
     },
     onError: () => {
@@ -725,4 +726,30 @@ export default function Settings() {
       </Tabs>
     </Layout>
   );
+}
+
+export default function Settings() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <Layout>
+        <div className="flex items-center justify-center h-96">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </Layout>
+    );
+  }
+
+  if (!user) {
+    return (
+      <Layout>
+        <div className="flex items-center justify-center h-96">
+          <p className="text-muted-foreground">Please log in to access settings.</p>
+        </div>
+      </Layout>
+    );
+  }
+
+  return <SettingsContent />;
 }

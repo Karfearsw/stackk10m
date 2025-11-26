@@ -1,8 +1,10 @@
-import { Switch, Route } from "wouter";
+import { Switch, Route, Redirect, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { Loader2 } from "lucide-react";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Leads from "@/pages/leads";
@@ -14,21 +16,73 @@ import Analytics from "@/pages/analytics";
 import Settings from "@/pages/settings";
 import Calculator from "@/pages/calculator";
 import Timesheet from "@/pages/timesheet";
+import Login from "@/pages/login";
+
+function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
+  const { isAuthenticated, loading } = useAuth();
+  const [location] = useLocation();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <Redirect to="/login" />;
+  }
+
+  return <Component />;
+}
 
 function Router() {
+  const { isAuthenticated, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   return (
     <Switch>
-      <Route path="/" component={Dashboard} />
-      <Route path="/leads" component={Leads} />
-      <Route path="/properties" component={Properties} />
-      <Route path="/properties/:id" component={PropertyDetail} />
-      <Route path="/contracts" component={ContractGenerator} />
-      <Route path="/contracts-old" component={Contracts} />
-      <Route path="/analytics" component={Analytics} />
-      <Route path="/settings" component={Settings} />
-      <Route path="/calculator" component={Calculator} />
-      <Route path="/timesheet" component={Timesheet} />
-      {/* Fallback to 404 */}
+      <Route path="/login">
+        {isAuthenticated ? <Redirect to="/" /> : <Login />}
+      </Route>
+      <Route path="/">
+        {() => <ProtectedRoute component={Dashboard} />}
+      </Route>
+      <Route path="/leads">
+        {() => <ProtectedRoute component={Leads} />}
+      </Route>
+      <Route path="/properties">
+        {() => <ProtectedRoute component={Properties} />}
+      </Route>
+      <Route path="/properties/:id">
+        {() => <ProtectedRoute component={PropertyDetail} />}
+      </Route>
+      <Route path="/contracts">
+        {() => <ProtectedRoute component={ContractGenerator} />}
+      </Route>
+      <Route path="/contracts-old">
+        {() => <ProtectedRoute component={Contracts} />}
+      </Route>
+      <Route path="/analytics">
+        {() => <ProtectedRoute component={Analytics} />}
+      </Route>
+      <Route path="/settings">
+        {() => <ProtectedRoute component={Settings} />}
+      </Route>
+      <Route path="/calculator">
+        {() => <ProtectedRoute component={Calculator} />}
+      </Route>
+      <Route path="/timesheet">
+        {() => <ProtectedRoute component={Timesheet} />}
+      </Route>
       <Route component={NotFound} />
     </Switch>
   );
@@ -37,10 +91,12 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Router />
-      </TooltipProvider>
+      <AuthProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Router />
+        </TooltipProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }
