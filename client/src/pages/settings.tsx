@@ -5,78 +5,276 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { toast } from "sonner";
+import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+
+// For demo purposes, using hardcoded user ID. In production, this would come from auth context
+const CURRENT_USER_ID = 1;
+const CURRENT_TEAM_ID = 1;
 
 export default function Settings() {
+  const queryClient = useQueryClient();
+  const [activeTab, setActiveTab] = useState("account");
+
+  // Fetch user data
+  const { data: userData, isLoading: userLoading } = useQuery<any>({
+    queryKey: [`/api/users/${CURRENT_USER_ID}`],
+  });
+
+  // Fetch 2FA status
+  const { data: twoFactorData } = useQuery<any>({
+    queryKey: [`/api/users/${CURRENT_USER_ID}/2fa`],
+  });
+
+  // Fetch notification preferences
+  const { data: notificationPrefs, isLoading: notifsLoading } = useQuery<any>({
+    queryKey: [`/api/users/${CURRENT_USER_ID}/notifications`],
+  });
+
+  // Fetch team members
+  const { data: teamMembers = [], isLoading: teamLoading } = useQuery<any[]>({
+    queryKey: [`/api/teams/${CURRENT_TEAM_ID}/members`],
+  });
+
+  // Fetch goals
+  const { data: goals = [], isLoading: goalsLoading } = useQuery<any[]>({
+    queryKey: [`/api/users/${CURRENT_USER_ID}/goals`],
+  });
+
+  // Fetch offers
+  const { data: offers = [], isLoading: offersLoading } = useQuery<any[]>({
+    queryKey: [`/api/offers`],
+    queryFn: async () => {
+      const res = await fetch(`/api/offers?userId=${CURRENT_USER_ID}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to fetch offers');
+      return res.json();
+    },
+  });
+
+  // Update user mutation
+  const updateUserMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await fetch(`/api/users/${CURRENT_USER_ID}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to update profile');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${CURRENT_USER_ID}`] });
+      toast.success('Profile updated successfully');
+    },
+    onError: () => {
+      toast.error('Failed to update profile');
+    },
+  });
+
+  // Update notifications mutation
+  const updateNotificationsMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await fetch(`/api/users/${CURRENT_USER_ID}/notifications`, {
+        method: notificationPrefs ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to update notifications');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${CURRENT_USER_ID}/notifications`] });
+      toast.success('Notification preferences updated');
+    },
+    onError: () => {
+      toast.error('Failed to update notification preferences');
+    },
+  });
+
+  // Toggle 2FA mutation
+  const toggle2FAMutation = useMutation({
+    mutationFn: async (enable: boolean) => {
+      if (enable) {
+        // In production, this would generate a secret and return QR code data
+        const secret = Math.random().toString(36).substring(7);
+        const res = await fetch(`/api/users/${CURRENT_USER_ID}/2fa`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ secret, isEnabled: true, method: 'totp' }),
+          credentials: 'include',
+        });
+        if (!res.ok) throw new Error('Failed to enable 2FA');
+        return res.json();
+      } else {
+        const res = await fetch(`/api/users/${CURRENT_USER_ID}/2fa`, {
+          method: 'DELETE',
+          credentials: 'include',
+        });
+        if (!res.ok) throw new Error('Failed to disable 2FA');
+        return null;
+      }
+    },
+    onSuccess: (_, enable) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${CURRENT_USER_ID}/2fa`] });
+      toast.success(enable ? '2FA enabled successfully' : '2FA disabled successfully');
+    },
+    onError: () => {
+      toast.error('Failed to toggle 2FA');
+    },
+  });
+
+  // Handle profile form submission
+  const handleProfileSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    updateUserMutation.mutate({
+      firstName: formData.get('firstName'),
+      lastName: formData.get('lastName'),
+      email: formData.get('email'),
+      phone: formData.get('phone'),
+      companyName: formData.get('companyName'),
+      licenseNumber: formData.get('licenseNumber'),
+    });
+  };
+
+  if (userLoading) {
+    return (
+      <Layout>
+        <div className="flex items-center justify-center h-96">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </Layout>
+    );
+  }
+
   return (
     <Layout>
       <div className="space-y-1 mb-6">
-        <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+        <h1 className="text-3xl font-bold tracking-tight" data-testid="page-title">Settings</h1>
         <p className="text-muted-foreground">Manage your account and application preferences.</p>
       </div>
 
-      <Tabs defaultValue="account" className="w-full">
-        <TabsList className="border-b rounded-none bg-transparent p-0 h-auto">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="border-b rounded-none bg-transparent p-0 h-auto flex-wrap">
           <TabsTrigger value="account" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <User className="w-4 h-4 mr-2" />
             Account
           </TabsTrigger>
           <TabsTrigger value="security" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Shield className="w-4 h-4 mr-2" />
             Security
           </TabsTrigger>
           <TabsTrigger value="notifications" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Bell className="w-4 h-4 mr-2" />
             Notifications
           </TabsTrigger>
           <TabsTrigger value="team" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Users className="w-4 h-4 mr-2" />
             Team
+          </TabsTrigger>
+          <TabsTrigger value="goals" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Target className="w-4 h-4 mr-2" />
+            Goals
+          </TabsTrigger>
+          <TabsTrigger value="offers" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <FileText className="w-4 h-4 mr-2" />
+            Offers
           </TabsTrigger>
         </TabsList>
 
+        {/* ACCOUNT TAB */}
         <TabsContent value="account" className="mt-6 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Profile Information</CardTitle>
-              <CardDescription>Update your personal details and contact information.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="firstName">First Name</Label>
-                  <Input id="firstName" placeholder="Kevin" defaultValue="Kevin" />
+          <form onSubmit={handleProfileSubmit}>
+            <Card>
+              <CardHeader>
+                <CardTitle>Profile Information</CardTitle>
+                <CardDescription>Update your personal details and contact information.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="firstName">First Name</Label>
+                    <Input 
+                      id="firstName" 
+                      name="firstName"
+                      placeholder="First Name" 
+                      defaultValue={userData?.firstName || ''} 
+                      data-testid="input-first-name"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="lastName">Last Name</Label>
+                    <Input 
+                      id="lastName" 
+                      name="lastName"
+                      placeholder="Last Name" 
+                      defaultValue={userData?.lastName || ''} 
+                      data-testid="input-last-name"
+                    />
+                  </div>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="lastName">Last Name</Label>
-                  <Input id="lastName" placeholder="Brown" defaultValue="Brown" />
+                  <Label htmlFor="email">Email Address</Label>
+                  <Input 
+                    id="email" 
+                    name="email"
+                    type="email" 
+                    placeholder="email@example.com" 
+                    defaultValue={userData?.email || ''} 
+                    data-testid="input-email"
+                  />
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email Address</Label>
-                <Input id="email" type="email" placeholder="kevin@flipstackk.com" defaultValue="kevin@flipstackk.com" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="phone">Phone Number</Label>
-                <Input id="phone" placeholder="(555) 123-4567" defaultValue="(555) 123-4567" />
-              </div>
-              <Button className="bg-primary hover:bg-primary/90 text-white">Save Changes</Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Company Information</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="company">Company Name</Label>
-                <Input id="company" placeholder="Flipstackk Wholesaling" defaultValue="Flipstackk Wholesaling" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="license">License Number</Label>
-                <Input id="license" placeholder="FL-123456" defaultValue="FL-123456" />
-              </div>
-              <Button className="bg-primary hover:bg-primary/90 text-white">Save Changes</Button>
-            </CardContent>
-          </Card>
+                <div className="space-y-2">
+                  <Label htmlFor="phone">Phone Number</Label>
+                  <Input 
+                    id="phone" 
+                    name="phone"
+                    placeholder="(555) 123-4567" 
+                    defaultValue={userData?.phone || ''} 
+                    data-testid="input-phone"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="companyName">Company Name</Label>
+                  <Input 
+                    id="companyName" 
+                    name="companyName"
+                    placeholder="Company Name" 
+                    defaultValue={userData?.companyName || ''} 
+                    data-testid="input-company"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="licenseNumber">License Number</Label>
+                  <Input 
+                    id="licenseNumber" 
+                    name="licenseNumber"
+                    placeholder="FL-123456" 
+                    defaultValue={userData?.licenseNumber || ''} 
+                    data-testid="input-license"
+                  />
+                </div>
+                <Button 
+                  type="submit" 
+                  className="bg-primary hover:bg-primary/90 text-white"
+                  disabled={updateUserMutation.isPending}
+                  data-testid="button-save-profile"
+                >
+                  {updateUserMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  Save Changes
+                </Button>
+              </CardContent>
+            </Card>
+          </form>
         </TabsContent>
 
+        {/* SECURITY TAB */}
         <TabsContent value="security" className="mt-6 space-y-6">
           <Card>
             <CardHeader>
@@ -86,83 +284,443 @@ export default function Settings() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="current">Current Password</Label>
-                <Input id="current" type="password" placeholder="••••••••" />
+                <Input id="current" type="password" placeholder="••••••••" data-testid="input-current-password" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="new">New Password</Label>
-                <Input id="new" type="password" placeholder="••••••••" />
+                <Input id="new" type="password" placeholder="••••••••" data-testid="input-new-password" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="confirm">Confirm Password</Label>
-                <Input id="confirm" type="password" placeholder="••••••••" />
+                <Input id="confirm" type="password" placeholder="••••••••" data-testid="input-confirm-password" />
               </div>
-              <Button className="bg-primary hover:bg-primary/90 text-white">Update Password</Button>
+              <Button className="bg-primary hover:bg-primary/90 text-white" data-testid="button-update-password">
+                Update Password
+              </Button>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
-              <CardTitle>Two-Factor Authentication</CardTitle>
-              <CardDescription>Add an extra layer of security to your account.</CardDescription>
+              <CardTitle>Two-Factor Authentication (2FA)</CardTitle>
+              <CardDescription>Add an extra layer of security using time-based one-time passwords (TOTP).</CardDescription>
             </CardHeader>
-            <CardContent className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">Status: Disabled</p>
-                <p className="text-sm text-muted-foreground">Enhance your account security</p>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between p-4 border rounded-lg">
+                <div>
+                  <p className="font-medium">
+                    Status: {twoFactorData?.isEnabled ? 
+                      <span className="text-green-600">Enabled</span> : 
+                      <span className="text-muted-foreground">Disabled</span>
+                    }
+                  </p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    {twoFactorData?.isEnabled ? 
+                      'Your account is protected with 2FA' : 
+                      'Enhance your account security with 2FA'
+                    }
+                  </p>
+                  {twoFactorData?.isEnabled && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Method: {twoFactorData.method === 'totp' ? 'Authenticator App' : 'SMS'}
+                    </p>
+                  )}
+                </div>
+                <Button 
+                  onClick={() => toggle2FAMutation.mutate(!twoFactorData?.isEnabled)}
+                  variant={twoFactorData?.isEnabled ? "destructive" : "default"}
+                  className={!twoFactorData?.isEnabled ? "bg-primary hover:bg-primary/90 text-white" : ""}
+                  disabled={toggle2FAMutation.isPending}
+                  data-testid="button-toggle-2fa"
+                >
+                  {toggle2FAMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  {twoFactorData?.isEnabled ? 'Disable 2FA' : 'Enable 2FA'}
+                </Button>
               </div>
-              <Button className="bg-primary hover:bg-primary/90 text-white">Enable 2FA</Button>
+
+              {twoFactorData?.isEnabled && (
+                <div className="border-t pt-4 space-y-4">
+                  <div>
+                    <h4 className="font-medium mb-2">Backup Codes</h4>
+                    <p className="text-sm text-muted-foreground mb-3">
+                      Generate backup codes to use if you lose access to your authenticator app
+                    </p>
+                    <Button variant="outline" size="sm" data-testid="button-generate-backup-codes">
+                      Generate Backup Codes
+                    </Button>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-medium mb-2">Fallback Options</h4>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span>SMS Backup</span>
+                        <Switch data-testid="switch-sms-backup" />
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span>Email Backup</span>
+                        <Switch data-testid="switch-email-backup" />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
 
+        {/* NOTIFICATIONS TAB */}
         <TabsContent value="notifications" className="mt-6 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Email Notifications</CardTitle>
-              <CardDescription>Manage how you receive notifications.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {[
-                { label: "New Leads", desc: "Get notified when new leads are added" },
-                { label: "Deal Updates", desc: "Updates on deals in progress" },
-                { label: "Contract Alerts", desc: "Important contract updates" },
-                { label: "Weekly Summary", desc: "Weekly performance summary" },
-              ].map((item) => (
-                <div key={item.label} className="flex items-center justify-between py-2">
-                  <div>
-                    <p className="font-medium">{item.label}</p>
-                    <p className="text-sm text-muted-foreground">{item.desc}</p>
+          {notifsLoading ? (
+            <Card>
+              <CardContent className="flex items-center justify-center p-8">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Notification Channels</CardTitle>
+                  <CardDescription>Choose how you want to receive notifications.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {[
+                    { key: 'emailEnabled', label: 'Email Notifications', desc: 'Receive notifications via email' },
+                    { key: 'pushEnabled', label: 'Push Notifications', desc: 'Browser push notifications' },
+                    { key: 'inAppEnabled', label: 'In-App Notifications', desc: 'Notifications within the application' },
+                  ].map((channel) => (
+                    <div key={channel.key} className="flex items-center justify-between py-2">
+                      <div>
+                        <p className="font-medium">{channel.label}</p>
+                        <p className="text-sm text-muted-foreground">{channel.desc}</p>
+                      </div>
+                      <Switch 
+                        checked={notificationPrefs?.[channel.key] ?? true}
+                        onCheckedChange={(checked) => {
+                          updateNotificationsMutation.mutate({ [channel.key]: checked });
+                        }}
+                        data-testid={`switch-${channel.key}`}
+                      />
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Notification Types</CardTitle>
+                  <CardDescription>Control which events trigger notifications.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {[
+                    { key: 'newLeads', label: 'New Leads', desc: 'Get notified when new leads are added' },
+                    { key: 'dealUpdates', label: 'Deal Updates', desc: 'Updates on deals in progress' },
+                    { key: 'contractAlerts', label: 'Contract Alerts', desc: 'Important contract updates' },
+                    { key: 'weeklySummary', label: 'Weekly Summary', desc: 'Weekly performance summary' },
+                  ].map((type) => (
+                    <div key={type.key} className="flex items-center justify-between py-2">
+                      <div>
+                        <p className="font-medium">{type.label}</p>
+                        <p className="text-sm text-muted-foreground">{type.desc}</p>
+                      </div>
+                      <Switch 
+                        checked={notificationPrefs?.[type.key] ?? true}
+                        onCheckedChange={(checked) => {
+                          updateNotificationsMutation.mutate({ [type.key]: checked });
+                        }}
+                        data-testid={`switch-${type.key}`}
+                      />
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Notification Frequency</CardTitle>
+                  <CardDescription>Control how often you receive notifications.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="frequency">Delivery Frequency</Label>
+                    <Select 
+                      value={notificationPrefs?.frequency || 'instant'}
+                      onValueChange={(value) => {
+                        updateNotificationsMutation.mutate({ frequency: value });
+                      }}
+                    >
+                      <SelectTrigger data-testid="select-frequency">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="instant">Instant</SelectItem>
+                        <SelectItem value="hourly">Hourly Digest</SelectItem>
+                        <SelectItem value="daily">Daily Digest</SelectItem>
+                        <SelectItem value="weekly">Weekly Digest</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <Switch defaultChecked={true} />
-                </div>
-              ))}
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Do Not Disturb Schedule</CardTitle>
+                  <CardDescription>Set quiet hours when you don't want to receive notifications.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium">Enable Do Not Disturb</p>
+                      <p className="text-sm text-muted-foreground">Mute notifications during specified hours</p>
+                    </div>
+                    <Switch 
+                      checked={notificationPrefs?.dndEnabled ?? false}
+                      onCheckedChange={(checked) => {
+                        updateNotificationsMutation.mutate({ dndEnabled: checked });
+                      }}
+                      data-testid="switch-dnd-enabled"
+                    />
+                  </div>
+
+                  {notificationPrefs?.dndEnabled && (
+                    <div className="grid grid-cols-2 gap-4 pt-4 border-t">
+                      <div className="space-y-2">
+                        <Label htmlFor="dndStart">Start Time</Label>
+                        <Input 
+                          id="dndStart" 
+                          type="time" 
+                          defaultValue={notificationPrefs?.dndStartTime || '22:00'}
+                          onChange={(e) => {
+                            updateNotificationsMutation.mutate({ dndStartTime: e.target.value });
+                          }}
+                          data-testid="input-dnd-start"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="dndEnd">End Time</Label>
+                        <Input 
+                          id="dndEnd" 
+                          type="time" 
+                          defaultValue={notificationPrefs?.dndEndTime || '08:00'}
+                          onChange={(e) => {
+                            updateNotificationsMutation.mutate({ dndEndTime: e.target.value });
+                          }}
+                          data-testid="input-dnd-end"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
         </TabsContent>
 
+        {/* TEAM TAB */}
         <TabsContent value="team" className="mt-6 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Team Members</CardTitle>
-              <CardDescription>Manage your team and their permissions.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {[
-                { name: "Benji Smith", role: "Owner", email: "benji@flipstackk.com" },
-                { name: "Sarah Martinez", role: "Acquisition Manager", email: "sarah@flipstackk.com" },
-                { name: "Michael Johnson", role: "Closer", email: "michael@flipstackk.com" },
-              ].map((member) => (
-                <div key={member.email} className="flex items-center justify-between border rounded p-3">
-                  <div>
-                    <p className="font-medium">{member.name}</p>
-                    <p className="text-sm text-muted-foreground">{member.role} • {member.email}</p>
+          {teamLoading ? (
+            <Card>
+              <CardContent className="flex items-center justify-center p-8">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Team Members</CardTitle>
+                  <CardDescription>Manage your team and their permissions.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {teamMembers.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Users className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                      <p>No team members yet</p>
+                      <p className="text-sm mt-1">Start by inviting your first team member</p>
+                    </div>
+                  ) : (
+                    teamMembers.map((member, index) => (
+                      <div key={member.id} className="flex items-center justify-between border rounded p-3" data-testid={`team-member-${index}`}>
+                        <div>
+                          <p className="font-medium">Team Member {member.userId}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {member.role || 'Member'} • {member.status || 'Active'}
+                          </p>
+                        </div>
+                        <Button variant="ghost" size="sm" data-testid={`button-remove-member-${index}`}>
+                          Remove
+                        </Button>
+                      </div>
+                    ))
+                  )}
+                  <Button className="w-full bg-primary hover:bg-primary/90 text-white mt-4" data-testid="button-add-team-member">
+                    Add Team Member
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Team Activity</CardTitle>
+                  <CardDescription>Recent team activity and changes.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-3">
+                    <p className="text-sm text-muted-foreground">No recent activity</p>
                   </div>
-                  <Button variant="ghost" size="sm">Remove</Button>
-                </div>
-              ))}
-              <Button className="w-full bg-primary hover:bg-primary/90 text-white mt-4">Add Team Member</Button>
-            </CardContent>
-          </Card>
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </TabsContent>
+
+        {/* GOALS TAB */}
+        <TabsContent value="goals" className="mt-6 space-y-6">
+          {goalsLoading ? (
+            <Card>
+              <CardContent className="flex items-center justify-center p-8">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Current Goals</CardTitle>
+                  <CardDescription>Track your progress towards sales and performance goals.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {goals.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Target className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                      <p>No goals set yet</p>
+                      <p className="text-sm mt-1">Create your first goal to start tracking progress</p>
+                    </div>
+                  ) : (
+                    goals.map((goal, index) => {
+                      const progress = goal.targetValue > 0 ? (goal.currentValue / goal.targetValue) * 100 : 0;
+                      return (
+                        <div key={goal.id} className="space-y-3" data-testid={`goal-${index}`}>
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <h4 className="font-medium">{goal.title}</h4>
+                              <p className="text-sm text-muted-foreground">{goal.description}</p>
+                            </div>
+                            <span className="text-sm font-medium">
+                              {goal.currentValue}/{goal.targetValue} {goal.unit}
+                            </span>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs text-muted-foreground">{progress.toFixed(0)}% Complete</span>
+                              <span className="text-xs text-muted-foreground">{goal.period}</span>
+                            </div>
+                            <Progress value={progress} className="h-2" />
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                  <Button className="w-full bg-primary hover:bg-primary/90 text-white" data-testid="button-add-goal">
+                    Create New Goal
+                  </Button>
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </TabsContent>
+
+        {/* OFFERS TAB */}
+        <TabsContent value="offers" className="mt-6 space-y-6">
+          {offersLoading ? (
+            <Card>
+              <CardContent className="flex items-center justify-center p-8">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Sent Offers</CardTitle>
+                  <CardDescription>Track all offers you've sent to sellers.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {offers.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <FileText className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                      <p>No offers sent yet</p>
+                      <p className="text-sm mt-1">Your sent offers will appear here</p>
+                    </div>
+                  ) : (
+                    offers.map((offer, index) => (
+                      <div key={offer.id} className="border rounded-lg p-4" data-testid={`offer-${index}`}>
+                        <div className="flex items-start justify-between mb-2">
+                          <div>
+                            <p className="font-medium">Offer #{offer.id}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {offer.buyerName} → {offer.sellerName}
+                            </p>
+                          </div>
+                          <span className={`text-xs px-2 py-1 rounded-full ${
+                            offer.status === 'accepted' ? 'bg-green-100 text-green-800' :
+                            offer.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                            offer.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>
+                            {offer.status}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="font-semibold text-lg">
+                            ${parseFloat(offer.offerAmount).toLocaleString()}
+                          </span>
+                          {offer.sentDate && (
+                            <span className="text-muted-foreground flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              {new Date(offer.sentDate).toLocaleDateString()}
+                            </span>
+                          )}
+                        </div>
+                        {offer.notes && (
+                          <p className="text-xs text-muted-foreground mt-2">{offer.notes}</p>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Offer Statistics</CardTitle>
+                  <CardDescription>Overview of your offer performance.</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="text-center">
+                      <p className="text-2xl font-bold">{offers.length}</p>
+                      <p className="text-xs text-muted-foreground">Total Sent</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-bold text-green-600">
+                        {offers.filter(o => o.status === 'accepted').length}
+                      </p>
+                      <p className="text-xs text-muted-foreground">Accepted</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-2xl font-bold text-yellow-600">
+                        {offers.filter(o => o.status === 'pending').length}
+                      </p>
+                      <p className="text-xs text-muted-foreground">Pending</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          )}
         </TabsContent>
       </Tabs>
     </Layout>
