@@ -15,7 +15,7 @@ async function bootstrapAdmin() {
       return;
     }
 
-    const password = "Whoisotp$01011Benjistackk";
+    const password = "FlipStackk2024!";
     const passwordHash = await bcrypt.hash(password, 12);
 
     const adminUser = await storage.createUser({

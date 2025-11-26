@@ -17,6 +17,8 @@ import Settings from "@/pages/settings";
 import Calculator from "@/pages/calculator";
 import Timesheet from "@/pages/timesheet";
 import Login from "@/pages/login";
+import Signup from "@/pages/signup";
+import Notifications from "@/pages/notifications";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -53,6 +55,9 @@ function Router() {
       <Route path="/login">
         {isAuthenticated ? <Redirect to="/" /> : <Login />}
       </Route>
+      <Route path="/signup">
+        {isAuthenticated ? <Redirect to="/" /> : <Signup />}
+      </Route>
       <Route path="/">
         {() => <ProtectedRoute component={Dashboard} />}
       </Route>
@@ -82,6 +87,9 @@ function Router() {
       </Route>
       <Route path="/timesheet">
         {() => <ProtectedRoute component={Timesheet} />}
+      </Route>
+      <Route path="/notifications">
+        {() => <ProtectedRoute component={Notifications} />}
       </Route>
       <Route component={NotFound} />
     </Switch>
