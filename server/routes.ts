@@ -56,6 +56,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/auth/signup", async (req, res) => {
+    try {
+      const { firstName, lastName, email, password, role = "employee", isSuperAdmin = false, isActive = true } = req.body;
+      
+      if (!firstName || !lastName || !email || !password) {
+        return res.status(400).json({ message: "All fields are required" });
+      }
+
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(409).json({ message: "Email already in use" });
+      }
+
+      const passwordHash = await bcrypt.hash(password, 12);
+
+      const newUser = await storage.createUser({
+        email,
+        passwordHash,
+        firstName,
+        lastName,
+        role,
+        isSuperAdmin,
+        isActive,
+      });
+
+      req.session.userId = newUser.id;
+      req.session.email = newUser.email;
+
+      const { passwordHash: _, ...userWithoutPassword } = newUser;
+      res.status(201).json({ user: userWithoutPassword });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.post("/api/auth/logout", async (req, res) => {
     req.session.destroy((err) => {
       if (err) {
