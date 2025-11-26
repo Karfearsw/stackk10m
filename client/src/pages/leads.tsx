@@ -36,7 +36,7 @@ export default function Leads() {
     ownerName: "",
     ownerPhone: "",
     ownerEmail: "",
-    estimatedValue: 0,
+    estimatedValue: "",
     status: "new"
   });
 
@@ -61,12 +61,12 @@ export default function Leads() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
-      setNewLead({ address: "", city: "", state: "FL", zipCode: "", ownerName: "", ownerPhone: "", ownerEmail: "", estimatedValue: 0, status: "new" });
+      setNewLead({ address: "", city: "", state: "FL", zipCode: "", ownerName: "", ownerPhone: "", ownerEmail: "", estimatedValue: "", status: "new" });
     }
   });
 
   const handleAddLead = async () => {
-    if (newLead.address && newLead.city && newLead.ownerName) {
+    if (newLead.address && newLead.city && newLead.zipCode && newLead.ownerName) {
       await createMutation.mutateAsync(newLead);
     }
   };
@@ -115,6 +115,10 @@ export default function Leads() {
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="city" className="text-right">City</Label>
                   <Input id="city" placeholder="Orlando" className="col-span-3" value={newLead.city} onChange={(e) => setNewLead({...newLead, city: e.target.value})} />
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="zipCode" className="text-right">Zip Code</Label>
+                  <Input id="zipCode" placeholder="32801" className="col-span-3" value={newLead.zipCode} onChange={(e) => setNewLead({...newLead, zipCode: e.target.value})} />
                 </div>
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="owner" className="text-right">Owner</Label>
