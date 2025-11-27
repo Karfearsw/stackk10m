@@ -43,6 +43,10 @@ export const properties = pgTable("properties", {
   yearBuilt: integer("year_built"),
   lotSize: varchar("lot_size", { length: 50 }),
   occupancy: varchar("occupancy", { length: 50 }),
+  images: text("images").array(),
+  arv: decimal("arv", { precision: 12, scale: 2 }),
+  repairCost: decimal("repair_cost", { precision: 12, scale: 2 }),
+  assignedTo: integer("assigned_to"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
