@@ -26,7 +26,8 @@ import {
   Phone,
   Mail,
   Lightbulb,
-  Save
+  Save,
+  Layers
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -97,6 +98,7 @@ const defaultResources = {
 };
 
 const propertyTypes = [
+  { value: "all", label: "All Types", icon: Layers },
   { value: "residential", label: "Residential", icon: Home },
   { value: "land", label: "Land/Vacant", icon: TreePine },
   { value: "commercial", label: "Commercial", icon: Factory },
@@ -113,7 +115,7 @@ export default function Playground() {
   const [newLinkUrl, setNewLinkUrl] = useState("");
   const [notes, setNotes] = useState<ResearchNote[]>([]);
   const [activeNote, setActiveNote] = useState<ResearchNote | null>(null);
-  const [selectedPropertyType, setSelectedPropertyType] = useState("residential");
+  const [selectedPropertyType, setSelectedPropertyType] = useState("all");
 
   useEffect(() => {
     const savedLinks = localStorage.getItem("playground_quicklinks");
@@ -165,11 +167,12 @@ export default function Playground() {
   };
 
   const createNote = () => {
+    const noteType = selectedPropertyType === "all" ? "residential" : selectedPropertyType;
     const newNote: ResearchNote = {
       id: Date.now().toString(),
       title: "New Research Note",
       content: "",
-      propertyType: selectedPropertyType,
+      propertyType: noteType,
       createdAt: new Date().toISOString(),
     };
     saveNotes([newNote, ...notes]);
@@ -531,7 +534,7 @@ export default function Playground() {
                   <CardContent>
                     <ScrollArea className="h-[400px]">
                       <div className="space-y-2">
-                        {notes.filter(n => !selectedPropertyType || n.propertyType === selectedPropertyType).map((note) => (
+                        {notes.filter(n => selectedPropertyType === "all" || n.propertyType === selectedPropertyType).map((note) => (
                           <div
                             key={note.id}
                             className={`p-3 rounded-lg border cursor-pointer transition-colors ${activeNote?.id === note.id ? "bg-primary/10 border-primary" : "hover:bg-muted"}`}
@@ -562,7 +565,7 @@ export default function Playground() {
                             </div>
                           </div>
                         ))}
-                        {notes.filter(n => !selectedPropertyType || n.propertyType === selectedPropertyType).length === 0 && (
+                        {notes.filter(n => selectedPropertyType === "all" || n.propertyType === selectedPropertyType).length === 0 && (
                           <div className="text-center py-8 text-muted-foreground">
                             <FileText className="h-8 w-8 mx-auto mb-2 opacity-50" />
                             <p className="text-sm">No notes yet</p>
