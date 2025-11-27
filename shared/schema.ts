@@ -403,6 +403,8 @@ export const buyers = pgTable("buyers", {
   maxBudget: decimal("max_budget", { precision: 12, scale: 2 }),
   dealsPerMonth: integer("deals_per_month"),
   proofOfFunds: boolean("proof_of_funds").default(false),
+  proofOfFundsVerifiedAt: timestamp("proof_of_funds_verified_at"),
+  proofOfFundsNotes: text("proof_of_funds_notes"),
   isVip: boolean("is_vip").default(false),
   status: varchar("status", { length: 50 }).default("active"),
   totalDeals: integer("total_deals").default(0),
