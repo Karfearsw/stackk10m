@@ -46,6 +46,8 @@ interface Buyer {
   maxBudget: string | null;
   dealsPerMonth: number | null;
   proofOfFunds: boolean | null;
+  proofOfFundsVerifiedAt: string | null;
+  proofOfFundsNotes: string | null;
   isVip: boolean | null;
   status: string | null;
   totalDeals: number | null;
@@ -101,6 +103,7 @@ export default function Buyers() {
     maxBudget: "",
     dealsPerMonth: "",
     proofOfFunds: false,
+    proofOfFundsNotes: "",
     isVip: false,
     notes: "",
     tags: ""
@@ -188,6 +191,7 @@ export default function Buyers() {
       maxBudget: "",
       dealsPerMonth: "",
       proofOfFunds: false,
+      proofOfFundsNotes: "",
       isVip: false,
       notes: "",
       tags: ""
@@ -206,6 +210,7 @@ export default function Buyers() {
       maxBudget: buyer.maxBudget || "",
       dealsPerMonth: buyer.dealsPerMonth?.toString() || "",
       proofOfFunds: buyer.proofOfFunds || false,
+      proofOfFundsNotes: buyer.proofOfFundsNotes || "",
       isVip: buyer.isVip || false,
       notes: buyer.notes || "",
       tags: buyer.tags?.join(", ") || ""
@@ -215,7 +220,7 @@ export default function Buyers() {
   };
 
   const handleSubmit = (isEdit: boolean) => {
-    const buyerData = {
+    const buyerData: any = {
       name: formData.name,
       company: formData.company || null,
       email: formData.email || null,
@@ -230,6 +235,16 @@ export default function Buyers() {
       notes: formData.notes || null,
       tags: formData.tags ? formData.tags.split(",").map(s => s.trim()) : null
     };
+    
+    if (formData.proofOfFunds) {
+      buyerData.proofOfFundsNotes = formData.proofOfFundsNotes || null;
+      if (!isEdit || (isEdit && selectedBuyer && !selectedBuyer.proofOfFundsVerifiedAt)) {
+        buyerData.proofOfFundsVerifiedAt = new Date().toISOString();
+      }
+    } else {
+      buyerData.proofOfFundsNotes = null;
+      buyerData.proofOfFundsVerifiedAt = null;
+    }
 
     if (isEdit && selectedBuyer) {
       updateBuyerMutation.mutate({ id: selectedBuyer.id, data: buyerData });
@@ -367,23 +382,45 @@ export default function Buyers() {
           />
         </div>
       </div>
-      <div className="flex items-center gap-6">
-        <div className="flex items-center gap-2">
-          <Switch
-            checked={formData.proofOfFunds}
-            onCheckedChange={(checked) => setFormData({ ...formData, proofOfFunds: checked })}
-            data-testid="switch-proof-of-funds"
-          />
-          <Label>Proof of Funds Verified</Label>
+      <div className={`p-3 rounded-lg border-2 ${formData.proofOfFunds ? 'border-red-500 bg-red-50 dark:bg-red-950/20' : 'border-border'}`}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Switch
+              checked={formData.proofOfFunds}
+              onCheckedChange={(checked) => setFormData({ ...formData, proofOfFunds: checked })}
+              data-testid="switch-proof-of-funds"
+            />
+            <div>
+              <Label className="font-semibold">Flipstackk Verified</Label>
+              <p className="text-xs text-muted-foreground">Mark when buyer has submitted proof of funds</p>
+            </div>
+          </div>
+          {formData.proofOfFunds && (
+            <Badge className="bg-red-600 text-white hover:bg-red-700 border-0">
+              <CheckCircle className="h-3 w-3 mr-1" /> Verified
+            </Badge>
+          )}
         </div>
-        <div className="flex items-center gap-2">
-          <Switch
-            checked={formData.isVip}
-            onCheckedChange={(checked) => setFormData({ ...formData, isVip: checked })}
-            data-testid="switch-vip"
-          />
-          <Label>VIP Buyer</Label>
-        </div>
+        {formData.proofOfFunds && (
+          <div className="mt-3">
+            <Label className="text-xs">Verification Notes</Label>
+            <Input
+              value={formData.proofOfFundsNotes}
+              onChange={(e) => setFormData({ ...formData, proofOfFundsNotes: e.target.value })}
+              placeholder="Bank statement received, credit line letter, etc."
+              className="mt-1"
+              data-testid="input-pof-notes"
+            />
+          </div>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <Switch
+          checked={formData.isVip}
+          onCheckedChange={(checked) => setFormData({ ...formData, isVip: checked })}
+          data-testid="switch-vip"
+        />
+        <Label>VIP Buyer</Label>
       </div>
       <div>
         <Label>Tags (comma-separated)</Label>
@@ -540,8 +577,8 @@ export default function Buyers() {
                                 </Badge>
                               )}
                               {buyer.proofOfFunds && (
-                                <Badge variant="secondary" className="bg-green-100 text-green-800">
-                                  <CheckCircle className="h-3 w-3 mr-1" /> POF
+                                <Badge className="bg-red-600 text-white hover:bg-red-700 border-0">
+                                  <CheckCircle className="h-3 w-3 mr-1" /> Flipstackk Verified
                                 </Badge>
                               )}
                             </div>
@@ -635,6 +672,18 @@ export default function Buyers() {
                       </h3>
                       {selectedBuyer.company && (
                         <p className="text-sm text-muted-foreground">{selectedBuyer.company}</p>
+                      )}
+                      {selectedBuyer.proofOfFunds && (
+                        <div className="mt-2">
+                          <Badge className="bg-red-600 text-white hover:bg-red-700 border-0">
+                            <CheckCircle className="h-3 w-3 mr-1" /> Flipstackk Verified
+                          </Badge>
+                          {selectedBuyer.proofOfFundsVerifiedAt && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              Verified {new Date(selectedBuyer.proofOfFundsVerifiedAt).toLocaleDateString()}
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
 

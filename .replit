@@ -11,10 +11,6 @@ build = ["npm", "run", "build"]
 publicDir = "dist/public"
 run = ["npm", "run", "start"]
 
-[[ports]]
-localPort = 33555
-externalPort = 80
-
 [env]
 PORT = "5000"
 
