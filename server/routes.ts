@@ -21,7 +21,10 @@ import {
   insertUserNotificationSchema,
   insertUserGoalSchema,
   insertOfferSchema,
-  insertTimesheetEntrySchema
+  insertTimesheetEntrySchema,
+  insertBuyerSchema,
+  insertBuyerCommunicationSchema,
+  insertDealAssignmentSchema
 } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -1104,6 +1107,154 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteTimesheetEntry(parseInt(req.params.id));
       res.json({ message: "Entry deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // BUYERS ENDPOINTS
+  app.get("/api/buyers", async (req, res) => {
+    try {
+      const buyers = await storage.getBuyers();
+      res.json(buyers);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/buyers/:id", async (req, res) => {
+    try {
+      const buyer = await storage.getBuyerById(parseInt(req.params.id));
+      if (!buyer) return res.status(404).json({ message: "Buyer not found" });
+      res.json(buyer);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/buyers", async (req, res) => {
+    try {
+      const validated = insertBuyerSchema.parse(req.body);
+      const buyer = await storage.createBuyer(validated);
+      res.status(201).json(buyer);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/buyers/:id", async (req, res) => {
+    try {
+      const partial = insertBuyerSchema.partial().parse(req.body);
+      const buyer = await storage.updateBuyer(parseInt(req.params.id), partial);
+      res.json(buyer);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/buyers/:id", async (req, res) => {
+    try {
+      await storage.deleteBuyer(parseInt(req.params.id));
+      res.json({ message: "Buyer deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // BUYER COMMUNICATIONS ENDPOINTS
+  app.get("/api/buyers/:buyerId/communications", async (req, res) => {
+    try {
+      const comms = await storage.getBuyerCommunications(parseInt(req.params.buyerId));
+      res.json(comms);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/buyers/:buyerId/communications", async (req, res) => {
+    try {
+      const validated = insertBuyerCommunicationSchema.parse({
+        ...req.body,
+        buyerId: parseInt(req.params.buyerId)
+      });
+      const comm = await storage.createBuyerCommunication(validated);
+      res.status(201).json(comm);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/buyer-communications/:id", async (req, res) => {
+    try {
+      await storage.deleteBuyerCommunication(parseInt(req.params.id));
+      res.json({ message: "Communication deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // DEAL ASSIGNMENTS ENDPOINTS
+  app.get("/api/deal-assignments", async (req, res) => {
+    try {
+      const assignments = await storage.getDealAssignments();
+      res.json(assignments);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/deal-assignments/:id", async (req, res) => {
+    try {
+      const assignment = await storage.getDealAssignmentById(parseInt(req.params.id));
+      if (!assignment) return res.status(404).json({ message: "Assignment not found" });
+      res.json(assignment);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/properties/:propertyId/assignments", async (req, res) => {
+    try {
+      const assignments = await storage.getDealAssignmentsByPropertyId(parseInt(req.params.propertyId));
+      res.json(assignments);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/buyers/:buyerId/assignments", async (req, res) => {
+    try {
+      const assignments = await storage.getDealAssignmentsByBuyerId(parseInt(req.params.buyerId));
+      res.json(assignments);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/deal-assignments", async (req, res) => {
+    try {
+      const validated = insertDealAssignmentSchema.parse(req.body);
+      const assignment = await storage.createDealAssignment(validated);
+      res.status(201).json(assignment);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/deal-assignments/:id", async (req, res) => {
+    try {
+      const partial = insertDealAssignmentSchema.partial().parse(req.body);
+      const assignment = await storage.updateDealAssignment(parseInt(req.params.id), partial);
+      res.json(assignment);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/deal-assignments/:id", async (req, res) => {
+    try {
+      await storage.deleteDealAssignment(parseInt(req.params.id));
+      res.json({ message: "Assignment deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

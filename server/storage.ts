@@ -2,7 +2,8 @@ import { db } from "./db";
 import { desc } from "drizzle-orm";
 import { 
   leads, properties, contacts, contracts, contractTemplates, contractDocuments, documentVersions, lois,
-  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, offers, timesheetEntries, globalActivityLogs
+  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, offers, timesheetEntries, globalActivityLogs,
+  buyers, buyerCommunications, dealAssignments
 } from "@shared/schema";
 import { 
   type Lead, type InsertLead, 
@@ -24,7 +25,10 @@ import {
   type UserNotification, type InsertUserNotification,
   type Offer, type InsertOffer,
   type TimesheetEntry, type InsertTimesheetEntry,
-  type GlobalActivityLog, type InsertGlobalActivityLog
+  type GlobalActivityLog, type InsertGlobalActivityLog,
+  type Buyer, type InsertBuyer,
+  type BuyerCommunication, type InsertBuyerCommunication,
+  type DealAssignment, type InsertDealAssignment
 } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 
@@ -162,6 +166,27 @@ export interface IStorage {
   // Global Activity Logs
   getGlobalActivityLogs(limit?: number): Promise<GlobalActivityLog[]>;
   createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog>;
+
+  // Buyers
+  getBuyers(): Promise<Buyer[]>;
+  getBuyerById(id: number): Promise<Buyer | undefined>;
+  createBuyer(buyer: InsertBuyer): Promise<Buyer>;
+  updateBuyer(id: number, buyer: Partial<InsertBuyer>): Promise<Buyer>;
+  deleteBuyer(id: number): Promise<void>;
+
+  // Buyer Communications
+  getBuyerCommunications(buyerId: number): Promise<BuyerCommunication[]>;
+  createBuyerCommunication(comm: InsertBuyerCommunication): Promise<BuyerCommunication>;
+  deleteBuyerCommunication(id: number): Promise<void>;
+
+  // Deal Assignments
+  getDealAssignments(): Promise<DealAssignment[]>;
+  getDealAssignmentById(id: number): Promise<DealAssignment | undefined>;
+  getDealAssignmentsByPropertyId(propertyId: number): Promise<DealAssignment[]>;
+  getDealAssignmentsByBuyerId(buyerId: number): Promise<DealAssignment[]>;
+  createDealAssignment(assignment: InsertDealAssignment): Promise<DealAssignment>;
+  updateDealAssignment(id: number, assignment: Partial<InsertDealAssignment>): Promise<DealAssignment>;
+  deleteDealAssignment(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -621,6 +646,76 @@ export class DatabaseStorage implements IStorage {
   async createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog> {
     const result = await db.insert(globalActivityLogs).values(log as any).returning();
     return result[0];
+  }
+
+  // Buyers
+  async getBuyers(): Promise<Buyer[]> {
+    return db.select().from(buyers);
+  }
+
+  async getBuyerById(id: number): Promise<Buyer | undefined> {
+    const result = await db.select().from(buyers).where(eq(buyers.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createBuyer(buyer: InsertBuyer): Promise<Buyer> {
+    const result = await db.insert(buyers).values(buyer as any).returning();
+    return result[0];
+  }
+
+  async updateBuyer(id: number, buyer: Partial<InsertBuyer>): Promise<Buyer> {
+    const result = await db.update(buyers).set(buyer as any).where(eq(buyers.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteBuyer(id: number): Promise<void> {
+    await db.delete(buyers).where(eq(buyers.id, id));
+  }
+
+  // Buyer Communications
+  async getBuyerCommunications(buyerId: number): Promise<BuyerCommunication[]> {
+    return db.select().from(buyerCommunications).where(eq(buyerCommunications.buyerId, buyerId)).orderBy(desc(buyerCommunications.createdAt));
+  }
+
+  async createBuyerCommunication(comm: InsertBuyerCommunication): Promise<BuyerCommunication> {
+    const result = await db.insert(buyerCommunications).values(comm as any).returning();
+    return result[0];
+  }
+
+  async deleteBuyerCommunication(id: number): Promise<void> {
+    await db.delete(buyerCommunications).where(eq(buyerCommunications.id, id));
+  }
+
+  // Deal Assignments
+  async getDealAssignments(): Promise<DealAssignment[]> {
+    return db.select().from(dealAssignments);
+  }
+
+  async getDealAssignmentById(id: number): Promise<DealAssignment | undefined> {
+    const result = await db.select().from(dealAssignments).where(eq(dealAssignments.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getDealAssignmentsByPropertyId(propertyId: number): Promise<DealAssignment[]> {
+    return db.select().from(dealAssignments).where(eq(dealAssignments.propertyId, propertyId));
+  }
+
+  async getDealAssignmentsByBuyerId(buyerId: number): Promise<DealAssignment[]> {
+    return db.select().from(dealAssignments).where(eq(dealAssignments.buyerId, buyerId));
+  }
+
+  async createDealAssignment(assignment: InsertDealAssignment): Promise<DealAssignment> {
+    const result = await db.insert(dealAssignments).values(assignment as any).returning();
+    return result[0];
+  }
+
+  async updateDealAssignment(id: number, assignment: Partial<InsertDealAssignment>): Promise<DealAssignment> {
+    const result = await db.update(dealAssignments).set(assignment as any).where(eq(dealAssignments.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteDealAssignment(id: number): Promise<void> {
+    await db.delete(dealAssignments).where(eq(dealAssignments.id, id));
   }
 }
 

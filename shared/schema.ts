@@ -389,3 +389,74 @@ export const globalActivityLogs = pgTable("global_activity_logs", {
 export const insertGlobalActivityLogSchema = createInsertSchema(globalActivityLogs).omit({ id: true, createdAt: true } as any);
 export type GlobalActivityLog = typeof globalActivityLogs.$inferSelect;
 export type InsertGlobalActivityLog = z.infer<typeof insertGlobalActivityLogSchema>;
+
+// BUYERS TABLE (Cash Buyers CRM)
+export const buyers = pgTable("buyers", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 255 }).notNull(),
+  company: varchar("company", { length: 255 }),
+  email: varchar("email", { length: 255 }),
+  phone: varchar("phone", { length: 20 }),
+  preferredPropertyTypes: text("preferred_property_types").array(),
+  preferredAreas: text("preferred_areas").array(),
+  minBudget: decimal("min_budget", { precision: 12, scale: 2 }),
+  maxBudget: decimal("max_budget", { precision: 12, scale: 2 }),
+  dealsPerMonth: integer("deals_per_month"),
+  proofOfFunds: boolean("proof_of_funds").default(false),
+  isVip: boolean("is_vip").default(false),
+  status: varchar("status", { length: 50 }).default("active"),
+  totalDeals: integer("total_deals").default(0),
+  totalRevenue: decimal("total_revenue", { precision: 12, scale: 2 }).default("0"),
+  notes: text("notes"),
+  tags: text("tags").array(),
+  lastContactDate: timestamp("last_contact_date"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertBuyerSchema = createInsertSchema(buyers).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type Buyer = typeof buyers.$inferSelect;
+export type InsertBuyer = z.infer<typeof insertBuyerSchema>;
+
+// BUYER COMMUNICATIONS TABLE
+export const buyerCommunications = pgTable("buyer_communications", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  buyerId: integer("buyer_id").notNull(),
+  userId: integer("user_id").notNull(),
+  type: varchar("type", { length: 50 }).notNull(),
+  subject: varchar("subject", { length: 255 }),
+  content: text("content"),
+  direction: varchar("direction", { length: 20 }).default("outbound"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertBuyerCommunicationSchema = createInsertSchema(buyerCommunications).omit({ id: true, createdAt: true } as any);
+export type BuyerCommunication = typeof buyerCommunications.$inferSelect;
+export type InsertBuyerCommunication = z.infer<typeof insertBuyerCommunicationSchema>;
+
+// DEAL ASSIGNMENTS TABLE (Linking buyers to properties for closing)
+export const dealAssignments = pgTable("deal_assignments", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  propertyId: integer("property_id").notNull(),
+  buyerId: integer("buyer_id").notNull(),
+  contractId: integer("contract_id"),
+  assignmentFee: decimal("assignment_fee", { precision: 12, scale: 2 }),
+  purchasePrice: decimal("purchase_price", { precision: 12, scale: 2 }),
+  assignedPrice: decimal("assigned_price", { precision: 12, scale: 2 }),
+  status: varchar("status", { length: 50 }).default("pending"),
+  closingDate: timestamp("closing_date"),
+  titleCompany: varchar("title_company", { length: 255 }),
+  earnestMoneyReceived: boolean("earnest_money_received").default(false),
+  titleCleared: boolean("title_cleared").default(false),
+  closingScheduled: boolean("closing_scheduled").default(false),
+  documentsComplete: boolean("documents_complete").default(false),
+  payoutReceived: boolean("payout_received").default(false),
+  payoutAmount: decimal("payout_amount", { precision: 12, scale: 2 }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertDealAssignmentSchema = createInsertSchema(dealAssignments).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type DealAssignment = typeof dealAssignments.$inferSelect;
+export type InsertDealAssignment = z.infer<typeof insertDealAssignmentSchema>;
