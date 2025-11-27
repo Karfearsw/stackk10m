@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useQuery } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/AuthContext";
 
 import banner1 from "@assets/d199ae88-7727-4c89-9b40-70b0d779ba41_1764244434725.png";
 import banner2 from "@assets/14cd99f0-0520-461a-9bab-2ef4d575e651 (1)_1764244434726.png";
@@ -10,7 +12,7 @@ import banner5 from "@assets/b8ea7ed5-2ba5-44b1-a73d-b1b73ea26b3d (1)_1764244434
 import banner6 from "@assets/9402bce5-3c31-480a-b204-8a0d501032c7 (1)_1764244434729.png";
 import banner7 from "@assets/a9abe541-7697-4dd5-8a56-3445face39e4_1764244434729.png";
 
-const bannerImages = [banner1, banner2, banner3, banner4, banner5, banner6, banner7];
+const defaultBannerImages = [banner1, banner2, banner3, banner4, banner5, banner6, banner7];
 
 const motivationalQuotes = [
   { quote: "Every property has a story. Make yours a success.", author: "Real Estate Wisdom" },
@@ -28,34 +30,47 @@ const motivationalQuotes = [
 ];
 
 export function MotivationalBanner() {
+  const { user } = useAuth();
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [currentQuoteIndex, setCurrentQuoteIndex] = useState(0);
   const [isTransitioning, setIsTransitioning] = useState(false);
+
+  const { data: userData } = useQuery<any>({
+    queryKey: [`/api/users/${user?.id}`],
+    enabled: !!user?.id,
+  });
+
+  const showQuotes = userData?.showBannerQuotes !== false;
+  const customImages = userData?.customBannerImages || [];
+  
+  const allImages = [...defaultBannerImages, ...customImages];
 
   useEffect(() => {
     const imageInterval = setInterval(() => {
       setIsTransitioning(true);
       setTimeout(() => {
-        setCurrentImageIndex((prev) => (prev + 1) % bannerImages.length);
+        setCurrentImageIndex((prev) => (prev + 1) % allImages.length);
         setIsTransitioning(false);
       }, 500);
     }, 6000);
 
     return () => clearInterval(imageInterval);
-  }, []);
+  }, [allImages.length]);
 
   useEffect(() => {
+    if (!showQuotes) return;
+    
     const quoteInterval = setInterval(() => {
       setCurrentQuoteIndex((prev) => (prev + 1) % motivationalQuotes.length);
     }, 8000);
 
     return () => clearInterval(quoteInterval);
-  }, []);
+  }, [showQuotes]);
 
   const goToPrevious = () => {
     setIsTransitioning(true);
     setTimeout(() => {
-      setCurrentImageIndex((prev) => (prev - 1 + bannerImages.length) % bannerImages.length);
+      setCurrentImageIndex((prev) => (prev - 1 + allImages.length) % allImages.length);
       setIsTransitioning(false);
     }, 300);
   };
@@ -63,7 +78,7 @@ export function MotivationalBanner() {
   const goToNext = () => {
     setIsTransitioning(true);
     setTimeout(() => {
-      setCurrentImageIndex((prev) => (prev + 1) % bannerImages.length);
+      setCurrentImageIndex((prev) => (prev + 1) % allImages.length);
       setIsTransitioning(false);
     }, 300);
   };
@@ -72,30 +87,31 @@ export function MotivationalBanner() {
 
   return (
     <div className="relative w-full overflow-hidden rounded-xl bg-gradient-to-r from-black via-gray-900 to-black mb-6" data-testid="motivational-banner">
+      {showQuotes && (
+        <div className="px-4 md:px-6 py-4 border-b border-white/10">
+          <div className="max-w-3xl">
+            <p 
+              className="text-white text-lg md:text-xl font-semibold italic leading-relaxed transition-all duration-500"
+              key={currentQuoteIndex}
+            >
+              "{currentQuote.quote}"
+            </p>
+            <p className="text-white/70 text-sm mt-1">
+              — {currentQuote.author}
+            </p>
+          </div>
+        </div>
+      )}
+      
       <div className="relative h-48 md:h-56 lg:h-64 overflow-hidden">
         <div
           className={`absolute inset-0 transition-opacity duration-500 ${isTransitioning ? "opacity-0" : "opacity-100"}`}
         >
           <img
-            src={bannerImages[currentImageIndex]}
+            src={allImages[currentImageIndex]}
             alt="Motivational banner"
             className="w-full h-full object-cover"
           />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent" />
-        </div>
-
-        <div className="absolute bottom-0 left-0 right-0 p-4 md:p-6">
-          <div className="max-w-3xl">
-            <p 
-              className="text-white text-lg md:text-xl lg:text-2xl font-semibold italic leading-relaxed transition-all duration-500"
-              key={currentQuoteIndex}
-            >
-              "{currentQuote.quote}"
-            </p>
-            <p className="text-white/70 text-sm md:text-base mt-2">
-              — {currentQuote.author}
-            </p>
-          </div>
         </div>
 
         <Button
@@ -117,8 +133,8 @@ export function MotivationalBanner() {
           <ChevronRight className="h-6 w-6" />
         </Button>
 
-        <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5">
-          {bannerImages.map((_, index) => (
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+          {allImages.map((_, index) => (
             <button
               key={index}
               onClick={() => {

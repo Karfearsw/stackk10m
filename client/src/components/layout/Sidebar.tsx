@@ -37,6 +37,11 @@ export function Sidebar() {
   const { user, logout } = useAuth();
   const { state, cycleState, isExpanded, isIconOnly, isHidden } = useSidebar();
 
+  const { data: userData } = useQuery<any>({
+    queryKey: [`/api/users/${user?.id}`],
+    enabled: !!user?.id,
+  });
+
   const { data: goals = [] } = useQuery<any[]>({
     queryKey: [`/api/users/${user?.id}/goals`],
     enabled: !!user?.id,
@@ -49,6 +54,8 @@ export function Sidebar() {
 
   const showIconsOnly = isIconOnly;
   const showLabels = isExpanded;
+  
+  const profileImage = userData?.profilePicture || userData?.avatarUrl;
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -170,15 +177,19 @@ export function Sidebar() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className="flex justify-center mb-3">
-                  <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center">
-                    <span className="text-sm font-bold text-primary">
-                      {user.firstName?.[0] || user.email[0].toUpperCase()}
-                    </span>
+                  <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center overflow-hidden">
+                    {profileImage ? (
+                      <img src={profileImage} alt="Profile" className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-sm font-bold text-primary">
+                        {userData?.firstName?.[0] || user.email[0].toUpperCase()}
+                      </span>
+                    )}
                   </div>
                 </div>
               </TooltipTrigger>
               <TooltipContent side="right" className="bg-sidebar text-white border-sidebar-border">
-                {user.firstName && user.lastName ? `${user.firstName} ${user.lastName}` : user.email}
+                {userData?.firstName && userData?.lastName ? `${userData.firstName} ${userData.lastName}` : user.email}
                 {user.isSuperAdmin && " (Super Admin)"}
               </TooltipContent>
             </Tooltip>

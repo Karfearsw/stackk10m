@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock } from "lucide-react";
+import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock, ImageIcon, Camera, Upload, X, Trash2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
@@ -254,6 +254,10 @@ function SettingsContent() {
           <TabsTrigger value="offers" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <FileText className="w-4 h-4 mr-2" />
             Offers
+          </TabsTrigger>
+          <TabsTrigger value="appearance" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <ImageIcon className="w-4 h-4 mr-2" />
+            Appearance
           </TabsTrigger>
         </TabsList>
 
@@ -831,6 +835,156 @@ function SettingsContent() {
               </Card>
             </>
           )}
+        </TabsContent>
+
+        {/* APPEARANCE TAB */}
+        <TabsContent value="appearance" className="mt-6 space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Camera className="w-5 h-5" />
+                Profile Picture
+              </CardTitle>
+              <CardDescription>Upload a profile picture that will be displayed in the app.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center gap-6">
+                <div className="relative">
+                  <div className="w-24 h-24 rounded-full overflow-hidden bg-muted flex items-center justify-center border-2 border-border">
+                    {userData?.profilePicture ? (
+                      <img 
+                        src={userData.profilePicture} 
+                        alt="Profile" 
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <User className="w-10 h-10 text-muted-foreground" />
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-3">
+                  <div className="flex gap-2">
+                    <label className="cursor-pointer">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = (event) => {
+                              const base64 = event.target?.result as string;
+                              updateUserMutation.mutate({ profilePicture: base64 });
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                        data-testid="input-profile-picture"
+                      />
+                      <Button type="button" variant="outline" asChild>
+                        <span>
+                          <Upload className="w-4 h-4 mr-2" />
+                          Upload Photo
+                        </span>
+                      </Button>
+                    </label>
+                    {userData?.profilePicture && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => updateUserMutation.mutate({ profilePicture: null })}
+                        data-testid="button-remove-profile-picture"
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Recommended: Square image, at least 200x200 pixels
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <ImageIcon className="w-5 h-5" />
+                Motivational Banner
+              </CardTitle>
+              <CardDescription>Customize the motivational banner on your dashboard.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <Label>Show Motivational Quotes</Label>
+                  <p className="text-sm text-muted-foreground">Display inspiring quotes above the banner images</p>
+                </div>
+                <Switch
+                  checked={userData?.showBannerQuotes !== false}
+                  onCheckedChange={(checked) => updateUserMutation.mutate({ showBannerQuotes: checked })}
+                  data-testid="switch-show-quotes"
+                />
+              </div>
+
+              <div className="space-y-3">
+                <Label>Custom Banner Images</Label>
+                <p className="text-sm text-muted-foreground">Add your own motivational images to the banner carousel</p>
+                
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {(userData?.customBannerImages || []).map((img: string, index: number) => (
+                    <div key={index} className="relative group">
+                      <img
+                        src={img}
+                        alt={`Custom banner ${index + 1}`}
+                        className="w-full h-24 object-cover rounded-lg border"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = (userData?.customBannerImages || []).filter((_: string, i: number) => i !== index);
+                          updateUserMutation.mutate({ customBannerImages: updated });
+                        }}
+                        className="absolute top-1 right-1 p-1 bg-destructive text-destructive-foreground rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                        data-testid={`button-remove-banner-${index}`}
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ))}
+                  
+                  <label className="cursor-pointer">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onload = (event) => {
+                            const base64 = event.target?.result as string;
+                            const currentImages = userData?.customBannerImages || [];
+                            updateUserMutation.mutate({ customBannerImages: [...currentImages, base64] });
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                      }}
+                      data-testid="input-banner-image"
+                    />
+                    <div className="w-full h-24 border-2 border-dashed border-muted-foreground/30 rounded-lg flex flex-col items-center justify-center gap-1 hover:border-primary hover:bg-accent/10 transition-colors">
+                      <Upload className="w-5 h-5 text-muted-foreground" />
+                      <span className="text-xs text-muted-foreground">Add Image</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </Layout>

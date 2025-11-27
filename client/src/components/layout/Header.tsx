@@ -11,17 +11,35 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useSidebar } from "@/contexts/SidebarContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { useQuery } from "@tanstack/react-query";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import agentImage from "@assets/generated_images/professional_headshot_of_a_real_estate_agent.png";
+import { useLocation } from "wouter";
 
 export function Header() {
   const { state, setState, cycleState, isHidden } = useSidebar();
+  const { user, logout } = useAuth();
+  const [, setLocation] = useLocation();
+
+  const { data: userData } = useQuery<any>({
+    queryKey: [`/api/users/${user?.id}`],
+    enabled: !!user?.id,
+  });
 
   const getNextStateLabel = () => {
     if (state === "expanded") return "Collapse to icons";
     if (state === "icon") return "Hide sidebar";
     return "Show sidebar";
   };
+
+  const getInitials = () => {
+    if (userData?.firstName && userData?.lastName) {
+      return `${userData.firstName[0]}${userData.lastName[0]}`.toUpperCase();
+    }
+    return user?.email?.[0]?.toUpperCase() || "U";
+  };
+
+  const profileImage = userData?.profilePicture || userData?.avatarUrl;
 
   return (
     <header className="sticky top-0 z-30 flex h-16 w-full items-center border-b bg-background px-4 md:px-6 shadow-sm gap-4">
@@ -60,7 +78,12 @@ export function Header() {
       </div>
       
       <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" className="relative text-muted-foreground hover:text-foreground">
+        <Button 
+          variant="ghost" 
+          size="icon" 
+          className="relative text-muted-foreground hover:text-foreground"
+          onClick={() => setLocation('/notifications')}
+        >
           <Bell className="h-5 w-5" />
           <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-accent ring-2 ring-background" />
         </Button>
@@ -69,18 +92,30 @@ export function Header() {
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="relative h-9 w-9 rounded-full">
               <Avatar className="h-9 w-9 border border-border">
-                <AvatarImage src={agentImage} alt="User" />
-                <AvatarFallback>BK</AvatarFallback>
+                {profileImage && <AvatarImage src={profileImage} alt="User" />}
+                <AvatarFallback className="bg-primary/10 text-primary font-semibold">
+                  {getInitials()}
+                </AvatarFallback>
               </Avatar>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuLabel>My Account</DropdownMenuLabel>
+            <DropdownMenuLabel>
+              {userData?.firstName && userData?.lastName 
+                ? `${userData.firstName} ${userData.lastName}` 
+                : user?.email}
+            </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>Profile</DropdownMenuItem>
-            <DropdownMenuItem>Settings</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setLocation('/settings')}>
+              Profile
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setLocation('/settings')}>
+              Settings
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-destructive">Log out</DropdownMenuItem>
+            <DropdownMenuItem className="text-destructive" onClick={logout}>
+              Log out
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
