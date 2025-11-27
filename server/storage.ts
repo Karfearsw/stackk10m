@@ -26,7 +26,7 @@ import {
   type TimesheetEntry, type InsertTimesheetEntry,
   type GlobalActivityLog, type InsertGlobalActivityLog
 } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 
 export interface IStorage {
   // Leads
@@ -404,9 +404,11 @@ export class DatabaseStorage implements IStorage {
   async useBackupCode(userId: number, code: string): Promise<boolean> {
     const result = await db.update(backupCodes)
       .set({ isUsed: true, usedAt: new Date() } as any)
-      .where(eq(backupCodes.userId, userId))
-      .where(eq(backupCodes.code, code))
-      .where(eq(backupCodes.isUsed, false))
+      .where(and(
+        eq(backupCodes.userId, userId),
+        eq(backupCodes.code, code),
+        eq(backupCodes.isUsed, false)
+      ))
       .returning();
     return result.length > 0;
   }
