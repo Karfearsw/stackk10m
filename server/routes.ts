@@ -211,13 +211,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Lead not found" });
       }
       
-      if (lead.status !== "under_contract") {
+      // Normalize status check (case-insensitive, trim whitespace)
+      const normalizedStatus = lead.status?.toLowerCase().trim();
+      if (normalizedStatus !== "under_contract") {
         return res.status(400).json({ 
           message: "Lead must be 'under contract' status before converting to property" 
         });
       }
       
-      // Check if property already exists from this lead
+      // Check if property already exists from this lead (DB has unique index but check first for better UX)
       const existingProperty = await storage.getPropertyBySourceLeadId(leadId);
       if (existingProperty) {
         return res.status(409).json({ 
@@ -226,8 +228,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      // Create property from lead data
-      const propertyData = {
+      // Create property from lead data - validate with schema
+      const propertyData = insertPropertySchema.parse({
         address: lead.address,
         city: lead.city,
         state: lead.state,
@@ -235,7 +237,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         price: lead.estimatedValue || null,
         status: "under_contract",
         sourceLeadId: lead.id,
-      };
+      });
       
       const property = await storage.createProperty(propertyData);
       
@@ -258,6 +260,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         property 
       });
     } catch (error: any) {
+      // Handle unique constraint violation
+      if (error.code === '23505') {
+        return res.status(409).json({ message: "Property already exists for this lead" });
+      }
       res.status(500).json({ message: error.message });
     }
   });

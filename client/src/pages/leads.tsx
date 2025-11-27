@@ -311,7 +311,7 @@ export default function Leads() {
                 <TableCell className="text-muted-foreground">{lead.ownerPhone || "—"}</TableCell>
                 <TableCell className="text-right">
                   <div className="flex items-center justify-end gap-2">
-                    {lead.status === "under_contract" && (
+                    {lead.status?.toLowerCase().trim() === "under_contract" && (
                       <Button 
                         size="sm" 
                         variant="outline" 
