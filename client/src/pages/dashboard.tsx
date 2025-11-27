@@ -4,6 +4,7 @@ import { ArrowUpRight, DollarSign, Users, Briefcase, Activity } from "lucide-rea
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
+import { MotivationalBanner } from "@/components/dashboard/MotivationalBanner";
 
 export default function Dashboard() {
   // Fetch real data from APIs
@@ -173,6 +174,7 @@ export default function Dashboard() {
   if (isLoading) {
     return (
       <Layout>
+        <MotivationalBanner />
         <div className="flex flex-col gap-2">
           <h1 className="text-3xl font-bold tracking-tight text-foreground" data-testid="page-title">Dashboard</h1>
           <p className="text-muted-foreground">Overview of your wholesaling operations and performance metrics.</p>
@@ -196,6 +198,7 @@ export default function Dashboard() {
 
   return (
     <Layout>
+      <MotivationalBanner />
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl font-bold tracking-tight text-foreground" data-testid="page-title">Dashboard</h1>
         <p className="text-muted-foreground">Overview of your wholesaling operations and performance metrics.</p>
