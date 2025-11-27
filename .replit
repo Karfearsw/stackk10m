@@ -39,5 +39,5 @@ waitForPort = 5000
 mockupState = "FULLSTACK"
 
 [[ports]]
-localPort = 42413
+localPort = 5000
 externalPort = 80
