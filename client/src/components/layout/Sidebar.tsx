@@ -51,8 +51,14 @@ export function Sidebar() {
       <div 
         className={cn(
           "flex h-full flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border shadow-xl z-10 transition-all duration-300 ease-in-out",
-          isCollapsed ? "w-20" : "w-64"
+          "absolute md:relative md:translate-x-0",
+          isCollapsed ? "w-20" : "w-64",
+          isCollapsed ? "md:w-20" : "md:w-64"
         )}
+        style={{
+          transform: isCollapsed ? "translateX(-100%)" : "translateX(0)",
+          transitionDuration: "300ms"
+        }}
       >
         <div className={cn(
           "flex h-16 items-center border-b border-sidebar-border bg-sidebar-accent/10",
@@ -82,7 +88,7 @@ export function Sidebar() {
           )}
         </button>
         
-        <div className="flex-1 overflow-y-auto py-6">
+        <div className="flex-1 scroll-y-container py-6">
           <nav className={cn("space-y-1.5", isCollapsed ? "px-2" : "px-3")}>
             {navigation.map((item) => {
               const isActive = location === item.href || (item.href !== '/' && location.startsWith(item.href));

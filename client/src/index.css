@@ -167,4 +167,63 @@
   h1, h2, h3, h4, h5, h6 {
     @apply font-display tracking-tight;
   }
+  
+  /* CUSTOM SCROLLBARS - Cross-browser support */
+  /* Webkit browsers (Chrome, Safari, Edge) */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    background: #a1a1a1;
+    border-radius: 3px;
+    transition: background 0.3s ease;
+  }
+  
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary));
+  }
+  
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #a1a1a1 transparent;
+  }
+  
+  *::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary)) !important;
+  }
+}
+
+/* OVERFLOW CONTAINER UTILITIES */
+@layer components {
+  .scroll-container {
+    @apply overflow-auto scroll-smooth;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
+    contain: layout style paint;
+  }
+  
+  .scroll-x-container {
+    @apply overflow-x-auto overflow-y-hidden scroll-smooth;
+    scroll-behavior: smooth;
+    overscroll-behavior-x: contain;
+    contain: layout style paint;
+  }
+  
+  .scroll-y-container {
+    @apply overflow-y-auto overflow-x-hidden scroll-smooth;
+    scroll-behavior: smooth;
+    overscroll-behavior-y: contain;
+    contain: layout style paint;
+  }
+  
+  .no-scroll {
+    @apply overflow-hidden;
+  }
 }

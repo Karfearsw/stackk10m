@@ -11,9 +11,12 @@ export function Layout({ children }: LayoutProps) {
     <SidebarProvider>
       <div className="flex h-screen w-full overflow-hidden bg-background">
         <Sidebar />
-        <div className="flex flex-1 flex-col overflow-hidden">
+        {/* Mobile overlay for sidebar */}
+        <div className="fixed inset-0 bg-black/50 md:hidden z-5 hidden" id="sidebar-overlay" />
+        
+        <div className="flex flex-1 flex-col overflow-hidden w-full">
           <Header />
-          <main className="flex-1 overflow-y-auto bg-muted/20 p-6">
+          <main className="flex-1 scroll-y-container bg-muted/20 p-4 md:p-6">
             <div className="mx-auto max-w-7xl space-y-8">
               {children}
             </div>
