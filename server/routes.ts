@@ -20,7 +20,8 @@ import {
   insertNotificationPreferenceSchema,
   insertUserNotificationSchema,
   insertUserGoalSchema,
-  insertOfferSchema
+  insertOfferSchema,
+  insertTimesheetEntrySchema
 } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -897,6 +898,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteOffer(parseInt(req.params.id));
       res.json({ message: "Offer deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // TIMESHEET ENTRIES ENDPOINTS
+  app.get("/api/users/:userId/timesheet", async (req, res) => {
+    try {
+      const entries = await storage.getTimesheetEntries(parseInt(req.params.userId));
+      res.json(entries);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/timesheet/:id", async (req, res) => {
+    try {
+      const entry = await storage.getTimesheetEntryById(parseInt(req.params.id));
+      if (!entry) return res.status(404).json({ message: "Entry not found" });
+      res.json(entry);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/users/:userId/timesheet", async (req, res) => {
+    try {
+      const validated = insertTimesheetEntrySchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const entry = await storage.createTimesheetEntry(validated);
+      res.status(201).json(entry);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/timesheet/:id", async (req, res) => {
+    try {
+      const partial = insertTimesheetEntrySchema.partial().parse(req.body);
+      const entry = await storage.updateTimesheetEntry(parseInt(req.params.id), partial);
+      res.json(entry);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/timesheet/:id", async (req, res) => {
+    try {
+      await storage.deleteTimesheetEntry(parseInt(req.params.id));
+      res.json({ message: "Entry deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

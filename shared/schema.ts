@@ -348,3 +348,22 @@ export const offers = pgTable("offers", {
 export const insertOfferSchema = createInsertSchema(offers).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type Offer = typeof offers.$inferSelect;
 export type InsertOffer = z.infer<typeof insertOfferSchema>;
+
+// TIMESHEET ENTRIES TABLE
+export const timesheetEntries = pgTable("timesheet_entries", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  date: varchar("date", { length: 10 }).notNull(),
+  employee: varchar("employee", { length: 255 }).notNull(),
+  task: varchar("task", { length: 255 }).notNull(),
+  startTime: varchar("start_time", { length: 10 }).notNull(),
+  endTime: varchar("end_time", { length: 10 }).notNull(),
+  hours: decimal("hours", { precision: 5, scale: 2 }).notNull(),
+  hourlyRate: decimal("hourly_rate", { precision: 10, scale: 2 }).default("50"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTimesheetEntrySchema = createInsertSchema(timesheetEntries).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type TimesheetEntry = typeof timesheetEntries.$inferSelect;
+export type InsertTimesheetEntry = z.infer<typeof insertTimesheetEntrySchema>;

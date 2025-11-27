@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { 
   leads, properties, contacts, contracts, contractTemplates, contractDocuments, documentVersions, lois,
-  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, offers
+  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, offers, timesheetEntries
 } from "@shared/schema";
 import { 
   type Lead, type InsertLead, 
@@ -21,7 +21,8 @@ import {
   type NotificationPreference, type InsertNotificationPreference,
   type UserGoal, type InsertUserGoal,
   type UserNotification, type InsertUserNotification,
-  type Offer, type InsertOffer
+  type Offer, type InsertOffer,
+  type TimesheetEntry, type InsertTimesheetEntry
 } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
@@ -147,6 +148,13 @@ export interface IStorage {
   createOffer(offer: InsertOffer): Promise<Offer>;
   updateOffer(id: number, offer: Partial<InsertOffer>): Promise<Offer>;
   deleteOffer(id: number): Promise<void>;
+
+  // Timesheet Entries
+  getTimesheetEntries(userId: number): Promise<TimesheetEntry[]>;
+  getTimesheetEntryById(id: number): Promise<TimesheetEntry | undefined>;
+  createTimesheetEntry(entry: InsertTimesheetEntry): Promise<TimesheetEntry>;
+  updateTimesheetEntry(id: number, entry: Partial<InsertTimesheetEntry>): Promise<TimesheetEntry>;
+  deleteTimesheetEntry(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -565,6 +573,30 @@ export class DatabaseStorage implements IStorage {
 
   async deleteOffer(id: number): Promise<void> {
     await db.delete(offers).where(eq(offers.id, id));
+  }
+
+  // Timesheet Entries
+  async getTimesheetEntries(userId: number): Promise<TimesheetEntry[]> {
+    return db.select().from(timesheetEntries).where(eq(timesheetEntries.userId, userId));
+  }
+
+  async getTimesheetEntryById(id: number): Promise<TimesheetEntry | undefined> {
+    const result = await db.select().from(timesheetEntries).where(eq(timesheetEntries.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createTimesheetEntry(entry: InsertTimesheetEntry): Promise<TimesheetEntry> {
+    const result = await db.insert(timesheetEntries).values(entry as any).returning();
+    return result[0];
+  }
+
+  async updateTimesheetEntry(id: number, entry: Partial<InsertTimesheetEntry>): Promise<TimesheetEntry> {
+    const result = await db.update(timesheetEntries).set(entry as any).where(eq(timesheetEntries.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteTimesheetEntry(id: number): Promise<void> {
+    await db.delete(timesheetEntries).where(eq(timesheetEntries.id, id));
   }
 }
 
