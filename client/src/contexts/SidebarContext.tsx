@@ -1,28 +1,56 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 
+export type SidebarState = "expanded" | "icon" | "hidden";
+
 interface SidebarContextType {
-  isCollapsed: boolean;
-  toggleSidebar: () => void;
-  setCollapsed: (collapsed: boolean) => void;
+  state: SidebarState;
+  setState: (state: SidebarState) => void;
+  cycleState: () => void;
+  isExpanded: boolean;
+  isIconOnly: boolean;
+  isHidden: boolean;
 }
 
 const SidebarContext = createContext<SidebarContextType | undefined>(undefined);
 
+function migrateOldState(): SidebarState {
+  const oldState = localStorage.getItem("sidebar-collapsed");
+  if (oldState !== null) {
+    localStorage.removeItem("sidebar-collapsed");
+    return oldState === "true" ? "icon" : "expanded";
+  }
+  
+  const savedState = localStorage.getItem("sidebar-state");
+  if (savedState && ["expanded", "icon", "hidden"].includes(savedState)) {
+    return savedState as SidebarState;
+  }
+  
+  return "expanded";
+}
+
 export function SidebarProvider({ children }: { children: ReactNode }) {
-  const [isCollapsed, setIsCollapsed] = useState(() => {
-    const saved = localStorage.getItem("sidebar-collapsed");
-    return saved ? JSON.parse(saved) : false;
-  });
+  const [state, setStateInternal] = useState<SidebarState>(migrateOldState);
 
   useEffect(() => {
-    localStorage.setItem("sidebar-collapsed", JSON.stringify(isCollapsed));
-  }, [isCollapsed]);
+    localStorage.setItem("sidebar-state", state);
+  }, [state]);
 
-  const toggleSidebar = () => setIsCollapsed((prev: boolean) => !prev);
-  const setCollapsed = (collapsed: boolean) => setIsCollapsed(collapsed);
+  const setState = (newState: SidebarState) => setStateInternal(newState);
+  
+  const cycleState = () => {
+    setStateInternal((prev) => {
+      if (prev === "expanded") return "icon";
+      if (prev === "icon") return "hidden";
+      return "expanded";
+    });
+  };
+
+  const isExpanded = state === "expanded";
+  const isIconOnly = state === "icon";
+  const isHidden = state === "hidden";
 
   return (
-    <SidebarContext.Provider value={{ isCollapsed, toggleSidebar, setCollapsed }}>
+    <SidebarContext.Provider value={{ state, setState, cycleState, isExpanded, isIconOnly, isHidden }}>
       {children}
     </SidebarContext.Provider>
   );

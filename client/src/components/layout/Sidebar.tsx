@@ -11,7 +11,8 @@ import {
   Clock,
   Bell,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  ChevronsLeft
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -34,7 +35,7 @@ const navigation = [
 export function Sidebar() {
   const [location, setLocation] = useLocation();
   const { user, logout } = useAuth();
-  const { isCollapsed, toggleSidebar } = useSidebar();
+  const { state, cycleState, isExpanded, isIconOnly, isHidden } = useSidebar();
 
   const { data: goals = [] } = useQuery<any[]>({
     queryKey: [`/api/users/${user?.id}/goals`],
@@ -46,23 +47,25 @@ export function Sidebar() {
     ? Math.min(100, (activeGoal.currentValue / activeGoal.targetValue) * 100)
     : 0;
 
+  const showIconsOnly = isIconOnly;
+  const showLabels = isExpanded;
+
   return (
     <TooltipProvider delayDuration={0}>
       <div 
         className={cn(
-          "flex h-full flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border shadow-xl z-10 transition-all duration-300 ease-in-out",
-          "absolute md:relative md:translate-x-0",
-          isCollapsed ? "w-20" : "w-64",
-          isCollapsed ? "md:w-20" : "md:w-64"
+          "flex h-full flex-col bg-sidebar text-sidebar-foreground border-r border-sidebar-border shadow-xl z-40 transition-all duration-300 ease-in-out",
+          isExpanded && "w-64",
+          isIconOnly && "w-20",
+          isHidden && "w-0 border-r-0 overflow-hidden"
         )}
-        style={{
-          transform: isCollapsed ? "translateX(-100%)" : "translateX(0)",
-          transitionDuration: "300ms"
-        }}
+        aria-hidden={isHidden}
       >
         <div className={cn(
-          "flex h-16 items-center border-b border-sidebar-border bg-sidebar-accent/10",
-          isCollapsed ? "justify-center px-2" : "px-6"
+          "flex h-16 items-center border-b border-sidebar-border bg-sidebar-accent/10 transition-all duration-300",
+          isExpanded && "px-6",
+          isIconOnly && "justify-center px-2",
+          isHidden && "opacity-0"
         )}>
           <div className="flex items-center gap-3">
             <img 
@@ -70,26 +73,28 @@ export function Sidebar() {
               alt="FlipStackk Logo" 
               className={cn(
                 "object-contain transition-all duration-300",
-                isCollapsed ? "h-10 w-10" : "h-12 w-auto"
+                isIconOnly ? "h-10 w-10" : "h-12 w-auto"
               )}
             />
           </div>
         </div>
 
-        <button
-          onClick={toggleSidebar}
-          className="absolute -right-3 top-20 z-50 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md hover:bg-primary/90 transition-colors"
-          data-testid="button-toggle-sidebar"
-        >
-          {isCollapsed ? (
-            <ChevronRight className="h-4 w-4" />
-          ) : (
-            <ChevronLeft className="h-4 w-4" />
-          )}
-        </button>
+        {!isHidden && (
+          <button
+            onClick={cycleState}
+            className="absolute -right-3 top-20 z-50 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md hover:bg-primary/90 transition-colors"
+            data-testid="button-toggle-sidebar"
+          >
+            {isExpanded && <ChevronLeft className="h-4 w-4" />}
+            {isIconOnly && <ChevronsLeft className="h-4 w-4" />}
+          </button>
+        )}
         
-        <div className="flex-1 scroll-y-container py-6">
-          <nav className={cn("space-y-1.5", isCollapsed ? "px-2" : "px-3")}>
+        <div className={cn(
+          "flex-1 scroll-y-container py-6 transition-all duration-300",
+          isHidden && "opacity-0"
+        )}>
+          <nav className={cn("space-y-1.5", showIconsOnly ? "px-2" : "px-3")}>
             {navigation.map((item) => {
               const isActive = location === item.href || (item.href !== '/' && location.startsWith(item.href));
               
@@ -98,7 +103,7 @@ export function Sidebar() {
                   <div
                     className={cn(
                       "group relative flex items-center rounded-md text-sm font-medium transition-all duration-200 ease-in-out cursor-pointer",
-                      isCollapsed ? "justify-center px-2 py-2.5" : "px-3 py-2.5",
+                      showIconsOnly ? "justify-center px-2 py-2.5" : "px-3 py-2.5",
                       isActive
                         ? "bg-primary text-primary-foreground shadow-md shadow-primary/20"
                         : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-white"
@@ -107,20 +112,22 @@ export function Sidebar() {
                     <item.icon
                       className={cn(
                         "h-5 w-5 flex-shrink-0 transition-colors",
-                        !isCollapsed && "mr-3",
+                        showLabels && "mr-3",
                         isActive ? "text-primary-foreground" : "text-sidebar-foreground/50 group-hover:text-white"
                       )}
                     />
-                    {!isCollapsed && item.name}
+                    {showLabels && (
+                      <span className="transition-opacity duration-200">{item.name}</span>
+                    )}
                     
-                    {isActive && !isCollapsed && (
+                    {isActive && showLabels && (
                       <div className="absolute right-2 h-1.5 w-1.5 rounded-full bg-white/30" />
                     )}
                   </div>
                 </Link>
               );
 
-              if (isCollapsed) {
+              if (showIconsOnly) {
                 return (
                   <Tooltip key={item.name}>
                     <TooltipTrigger asChild>
@@ -140,9 +147,10 @@ export function Sidebar() {
 
         <div className={cn(
           "mt-auto border-t border-sidebar-border bg-sidebar-accent/5 transition-all duration-300",
-          isCollapsed ? "p-2" : "p-4"
+          showIconsOnly ? "p-2" : "p-4",
+          isHidden && "opacity-0"
         )}>
-          {user && !isCollapsed && (
+          {user && showLabels && (
             <div className="bg-sidebar-accent/50 rounded-lg p-3 mb-3">
               <p className="text-xs font-medium text-sidebar-foreground/60 uppercase tracking-wider mb-1">
                 Logged in as
@@ -158,7 +166,7 @@ export function Sidebar() {
             </div>
           )}
 
-          {user && isCollapsed && (
+          {user && showIconsOnly && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className="flex justify-center mb-3">
@@ -176,7 +184,7 @@ export function Sidebar() {
             </Tooltip>
           )}
           
-          {!isCollapsed && (
+          {showLabels && (
             <div 
               className="bg-sidebar-accent/50 rounded-lg p-3 mb-4 cursor-pointer hover:bg-sidebar-accent/70 transition-colors"
               onClick={() => setLocation('/settings')}
@@ -206,7 +214,7 @@ export function Sidebar() {
             </div>
           )}
 
-          {isCollapsed && activeGoal && (
+          {showIconsOnly && activeGoal && (
             <Tooltip>
               <TooltipTrigger asChild>
                 <div 
@@ -250,7 +258,7 @@ export function Sidebar() {
             </Tooltip>
           )}
 
-          {isCollapsed ? (
+          {showIconsOnly ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <button 
@@ -265,7 +273,7 @@ export function Sidebar() {
                 Sign Out
               </TooltipContent>
             </Tooltip>
-          ) : (
+          ) : showLabels ? (
             <button 
               onClick={logout}
               className="flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/70 hover:bg-destructive/10 hover:text-destructive transition-colors"
@@ -274,7 +282,7 @@ export function Sidebar() {
               <LogOut className="h-5 w-5" />
               Sign Out
             </button>
-          )}
+          ) : null}
         </div>
       </div>
     </TooltipProvider>
