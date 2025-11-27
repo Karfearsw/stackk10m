@@ -39,6 +39,7 @@ export interface IStorage {
   // Properties
   getProperties(): Promise<Property[]>;
   getPropertyById(id: number): Promise<Property | undefined>;
+  getPropertyBySourceLeadId(sourceLeadId: number): Promise<Property | undefined>;
   createProperty(property: InsertProperty): Promise<Property>;
   updateProperty(id: number, property: Partial<InsertProperty>): Promise<Property>;
   deleteProperty(id: number): Promise<void>;
@@ -195,6 +196,11 @@ export class DatabaseStorage implements IStorage {
 
   async getPropertyById(id: number): Promise<Property | undefined> {
     const result = await db.select().from(properties).where(eq(properties.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getPropertyBySourceLeadId(sourceLeadId: number): Promise<Property | undefined> {
+    const result = await db.select().from(properties).where(eq(properties.sourceLeadId, sourceLeadId)).limit(1);
     return result[0];
   }
 

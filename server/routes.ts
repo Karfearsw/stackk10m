@@ -201,6 +201,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Convert lead to property (lead must be under_contract status)
+  app.post("/api/leads/:id/convert-to-property", async (req, res) => {
+    try {
+      const leadId = parseInt(req.params.id);
+      const lead = await storage.getLeadById(leadId);
+      
+      if (!lead) {
+        return res.status(404).json({ message: "Lead not found" });
+      }
+      
+      if (lead.status !== "under_contract") {
+        return res.status(400).json({ 
+          message: "Lead must be 'under contract' status before converting to property" 
+        });
+      }
+      
+      // Check if property already exists from this lead
+      const existingProperty = await storage.getPropertyBySourceLeadId(leadId);
+      if (existingProperty) {
+        return res.status(409).json({ 
+          message: "Property already exists for this lead",
+          propertyId: existingProperty.id
+        });
+      }
+      
+      // Create property from lead data
+      const propertyData = {
+        address: lead.address,
+        city: lead.city,
+        state: lead.state,
+        zipCode: lead.zipCode,
+        price: lead.estimatedValue || null,
+        status: "under_contract",
+        sourceLeadId: lead.id,
+      };
+      
+      const property = await storage.createProperty(propertyData);
+      
+      // Log activity
+      if (req.session.userId) {
+        await storage.createGlobalActivity({
+          userId: req.session.userId,
+          action: "converted_lead_to_property",
+          description: `Converted lead to property: ${property.address}`,
+          metadata: JSON.stringify({ 
+            leadId: lead.id, 
+            propertyId: property.id, 
+            address: property.address 
+          }),
+        });
+      }
+      
+      res.status(201).json({ 
+        message: "Lead successfully converted to property",
+        property 
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // PROPERTIES ENDPOINTS
   app.get("/api/properties", async (req, res) => {
     try {
