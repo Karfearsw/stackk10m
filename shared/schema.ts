@@ -47,6 +47,7 @@ export const properties = pgTable("properties", {
   arv: decimal("arv", { precision: 12, scale: 2 }),
   repairCost: decimal("repair_cost", { precision: 12, scale: 2 }),
   assignedTo: integer("assigned_to"),
+  sourceLeadId: integer("source_lead_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
