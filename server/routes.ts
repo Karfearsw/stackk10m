@@ -145,6 +145,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validated = insertLeadSchema.parse(req.body);
       const lead = await storage.createLead(validated);
+      
+      if (req.session.userId) {
+        await storage.createGlobalActivity({
+          userId: req.session.userId,
+          action: "created_lead",
+          description: `Added new lead: ${lead.address}`,
+          metadata: JSON.stringify({ leadId: lead.id, address: lead.address }),
+        });
+      }
+      
       res.status(201).json(lead);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -155,6 +165,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const partial = insertLeadSchema.partial().parse(req.body);
       const lead = await storage.updateLead(parseInt(req.params.id), partial);
+      
+      if (req.session.userId) {
+        await storage.createGlobalActivity({
+          userId: req.session.userId,
+          action: "updated_lead",
+          description: `Updated lead: ${lead.address}`,
+          metadata: JSON.stringify({ leadId: lead.id, address: lead.address, status: lead.status }),
+        });
+      }
+      
       res.json(lead);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -163,7 +183,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/leads/:id", async (req, res) => {
     try {
+      const lead = await storage.getLeadById(parseInt(req.params.id));
       await storage.deleteLead(parseInt(req.params.id));
+      
+      if (req.session.userId && lead) {
+        await storage.createGlobalActivity({
+          userId: req.session.userId,
+          action: "deleted_lead",
+          description: `Deleted lead: ${lead.address}`,
+          metadata: JSON.stringify({ leadId: lead.id, address: lead.address }),
+        });
+      }
+      
       res.json({ message: "Lead deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -194,6 +225,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const validated = insertPropertySchema.parse(req.body);
       const property = await storage.createProperty(validated);
+      
+      if (req.session.userId) {
+        await storage.createGlobalActivity({
+          userId: req.session.userId,
+          action: "created_property",
+          description: `Added new property: ${property.address}`,
+          metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
+        });
+      }
+      
       res.status(201).json(property);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -204,6 +245,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const partial = insertPropertySchema.partial().parse(req.body);
       const property = await storage.updateProperty(parseInt(req.params.id), partial);
+      
+      if (req.session.userId) {
+        await storage.createGlobalActivity({
+          userId: req.session.userId,
+          action: "updated_property",
+          description: `Updated property: ${property.address}`,
+          metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
+        });
+      }
+      
       res.json(property);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -212,7 +263,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/properties/:id", async (req, res) => {
     try {
+      const property = await storage.getPropertyById(parseInt(req.params.id));
       await storage.deleteProperty(parseInt(req.params.id));
+      
+      if (req.session.userId && property) {
+        await storage.createGlobalActivity({
+          userId: req.session.userId,
+          action: "deleted_property",
+          description: `Deleted property: ${property.address}`,
+          metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
+        });
+      }
+      
       res.json({ message: "Property deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -596,6 +658,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(201).json(code);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
+    }
+  });
+
+  // GLOBAL ACTIVITY ENDPOINT
+  app.get("/api/activity", async (req, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+      const logs = await storage.getGlobalActivityLogs(limit);
+      
+      const logsWithUsers = await Promise.all(
+        logs.map(async (log) => {
+          const user = await storage.getUserById(log.userId);
+          return {
+            ...log,
+            user: user ? {
+              id: user.id,
+              firstName: user.firstName,
+              lastName: user.lastName,
+              email: user.email,
+              profilePicture: user.profilePicture,
+            } : null,
+          };
+        })
+      );
+      
+      res.json(logsWithUsers);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 

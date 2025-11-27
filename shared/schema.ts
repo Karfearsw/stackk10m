@@ -374,3 +374,17 @@ export const timesheetEntries = pgTable("timesheet_entries", {
 export const insertTimesheetEntrySchema = createInsertSchema(timesheetEntries).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type TimesheetEntry = typeof timesheetEntries.$inferSelect;
 export type InsertTimesheetEntry = z.infer<typeof insertTimesheetEntrySchema>;
+
+// GLOBAL ACTIVITY LOG TABLE (company-wide activity visible to all team members)
+export const globalActivityLogs = pgTable("global_activity_logs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  action: varchar("action", { length: 255 }).notNull(),
+  description: text("description"),
+  metadata: text("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertGlobalActivityLogSchema = createInsertSchema(globalActivityLogs).omit({ id: true, createdAt: true } as any);
+export type GlobalActivityLog = typeof globalActivityLogs.$inferSelect;
+export type InsertGlobalActivityLog = z.infer<typeof insertGlobalActivityLogSchema>;

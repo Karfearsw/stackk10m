@@ -1,7 +1,8 @@
 import { db } from "./db";
+import { desc } from "drizzle-orm";
 import { 
   leads, properties, contacts, contracts, contractTemplates, contractDocuments, documentVersions, lois,
-  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, offers, timesheetEntries
+  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, offers, timesheetEntries, globalActivityLogs
 } from "@shared/schema";
 import { 
   type Lead, type InsertLead, 
@@ -22,7 +23,8 @@ import {
   type UserGoal, type InsertUserGoal,
   type UserNotification, type InsertUserNotification,
   type Offer, type InsertOffer,
-  type TimesheetEntry, type InsertTimesheetEntry
+  type TimesheetEntry, type InsertTimesheetEntry,
+  type GlobalActivityLog, type InsertGlobalActivityLog
 } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
@@ -155,6 +157,10 @@ export interface IStorage {
   createTimesheetEntry(entry: InsertTimesheetEntry): Promise<TimesheetEntry>;
   updateTimesheetEntry(id: number, entry: Partial<InsertTimesheetEntry>): Promise<TimesheetEntry>;
   deleteTimesheetEntry(id: number): Promise<void>;
+
+  // Global Activity Logs
+  getGlobalActivityLogs(limit?: number): Promise<GlobalActivityLog[]>;
+  createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -597,6 +603,16 @@ export class DatabaseStorage implements IStorage {
 
   async deleteTimesheetEntry(id: number): Promise<void> {
     await db.delete(timesheetEntries).where(eq(timesheetEntries.id, id));
+  }
+
+  // Global Activity Logs
+  async getGlobalActivityLogs(limit: number = 50): Promise<GlobalActivityLog[]> {
+    return db.select().from(globalActivityLogs).orderBy(desc(globalActivityLogs.createdAt)).limit(limit);
+  }
+
+  async createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog> {
+    const result = await db.insert(globalActivityLogs).values(log as any).returning();
+    return result[0];
   }
 }
 
