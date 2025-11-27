@@ -1,69 +1,104 @@
 import { Layout } from "@/components/layout/Layout";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Bell, Trash2, CheckCircle2, AlertCircle, Info } from "lucide-react";
-import { useState } from "react";
+import { Bell, Trash2, CheckCircle2, AlertCircle, Info, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface Notification {
   id: number;
-  type: 'lead' | 'deal' | 'contract' | 'system' | 'task';
+  userId: number;
+  type: string;
   title: string;
-  description: string;
-  timestamp: Date;
+  description: string | null;
   read: boolean;
+  relatedId: number | null;
+  relatedType: string | null;
+  createdAt: string;
 }
 
 export default function Notifications() {
-  const [notifications, setNotifications] = useState<Notification[]>([
-    {
-      id: 1,
-      type: 'lead',
-      title: 'New Lead Added',
-      description: 'John Smith inquired about the property on Oak Street',
-      timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
-      read: false,
+  const { user } = useAuth();
+  const queryClient = useQueryClient();
+
+  const { data: notifications = [], isLoading } = useQuery<Notification[]>({
+    queryKey: [`/api/users/${user?.id}/notifications`],
+    enabled: !!user?.id,
+  });
+
+  const markAsReadMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/notifications/${id}/read`, {
+        method: 'PATCH',
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to mark as read');
+      return res.json();
     },
-    {
-      id: 2,
-      type: 'contract',
-      title: 'Contract Pending Signature',
-      description: 'The purchase agreement for 123 Main St is ready for your signature',
-      timestamp: new Date(Date.now() - 4 * 60 * 60 * 1000),
-      read: false,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${user?.id}/notifications`] });
+      toast.success('Marked as read');
     },
-    {
-      id: 3,
-      type: 'deal',
-      title: 'Deal Status Updated',
-      description: 'Your offer on Maple Avenue has been accepted',
-      timestamp: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
-      read: true,
+    onError: () => {
+      toast.error('Failed to mark as read');
     },
-  ]);
+  });
 
-  const handleMarkAsRead = (id: number) => {
-    setNotifications(notifications.map(n => 
-      n.id === id ? { ...n, read: true } : n
-    ));
-    toast.success('Marked as read');
-  };
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/notifications/${id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to delete');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${user?.id}/notifications`] });
+      toast.success('Notification deleted');
+    },
+    onError: () => {
+      toast.error('Failed to delete notification');
+    },
+  });
 
-  const handleDelete = (id: number) => {
-    setNotifications(notifications.filter(n => n.id !== id));
-    toast.success('Notification deleted');
-  };
+  const markAllAsReadMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/users/${user?.id}/notifications/read-all`, {
+        method: 'PATCH',
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to mark all as read');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${user?.id}/notifications`] });
+      toast.success('All notifications marked as read');
+    },
+    onError: () => {
+      toast.error('Failed to mark all as read');
+    },
+  });
 
-  const handleMarkAllAsRead = () => {
-    setNotifications(notifications.map(n => ({ ...n, read: true })));
-    toast.success('All notifications marked as read');
-  };
-
-  const handleClearAll = () => {
-    setNotifications([]);
-    toast.success('All notifications cleared');
-  };
+  const clearAllMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/users/${user?.id}/notifications`, {
+        method: 'DELETE',
+        credentials: 'include',
+      });
+      if (!res.ok) throw new Error('Failed to clear all');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${user?.id}/notifications`] });
+      toast.success('All notifications cleared');
+    },
+    onError: () => {
+      toast.error('Failed to clear notifications');
+    },
+  });
 
   const unreadCount = notifications.filter(n => !n.read).length;
 
@@ -82,7 +117,8 @@ export default function Notifications() {
     }
   };
 
-  const formatTime = (date: Date) => {
+  const formatTime = (dateString: string) => {
+    const date = new Date(dateString);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
     const diffMins = Math.floor(diffMs / 60000);
@@ -94,6 +130,16 @@ export default function Notifications() {
     if (diffDays < 7) return `${diffDays}d ago`;
     return date.toLocaleDateString();
   };
+
+  if (isLoading) {
+    return (
+      <Layout>
+        <div className="flex items-center justify-center h-96">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>
@@ -110,9 +156,11 @@ export default function Notifications() {
               <Button 
                 variant="outline" 
                 size="sm"
-                onClick={handleMarkAllAsRead}
+                onClick={() => markAllAsReadMutation.mutate()}
+                disabled={markAllAsReadMutation.isPending}
                 data-testid="button-mark-all-read"
               >
+                {markAllAsReadMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Mark all as read
               </Button>
             )}
@@ -120,10 +168,12 @@ export default function Notifications() {
               <Button 
                 variant="outline" 
                 size="sm"
-                onClick={handleClearAll}
+                onClick={() => clearAllMutation.mutate()}
+                disabled={clearAllMutation.isPending}
                 className="text-destructive hover:text-destructive"
                 data-testid="button-clear-all"
               >
+                {clearAllMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                 Clear all
               </Button>
             )}
@@ -159,11 +209,13 @@ export default function Notifications() {
                           <h4 className="font-semibold text-sm leading-tight">
                             {notification.title}
                           </h4>
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {notification.description}
-                          </p>
+                          {notification.description && (
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {notification.description}
+                            </p>
+                          )}
                           <p className="text-xs text-muted-foreground mt-2">
-                            {formatTime(notification.timestamp)}
+                            {formatTime(notification.createdAt)}
                           </p>
                         </div>
                         <div className="flex gap-2 flex-shrink-0">
@@ -171,7 +223,8 @@ export default function Notifications() {
                             <Button
                               variant="ghost"
                               size="sm"
-                              onClick={() => handleMarkAsRead(notification.id)}
+                              onClick={() => markAsReadMutation.mutate(notification.id)}
+                              disabled={markAsReadMutation.isPending}
                               data-testid={`button-mark-read-${notification.id}`}
                               className="h-8 w-8 p-0"
                             >
@@ -181,7 +234,8 @@ export default function Notifications() {
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => handleDelete(notification.id)}
+                            onClick={() => deleteMutation.mutate(notification.id)}
+                            disabled={deleteMutation.isPending}
                             data-testid={`button-delete-notif-${notification.id}`}
                             className="h-8 w-8 p-0 text-destructive hover:text-destructive"
                           >

@@ -39,7 +39,7 @@ function SettingsContent() {
 
   // Fetch notification preferences
   const { data: notificationPrefs, isLoading: notifsLoading } = useQuery<any>({
-    queryKey: [`/api/users/${user.id}/notifications`],
+    queryKey: [`/api/users/${user.id}/notification-preferences`],
   });
 
   // Fetch team members
@@ -86,7 +86,7 @@ function SettingsContent() {
   // Update notifications mutation
   const updateNotificationsMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch(`/api/users/${user!.id}/notifications`, {
+      const res = await fetch(`/api/users/${user!.id}/notification-preferences`, {
         method: notificationPrefs ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
@@ -96,7 +96,7 @@ function SettingsContent() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/users/${user!.id}/notifications`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${user!.id}/notification-preferences`] });
       toast.success('Notification preferences updated');
     },
     onError: () => {

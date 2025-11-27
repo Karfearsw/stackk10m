@@ -18,6 +18,7 @@ import {
   insertTeamMemberSchema,
   insertTeamActivityLogSchema,
   insertNotificationPreferenceSchema,
+  insertUserNotificationSchema,
   insertUserGoalSchema,
   insertOfferSchema
 } from "@shared/schema";
@@ -707,7 +708,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // NOTIFICATION PREFERENCES ENDPOINTS
-  app.get("/api/users/:userId/notifications", async (req, res) => {
+  app.get("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
       const prefs = await storage.getNotificationPreferencesByUserId(parseInt(req.params.userId));
       res.json(prefs || {});
@@ -716,7 +717,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/users/:userId/notifications", async (req, res) => {
+  app.post("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
       const validated = insertNotificationPreferenceSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
       const prefs = await storage.createNotificationPreferences(validated);
@@ -726,11 +727,67 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/users/:userId/notifications", async (req, res) => {
+  app.patch("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
       const partial = insertNotificationPreferenceSchema.partial().parse(req.body);
       const prefs = await storage.updateNotificationPreferences(parseInt(req.params.userId), partial);
       res.json(prefs);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // USER NOTIFICATIONS ENDPOINTS (actual notification messages)
+  app.get("/api/users/:userId/notifications", async (req, res) => {
+    try {
+      const notifications = await storage.getUserNotifications(parseInt(req.params.userId));
+      res.json(notifications);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/users/:userId/notifications", async (req, res) => {
+    try {
+      const validated = insertUserNotificationSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const notification = await storage.createUserNotification(validated);
+      res.status(201).json(notification);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/notifications/:id/read", async (req, res) => {
+    try {
+      const notification = await storage.markNotificationAsRead(parseInt(req.params.id));
+      res.json(notification);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/notifications/:id", async (req, res) => {
+    try {
+      await storage.deleteUserNotification(parseInt(req.params.id));
+      res.json({ message: "Notification deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/users/:userId/notifications", async (req, res) => {
+    try {
+      await storage.deleteAllUserNotifications(parseInt(req.params.userId));
+      res.json({ message: "All notifications deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/users/:userId/notifications/read-all", async (req, res) => {
+    try {
+      await storage.markAllNotificationsAsRead(parseInt(req.params.userId));
+      res.json({ message: "All notifications marked as read" });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }

@@ -309,6 +309,23 @@ export const insertUserGoalSchema = createInsertSchema(userGoals).omit({ id: tru
 export type UserGoal = typeof userGoals.$inferSelect;
 export type InsertUserGoal = z.infer<typeof insertUserGoalSchema>;
 
+// USER NOTIFICATIONS TABLE (actual notification messages)
+export const userNotifications = pgTable("user_notifications", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  type: varchar("type", { length: 50 }).default("system"),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  read: boolean("read").default(false),
+  relatedId: integer("related_id"),
+  relatedType: varchar("related_type", { length: 50 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertUserNotificationSchema = createInsertSchema(userNotifications).omit({ id: true, createdAt: true } as any);
+export type UserNotification = typeof userNotifications.$inferSelect;
+export type InsertUserNotification = z.infer<typeof insertUserNotificationSchema>;
+
 // OFFERS TABLE
 export const offers = pgTable("offers", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),

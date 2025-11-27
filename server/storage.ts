@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { 
   leads, properties, contacts, contracts, contractTemplates, contractDocuments, documentVersions, lois,
-  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, offers
+  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, offers
 } from "@shared/schema";
 import { 
   type Lead, type InsertLead, 
@@ -20,6 +20,7 @@ import {
   type TeamActivityLog, type InsertTeamActivityLog,
   type NotificationPreference, type InsertNotificationPreference,
   type UserGoal, type InsertUserGoal,
+  type UserNotification, type InsertUserNotification,
   type Offer, type InsertOffer
 } from "@shared/schema";
 import { eq } from "drizzle-orm";
@@ -121,6 +122,15 @@ export interface IStorage {
   getNotificationPreferencesByUserId(userId: number): Promise<NotificationPreference | undefined>;
   createNotificationPreferences(prefs: InsertNotificationPreference): Promise<NotificationPreference>;
   updateNotificationPreferences(userId: number, prefs: Partial<InsertNotificationPreference>): Promise<NotificationPreference>;
+
+  // User Notifications (actual notification messages)
+  getUserNotifications(userId: number): Promise<UserNotification[]>;
+  getUserNotificationById(id: number): Promise<UserNotification | undefined>;
+  createUserNotification(notification: InsertUserNotification): Promise<UserNotification>;
+  markNotificationAsRead(id: number): Promise<UserNotification>;
+  deleteUserNotification(id: number): Promise<void>;
+  deleteAllUserNotifications(userId: number): Promise<void>;
+  markAllNotificationsAsRead(userId: number): Promise<void>;
 
   // User Goals
   getUserGoals(userId: number): Promise<UserGoal[]>;
@@ -467,6 +477,38 @@ export class DatabaseStorage implements IStorage {
   async updateNotificationPreferences(userId: number, prefs: Partial<InsertNotificationPreference>): Promise<NotificationPreference> {
     const result = await db.update(notificationPreferences).set(prefs as any).where(eq(notificationPreferences.userId, userId)).returning();
     return result[0];
+  }
+
+  // User Notifications (actual notification messages)
+  async getUserNotifications(userId: number): Promise<UserNotification[]> {
+    return db.select().from(userNotifications).where(eq(userNotifications.userId, userId));
+  }
+
+  async getUserNotificationById(id: number): Promise<UserNotification | undefined> {
+    const result = await db.select().from(userNotifications).where(eq(userNotifications.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createUserNotification(notification: InsertUserNotification): Promise<UserNotification> {
+    const result = await db.insert(userNotifications).values(notification as any).returning();
+    return result[0];
+  }
+
+  async markNotificationAsRead(id: number): Promise<UserNotification> {
+    const result = await db.update(userNotifications).set({ read: true }).where(eq(userNotifications.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteUserNotification(id: number): Promise<void> {
+    await db.delete(userNotifications).where(eq(userNotifications.id, id));
+  }
+
+  async deleteAllUserNotifications(userId: number): Promise<void> {
+    await db.delete(userNotifications).where(eq(userNotifications.userId, userId));
+  }
+
+  async markAllNotificationsAsRead(userId: number): Promise<void> {
+    await db.update(userNotifications).set({ read: true }).where(eq(userNotifications.userId, userId));
   }
 
   // User Goals
