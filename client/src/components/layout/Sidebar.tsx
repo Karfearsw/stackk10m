@@ -12,7 +12,8 @@ import {
   Bell,
   ChevronLeft,
   ChevronRight,
-  ChevronsLeft
+  ChevronsLeft,
+  Lightbulb
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -26,6 +27,7 @@ const navigation = [
   { name: "Properties", href: "/properties", icon: Building2 },
   { name: "Contracts", href: "/contracts", icon: FileText },
   { name: "Analytics", href: "/analytics", icon: PieChart },
+  { name: "Playground", href: "/playground", icon: Lightbulb },
   { name: "Calculator", href: "/calculator", icon: Calculator },
   { name: "Timesheet", href: "/timesheet", icon: Clock },
   { name: "Notifications", href: "/notifications", icon: Bell },
