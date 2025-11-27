@@ -244,12 +244,10 @@ export default function Playground() {
                       </Button>
                     </div>
                     <Button 
-                      variant="outline" 
-                      size="sm"
                       onClick={() => window.open(browserUrl, "_blank")}
                       data-testid="button-open-external"
                     >
-                      <ExternalLink className="h-4 w-4 mr-1" /> Open External
+                      <ExternalLink className="h-4 w-4 mr-1" /> Open in New Tab
                     </Button>
                   </div>
                   <div className="flex items-center gap-1 mt-2 text-sm text-muted-foreground">
@@ -257,15 +255,86 @@ export default function Playground() {
                     <span className="truncate">{browserUrl}</span>
                   </div>
                 </CardHeader>
-                <CardContent className="p-0">
-                  <div className="relative w-full h-[600px] border-t">
-                    <iframe
-                      src={browserUrl}
-                      className="w-full h-full"
-                      title="Research Browser"
-                      sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
-                      data-testid="iframe-browser"
-                    />
+                <CardContent className="p-4">
+                  <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg p-4 mb-4">
+                    <div className="flex items-start gap-3">
+                      <ExternalLink className="h-5 w-5 text-amber-600 dark:text-amber-500 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="font-medium text-amber-800 dark:text-amber-400">Most sites block embedded viewing</p>
+                        <p className="text-sm text-amber-700 dark:text-amber-500 mt-1">
+                          For security reasons, sites like Zillow, Redfin, and county GIS portals don't allow embedding. 
+                          Use the <strong>"Open in New Tab"</strong> button above to view them directly.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                    <Card className="hover:border-primary cursor-pointer transition-colors" onClick={() => window.open("https://www.zillow.com/", "_blank")}>
+                      <CardContent className="p-4 flex items-center gap-3">
+                        <div className="p-2 bg-blue-100 dark:bg-blue-900 rounded-lg">
+                          <Home className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                        </div>
+                        <div>
+                          <p className="font-medium">Zillow</p>
+                          <p className="text-xs text-muted-foreground">Property values & listings</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card className="hover:border-primary cursor-pointer transition-colors" onClick={() => window.open("https://www.redfin.com/", "_blank")}>
+                      <CardContent className="p-4 flex items-center gap-3">
+                        <div className="p-2 bg-red-100 dark:bg-red-900 rounded-lg">
+                          <Home className="h-5 w-5 text-red-600 dark:text-red-400" />
+                        </div>
+                        <div>
+                          <p className="font-medium">Redfin</p>
+                          <p className="text-xs text-muted-foreground">Market data & comps</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card className="hover:border-primary cursor-pointer transition-colors" onClick={() => window.open("https://www.realtor.com/", "_blank")}>
+                      <CardContent className="p-4 flex items-center gap-3">
+                        <div className="p-2 bg-green-100 dark:bg-green-900 rounded-lg">
+                          <Home className="h-5 w-5 text-green-600 dark:text-green-400" />
+                        </div>
+                        <div>
+                          <p className="font-medium">Realtor.com</p>
+                          <p className="text-xs text-muted-foreground">MLS listings</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card className="hover:border-primary cursor-pointer transition-colors" onClick={() => window.open("https://www.truepeoplesearch.com/", "_blank")}>
+                      <CardContent className="p-4 flex items-center gap-3">
+                        <div className="p-2 bg-purple-100 dark:bg-purple-900 rounded-lg">
+                          <Phone className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                        </div>
+                        <div>
+                          <p className="font-medium">TruePeopleSearch</p>
+                          <p className="text-xs text-muted-foreground">Free skip trace</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card className="hover:border-primary cursor-pointer transition-colors" onClick={() => window.open("https://www.google.com/maps", "_blank")}>
+                      <CardContent className="p-4 flex items-center gap-3">
+                        <div className="p-2 bg-orange-100 dark:bg-orange-900 rounded-lg">
+                          <MapPin className="h-5 w-5 text-orange-600 dark:text-orange-400" />
+                        </div>
+                        <div>
+                          <p className="font-medium">Google Maps</p>
+                          <p className="text-xs text-muted-foreground">Street view & location</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                    <Card className="hover:border-primary cursor-pointer transition-colors" onClick={() => window.open(browserUrl, "_blank")}>
+                      <CardContent className="p-4 flex items-center gap-3">
+                        <div className="p-2 bg-gray-100 dark:bg-gray-900 rounded-lg">
+                          <ExternalLink className="h-5 w-5 text-gray-600 dark:text-gray-400" />
+                        </div>
+                        <div>
+                          <p className="font-medium">Current URL</p>
+                          <p className="text-xs text-muted-foreground truncate max-w-[120px]">{browserUrl}</p>
+                        </div>
+                      </CardContent>
+                    </Card>
                   </div>
                 </CardContent>
               </Card>

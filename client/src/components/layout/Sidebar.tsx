@@ -13,7 +13,8 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
-  Lightbulb
+  Lightbulb,
+  UserCheck
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -25,6 +26,7 @@ const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Leads Pipeline", href: "/leads", icon: Users },
   { name: "Properties", href: "/properties", icon: Building2 },
+  { name: "Buyers", href: "/buyers", icon: UserCheck },
   { name: "Contracts", href: "/contracts", icon: FileText },
   { name: "Analytics", href: "/analytics", icon: PieChart },
   { name: "Playground", href: "/playground", icon: Lightbulb },

@@ -77,6 +77,10 @@ export default function Dashboard() {
     queryKey: ['/api/contracts'],
   });
 
+  const { data: contractDocuments = [] } = useQuery<any[]>({
+    queryKey: ['/api/contract-documents'],
+  });
+
   const { data: activityLogs = [] } = useQuery<ActivityLog[]>({
     queryKey: ['/api/activity'],
     refetchInterval: 30000,
@@ -91,7 +95,21 @@ export default function Dashboard() {
   const activeTeamMembers = allUsers.filter(user => user.isActive);
 
   const kpiData = useMemo(() => {
-    const totalRevenue = contracts.reduce((sum, contract) => {
+    const closedDocuments = contractDocuments.filter(doc => doc.status === 'closed');
+    
+    let totalAssignmentFees = 0;
+    closedDocuments.forEach(doc => {
+      try {
+        if (doc.mergeData) {
+          const data = typeof doc.mergeData === 'string' ? JSON.parse(doc.mergeData) : doc.mergeData;
+          if (data.closingData?.assignmentFee) {
+            totalAssignmentFees += parseFloat(data.closingData.assignmentFee) || 0;
+          }
+        }
+      } catch (e) {}
+    });
+
+    const totalContractValue = contracts.reduce((sum, contract) => {
       return sum + (parseFloat(contract.amount) || 0);
     }, 0);
 
@@ -99,13 +117,11 @@ export default function Dashboard() {
       lead.status === 'new' || lead.status === 'contacted' || lead.status === 'qualified'
     ).length;
 
-    const dealsInPipeline = contracts.filter(contract => 
-      contract.status === 'pending' || contract.status === 'negotiating'
+    const dealsInPipeline = contractDocuments.filter(doc => 
+      doc.status === 'draft' || doc.status === 'sent' || doc.status === 'executed'
     ).length;
 
-    const closedDeals = contracts.filter(contract => 
-      contract.status === 'signed' || contract.status === 'closed'
-    ).length;
+    const closedDeals = closedDocuments.length;
 
     const conversionRate = leads.length > 0 
       ? ((closedDeals / leads.length) * 100).toFixed(1)
@@ -113,10 +129,10 @@ export default function Dashboard() {
 
     return [
       {
-        title: "Total Contract Value",
-        value: totalRevenue > 0 ? `$${totalRevenue.toLocaleString()}` : "$0",
-        change: contracts.length > 0 ? `${contracts.length} contracts` : "No contracts yet",
-        trend: "neutral",
+        title: "Revenue from Closed Deals",
+        value: totalAssignmentFees > 0 ? `$${totalAssignmentFees.toLocaleString()}` : "$0",
+        change: closedDeals > 0 ? `${closedDeals} closed deals` : "No closed deals yet",
+        trend: "up",
         icon: DollarSign,
         description: ""
       },
@@ -131,7 +147,7 @@ export default function Dashboard() {
       {
         title: "Deals in Pipeline",
         value: dealsInPipeline.toString(),
-        change: `${contracts.length} total`,
+        change: `${contractDocuments.length} total contracts`,
         trend: "neutral",
         icon: Briefcase,
         description: ""
@@ -145,7 +161,7 @@ export default function Dashboard() {
         description: ""
       }
     ];
-  }, [leads, contracts]);
+  }, [leads, contracts, contractDocuments]);
 
   const chartData = useMemo(() => {
     if (contracts.length === 0) {

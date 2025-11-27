@@ -20,6 +20,7 @@ import Login from "@/pages/login";
 import Signup from "@/pages/signup";
 import Notifications from "@/pages/notifications";
 import Playground from "@/pages/playground";
+import Buyers from "@/pages/buyers";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -94,6 +95,9 @@ function Router() {
       </Route>
       <Route path="/playground">
         {() => <ProtectedRoute component={Playground} />}
+      </Route>
+      <Route path="/buyers">
+        {() => <ProtectedRoute component={Buyers} />}
       </Route>
       <Route component={NotFound} />
     </Switch>

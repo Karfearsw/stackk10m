@@ -7,9 +7,18 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { FileText, Download, Plus, Eye, Save, FileSignature } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { FileText, Download, Plus, Eye, Save, FileSignature, CheckCircle, Send, Clock, DollarSign, ChevronRight, ArrowRight } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+
+const statusColors: Record<string, string> = {
+  draft: "bg-gray-500",
+  sent: "bg-blue-500", 
+  executed: "bg-green-500",
+  closed: "bg-purple-500",
+};
 
 export default function ContractGenerator() {
   const { toast } = useToast();
@@ -51,7 +60,7 @@ export default function ContractGenerator() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4 lg:w-auto">
+          <TabsList className="grid w-full grid-cols-5 lg:w-auto">
             <TabsTrigger value="list" data-testid="tab-contracts">
               <FileText className="w-4 h-4 mr-2" />
               Contracts
@@ -59,6 +68,10 @@ export default function ContractGenerator() {
             <TabsTrigger value="create" data-testid="tab-create">
               <Plus className="w-4 h-4 mr-2" />
               Create New
+            </TabsTrigger>
+            <TabsTrigger value="closing" data-testid="tab-closing">
+              <CheckCircle className="w-4 h-4 mr-2" />
+              Closing
             </TabsTrigger>
             <TabsTrigger value="templates" data-testid="tab-templates">
               <FileSignature className="w-4 h-4 mr-2" />
@@ -72,57 +85,12 @@ export default function ContractGenerator() {
 
           {/* Contracts List Tab */}
           <TabsContent value="list" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle>Active Contracts</CardTitle>
-                <CardDescription>View and manage all contract documents</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {contractsLoading ? (
-                  <div className="text-center py-8 text-muted-foreground">Loading contracts...</div>
-                ) : contracts.length === 0 ? (
-                  <div className="text-center py-12">
-                    <FileText className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
-                    <p className="text-muted-foreground mb-4">No contracts yet</p>
-                    <Button onClick={() => setActiveTab("create")} data-testid="button-create-first">
-                      <Plus className="w-4 h-4 mr-2" />
-                      Create Your First Contract
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {contracts.map((contract: any) => (
-                      <div
-                        key={contract.id}
-                        className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-accent/5 transition-colors"
-                        data-testid={`contract-${contract.id}`}
-                      >
-                        <div className="flex-1">
-                          <h3 className="font-semibold text-foreground">{contract.title}</h3>
-                          <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
-                            <span>Type: {contract.documentType}</span>
-                            <span className="capitalize">Status: {contract.status}</span>
-                            <span>Version: {contract.version}</span>
-                          </div>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button variant="outline" size="sm" data-testid={`button-view-${contract.id}`}>
-                            <Eye className="w-4 h-4 mr-2" />
-                            View
-                          </Button>
-                          {contract.pdfUrl && (
-                            <Button variant="outline" size="sm" data-testid={`button-download-${contract.id}`}>
-                              <Download className="w-4 h-4 mr-2" />
-                              Download
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+            <ContractsList contracts={contracts} isLoading={contractsLoading} onCreateNew={() => setActiveTab("create")} />
+          </TabsContent>
+          
+          {/* Closing Tab */}
+          <TabsContent value="closing" className="space-y-4">
+            <ClosingModule contracts={contracts} properties={properties} />
           </TabsContent>
 
           {/* Create Contract Tab */}
@@ -691,5 +659,359 @@ function LOICreator({ properties, onClose }: { properties: any[], onClose: () =>
         </Button>
       </div>
     </form>
+  );
+}
+
+function ContractsList({ contracts, isLoading, onCreateNew }: { contracts: any[], isLoading: boolean, onCreateNew: () => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const updateStatusMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: number, status: string }) => {
+      const response = await fetch(`/api/contract-documents/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (!response.ok) throw new Error('Failed to update status');
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Contract status updated" });
+      queryClient.invalidateQueries({ queryKey: ['/api/contract-documents'] });
+    },
+  });
+
+  const getNextStatus = (current: string): string | null => {
+    const flow: Record<string, string> = {
+      draft: 'sent',
+      sent: 'executed',
+      executed: 'closed',
+    };
+    return flow[current] || null;
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'draft': return <Clock className="w-4 h-4" />;
+      case 'sent': return <Send className="w-4 h-4" />;
+      case 'executed': return <FileSignature className="w-4 h-4" />;
+      case 'closed': return <CheckCircle className="w-4 h-4" />;
+      default: return <FileText className="w-4 h-4" />;
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex justify-between items-center">
+          <div>
+            <CardTitle>Active Contracts</CardTitle>
+            <CardDescription>View and manage all contract documents</CardDescription>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Pipeline:</span>
+              <Badge variant="outline" className="bg-gray-500/10">Draft</Badge>
+              <ArrowRight className="w-3 h-3 text-muted-foreground" />
+              <Badge variant="outline" className="bg-blue-500/10">Sent</Badge>
+              <ArrowRight className="w-3 h-3 text-muted-foreground" />
+              <Badge variant="outline" className="bg-green-500/10">Executed</Badge>
+              <ArrowRight className="w-3 h-3 text-muted-foreground" />
+              <Badge variant="outline" className="bg-purple-500/10">Closed</Badge>
+            </div>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="text-center py-8 text-muted-foreground">Loading contracts...</div>
+        ) : contracts.length === 0 ? (
+          <div className="text-center py-12">
+            <FileText className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
+            <p className="text-muted-foreground mb-4">No contracts yet</p>
+            <Button onClick={onCreateNew} data-testid="button-create-first">
+              <Plus className="w-4 h-4 mr-2" />
+              Create Your First Contract
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {contracts.map((contract: any) => {
+              const nextStatus = getNextStatus(contract.status);
+              return (
+                <div
+                  key={contract.id}
+                  className="flex items-center justify-between p-4 border border-border rounded-lg hover:bg-accent/5 transition-colors"
+                  data-testid={`contract-${contract.id}`}
+                >
+                  <div className="flex items-center gap-4 flex-1">
+                    <div className={`p-2 rounded-full ${statusColors[contract.status] || 'bg-gray-500'}`}>
+                      {getStatusIcon(contract.status)}
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-foreground">{contract.title}</h3>
+                      <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
+                        <span>Type: {contract.documentType || 'contract'}</span>
+                        <Badge variant="outline" className={`${statusColors[contract.status]}/10 capitalize`}>
+                          {contract.status}
+                        </Badge>
+                        <span>Version: {contract.version || 1}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    {nextStatus && (
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => updateStatusMutation.mutate({ id: contract.id, status: nextStatus })}
+                        disabled={updateStatusMutation.isPending}
+                        data-testid={`button-advance-${contract.id}`}
+                      >
+                        <ChevronRight className="w-4 h-4 mr-1" />
+                        Mark as {nextStatus.charAt(0).toUpperCase() + nextStatus.slice(1)}
+                      </Button>
+                    )}
+                    <Button variant="outline" size="sm" data-testid={`button-view-${contract.id}`}>
+                      <Eye className="w-4 h-4 mr-2" />
+                      View
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function ClosingModule({ contracts, properties }: { contracts: any[], properties: any[] }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [selectedContract, setSelectedContract] = useState<any>(null);
+  const [closingData, setClosingData] = useState({
+    assignmentFee: "",
+    closingCosts: "",
+    buyerPaid: false,
+    titleReceived: false,
+    fundsWired: false,
+    docsRecorded: false,
+    notes: "",
+  });
+
+  const executedContracts = contracts.filter(c => c.status === 'executed');
+
+  const closeContractMutation = useMutation({
+    mutationFn: async ({ contractId, data }: { contractId: number, data: any }) => {
+      const response = await fetch(`/api/contract-documents/${contractId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          status: 'closed',
+          mergeData: JSON.stringify({
+            ...JSON.parse(data.mergeData || '{}'),
+            closingData: data.closingData,
+          }),
+        }),
+      });
+      if (!response.ok) throw new Error('Failed to close contract');
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Deal closed successfully!", description: "The contract has been marked as closed." });
+      queryClient.invalidateQueries({ queryKey: ['/api/contract-documents'] });
+      setSelectedContract(null);
+      setClosingData({
+        assignmentFee: "",
+        closingCosts: "",
+        buyerPaid: false,
+        titleReceived: false,
+        fundsWired: false,
+        docsRecorded: false,
+        notes: "",
+      });
+    },
+  });
+
+  const handleCloseDeal = () => {
+    if (!selectedContract) return;
+    const allChecked = closingData.buyerPaid && closingData.titleReceived && closingData.fundsWired && closingData.docsRecorded;
+    if (!allChecked) {
+      toast({ title: "Please complete all checklist items", variant: "destructive" });
+      return;
+    }
+    closeContractMutation.mutate({
+      contractId: selectedContract.id,
+      data: {
+        mergeData: selectedContract.mergeData,
+        closingData,
+      },
+    });
+  };
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-2">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <CheckCircle className="w-5 h-5 text-primary" />
+            Deals Ready to Close
+          </CardTitle>
+          <CardDescription>Executed contracts awaiting final closing</CardDescription>
+        </CardHeader>
+        <CardContent>
+          {executedContracts.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <FileSignature className="w-12 h-12 mx-auto mb-3 opacity-50" />
+              <p>No executed contracts ready to close</p>
+              <p className="text-sm mt-1">Contracts appear here after being marked as "Executed"</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {executedContracts.map((contract: any) => (
+                <div
+                  key={contract.id}
+                  onClick={() => setSelectedContract(contract)}
+                  className={`p-4 border rounded-lg cursor-pointer transition-colors ${
+                    selectedContract?.id === contract.id 
+                      ? 'border-primary bg-primary/5' 
+                      : 'border-border hover:border-primary/50'
+                  }`}
+                  data-testid={`closing-contract-${contract.id}`}
+                >
+                  <h3 className="font-semibold">{contract.title}</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Ready for closing procedures
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <DollarSign className="w-5 h-5 text-green-500" />
+            Closing Checklist
+          </CardTitle>
+          <CardDescription>
+            {selectedContract 
+              ? `Complete closing for: ${selectedContract.title}` 
+              : 'Select a contract to begin closing process'}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!selectedContract ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50" />
+              <p>Select a contract from the left panel</p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Assignment Fee</Label>
+                  <Input
+                    type="number"
+                    placeholder="10000"
+                    value={closingData.assignmentFee}
+                    onChange={(e) => setClosingData({ ...closingData, assignmentFee: e.target.value })}
+                    data-testid="input-assignment-fee"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Closing Costs</Label>
+                  <Input
+                    type="number"
+                    placeholder="500"
+                    value={closingData.closingCosts}
+                    onChange={(e) => setClosingData({ ...closingData, closingCosts: e.target.value })}
+                    data-testid="input-closing-costs"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-4 p-4 bg-accent/5 rounded-lg">
+                <h4 className="font-semibold flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4" />
+                  Closing Checklist
+                </h4>
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <Checkbox 
+                      id="buyerPaid" 
+                      checked={closingData.buyerPaid}
+                      onCheckedChange={(checked) => setClosingData({ ...closingData, buyerPaid: !!checked })}
+                      data-testid="checkbox-buyer-paid"
+                    />
+                    <label htmlFor="buyerPaid" className="text-sm cursor-pointer">
+                      Buyer has submitted payment
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Checkbox 
+                      id="titleReceived" 
+                      checked={closingData.titleReceived}
+                      onCheckedChange={(checked) => setClosingData({ ...closingData, titleReceived: !!checked })}
+                      data-testid="checkbox-title-received"
+                    />
+                    <label htmlFor="titleReceived" className="text-sm cursor-pointer">
+                      Title documents received
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Checkbox 
+                      id="fundsWired" 
+                      checked={closingData.fundsWired}
+                      onCheckedChange={(checked) => setClosingData({ ...closingData, fundsWired: !!checked })}
+                      data-testid="checkbox-funds-wired"
+                    />
+                    <label htmlFor="fundsWired" className="text-sm cursor-pointer">
+                      Funds wired to escrow/title company
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Checkbox 
+                      id="docsRecorded" 
+                      checked={closingData.docsRecorded}
+                      onCheckedChange={(checked) => setClosingData({ ...closingData, docsRecorded: !!checked })}
+                      data-testid="checkbox-docs-recorded"
+                    />
+                    <label htmlFor="docsRecorded" className="text-sm cursor-pointer">
+                      Documents recorded with county
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Closing Notes</Label>
+                <Textarea
+                  placeholder="Any additional notes about this closing..."
+                  value={closingData.notes}
+                  onChange={(e) => setClosingData({ ...closingData, notes: e.target.value })}
+                  data-testid="textarea-closing-notes"
+                />
+              </div>
+
+              <Button 
+                className="w-full" 
+                onClick={handleCloseDeal}
+                disabled={closeContractMutation.isPending}
+                data-testid="button-close-deal"
+              >
+                <CheckCircle className="w-4 h-4 mr-2" />
+                {closeContractMutation.isPending ? "Closing Deal..." : "Close Deal & Record Revenue"}
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
