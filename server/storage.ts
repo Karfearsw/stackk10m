@@ -1,10 +1,10 @@
-import { db } from "./db";
+import { db } from "./db.js";
 import { desc } from "drizzle-orm";
 import { 
   leads, properties, contacts, contracts, contractTemplates, contractDocuments, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, offers, timesheetEntries, globalActivityLogs,
   buyers, buyerCommunications, dealAssignments
-} from "./shared-schema";
+} from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
   type Property, type InsertProperty, 
@@ -29,19 +29,19 @@ import {
   type Buyer, type InsertBuyer,
   type BuyerCommunication, type InsertBuyerCommunication,
   type DealAssignment, type InsertDealAssignment
-} from "./shared-schema";
+} from "./shared-schema.js";
 import { eq, and } from "drizzle-orm";
 
 export interface IStorage {
   // Leads
-  getLeads(): Promise<Lead[]>;
+  getLeads(limit?: number, offset?: number): Promise<Lead[]>;
   getLeadById(id: number): Promise<Lead | undefined>;
   createLead(lead: InsertLead): Promise<Lead>;
   updateLead(id: number, lead: Partial<InsertLead>): Promise<Lead>;
   deleteLead(id: number): Promise<void>;
 
   // Properties
-  getProperties(): Promise<Property[]>;
+  getProperties(limit?: number, offset?: number): Promise<Property[]>;
   getPropertyById(id: number): Promise<Property | undefined>;
   getPropertyBySourceLeadId(sourceLeadId: number): Promise<Property | undefined>;
   createProperty(property: InsertProperty): Promise<Property>;
@@ -49,28 +49,28 @@ export interface IStorage {
   deleteProperty(id: number): Promise<void>;
 
   // Contacts
-  getContacts(): Promise<Contact[]>;
+  getContacts(limit?: number, offset?: number): Promise<Contact[]>;
   getContactById(id: number): Promise<Contact | undefined>;
   createContact(contact: InsertContact): Promise<Contact>;
   updateContact(id: number, contact: Partial<InsertContact>): Promise<Contact>;
   deleteContact(id: number): Promise<void>;
 
   // Contracts
-  getContracts(): Promise<Contract[]>;
+  getContracts(limit?: number, offset?: number): Promise<Contract[]>;
   getContractById(id: number): Promise<Contract | undefined>;
   createContract(contract: InsertContract): Promise<Contract>;
   updateContract(id: number, contract: Partial<InsertContract>): Promise<Contract>;
   deleteContract(id: number): Promise<void>;
 
   // Contract Templates
-  getContractTemplates(): Promise<ContractTemplate[]>;
+  getContractTemplates(limit?: number, offset?: number): Promise<ContractTemplate[]>;
   getContractTemplateById(id: number): Promise<ContractTemplate | undefined>;
   createContractTemplate(template: InsertContractTemplate): Promise<ContractTemplate>;
   updateContractTemplate(id: number, template: Partial<InsertContractTemplate>): Promise<ContractTemplate>;
   deleteContractTemplate(id: number): Promise<void>;
 
   // Contract Documents
-  getContractDocuments(): Promise<ContractDocument[]>;
+  getContractDocuments(limit?: number, offset?: number): Promise<ContractDocument[]>;
   getContractDocumentById(id: number): Promise<ContractDocument | undefined>;
   createContractDocument(document: InsertContractDocument): Promise<ContractDocument>;
   updateContractDocument(id: number, document: Partial<InsertContractDocument>): Promise<ContractDocument>;
@@ -81,14 +81,14 @@ export interface IStorage {
   createDocumentVersion(version: InsertDocumentVersion): Promise<DocumentVersion>;
 
   // LOIs
-  getLois(): Promise<Loi[]>;
+  getLois(limit?: number, offset?: number): Promise<Loi[]>;
   getLoiById(id: number): Promise<Loi | undefined>;
   createLoi(loi: InsertLoi): Promise<Loi>;
   updateLoi(id: number, loi: Partial<InsertLoi>): Promise<Loi>;
   deleteLoi(id: number): Promise<void>;
 
   // Users
-  getUsers(): Promise<User[]>;
+  getUsers(limit?: number, offset?: number): Promise<User[]>;
   getUserById(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
@@ -132,7 +132,7 @@ export interface IStorage {
   updateNotificationPreferences(userId: number, prefs: Partial<InsertNotificationPreference>): Promise<NotificationPreference>;
 
   // User Notifications (actual notification messages)
-  getUserNotifications(userId: number): Promise<UserNotification[]>;
+  getUserNotifications(userId: number, limit?: number, offset?: number): Promise<UserNotification[]>;
   getUserNotificationById(id: number): Promise<UserNotification | undefined>;
   createUserNotification(notification: InsertUserNotification): Promise<UserNotification>;
   markNotificationAsRead(id: number): Promise<UserNotification>;
@@ -148,7 +148,7 @@ export interface IStorage {
   deleteUserGoal(id: number): Promise<void>;
 
   // Offers
-  getOffers(): Promise<Offer[]>;
+  getOffers(limit?: number, offset?: number): Promise<Offer[]>;
   getOfferById(id: number): Promise<Offer | undefined>;
   getOffersByUserId(userId: number): Promise<Offer[]>;
   getOffersByPropertyId(propertyId: number): Promise<Offer[]>;
@@ -157,30 +157,30 @@ export interface IStorage {
   deleteOffer(id: number): Promise<void>;
 
   // Timesheet Entries
-  getTimesheetEntries(userId: number): Promise<TimesheetEntry[]>;
+  getTimesheetEntries(userId: number, limit?: number, offset?: number): Promise<TimesheetEntry[]>;
   getTimesheetEntryById(id: number): Promise<TimesheetEntry | undefined>;
   createTimesheetEntry(entry: InsertTimesheetEntry): Promise<TimesheetEntry>;
   updateTimesheetEntry(id: number, entry: Partial<InsertTimesheetEntry>): Promise<TimesheetEntry>;
   deleteTimesheetEntry(id: number): Promise<void>;
 
   // Global Activity Logs
-  getGlobalActivityLogs(limit?: number): Promise<GlobalActivityLog[]>;
+  getGlobalActivityLogs(limit?: number, offset?: number): Promise<GlobalActivityLog[]>;
   createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog>;
 
   // Buyers
-  getBuyers(): Promise<Buyer[]>;
+  getBuyers(limit?: number, offset?: number): Promise<Buyer[]>;
   getBuyerById(id: number): Promise<Buyer | undefined>;
   createBuyer(buyer: InsertBuyer): Promise<Buyer>;
   updateBuyer(id: number, buyer: Partial<InsertBuyer>): Promise<Buyer>;
   deleteBuyer(id: number): Promise<void>;
 
   // Buyer Communications
-  getBuyerCommunications(buyerId: number): Promise<BuyerCommunication[]>;
+  getBuyerCommunications(buyerId: number, limit?: number, offset?: number): Promise<BuyerCommunication[]>;
   createBuyerCommunication(comm: InsertBuyerCommunication): Promise<BuyerCommunication>;
   deleteBuyerCommunication(id: number): Promise<void>;
 
   // Deal Assignments
-  getDealAssignments(): Promise<DealAssignment[]>;
+  getDealAssignments(limit?: number, offset?: number): Promise<DealAssignment[]>;
   getDealAssignmentById(id: number): Promise<DealAssignment | undefined>;
   getDealAssignmentsByPropertyId(propertyId: number): Promise<DealAssignment[]>;
   getDealAssignmentsByBuyerId(buyerId: number): Promise<DealAssignment[]>;
@@ -191,8 +191,10 @@ export interface IStorage {
 
 export class DatabaseStorage implements IStorage {
   // Leads
-  async getLeads(): Promise<Lead[]> {
-    return db.select().from(leads);
+  async getLeads(limit?: number, offset: number = 0): Promise<Lead[]> {
+    let q = db.select().from(leads);
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async getLeadById(id: number): Promise<Lead | undefined> {
@@ -215,8 +217,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Properties
-  async getProperties(): Promise<Property[]> {
-    return db.select().from(properties);
+  async getProperties(limit?: number, offset: number = 0): Promise<Property[]> {
+    let q = db.select().from(properties);
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async getPropertyById(id: number): Promise<Property | undefined> {
@@ -244,8 +248,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Contacts
-  async getContacts(): Promise<Contact[]> {
-    return db.select().from(contacts);
+  async getContacts(limit?: number, offset: number = 0): Promise<Contact[]> {
+    let q = db.select().from(contacts);
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async getContactById(id: number): Promise<Contact | undefined> {
@@ -268,8 +274,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Contracts
-  async getContracts(): Promise<Contract[]> {
-    return db.select().from(contracts);
+  async getContracts(limit?: number, offset: number = 0): Promise<Contract[]> {
+    let q = db.select().from(contracts);
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async getContractById(id: number): Promise<Contract | undefined> {
@@ -292,8 +300,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Contract Templates
-  async getContractTemplates(): Promise<ContractTemplate[]> {
-    return db.select().from(contractTemplates);
+  async getContractTemplates(limit?: number, offset: number = 0): Promise<ContractTemplate[]> {
+    let q = db.select().from(contractTemplates);
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async getContractTemplateById(id: number): Promise<ContractTemplate | undefined> {
@@ -316,8 +326,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Contract Documents
-  async getContractDocuments(): Promise<ContractDocument[]> {
-    return db.select().from(contractDocuments);
+  async getContractDocuments(limit?: number, offset: number = 0): Promise<ContractDocument[]> {
+    let q = db.select().from(contractDocuments);
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async getContractDocumentById(id: number): Promise<ContractDocument | undefined> {
@@ -340,8 +352,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Document Versions
-  async getDocumentVersions(documentId: number): Promise<DocumentVersion[]> {
-    return db.select().from(documentVersions).where(eq(documentVersions.documentId, documentId));
+  async getDocumentVersions(documentId: number, limit?: number, offset: number = 0): Promise<DocumentVersion[]> {
+    let q = db.select().from(documentVersions).where(eq(documentVersions.documentId, documentId));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async createDocumentVersion(version: InsertDocumentVersion): Promise<DocumentVersion> {
@@ -350,8 +364,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // LOIs
-  async getLois(): Promise<Loi[]> {
-    return db.select().from(lois);
+  async getLois(limit?: number, offset: number = 0): Promise<Loi[]> {
+    let q = db.select().from(lois);
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async getLoiById(id: number): Promise<Loi | undefined> {
@@ -374,8 +390,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Users
-  async getUsers(): Promise<User[]> {
-    return db.select().from(users);
+  async getUsers(limit?: number, offset: number = 0): Promise<User[]> {
+    let q = db.select().from(users);
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async getUserById(id: number): Promise<User | undefined> {
@@ -527,8 +545,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // User Notifications (actual notification messages)
-  async getUserNotifications(userId: number): Promise<UserNotification[]> {
-    return db.select().from(userNotifications).where(eq(userNotifications.userId, userId));
+  async getUserNotifications(userId: number, limit?: number, offset: number = 0): Promise<UserNotification[]> {
+    let q = db.select().from(userNotifications).where(eq(userNotifications.userId, userId));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async getUserNotificationById(id: number): Promise<UserNotification | undefined> {
@@ -583,8 +603,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Offers
-  async getOffers(): Promise<Offer[]> {
-    return db.select().from(offers);
+  async getOffers(limit?: number, offset: number = 0): Promise<Offer[]> {
+    let q = db.select().from(offers);
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async getOfferById(id: number): Promise<Offer | undefined> {
@@ -592,12 +614,16 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
-  async getOffersByUserId(userId: number): Promise<Offer[]> {
-    return db.select().from(offers).where(eq(offers.userId, userId));
+  async getOffersByUserId(userId: number, limit?: number, offset: number = 0): Promise<Offer[]> {
+    let q = db.select().from(offers).where(eq(offers.userId, userId));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
-  async getOffersByPropertyId(propertyId: number): Promise<Offer[]> {
-    return db.select().from(offers).where(eq(offers.propertyId, propertyId));
+  async getOffersByPropertyId(propertyId: number, limit?: number, offset: number = 0): Promise<Offer[]> {
+    let q = db.select().from(offers).where(eq(offers.propertyId, propertyId));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async createOffer(offer: InsertOffer): Promise<Offer> {
@@ -615,8 +641,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Timesheet Entries
-  async getTimesheetEntries(userId: number): Promise<TimesheetEntry[]> {
-    return db.select().from(timesheetEntries).where(eq(timesheetEntries.userId, userId));
+  async getTimesheetEntries(userId: number, limit?: number, offset: number = 0): Promise<TimesheetEntry[]> {
+    let q = db.select().from(timesheetEntries).where(eq(timesheetEntries.userId, userId));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async getTimesheetEntryById(id: number): Promise<TimesheetEntry | undefined> {
@@ -639,8 +667,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Global Activity Logs
-  async getGlobalActivityLogs(limit: number = 50): Promise<GlobalActivityLog[]> {
-    return db.select().from(globalActivityLogs).orderBy(desc(globalActivityLogs.createdAt)).limit(limit);
+  async getGlobalActivityLogs(limit: number = 50, offset: number = 0): Promise<GlobalActivityLog[]> {
+    return db.select().from(globalActivityLogs).orderBy(desc(globalActivityLogs.createdAt)).offset(offset).limit(limit);
   }
 
   async createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog> {
@@ -649,8 +677,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Buyers
-  async getBuyers(): Promise<Buyer[]> {
-    return db.select().from(buyers);
+  async getBuyers(limit?: number, offset: number = 0): Promise<Buyer[]> {
+    let q = db.select().from(buyers);
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async getBuyerById(id: number): Promise<Buyer | undefined> {
@@ -673,8 +703,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Buyer Communications
-  async getBuyerCommunications(buyerId: number): Promise<BuyerCommunication[]> {
-    return db.select().from(buyerCommunications).where(eq(buyerCommunications.buyerId, buyerId)).orderBy(desc(buyerCommunications.createdAt));
+  async getBuyerCommunications(buyerId: number, limit?: number, offset: number = 0): Promise<BuyerCommunication[]> {
+    let q = db.select().from(buyerCommunications).where(eq(buyerCommunications.buyerId, buyerId)).orderBy(desc(buyerCommunications.createdAt));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async createBuyerCommunication(comm: InsertBuyerCommunication): Promise<BuyerCommunication> {
@@ -687,8 +719,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Deal Assignments
-  async getDealAssignments(): Promise<DealAssignment[]> {
-    return db.select().from(dealAssignments);
+  async getDealAssignments(limit?: number, offset: number = 0): Promise<DealAssignment[]> {
+    let q = db.select().from(dealAssignments);
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async getDealAssignmentById(id: number): Promise<DealAssignment | undefined> {
@@ -696,12 +730,16 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
-  async getDealAssignmentsByPropertyId(propertyId: number): Promise<DealAssignment[]> {
-    return db.select().from(dealAssignments).where(eq(dealAssignments.propertyId, propertyId));
+  async getDealAssignmentsByPropertyId(propertyId: number, limit?: number, offset: number = 0): Promise<DealAssignment[]> {
+    let q = db.select().from(dealAssignments).where(eq(dealAssignments.propertyId, propertyId));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
-  async getDealAssignmentsByBuyerId(buyerId: number): Promise<DealAssignment[]> {
-    return db.select().from(dealAssignments).where(eq(dealAssignments.buyerId, buyerId));
+  async getDealAssignmentsByBuyerId(buyerId: number, limit?: number, offset: number = 0): Promise<DealAssignment[]> {
+    let q = db.select().from(dealAssignments).where(eq(dealAssignments.buyerId, buyerId));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q;
   }
 
   async createDealAssignment(assignment: InsertDealAssignment): Promise<DealAssignment> {

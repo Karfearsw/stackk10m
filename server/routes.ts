@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import bcrypt from "bcryptjs";
-import { storage } from "./storage";
+import { storage } from "./storage.js";
 import { 
   insertLeadSchema, 
   insertPropertySchema, 
@@ -25,7 +25,7 @@ import {
   insertBuyerSchema,
   insertBuyerCommunicationSchema,
   insertDealAssignmentSchema
-} from "./shared-schema";
+} from "./shared-schema.js";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // HEALTH CHECK
@@ -144,7 +144,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // LEADS ENDPOINTS
   app.get("/api/leads", async (req, res) => {
     try {
-      const allLeads = await storage.getLeads();
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const allLeads = await storage.getLeads(limit, offset);
       res.json(allLeads);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -291,7 +293,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // PROPERTIES ENDPOINTS
   app.get("/api/properties", async (req, res) => {
     try {
-      const allProperties = await storage.getProperties();
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const allProperties = await storage.getProperties(limit, offset);
       res.json(allProperties);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -371,7 +375,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // CONTRACTS ENDPOINTS
   app.get("/api/contracts", async (req, res) => {
     try {
-      const allContracts = await storage.getContracts();
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const allContracts = await storage.getContracts(limit, offset);
       res.json(allContracts);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -420,7 +426,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // CONTACTS ENDPOINTS
   app.get("/api/contacts", async (req, res) => {
     try {
-      const allContacts = await storage.getContacts();
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const allContacts = await storage.getContacts(limit, offset);
       res.json(allContacts);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -440,7 +448,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // CONTRACT TEMPLATES ENDPOINTS
   app.get("/api/contract-templates", async (req, res) => {
     try {
-      const templates = await storage.getContractTemplates();
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const templates = await storage.getContractTemplates(limit, offset);
       res.json(templates);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -489,7 +499,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // CONTRACT DOCUMENTS ENDPOINTS
   app.get("/api/contract-documents", async (req, res) => {
     try {
-      const documents = await storage.getContractDocuments();
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const documents = await storage.getContractDocuments(limit, offset);
       res.json(documents);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -561,7 +573,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // LOIS ENDPOINTS
   app.get("/api/lois", async (req, res) => {
     try {
-      const allLois = await storage.getLois();
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const allLois = await storage.getLois(limit, offset);
       res.json(allLois);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -610,7 +624,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // USERS ENDPOINTS
   app.get("/api/users", async (req, res) => {
     try {
-      const users = await storage.getUsers();
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const users = await storage.getUsers(limit, offset);
       res.json(users);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -918,7 +934,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // USER NOTIFICATIONS ENDPOINTS (actual notification messages)
   app.get("/api/users/:userId/notifications", async (req, res) => {
     try {
-      const notifications = await storage.getUserNotifications(parseInt(req.params.userId));
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const notifications = await storage.getUserNotifications(parseInt(req.params.userId), limit, offset);
       res.json(notifications);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -1025,16 +1043,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.query.userId ? parseInt(req.query.userId as string) : undefined;
       const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       
       if (userId) {
-        const offers = await storage.getOffersByUserId(userId);
+        const offers = await storage.getOffersByUserId(userId, limit, offset);
         return res.json(offers);
       }
       if (propertyId) {
-        const offers = await storage.getOffersByPropertyId(propertyId);
+        const offers = await storage.getOffersByPropertyId(propertyId, limit, offset);
         return res.json(offers);
       }
-      const offers = await storage.getOffers();
+      const offers = await storage.getOffers(limit, offset);
       res.json(offers);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -1083,7 +1103,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // TIMESHEET ENTRIES ENDPOINTS
   app.get("/api/users/:userId/timesheet", async (req, res) => {
     try {
-      const entries = await storage.getTimesheetEntries(parseInt(req.params.userId));
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const entries = await storage.getTimesheetEntries(parseInt(req.params.userId), limit, offset);
       res.json(entries);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -1132,7 +1154,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // BUYERS ENDPOINTS
   app.get("/api/buyers", async (req, res) => {
     try {
-      const buyers = await storage.getBuyers();
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const buyers = await storage.getBuyers(limit, offset);
       res.json(buyers);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -1181,7 +1205,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // BUYER COMMUNICATIONS ENDPOINTS
   app.get("/api/buyers/:buyerId/communications", async (req, res) => {
     try {
-      const comms = await storage.getBuyerCommunications(parseInt(req.params.buyerId));
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const comms = await storage.getBuyerCommunications(parseInt(req.params.buyerId), limit, offset);
       res.json(comms);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -1213,7 +1239,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // DEAL ASSIGNMENTS ENDPOINTS
   app.get("/api/deal-assignments", async (req, res) => {
     try {
-      const assignments = await storage.getDealAssignments();
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const assignments = await storage.getDealAssignments(limit, offset);
       res.json(assignments);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -1232,7 +1260,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/properties/:propertyId/assignments", async (req, res) => {
     try {
-      const assignments = await storage.getDealAssignmentsByPropertyId(parseInt(req.params.propertyId));
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const assignments = await storage.getDealAssignmentsByPropertyId(parseInt(req.params.propertyId), limit, offset);
       res.json(assignments);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -1241,7 +1271,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/buyers/:buyerId/assignments", async (req, res) => {
     try {
-      const assignments = await storage.getDealAssignmentsByBuyerId(parseInt(req.params.buyerId));
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const assignments = await storage.getDealAssignmentsByBuyerId(parseInt(req.params.buyerId), limit, offset);
       res.json(assignments);
     } catch (error: any) {
       res.status(500).json({ message: error.message });

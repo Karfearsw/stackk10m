@@ -2,8 +2,8 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import session from 'express-session';
-import { registerRoutes } from './server/routes';
-import { storage } from './server/storage';
+import { registerRoutes } from '../server/routes';
+import { storage } from '../server/storage';
 
 // Mock storage to avoid DB connection
 storage.getUserByEmail = async () => undefined;

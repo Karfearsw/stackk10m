@@ -4,8 +4,11 @@ import express, { type Express, type Request, Response, NextFunction } from "exp
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import helmet from "helmet";
-import { db } from "./db";
-import { registerRoutes } from "./routes";
+import { db } from "./db.js";
+import { registerRoutes } from "./routes.js";
+import { initSentry, Sentry } from "./sentry";
+import crypto from "node:crypto";
+import { httpRequestsTotal, httpErrorsTotal, metricsText } from "./metrics";
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -19,6 +22,11 @@ export function log(message: string, source = "express") {
 }
 
 export const app = express();
+
+initSentry();
+if (process.env.SENTRY_DSN) {
+  app.use(Sentry.Handlers.requestHandler());
+}
 
 app.use(helmet({
   contentSecurityPolicy: false, // Disabled for simplicity with Vite dev server scripts
@@ -85,6 +93,7 @@ app.use(express.urlencoded({ extended: false }));
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
+  const requestId = (req.headers["x-request-id"] as string) || crypto.randomUUID();
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
 
   const originalResJson = res.json;
@@ -96,7 +105,7 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms id=${requestId}`;
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
@@ -106,6 +115,10 @@ app.use((req, res, next) => {
       }
 
       log(logLine);
+      httpRequestsTotal.labels(req.method, path, String(res.statusCode)).inc();
+      if (res.statusCode >= 500) {
+        httpErrorsTotal.labels(path, String(res.statusCode)).inc();
+      }
     }
   });
 
@@ -117,6 +130,15 @@ export default async function runApp(
 ) {
   const server = await registerRoutes(app);
 
+  app.get("/api/metrics", async (_req, res) => {
+    const text = await metricsText();
+    res.setHeader("Content-Type", "text/plain");
+    res.send(text);
+  });
+
+  if (process.env.SENTRY_DSN) {
+    app.use(Sentry.Handlers.errorHandler());
+  }
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";

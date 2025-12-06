@@ -1,5 +1,5 @@
-import { app } from "./app";
-import { registerRoutes } from "./routes";
+import { app } from "./app.js";
+import { registerRoutes } from "./routes.js";
 
 // Register API routes on the Express app
 registerRoutes(app);

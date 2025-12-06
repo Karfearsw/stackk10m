@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import { storage } from "./storage";
+import { storage } from "./storage.js";
 
 async function bootstrapAdmin() {
   try {

@@ -9,9 +9,9 @@ if (!process.env.DATABASE_URL) {
 // Use connection string from environment
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Explicitly enable SSL for production if not present in connection string
-  // but usually connection string params take precedence.
-  // We rely on ?sslmode=require in the URL.
+  max: 3,
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 5000,
 });
 
 // Log connection errors

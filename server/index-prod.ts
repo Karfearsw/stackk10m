@@ -5,7 +5,7 @@ import "dotenv/config";
 
 import express, { type Express, type Request } from "express";
 
-import runApp from "./app";
+import runApp from "./app.js";
 
 export async function serveStatic(app: Express, server: Server) {
   const distPath = path.resolve(import.meta.dirname, "public");
