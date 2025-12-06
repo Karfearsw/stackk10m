@@ -51,12 +51,23 @@ npx vitest run
 
 1. Push to GitHub.
 2. Import project into Vercel.
-3. Configure Environment Variables in Vercel Settings.
+3. Configure **Environment Variables** (Settings -> Environment Variables):
+   - `DATABASE_URL`: Your Neon connection string (Use `sslmode=require`, **remove** `channel_binding=require` if present).
+   - `SESSION_SECRET`: A strong random string.
+   - `EMPLOYEE_ACCESS_CODE`: e.g. `3911`.
+   - `NODE_ENV`: `production`.
 4. Deploy.
+
+### Troubleshooting Vercel 500 Errors
+If you encounter `500 INTERNAL_SERVER_ERROR` on signup/login:
+- Verify `DATABASE_URL` does not have `channel_binding=require`.
+- Ensure `SESSION_SECRET` and `EMPLOYEE_ACCESS_CODE` are set.
+- Check Vercel Function logs for startup errors.
 
 ## CI/CD
 
 GitHub Actions are configured in `.github/workflows/ci.yml` to run type checks, builds, and tests on every push/PR.
+Docker builds are pushed to GHCR via `.github/workflows/docker-publish.yml`.
 
 ## Security
 

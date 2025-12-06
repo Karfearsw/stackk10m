@@ -28,6 +28,11 @@ import {
 } from "@shared/schema";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // HEALTH CHECK
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
   // AUTH ENDPOINTS
   app.post("/api/auth/login", async (req, res) => {
     try {
