@@ -4,7 +4,7 @@ import {
   leads, properties, contacts, contracts, contractTemplates, contractDocuments, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, offers, timesheetEntries, globalActivityLogs,
   buyers, buyerCommunications, dealAssignments
-} from "@shared/schema";
+} from "../shared/schema";
 import { 
   type Lead, type InsertLead, 
   type Property, type InsertProperty, 
