@@ -2,7 +2,7 @@
   "version": 2,
   "builds": [
     {
-      "src": "server/index-prod.ts",
+      "src": "server/index-vercel.ts",
       "use": "@vercel/node"
     },
     {
@@ -12,7 +12,7 @@
     }
   ],
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "/server/index-prod.ts" },
+    { "source": "/api/(.*)", "destination": "/server/index-vercel.ts" },
     { "source": "/(.*)", "destination": "/dist/public/index.html" }
   ]
 }
