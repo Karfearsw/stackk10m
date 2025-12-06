@@ -29,7 +29,7 @@ import {
   type Buyer, type InsertBuyer,
   type BuyerCommunication, type InsertBuyerCommunication,
   type DealAssignment, type InsertDealAssignment
-} from "@shared/schema";
+} from "../shared/schema";
 import { eq, and } from "drizzle-orm";
 
 export interface IStorage {
