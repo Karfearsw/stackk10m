@@ -13,6 +13,6 @@
   ],
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/server/index-vercel.ts" },
-    { "source": "/(.*)", "destination": "/dist/public/index.html" }
+    { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
