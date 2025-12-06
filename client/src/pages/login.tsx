@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'wouter';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -85,9 +86,9 @@ export default function Login() {
           <div className="mt-6 text-center text-sm text-muted-foreground">
             <p>Real Estate Wholesaling CRM</p>
             <p className="mt-2">Don't have an account?</p>
-            <a href="/signup" className="text-primary hover:underline font-medium">
+            <Link href="/signup" className="text-primary hover:underline font-medium">
               Sign up as an employee
-            </a>
+            </Link>
             <p className="mt-4 text-xs">© 2025 FlipStackk. All rights reserved.</p>
           </div>
         </CardContent>
