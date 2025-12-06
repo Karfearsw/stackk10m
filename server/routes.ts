@@ -29,8 +29,15 @@ import {
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // HEALTH CHECK
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  app.get("/api/health", async (req, res) => {
+    try {
+      // Perform a simple query to verify DB connectivity
+      await storage.getUserByEmail("test@example.com");
+      res.json({ status: "ok", db: "connected", timestamp: new Date().toISOString() });
+    } catch (error: any) {
+      console.error("Health check failed:", error);
+      res.status(500).json({ status: "error", db: "disconnected", message: error.message });
+    }
   });
 
   // AUTH ENDPOINTS
