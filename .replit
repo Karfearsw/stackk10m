@@ -42,7 +42,3 @@ integrations = ["github:1.0.0"]
 [[ports]]
 localPort = 5000
 externalPort = 80
-
-[[ports]]
-localPort = 39255
-externalPort = 3000

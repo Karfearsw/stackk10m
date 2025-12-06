@@ -44,6 +44,10 @@ if (!sessionSecret) {
   throw new Error('SESSION_SECRET must be set');
 }
 
+if (process.env.NODE_ENV === 'production' && !process.env.EMPLOYEE_ACCESS_CODE) {
+  throw new Error('EMPLOYEE_ACCESS_CODE environment variable is required in production');
+}
+
 // Use PostgreSQL-backed session store for production-ready persistence
 const PgSession = connectPgSimple(session);
 
@@ -128,7 +132,6 @@ export default async function runApp(
   server.listen({
     port,
     host: "0.0.0.0",
-    reusePort: true,
   }, () => {
     log(`serving on port ${port}`);
   });

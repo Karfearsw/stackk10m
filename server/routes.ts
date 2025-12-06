@@ -63,10 +63,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/signup", async (req, res) => {
     try {
-      const { firstName, lastName, email, password, role = "employee", isSuperAdmin = false, isActive = true } = req.body;
+      const { firstName, lastName, email, password, role = "employee", isSuperAdmin = false, isActive = true, employeeCode } = req.body;
       
       if (!firstName || !lastName || !email || !password) {
         return res.status(400).json({ message: "All fields are required" });
+      }
+
+      const accessCode = process.env.EMPLOYEE_ACCESS_CODE || "3911";
+      if (!employeeCode || employeeCode !== accessCode) {
+        return res.status(403).json({ message: "Invalid employee code" });
       }
 
       const existingUser = await storage.getUserByEmail(email);

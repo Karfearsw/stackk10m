@@ -54,6 +54,7 @@ export default function Signup() {
           lastName,
           email,
           password,
+          employeeCode,
           role: 'employee',
           isSuperAdmin: false,
           isActive: true,
