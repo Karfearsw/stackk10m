@@ -3,6 +3,7 @@ import { type Server } from "node:http";
 import express, { type Express, type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
+import helmet from "helmet";
 import { db } from "./db";
 import { registerRoutes } from "./routes";
 
@@ -18,6 +19,10 @@ export function log(message: string, source = "express") {
 }
 
 export const app = express();
+
+app.use(helmet({
+  contentSecurityPolicy: false, // Disabled for simplicity with Vite dev server scripts
+}));
 
 declare module 'http' {
   interface IncomingMessage {
