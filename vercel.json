@@ -2,6 +2,6 @@
   "version": 2,
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index" },
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/((?!api/|assets/|favicon.ico|logo.jpg|flipstackk-logo.jpg).*)", "destination": "/index.html" }
   ]
 }
