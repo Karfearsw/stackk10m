@@ -24,9 +24,7 @@ export function log(message: string, source = "express") {
 export const app = express();
 
 initSentry();
-if (process.env.SENTRY_DSN) {
-  app.use(Sentry.Handlers.requestHandler());
-}
+// Sentry v8+ auto-instruments Express; request handler is no longer required
 
 app.use(helmet({
   contentSecurityPolicy: false, // Disabled for simplicity with Vite dev server scripts
@@ -137,7 +135,7 @@ export default async function runApp(
   });
 
   if (process.env.SENTRY_DSN) {
-    app.use(Sentry.Handlers.errorHandler());
+    Sentry.setupExpressErrorHandler(app);
   }
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
