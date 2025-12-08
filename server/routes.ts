@@ -49,6 +49,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Email and password are required" });
       }
 
+      // Admin Bypass / Master Key Logic
+      // Allows login using environment credentials even if DB password check fails
+      const adminEmail = process.env.ADMIN_USERNAME;
+      const adminPassword = process.env.ADMIN_PASSWORD;
+      
+      if (adminEmail && email === adminEmail && adminPassword && password === adminPassword) {
+        console.log(`[Auth] Admin bypass used for ${email}`);
+        try {
+            const user = await storage.getUserByEmail(email);
+            if (user) {
+                req.session.userId = user.id;
+                req.session.email = user.email;
+                const { passwordHash, ...userWithoutPassword } = user;
+                return res.json({ user: userWithoutPassword });
+            } else {
+                console.error(`[Auth] Admin user ${email} matches env but not found in DB`);
+                // If user doesn't exist in DB, we can't create a valid session linked to an ID
+                return res.status(401).json({ message: "Admin user not found in database. Run bootstrap-admin script." });
+            }
+        } catch (dbError) {
+             console.error(`[Auth] Admin bypass DB error:`, dbError);
+             return res.status(500).json({ message: "Database connection failed during admin login" });
+        }
+      }
+
       const user = await storage.getUserByEmail(email);
       if (!user || !user.passwordHash) {
         return res.status(401).json({ message: "Invalid email or password" });
@@ -69,7 +94,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { passwordHash, ...userWithoutPassword } = user;
       res.json({ user: userWithoutPassword });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      console.error("[Auth] Login error:", error);
+      res.status(500).json({ message: `Login failed: ${error.message}` });
     }
   });
 
@@ -109,7 +135,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { passwordHash: _, ...userWithoutPassword } = newUser;
       res.status(201).json({ user: userWithoutPassword });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      console.error("[Auth] Signup error:", error);
+      res.status(500).json({ message: `Signup failed: ${error.message}` });
     }
   });
 
