@@ -29,17 +29,17 @@ function SettingsContent() {
 
   // Fetch user data
   const { data: userData, isLoading: userLoading } = useQuery<any>({
-    queryKey: [`/api/users/${user.id}`],
+    queryKey: [`/api/users/${user!.id}`],
   });
 
   // Fetch 2FA status
   const { data: twoFactorData } = useQuery<any>({
-    queryKey: [`/api/users/${user.id}/2fa`],
+    queryKey: [`/api/users/${user!.id}/2fa`],
   });
 
   // Fetch notification preferences
   const { data: notificationPrefs, isLoading: notifsLoading } = useQuery<any>({
-    queryKey: [`/api/users/${user.id}/notification-preferences`],
+    queryKey: [`/api/users/${user!.id}/notification-preferences`],
   });
 
   // Fetch team members
@@ -49,14 +49,14 @@ function SettingsContent() {
 
   // Fetch goals
   const { data: goals = [], isLoading: goalsLoading } = useQuery<any[]>({
-    queryKey: [`/api/users/${user.id}/goals`],
+    queryKey: [`/api/users/${user!.id}/goals`],
   });
 
   // Fetch offers
   const { data: offers = [], isLoading: offersLoading } = useQuery<any[]>({
     queryKey: [`/api/offers`],
     queryFn: async () => {
-      const res = await fetch(`/api/offers?userId=${user.id}`, { credentials: 'include' });
+      const res = await fetch(`/api/offers?userId=${user!.id}`, { credentials: 'include' });
       if (!res.ok) throw new Error('Failed to fetch offers');
       return res.json();
     },
