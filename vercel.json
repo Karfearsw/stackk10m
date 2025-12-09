@@ -1,5 +1,7 @@
 {
   "version": 2,
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index" },
     { "source": "/((?!api/|assets/|favicon.ico|logo.jpg|flipstackk-logo.jpg).*)", "destination": "/index.html" }
