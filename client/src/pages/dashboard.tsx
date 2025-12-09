@@ -5,6 +5,7 @@ import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianG
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { MotivationalBanner } from "@/components/dashboard/MotivationalBanner";
+import { PipelineBar } from "@/components/dashboard/PipelineBar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -232,6 +233,7 @@ export default function Dashboard() {
   return (
     <Layout>
       <MotivationalBanner />
+      <PipelineBar />
       <div className="flex flex-col gap-2">
         <h1 className="text-3xl font-bold tracking-tight text-foreground" data-testid="page-title">Dashboard</h1>
         <p className="text-muted-foreground">Overview of your wholesaling operations and performance metrics.</p>

@@ -1,7 +1,10 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import bcrypt from "bcryptjs";
+import { SignJWT } from "jose";
 import { storage } from "./storage.js";
+import { db } from "./db.js";
+import { sql } from "drizzle-orm";
 import { 
   insertLeadSchema, 
   insertPropertySchema, 
@@ -37,6 +40,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Health check failed:", error);
       res.status(500).json({ status: "error", db: "disconnected", message: error.message });
+    }
+  });
+
+  // GLOBAL SEARCH
+  app.get("/api/search", async (req, res) => {
+    const startedAt = Date.now();
+    try {
+      const qRaw = (req.query.q as string) || "";
+      const q = qRaw.trim();
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      if (!q) return res.json({ q: qRaw, results: [], counts: { leads: 0, properties: 0, contacts: 0, total: 0 } });
+
+      const term = `%${q}%`;
+
+      const countsPromises = [
+        db.execute(sql`SELECT COUNT(*)::int AS c FROM leads l WHERE 
+          lower(l.address) LIKE lower(${term}) OR lower(l.city) LIKE lower(${term}) OR lower(l.state) LIKE lower(${term}) OR
+          lower(l.owner_name) LIKE lower(${term}) OR lower(l.owner_phone) LIKE lower(${term}) OR lower(l.owner_email) LIKE lower(${term})
+        `),
+        db.execute(sql`SELECT COUNT(*)::int AS c FROM properties p WHERE 
+          lower(p.address) LIKE lower(${term}) OR lower(p.city) LIKE lower(${term}) OR lower(p.state) LIKE lower(${term}) OR
+          lower(p.apn) LIKE lower(${term}) OR lower(p.zip_code) LIKE lower(${term})
+        `),
+        db.execute(sql`SELECT COUNT(*)::int AS c FROM contacts c WHERE 
+          lower(c.name) LIKE lower(${term}) OR lower(c.email) LIKE lower(${term}) OR lower(c.phone) LIKE lower(${term})
+        `),
+      ];
+
+      const [leadCountRow, propertyCountRow, contactCountRow] = await Promise.all(countsPromises);
+      const leadCount = (leadCountRow as any).rows?.[0]?.c ?? 0;
+      const propertyCount = (propertyCountRow as any).rows?.[0]?.c ?? 0;
+      const contactCount = (contactCountRow as any).rows?.[0]?.c ?? 0;
+
+      const resultsQuery = sql`(
+        SELECT 'lead' AS type, l.id AS id, l.address AS title, (l.city || ', ' || l.state) AS subtitle,
+               '/leads' AS path,
+               CASE 
+                 WHEN lower(l.address) LIKE lower(${term}) THEN 1
+                 WHEN lower(l.owner_name) LIKE lower(${term}) THEN 2
+                 ELSE 3
+               END AS rank
+        FROM leads l
+        WHERE lower(l.address) LIKE lower(${term}) OR lower(l.city) LIKE lower(${term}) OR lower(l.state) LIKE lower(${term}) OR
+              lower(l.owner_name) LIKE lower(${term}) OR lower(l.owner_phone) LIKE lower(${term}) OR lower(l.owner_email) LIKE lower(${term})
+      )
+      UNION ALL
+      (
+        SELECT 'opportunity' AS type, p.id AS id, p.address AS title, (p.city || ', ' || p.state) AS subtitle,
+               ('/opportunities/' || p.id)::text AS path,
+               CASE 
+                 WHEN lower(p.address) LIKE lower(${term}) THEN 1
+                 WHEN lower(p.apn) LIKE lower(${term}) THEN 2
+                 ELSE 3
+               END AS rank
+        FROM properties p
+        WHERE lower(p.address) LIKE lower(${term}) OR lower(p.city) LIKE lower(${term}) OR lower(p.state) LIKE lower(${term}) OR
+              lower(p.apn) LIKE lower(${term}) OR lower(p.zip_code) LIKE lower(${term})
+      )
+      UNION ALL
+      (
+        SELECT 'contact' AS type, c.id AS id, c.name AS title, COALESCE(c.phone, c.email, '') AS subtitle,
+               '/contacts' AS path,
+               CASE 
+                 WHEN lower(c.name) LIKE lower(${term}) THEN 1
+                 ELSE 3
+               END AS rank
+        FROM contacts c
+        WHERE lower(c.name) LIKE lower(${term}) OR lower(c.email) LIKE lower(${term}) OR lower(c.phone) LIKE lower(${term})
+      )
+      ORDER BY rank ASC, title ASC
+      LIMIT ${limit} OFFSET ${offset}`;
+
+      const resultsRows: any = await db.execute(resultsQuery as any);
+      const results = (resultsRows as any).rows ?? [];
+
+      const total = leadCount + propertyCount + contactCount;
+
+      const elapsedMs = Date.now() - startedAt;
+      console.log(`[search] q="${qRaw}" results=${results.length}/${total} leads=${leadCount} properties=${propertyCount} contacts=${contactCount} in ${elapsedMs}ms`);
+      res.json({ q: qRaw, results, counts: { leads: leadCount, properties: propertyCount, contacts: contactCount, total } });
+    } catch (error: any) {
+      console.error('[search] error', error);
+      res.status(500).json({ message: error.message });
     }
   });
 
@@ -317,7 +404,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // PROPERTIES ENDPOINTS
+  // OPPORTUNITIES ENDPOINTS (New Terminology)
+  app.get("/api/opportunities", async (req, res) => {
+    try {
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const allProperties = await storage.getProperties(limit, offset);
+      res.json(allProperties);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/opportunities/:id", async (req, res) => {
+    try {
+      const property = await storage.getPropertyById(parseInt(req.params.id));
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      res.json(property);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/opportunities", async (req, res) => {
+    try {
+      const validated = insertPropertySchema.parse(req.body);
+      const property = await storage.createProperty(validated);
+      
+      if (req.session.userId) {
+        await storage.createGlobalActivity({
+          userId: req.session.userId,
+          action: "created_opportunity",
+          description: `Added new opportunity: ${property.address}`,
+          metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
+        });
+      }
+      
+      res.status(201).json(property);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/opportunities/:id", async (req, res) => {
+    try {
+      const partial = insertPropertySchema.partial().parse(req.body);
+      const property = await storage.updateProperty(parseInt(req.params.id), partial);
+      
+      if (req.session.userId) {
+        await storage.createGlobalActivity({
+          userId: req.session.userId,
+          action: "updated_opportunity",
+          description: `Updated opportunity: ${property.address}`,
+          metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
+        });
+      }
+      
+      res.json(property);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/opportunities/:id", async (req, res) => {
+    try {
+      const property = await storage.getPropertyById(parseInt(req.params.id));
+      await storage.deleteProperty(parseInt(req.params.id));
+      
+      if (req.session.userId && property) {
+        await storage.createGlobalActivity({
+          userId: req.session.userId,
+          action: "deleted_opportunity",
+          description: `Deleted opportunity: ${property.address}`,
+          metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
+        });
+      }
+      
+      res.json({ message: "Opportunity deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // PROPERTIES ENDPOINTS (Legacy Proxies)
   app.get("/api/properties", async (req, res) => {
     try {
       const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
@@ -326,6 +495,372 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(allProperties);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
+    }
+  });
+
+  // TELEPHONY ENDPOINTS (Dialer)
+  app.post("/api/telephony/calls", async (req, res) => {
+    try {
+      const { direction, number, contactId, status, startedAt, metadata } = req.body || {};
+      const userId = req.session.userId || 0;
+      const log = await storage.createCallLog({
+        userId,
+        direction,
+        number,
+        contactId: contactId ?? null as any,
+        status: status || "dialing",
+        startedAt: startedAt ? new Date(startedAt) : new Date(),
+        metadata: metadata ? JSON.stringify(metadata) : null as any,
+      } as any);
+      res.status(201).json(log);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/telephony/calls/:id", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const patch = req.body || {};
+      if (patch.metadata && typeof patch.metadata !== "string") patch.metadata = JSON.stringify(patch.metadata);
+      const updated = await storage.updateCallLog(id, patch);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/telephony/history", async (req, res) => {
+    try {
+      const { limit, offset, status, contactId } = req.query as any;
+      const items = await storage.getCallLogs(
+        limit ? parseInt(limit) : undefined,
+        offset ? parseInt(offset) : 0,
+        status as string | undefined,
+        contactId ? parseInt(contactId as string) : undefined,
+      );
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/telephony/contacts", async (req, res) => {
+    try {
+      const q = (req.query.query as string || "").toLowerCase();
+      const all = await storage.getContacts(100, 0);
+      const filtered = all.filter(c => (
+        (c.name || "").toLowerCase().includes(q) || (c.phone || "").includes(q)
+      ));
+      res.json({ items: filtered.map(c => ({ id: c.id, name: c.name, numbers: [c.phone].filter(Boolean) })) });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/telephony/presence", async (req, res) => {
+    try {
+      const number = req.query.number as string;
+      // Placeholder presence; integrate SwitchFree later
+      res.json({ number, available: true, lastSeenAt: new Date().toISOString() });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/telephony/health", async (req, res) => {
+    try {
+      // Check database connectivity
+      await storage.getUserByEmail("test@example.com");
+      
+      // Check SignalWire connectivity
+      const space = process.env.SIGNALWIRE_SPACE_URL?.replace(/^https?:\/\//, "");
+      const project = process.env.SIGNALWIRE_PROJECT_ID;
+      const token = process.env.SIGNALWIRE_API_TOKEN;
+      
+      let signalwireStatus = "unconfigured";
+      if (space && project && token) {
+        try {
+          const url = `https://${space}/api/laml/2010-04-01/Accounts/${project}.json`;
+          const auth = Buffer.from(`${project}:${token}`).toString("base64");
+          const resp = await fetch(url, { 
+            method: "GET", 
+            headers: { "Authorization": `Basic ${auth}` },
+            signal: AbortSignal.timeout(5000) // 5 second timeout
+          });
+          signalwireStatus = resp.ok ? "reachable" : "unreachable";
+        } catch (error) {
+          signalwireStatus = "error";
+          console.error("SignalWire health check failed:", error);
+        }
+      }
+      
+      res.json({ 
+        status: "ok", 
+        db: "connected", 
+        signalwire: signalwireStatus,
+        timestamp: new Date().toISOString(),
+        numbers: process.env.DIALER_NUMBERS_JSON ? JSON.parse(process.env.DIALER_NUMBERS_JSON) : [],
+        defaultFrom: process.env.DIALER_DEFAULT_FROM_NUMBER || null
+      });
+    } catch (error: any) {
+      console.error("Telephony health check failed:", error);
+      res.status(500).json({ 
+        status: "error", 
+        db: "disconnected", 
+        signalwire: "error",
+        message: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
+  app.post("/api/telephony/signalwire/token", async (req, res) => {
+    try {
+      const { to, from } = req.body || {};
+      
+      if (!to) {
+        return res.status(400).json({ message: "Destination number (to) is required" });
+      }
+      
+      const space = process.env.SIGNALWIRE_SPACE_URL?.replace(/^https?:\/\//, "");
+      const project = process.env.SIGNALWIRE_PROJECT_ID;
+      const token = process.env.SIGNALWIRE_API_TOKEN;
+      
+      if (!space || !project || !token) {
+        return res.status(500).json({ message: "SignalWire credentials not configured" });
+      }
+      
+      // Generate a short-lived JWT token for WebRTC
+      const payload = {
+        iss: project,
+        sub: req.session.userId?.toString() || 'anonymous',
+        aud: `https://${space}`,
+        exp: Math.floor(Date.now() / 1000) + 300, // 5 minutes
+        iat: Math.floor(Date.now() / 1000),
+        scope: 'voice',
+        resource: {
+          type: 'call',
+          to: to,
+          from: from || process.env.DIALER_DEFAULT_FROM_NUMBER
+        }
+      };
+      const secret = new TextEncoder().encode(token);
+      const jwtToken = await new SignJWT(payload as any)
+        .setProtectedHeader({ alg: 'HS256' })
+        .sign(secret);
+      
+      res.json({ 
+        token: jwtToken,
+        expiresAt: new Date(payload.exp * 1000).toISOString(),
+        space: `wss://${space}`,
+        project: project,
+        from: from || process.env.DIALER_DEFAULT_FROM_NUMBER || null
+      });
+    } catch (error: any) {
+      console.error("WebRTC token generation failed:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/telephony/sms", async (req, res) => {
+    try {
+      const { to, from, body } = req.body || {};
+      const space = process.env.SIGNALWIRE_SPACE_URL?.replace(/^https?:\/\//, "") || "";
+      const project = process.env.SIGNALWIRE_PROJECT_ID || "";
+      const token = process.env.SIGNALWIRE_API_TOKEN || "";
+      const url = `https://${space}/api/laml/2010-04-01/Accounts/${project}/Messages.json`;
+      const form = new URLSearchParams({ From: from, To: to, Body: body });
+      const auth = Buffer.from(`${project}:${token}`).toString("base64");
+      const resp = await fetch(url, { method: "POST", headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" }, body: form });
+      const data = await resp.json();
+      if (!resp.ok) return res.status(resp.status).json(data);
+      res.json({ sid: data.sid || data.Sid || null, status: data.status || data.Status || "queued" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Inbound SMS webhook with cXML auto-reply
+  app.post("/api/telephony/sms/webhook", async (req, res) => {
+    try {
+      // Verify SignalWire signature if configured
+      const signature = req.headers["x-signalwire-signature"] as string;
+      const url = req.protocol + "://" + req.get("host") + req.originalUrl;
+      
+      if (signature && process.env.SIGNALWIRE_API_TOKEN) {
+        // Simple signature verification (can be enhanced with crypto)
+        // For now, we'll accept the webhook
+      }
+      
+      const { To, From, Body } = req.body;
+      
+      // Log the incoming message
+      console.log(`[SMS Webhook] From: ${From}, To: ${To}, Body: ${Body}`);
+      
+      // Send cXML response for auto-reply
+      const cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Message>Thanks, we'll call you shortly.</Message>
+  <Route to="${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}" body="${Body}" from="${To}"/>
+</Response>`;
+      
+      res.set("Content-Type", "text/xml");
+      res.send(cxmlResponse);
+      
+      // Log the response
+      console.log(`[SMS Webhook] Sent auto-reply to ${From}`);
+      
+    } catch (error: any) {
+      console.error("SMS webhook error:", error);
+      res.status(500).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>");
+    }
+  });
+
+  // Inbound voice webhook with cXML IVR
+  app.post("/api/telephony/voice/webhook", async (req, res) => {
+    try {
+      const { To, From, CallSid } = req.body;
+      
+      // Log the incoming call
+      console.log(`[Voice Webhook] From: ${From}, To: ${To}, CallSid: ${CallSid}`);
+      
+      // Simple IVR response - can be enhanced with business hours logic
+      const hour = new Date().getHours();
+      const isBusinessHours = hour >= 9 && hour < 17; // 9 AM to 5 PM
+      
+      let cxmlResponse: string;
+      
+      if (isBusinessHours) {
+        // Business hours: AI greeting and qualification
+        cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">Thank you for calling. Please tell us how we can help you today.</Say>
+  <Gather input="speech" timeout="10" action="/api/telephony/voice/gather" method="POST">
+    <Say voice="Polly.Joanna">You can say things like schedule appointment, property inquiry, or speak to agent.</Say>
+  </Gather>
+</Response>`;
+      } else {
+        // After hours: voicemail with SMS callback
+        cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">Thank you for calling. Our office is currently closed. Please leave a message and we will return your call during business hours.</Say>
+  <Record timeout="30" finishOnKey="#" action="/api/telephony/voice/recording" method="POST"/>
+  <Say voice="Polly.Joanna">Thank you for your message. We will contact you soon.</Say>
+</Response>`;
+      }
+      
+      res.set("Content-Type", "text/xml");
+      res.send(cxmlResponse);
+      
+    } catch (error: any) {
+      console.error("Voice webhook error:", error);
+      res.status(500).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>");
+    }
+  });
+
+  // Voice gather webhook for speech recognition
+  app.post("/api/telephony/voice/gather", async (req, res) => {
+    try {
+      const { To, From, CallSid, SpeechResult, Confidence } = req.body;
+      
+      console.log(`[Voice Gather] From: ${From}, Speech: ${SpeechResult}, Confidence: ${Confidence}`);
+      
+      let cxmlResponse: string;
+      
+      if (SpeechResult && Confidence > 0.5) {
+        const speech = SpeechResult.toLowerCase();
+        
+        if (speech.includes("appointment") || speech.includes("schedule")) {
+          cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">I'll connect you to our scheduling department. Please hold.</Say>
+  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
+</Response>`;
+        } else if (speech.includes("property") || speech.includes("inquiry")) {
+          cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">I'll connect you to our property specialist. Please hold.</Say>
+  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
+</Response>`;
+        } else if (speech.includes("agent") || speech.includes("speak")) {
+          cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">I'll connect you to the next available agent. Please hold.</Say>
+  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
+</Response>`;
+        } else {
+          cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">I didn't understand that. Let me connect you to an agent.</Say>
+  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
+</Response>`;
+        }
+      } else {
+        cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">I didn't catch that. Let me connect you to an agent.</Say>
+  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
+</Response>`;
+      }
+      
+      res.set("Content-Type", "text/xml");
+      res.send(cxmlResponse);
+      
+    } catch (error: any) {
+      console.error("Voice gather error:", error);
+      res.status(500).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>");
+    }
+  });
+
+  // Voice recording webhook
+  app.post("/api/telephony/voice/recording", async (req, res) => {
+    try {
+      const { To, From, CallSid, RecordingUrl, RecordingSid, RecordingDuration } = req.body;
+      
+      console.log(`[Voice Recording] From: ${From}, Recording URL: ${RecordingUrl}, Duration: ${RecordingDuration}s`);
+      
+      // Send SMS confirmation
+      const space = process.env.SIGNALWIRE_SPACE_URL?.replace(/^https?:\/\//, "") || "";
+      const project = process.env.SIGNALWIRE_PROJECT_ID || "";
+      const token = process.env.SIGNALWIRE_API_TOKEN || "";
+      
+      if (space && project && token) {
+        const smsUrl = `https://${space}/api/laml/2010-04-01/Accounts/${project}/Messages.json`;
+        const smsForm = new URLSearchParams({ 
+          From: process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943',
+          To: From,
+          Body: "Thank you for leaving a voicemail. We will review your message and contact you during business hours."
+        });
+        const auth = Buffer.from(`${project}:${token}`).toString("base64");
+        
+        try {
+          await fetch(smsUrl, { 
+            method: "POST", 
+            headers: { 
+              "Authorization": `Basic ${auth}`, 
+              "Content-Type": "application/x-www-form-urlencoded" 
+            }, 
+            body: smsForm 
+          });
+          console.log(`[Voice Recording] SMS confirmation sent to ${From}`);
+        } catch (smsError) {
+          console.error("Failed to send SMS confirmation:", smsError);
+        }
+      }
+      
+      const cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">Thank you for your message. We will contact you soon.</Say>
+  <Hangup/>
+</Response>`;
+      
+      res.set("Content-Type", "text/xml");
+      res.send(cxmlResponse);
+      
+    } catch (error: any) {
+      console.error("Voice recording error:", error);
+      res.status(500).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>");
     }
   });
 
@@ -1014,6 +1549,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
+  });
+
+  app.get("/api/ai/config", async (_req, res) => {
+    const required = [
+      "SIGNALWIRE_SPACE_URL",
+      "SIGNALWIRE_PROJECT_ID",
+      "SIGNALWIRE_API_TOKEN",
+    ];
+    const missing = required.filter((k) => !process.env[k] || String(process.env[k]).trim() === "");
+    const ready = missing.length === 0;
+    res.json({ ready, missing });
+  });
+
+  app.get("/api/ai/ping", async (_req, res) => {
+    const ok = Boolean(process.env.SIGNALWIRE_SPACE_URL && process.env.SIGNALWIRE_PROJECT_ID && process.env.SIGNALWIRE_API_TOKEN);
+    res.json({ ok });
   });
 
   // USER GOALS ENDPOINTS

@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock, ImageIcon, Camera, Upload, X, Trash2 } from "lucide-react";
+import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock, ImageIcon, Camera, Upload, X, Trash2, Server, Database, Phone, Bot } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
@@ -58,6 +58,34 @@ function SettingsContent() {
     queryFn: async () => {
       const res = await fetch(`/api/offers?userId=${user!.id}`, { credentials: 'include' });
       if (!res.ok) throw new Error('Failed to fetch offers');
+      return res.json();
+    },
+  });
+
+  // System health checks
+  const { data: coreHealth, refetch: refetchCore, isFetching: coreFetching } = useQuery<any>({
+    queryKey: ["/api/health"],
+    queryFn: async () => {
+      const res = await fetch("/api/health", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch core health");
+      return res.json();
+    },
+  });
+
+  const { data: telephonyHealth, refetch: refetchTelephony, isFetching: telephonyFetching } = useQuery<any>({
+    queryKey: ["/api/telephony/health"],
+    queryFn: async () => {
+      const res = await fetch("/api/telephony/health", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch telephony health");
+      return res.json();
+    },
+  });
+
+  const { data: aiConfig, refetch: refetchAi, isFetching: aiFetching } = useQuery<any>({
+    queryKey: ["/api/ai/config"],
+    queryFn: async () => {
+      const res = await fetch("/api/ai/config", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch AI config");
       return res.json();
     },
   });
@@ -258,6 +286,10 @@ function SettingsContent() {
           <TabsTrigger value="appearance" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <ImageIcon className="w-4 h-4 mr-2" />
             Appearance
+          </TabsTrigger>
+          <TabsTrigger value="system" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Server className="w-4 h-4 mr-2" />
+            System
           </TabsTrigger>
         </TabsList>
 
@@ -985,6 +1017,91 @@ function SettingsContent() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* SYSTEM TAB */}
+        <TabsContent value="system" className="mt-6 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Database className="w-5 h-5" />
+                  Database
+                </CardTitle>
+                <CardDescription>Connectivity and query health.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Status</span>
+                  <span className={`text-sm font-medium ${coreHealth?.db === "connected" ? "text-green-600" : "text-red-600"}`}>
+                    {coreHealth?.db || "unknown"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Last check</span>
+                  <span className="text-xs text-muted-foreground">{coreHealth?.timestamp ? new Date(coreHealth.timestamp).toLocaleString() : "-"}</span>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => refetchCore()} disabled={coreFetching}>
+                  {coreFetching && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  Refresh
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Phone className="w-5 h-5" />
+                  Dialer (SignalWire)
+                </CardTitle>
+                <CardDescription>WebRTC + REST reachability.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">SignalWire</span>
+                  <span className={`text-sm font-medium ${telephonyHealth?.signalwire === "reachable" ? "text-green-600" : telephonyHealth?.signalwire === "unconfigured" ? "text-yellow-600" : "text-red-600"}`}>
+                    {telephonyHealth?.signalwire || "unknown"}
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">Default From: {telephonyHealth?.defaultFrom || "not set"}</p>
+                  <p className="text-xs text-muted-foreground">Numbers: {Array.isArray(telephonyHealth?.numbers) ? telephonyHealth.numbers.join(", ") : "-"}</p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => refetchTelephony()} disabled={telephonyFetching}>
+                  {telephonyFetching && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  Refresh
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Bot className="w-5 h-5" />
+                  AI SMS
+                </CardTitle>
+                <CardDescription>Credentials readiness for SMS automation.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm">Configured</span>
+                  <span className={`text-sm font-medium ${aiConfig?.ready ? "text-green-600" : "text-red-600"}`}>
+                    {aiConfig?.ready ? "yes" : "no"}
+                  </span>
+                </div>
+                {!aiConfig?.ready && Array.isArray(aiConfig?.missing) && aiConfig.missing.length > 0 && (
+                  <div>
+                    <p className="text-xs text-muted-foreground">Missing:</p>
+                    <p className="text-xs">{aiConfig.missing.join(", ")}</p>
+                  </div>
+                )}
+                <Button variant="outline" size="sm" onClick={() => refetchAi()} disabled={aiFetching}>
+                  {aiFetching && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  Refresh
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
     </Layout>

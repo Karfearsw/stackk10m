@@ -4,7 +4,7 @@ import express, { type Express, type Request, Response, NextFunction } from "exp
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import helmet from "helmet";
-import { db } from "./db.js";
+import { db, pool } from "./db.js";
 import { registerRoutes } from "./routes.js";
 import { initSentry, Sentry } from "./sentry.js";
 import crypto from "node:crypto";
@@ -125,10 +125,41 @@ app.use((req, res, next) => {
   next();
 });
 
+import { startAutomationWorker } from "./cron/lead-automation.js";
+
 export default async function runApp(
   setup: (app: Express, server: Server) => Promise<void>,
 ) {
+  // Ensure required tables exist (call_logs)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS call_logs (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        direction VARCHAR(20) NOT NULL,
+        number VARCHAR(20) NOT NULL,
+        contact_id INTEGER,
+        status VARCHAR(50) NOT NULL,
+        started_at TIMESTAMP DEFAULT NOW(),
+        ended_at TIMESTAMP,
+        duration_ms INTEGER,
+        error_code VARCHAR(50),
+        error_message TEXT,
+        metadata TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    log("[Startup] Verified call_logs table", "db");
+  } catch (e) {
+    console.error("Failed to ensure call_logs table:", e);
+  }
+
   const server = await registerRoutes(app);
+
+  // Start background automation worker
+  if (process.env.NODE_ENV !== 'test') {
+    startAutomationWorker(60000); // Run every minute
+  }
 
   app.get("/api/metrics", async (_req, res) => {
     const text = await metricsText();

@@ -462,3 +462,24 @@ export const dealAssignments = pgTable("deal_assignments", {
 export const insertDealAssignmentSchema = createInsertSchema(dealAssignments).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type DealAssignment = typeof dealAssignments.$inferSelect;
 export type InsertDealAssignment = z.infer<typeof insertDealAssignmentSchema>;
+
+// CALL LOGS TABLE (Dialer)
+export const callLogs = pgTable("call_logs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  direction: varchar("direction", { length: 20 }).notNull(),
+  number: varchar("number", { length: 20 }).notNull(),
+  contactId: integer("contact_id"),
+  status: varchar("status", { length: 50 }).notNull(),
+  startedAt: timestamp("started_at").defaultNow(),
+  endedAt: timestamp("ended_at"),
+  durationMs: integer("duration_ms"),
+  errorCode: varchar("error_code", { length: 50 }),
+  errorMessage: text("error_message"),
+  metadata: text("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCallLogSchema = createInsertSchema(callLogs).omit({ id: true, createdAt: true } as any);
+export type CallLog = typeof callLogs.$inferSelect;
+export type InsertCallLog = z.infer<typeof insertCallLogSchema>;

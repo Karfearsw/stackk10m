@@ -3,7 +3,7 @@ import { desc } from "drizzle-orm";
 import { 
   leads, properties, contacts, contracts, contractTemplates, contractDocuments, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, offers, timesheetEntries, globalActivityLogs,
-  buyers, buyerCommunications, dealAssignments
+  buyers, buyerCommunications, dealAssignments, callLogs
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -28,7 +28,8 @@ import {
   type GlobalActivityLog, type InsertGlobalActivityLog,
   type Buyer, type InsertBuyer,
   type BuyerCommunication, type InsertBuyerCommunication,
-  type DealAssignment, type InsertDealAssignment
+  type DealAssignment, type InsertDealAssignment,
+  type CallLog, type InsertCallLog
 } from "./shared-schema.js";
 import { eq, and } from "drizzle-orm";
 
@@ -187,6 +188,11 @@ export interface IStorage {
   createDealAssignment(assignment: InsertDealAssignment): Promise<DealAssignment>;
   updateDealAssignment(id: number, assignment: Partial<InsertDealAssignment>): Promise<DealAssignment>;
   deleteDealAssignment(id: number): Promise<void>;
+
+  // Call Logs
+  getCallLogs(limit?: number, offset?: number, status?: string, contactId?: number): Promise<CallLog[]>;
+  createCallLog(log: InsertCallLog): Promise<CallLog>;
+  updateCallLog(id: number, patch: Partial<InsertCallLog & { status?: string; endedAt?: Date; durationMs?: number; errorCode?: string; errorMessage?: string }>): Promise<CallLog>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -756,6 +762,24 @@ export class DatabaseStorage implements IStorage {
     await db.delete(dealAssignments).where(eq(dealAssignments.id, id));
   }
 
+  // Call Logs
+  async getCallLogs(limit?: number, offset: number = 0, status?: string, contactId?: number): Promise<CallLog[]> {
+    let q: any = db.select().from(callLogs);
+    if (status) q = q.where(eq(callLogs.status, status));
+    if (contactId) q = q.where(eq(callLogs.contactId, contactId));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q as unknown as Promise<CallLog[]>;
+  }
+
+  async createCallLog(log: InsertCallLog): Promise<CallLog> {
+    const result = await db.insert(callLogs).values(log as any).returning();
+    return result[0];
+  }
+
+  async updateCallLog(id: number, patch: Partial<InsertCallLog & { status?: string; endedAt?: Date; durationMs?: number; errorCode?: string; errorMessage?: string }>): Promise<CallLog> {
+    const result = await db.update(callLogs).set(patch as any).where(eq(callLogs.id, id)).returning();
+    return result[0];
+  }
 }
 
 export const storage = new DatabaseStorage();

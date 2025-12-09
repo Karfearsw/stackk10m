@@ -7,7 +7,7 @@ if (!process.env.DATABASE_URL) {
 }
 
 // Use connection string from environment
-const pool = new Pool({
+export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   max: 3,
   idleTimeoutMillis: 10000,

@@ -21,6 +21,11 @@ import Signup from "@/pages/signup";
 import Notifications from "@/pages/notifications";
 import Playground from "@/pages/playground";
 import Buyers from "@/pages/buyers";
+import Dialer from "@/pages/dialer";
+import Contacts from "@/pages/contacts";
+import History from "@/pages/history";
+import VoicemailPage from "@/pages/voicemail";
+import SearchPage from "@/pages/search";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -66,11 +71,20 @@ function Router() {
       <Route path="/leads">
         {() => <ProtectedRoute component={Leads} />}
       </Route>
-      <Route path="/properties">
+      <Route path="/opportunities">
         {() => <ProtectedRoute component={Properties} />}
       </Route>
-      <Route path="/properties/:id">
+      <Route path="/properties">
+        {() => <Redirect to="/opportunities" />}
+      </Route>
+      <Route path="/opportunities/:id">
         {() => <ProtectedRoute component={PropertyDetail} />}
+      </Route>
+      <Route path="/properties/:id">
+        {() => {
+          const [location] = useLocation();
+          return <Redirect to={location.replace('/properties', '/opportunities')} />;
+        }}
       </Route>
       <Route path="/contracts">
         {() => <ProtectedRoute component={ContractGenerator} />}
@@ -96,8 +110,23 @@ function Router() {
       <Route path="/playground">
         {() => <ProtectedRoute component={Playground} />}
       </Route>
+      <Route path="/dialer">
+        {() => <ProtectedRoute component={Dialer} />}
+      </Route>
       <Route path="/buyers">
         {() => <ProtectedRoute component={Buyers} />}
+      </Route>
+      <Route path="/contacts">
+        {() => <ProtectedRoute component={Contacts} />}
+      </Route>
+      <Route path="/history">
+        {() => <ProtectedRoute component={History} />}
+      </Route>
+      <Route path="/voicemail">
+        {() => <ProtectedRoute component={VoicemailPage} />}
+      </Route>
+      <Route path="/search">
+        {() => <ProtectedRoute component={SearchPage} />}
       </Route>
       <Route component={NotFound} />
     </Switch>
@@ -118,3 +147,6 @@ function App() {
 }
 
 export default App;
+      <Route path="/dialer">
+        {() => <ProtectedRoute component={require('@/pages/dialer').default} />}
+      </Route>

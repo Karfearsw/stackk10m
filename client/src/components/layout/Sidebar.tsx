@@ -14,7 +14,10 @@ import {
   ChevronRight,
   ChevronsLeft,
   Lightbulb,
-  UserCheck
+  UserCheck,
+  Phone,
+  Voicemail,
+  History
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -25,7 +28,11 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Leads Pipeline", href: "/leads", icon: Users },
-  { name: "Properties", href: "/properties", icon: Building2 },
+  { name: "Opportunities", href: "/opportunities", icon: Building2 },
+  { name: "Dialer", href: "/dialer", icon: Phone },
+  { name: "Contacts", href: "/contacts", icon: Users },
+  { name: "History", href: "/history", icon: History },
+  { name: "Voicemail", href: "/voicemail", icon: Voicemail },
   { name: "Buyers", href: "/buyers", icon: UserCheck },
   { name: "Contracts", href: "/contracts", icon: FileText },
   { name: "Analytics", href: "/analytics", icon: PieChart },

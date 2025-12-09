@@ -79,3 +79,9 @@ Docker builds are pushed to GHCR via `.github/workflows/docker-publish.yml`.
 ## License
 
 MIT
+
+## AI Implementation
+
+- Provider: SignalWire
+- Docs: `docs/ai-next-steps.md`, `docs/preview-environment.md`, `docs/testing-protocols.md`, `docs/success-criteria.md`
+- Required env vars: `SIGNALWIRE_SPACE_URL`, `SIGNALWIRE_PROJECT_ID`, `SIGNALWIRE_API_TOKEN`

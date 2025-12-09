@@ -1,3 +1,4 @@
+import React from "react";
 import { Bell, Search, Menu, PanelLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -41,6 +42,28 @@ export function Header() {
 
   const profileImage = userData?.profilePicture || userData?.avatarUrl;
 
+  const [query, setQuery] = React.useState("");
+  const [debounced, setDebounced] = React.useState("");
+  const [open, setOpen] = React.useState(false);
+  React.useEffect(() => {
+    const t = setTimeout(() => setDebounced(query.trim()), 250);
+    return () => clearTimeout(t);
+  }, [query]);
+  const { data: searchData, isFetching: searching } = useQuery<any>({
+    queryKey: ["/api/search", debounced],
+    queryFn: async () => {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(debounced)}`);
+      return res.json();
+    },
+    enabled: debounced.length >= 2,
+  });
+
+  const onSelect = (item: any) => {
+    setOpen(false);
+    setQuery("");
+    if (item.path) setLocation(item.path);
+  };
+
   return (
     <header className="sticky top-0 z-30 flex h-16 w-full items-center border-b bg-background px-4 md:px-6 shadow-sm gap-4">
       <TooltipProvider>
@@ -73,7 +96,55 @@ export function Header() {
             type="search"
             placeholder="Search leads, properties, or contacts..."
             className="w-full bg-muted/50 pl-9 md:w-[300px] lg:w-[400px] border-none focus-visible:ring-1"
+            value={query}
+            onChange={(e) => {
+              const v = e.target.value;
+              setQuery(v);
+              setOpen(v.trim().length >= 2);
+            }}
+            onFocus={() => setOpen(query.trim().length >= 2)}
+            onBlur={() => setTimeout(() => setOpen(false), 150)}
           />
+          {open && (
+            <div className="absolute mt-2 w-full bg-background border rounded-md shadow-lg z-50 max-h-80 overflow-auto">
+              <div className="flex items-center justify-between px-3 py-2 text-xs text-muted-foreground">
+                <span>Results</span>
+                {searching && <span>Searching…</span>}
+              </div>
+              {(searchData?.results || []).length === 0 ? (
+                <div className="px-3 py-3 text-sm text-muted-foreground">No matches</div>
+              ) : (
+                (searchData?.results || []).map((item: any) => (
+                  <button
+                    key={`${item.type}-${item.id}`}
+                    className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => onSelect(item)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-medium">{item.title}</span>
+                      <span className="text-xs text-muted-foreground">{item.type}</span>
+                    </div>
+                    {item.subtitle && (
+                      <div className="text-xs text-muted-foreground">{item.subtitle}</div>
+                    )}
+                  </button>
+                ))
+              )}
+              {searchData?.counts?.total > (searchData?.results?.length || 0) && (
+                <button
+                  className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm border-t"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setOpen(false);
+                    setLocation(`/search?q=${encodeURIComponent(query.trim())}`);
+                  }}
+                >
+                  View all results ({searchData?.counts?.total})
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
       
