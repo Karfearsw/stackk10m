@@ -6,9 +6,9 @@ import connectPgSimple from "connect-pg-simple";
 import helmet from "helmet";
 import { db } from "./db.js";
 import { registerRoutes } from "./routes.js";
-import { initSentry, Sentry } from "./sentry";
+import { initSentry, Sentry } from "./sentry.js";
 import crypto from "node:crypto";
-import { httpRequestsTotal, httpErrorsTotal, metricsText } from "./metrics";
+import { httpRequestsTotal, httpErrorsTotal, metricsText } from "./metrics.js";
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
