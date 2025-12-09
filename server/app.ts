@@ -23,6 +23,8 @@ export function log(message: string, source = "express") {
 
 export const app = express();
 
+log(`[Startup] Server initializing... (Commit: 90e785a)`);
+
 initSentry();
 // Sentry v8+ auto-instruments Express; request handler is no longer required
 
