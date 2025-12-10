@@ -1,0 +1,2401 @@
+This comprehensive framework addresses all 25 questions across the Planning, Analysis, Architecture, Development, and Testing phases for Flipstackk 6.0. Based on your existing documentation and market research, the recommendations prioritize:
+
+https://www.perplexity.ai/page/flipstackk-6-0-comprehensive-p-x18Iyz0TSmmekd8CHJcRcA
+
+**Key Strategic Decisions:**
+
+1. **Vision**: Wholesaler-first CRM focused on speed and simplicity vs. feature bloatFlipstackk_3.0_Project_Brief.pdf​
+    
+2. **Differentiation**: Integrated lead scoring (RELAS), intuitive UX, affordable pricing vs. competitors[coastandvalleypm+3](https://coastandvalleypm.com/best-crm-for-real-estate-investors/)​RELAS-Lab-Report-Flipstackk.pdf+1​
+    
+3. **Timeline**: 6-month MVP with 2-week sprints, internal validation before SaaS launchteam-fullstack-1.txt+1​
+    
+4. **Architecture**: Next.js monolith with domain-driven design, RELAS API integration, mobile-responsive webRELAS-Lab-Report-Flipstackk.pdf+1​[halo-lab+1](https://www.halo-lab.com/blog/crm-system-design)​
+    
+5. **Testing**: Feature validation priority, automated testing (Vitest, Playwright), pilot rollout strategyFlipstackk_3.0_Project_Brief.pdf+1​
+    
+
+**Immediate Actions:**
+
+1. **Finalize PRD**: Use Flipstackk 3.0 Project Brief as foundation, incorporate RELAS insights, validate with stakeholdersKevnBen_Estate_Full_Plan_Informal.pdf+2​
+    
+2. **Architecture Design**: Detail tech stack decisions (Next.js, PostgreSQL, Prisma, tRPC), RELAS integration approach, deployment strategy[artkai](https://artkai.io/blog/crm-development-guide)​RELAS-Lab-Report-Flipstackk.pdf+1​
+    
+3. **Sprint 0 Planning**: Set up repository, CI/CD pipeline, staging environment, team onboardingteam-fullstack-1.txt​
+    
+4. **Stakeholder Alignment**: Present this framework to co-founders for approval, budget allocation, timeline commitmentKevnBen_Estate_Full_Plan_Informal.pdf​
+    
+
+**Critical Open Questions to Resolve:**
+
+- RELAS integration: API vs. rebuild in TypeScript?RELAS-Lab-Report-Flipstackk.pdf+1​
+    
+- Mobile app: Responsive web sufficient or native required?[halo-lab+1](https://www.halo-lab.com/blog/crm-system-design)​Flipstackk_3.0_Project_Brief.pdf+1​
+    
+- Pricing model: Internal tool first or SaaS from Day 1?[resimpli+3](https://resimpli.com/blog/propstream-alternatives-real-estate/)​KevnBen_Estate_Full_Plan_Informal.pdf​
+    
+- Data providers: Build scrapers vs. integrate PropStream/Attom APIs?[realestateskills+1](https://www.realestateskills.com/blog/dataflik-review)​RELAS-Lab-Report-Flipstackk.pdf​
+    
+
+This framework serves as your comprehensive planning document for Flipstackk 6.0. Each section can be expanded into detailed specifications (PRD, Architecture Doc, Test Plan) as you progress through development phases using the BMad Method agents or traditional development workflows.team-fullstack-1.txt​
+
+1. [https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/collection_27ef946f-1706-44a8-9dc2-d1ee8271f4ad/5bc7cdd9-85af-4c10-bdc1-62ec2a1b5c5d/Flipstackk_3.0_Project_Brief.pdf](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/collection_27ef946f-1706-44a8-9dc2-d1ee8271f4ad/5bc7cdd9-85af-4c10-bdc1-62ec2a1b5c5d/Flipstackk_3.0_Project_Brief.pdf)
+2. [https://coastandvalleypm.com/best-crm-for-real-estate-investors/](https://coastandvalleypm.com/best-crm-for-real-estate-investors/)
+3. [https://resimpli.com/blog/propstream-alternatives-real-estate/](https://resimpli.com/blog/propstream-alternatives-real-estate/)
+4. [https://resimpli.com/blog/investor-crm-showdown/](https://resimpli.com/blog/investor-crm-showdown/)
+5. [https://www.realestateskills.com/blog/dataflik-review](https://www.realestateskills.com/blog/dataflik-review)
+6. [https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/collection_27ef946f-1706-44a8-9dc2-d1ee8271f4ad/c89e2871-3f16-4aab-a44e-06e285662231/RELAS-Lab-Report-Flipstackk.pdf](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/collection_27ef946f-1706-44a8-9dc2-d1ee8271f4ad/c89e2871-3f16-4aab-a44e-06e285662231/RELAS-Lab-Report-Flipstackk.pdf)
+7. [https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/collection_27ef946f-1706-44a8-9dc2-d1ee8271f4ad/ae20b1ab-0cd8-438b-a9eb-552744333841/team-fullstack-1.txt](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/collection_27ef946f-1706-44a8-9dc2-d1ee8271f4ad/ae20b1ab-0cd8-438b-a9eb-552744333841/team-fullstack-1.txt)
+8. [https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/collection_27ef946f-1706-44a8-9dc2-d1ee8271f4ad/8d469fb6-f669-44d4-8ba0-f22c6cf7a3e8/KevnBen_Estate_Full_Plan_Informal.pdf](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/collection_27ef946f-1706-44a8-9dc2-d1ee8271f4ad/8d469fb6-f669-44d4-8ba0-f22c6cf7a3e8/KevnBen_Estate_Full_Plan_Informal.pdf)
+9. [https://www.halo-lab.com/blog/crm-system-design](https://www.halo-lab.com/blog/crm-system-design)
+10. [https://artkai.io/blog/crm-development-guide](https://artkai.io/blog/crm-development-guide)
+11. [https://resimpli.com/blog/real-estate-wholesaling-software-tools/](https://resimpli.com/blog/real-estate-wholesaling-software-tools/)
+
+
+Planning Phase Responses
+
+## 1. High-Level Product Vision & Business Goal
+
+**Vision for Flipstackk 6.0:**​  
+Flipstackk 6.0 aims to deliver a highly focused, intuitive, and efficient CRM specifically tailored for real estate wholesaling that **streamlines the entire deal lifecycle** from lead intake to closing. The platform will combine robust lead management, automated offer generation, comprehensive buyer relationship management, and intelligent lead scoring—all within a user-friendly, modern interface that reduces operational friction and maximizes deal flow.​
+
+**Core Business Goals:**
+
+- **Maximize Deal Velocity**: Reduce average deal cycle time from lead intake to closing​
+    
+- **Improve Lead Conversion**: Increase percentage of leads progressing to closed deals through intelligent scoring and automation​
+    
+- **Enhance Team Efficiency**: Enable team members to manage more deals per person through workflow automation​
+    
+- **Scale Operations**: Support expansion from Florida/Massachusetts/Rhode Island to nationwide markets​
+    
+- **Competitive Differentiation**: Deliver a wholesaler-first platform that outperforms generic CRMs through specialized features​
+    
+
+## 2. Main User Types
+
+**Primary User Personas:**​
+
+**Wholesalers/Owners (Benji/Kevin):**
+
+- **Role**: Oversee entire wholesaling operation
+    
+- **Needs**: Holistic deal view, team performance metrics, financial dashboards, strategic insights
+    
+- **Pain Points**: Lack of centralized data, difficulty tracking progress, challenges managing buyer relationships
+    
+
+**Acquisition Managers:**
+
+- **Role**: Front-line lead generation and property assessment
+    
+- **Needs**: Efficient lead processing, property enrichment tools, qualification workflows, quick analysis
+    
+- **Pain Points**: Manual data entry, inconsistent qualification, lack of property analysis tools
+    
+
+**Disposition/Buyer Relations:**
+
+- **Role**: Manage buyer pipeline and facilitate assignments
+    
+- **Needs**: Organized buyer database, property-buyer matching, streamlined contract assignment
+    
+- **Pain Points**: Disorganized buyer lists, difficulty tracking buy boxes, manual contract processes
+    
+
+**Virtual Assistants (VAs):**​
+
+- **Role**: Data entry, skip tracing, lead cleanup, CRM maintenance, cold calling
+    
+- **Needs**: Clear task lists, simple data entry interfaces, call scripts, follow-up automation
+    
+- **Pain Points**: Repetitive manual tasks, unclear priorities, inconsistent processes
+    
+
+**Closers/Sales Reps:**​
+
+- **Role**: Handle inbound inquiries and move deals to closing
+    
+- **Needs**: Lead routing, communication history, offer templates, e-signature integration
+    
+- **Pain Points**: Disconnected communication channels, slow offer generation, lack of buyer visibility
+    
+
+## 3. Known Competitors & Differentiation Strategy
+
+**Major Competitors:**[](https://coastandvalleypm.com/best-crm-for-real-estate-investors/)​​
+
+**REsimpli** ($99-$299/month):
+
+- _Strengths_: All-in-one solution, CRM with marketing, accounting features, AI agents, skip tracing included[](https://resimpli.com/blog/propstream-alternatives-real-estate/)​
+    
+- _Weaknesses_: Can be overwhelming due to feature bloat, steep learning curve, higher subscription costs[](https://resimpli.com/blog/investor-crm-showdown/)​​
+    
+- _Differentiation Opportunity_: Focus on **simplicity and speed** vs. feature overload
+    
+
+**InvestorLift** ($3,000-$10,000/year):
+
+- _Strengths_: Robust deal management, strong buyer network, advanced analytics, disposition automation[](https://www.realestateskills.com/blog/dataflik-review)​​
+    
+- _Weaknesses_: High cost, steep learning curve, less customizable for niche strategies, limited acquisition data[](https://www.realestateskills.com/blog/dataflik-review)​​
+    
+- _Differentiation Opportunity_: **Affordable pricing** with wholesaler-specific acquisition tools
+    
+
+**PropStream** ($99/month + add-ons):
+
+- _Strengths_: Powerful property data, comprehensive market analysis, nationwide MLS coverage[](https://resimpli.com/blog/propstream-alternatives-real-estate/)​​
+    
+- _Weaknesses_: Primarily data provider, less CRM-focused, requires integration with other tools, no predictive AI or built-in marketing[](https://resimpli.com/blog/propstream-alternatives-real-estate/)​​
+    
+- _Differentiation Opportunity_: **Integrated CRM + data** in single platform vs. requiring multiple tools
+    
+
+**DataFlik/REISift** ($500-$2,500/month):
+
+- _Strengths_: Predictive AI with 1,800+ data points, unlimited skip tracing, CRM integration, marketing automation[](https://www.realestateskills.com/blog/dataflik-review)​
+    
+- _Weaknesses_: Premium pricing, no free trial, limited integrations[](https://www.realestateskills.com/blog/dataflik-review)​
+    
+- _Differentiation Opportunity_: **Accessible pricing** with core AI features for emerging wholesalers
+    
+
+**Privy/Propwire** ($49-$97/month):
+
+- _Strengths_: Real-time market data, investment analysis, affordable MLS and investor comps[](https://www.realestateskills.com/blog/dataflik-review)​​
+    
+- _Weaknesses_: Not full-fledged CRM, limited deal management and team collaboration, no predictive scoring or CRM​[](https://www.realestateskills.com/blog/dataflik-review)​
+    
+- _Differentiation Opportunity_: **Complete workflow management** vs. analysis-only tools
+    
+
+**Flipstackk 6.0 Unique Value Proposition:**​
+
+- **Wholesaler-First Design**: Every feature purpose-built for wholesaling workflow vs. generic CRM adapted for real estate
+    
+- **Speed + Simplicity**: Intuitive interface prioritizing rapid task completion over feature bloat
+    
+- **Intelligent Automation**: AI-powered lead scoring (like RELAS system), automated follow-ups, smart buyer matching​
+    
+- **All-in-One Efficiency**: Lead management, offer generation, buyer CRM, deal analysis in cohesive system
+    
+- **Actionable Insights**: KPI dashboards showing bottlenecks and opportunities, not just data dumps
+    
+- **Cost-Effective Scaling**: Predictable pricing supporting growth from solo operator to team operations
+    
+
+## 4. Success Definition
+
+**Key Performance Indicators (KPIs):**​
+
+**Lead & Deal Metrics:**
+
+- **Lead Conversion Rate**: Percentage of new leads progressing to closed deals (target: 1-3% industry standard)​
+    
+- **Deal Cycle Time**: Average days from lead intake to deal closing (target: reduce by 25% vs. current state)​
+    
+- **Qualified Lead Volume**: Monthly leads scoring >60 on motivation scale (target: 150-200/month)​
+    
+- **Contract Signing Rate**: Offers sent to contracts signed (target: 3-10/month → 20-50% contract conversion)​
+    
+- **Closed Deal Rate**: Contracts to closed deals (target: 2-5 deals/month)​
+    
+
+**Team Efficiency Metrics:**
+
+- **Deals Per Team Member**: Number managed per acquisitions/dispo staff (target: +30% improvement)​
+    
+- **Offer Acceptance Rate**: Percentage of offers accepted by sellers (target: track baseline → +15%)​
+    
+- **Time to First Contact**: Lead entry to initial outreach (target: <48 hours)​
+    
+- **Response Time**: Average time to respond to inbound inquiries (target: <2 hours during business hours)
+    
+
+**System Performance Metrics:**​
+
+- **User Adoption Rate**: Percentage of team actively using system daily (target: 90%+)
+    
+- **Data Quality**: Lead completeness score (target: 85% of leads with complete information)
+    
+- **Buyer Engagement**: Activity within buyer CRM (target: 50% buyer interaction rate)
+    
+- **Assignment Fee Revenue**: Monthly revenue from closed deals (target: $16,000-$75,000)​
+    
+
+**User Satisfaction:**​
+
+- **Net Promoter Score (NPS)**: Team willingness to recommend platform (target: NPS >50)
+    
+- **Task Completion Rate**: Percentage of initiated workflows completed (target: 85%+)
+    
+- **Feature Utilization**: Adoption of core features - lead scoring, offer generator, buyer matching (target: 80% usage)
+    
+
+**Financial Success:**​
+
+- **Monthly Deal Volume**: 5-10 deals per month across multiple states​
+    
+- **Average Wholesale Fee**: $8,000-$15,000 per deal​
+    
+- **Monthly Revenue Impact**: $16,000-$75,000 (2-5 deals/month)​
+    
+- **Annual ROI**: >$10,000 ROI vs. operational costs​
+    
+
+## 5. Timeline & Available Resources
+
+**Current State Context:**​
+
+**Existing Foundation:**
+
+- **Flipstackk 3.0**: Documented CRM with defined user personas, competitive analysis, technical stack preferences​
+    
+- **RELAS System**: Production-ready lead automation system (Python/SQLite) with intelligent scoring operational since October 2025​
+    
+- **Team Structure**:
+    
+    - 2 Co-founders (Benji - technical/automation, Kevin - sales/buyer relations)​
+        
+    - 1 VA Team Lead (Ibby - cold calling, training)​
+        
+    - 3 VAs ($5/hr - data entry, skip tracing, CRM tasks)​
+        
+    - 3 Commission Sales Reps (USA - inbound/closings)​
+        
+    - 1 Part-time Cold Caller​
+        
+
+**Technology Assets:**​
+
+- **Current Stack**: Next.js 14, TypeScript, Tailwind CSS, shadcn/ui, Node.js, PostgreSQL, Prisma ORM​
+    
+- **Integrations**: Google Voice (calls/SMS), PandaDoc (contracts), RentCast/Zillow/Redfin (comps), OpenAI (AI assistance)​
+    
+- **Infrastructure**: Notion (SOPs/docs), CrewAI (scraping agents)​
+    
+
+**Recommended Timeline:**
+
+**Phase 1: Foundation & Core MVP (Months 1-3)**
+
+- **Month 1**: Requirements finalization, architecture design, development environment setup
+    
+- **Month 2**: Core infrastructure, authentication, basic lead management
+    
+- **Month 3**: Status pipeline, basic reporting, MVP deployment
+    
+- **Milestone**: Functional system for single-user testing with core lead workflow
+    
+
+**Phase 2: Feature Enhancement (Months 4-5)**
+
+- **Month 4**: Offer/LOI generator, buyer CRM, deal calculator
+    
+- **Month 5**: RELAS integration, advanced automation, team collaboration features
+    
+- **Milestone**: Feature-complete system for team pilot testing
+    
+
+**Phase 3: Integration & Polish (Month 6)**
+
+- **Integration**: PandaDoc, Google Voice, third-party APIs
+    
+- **Refinement**: UX optimization based on pilot feedback, performance tuning
+    
+- **Documentation**: User guides, training materials, API documentation
+    
+- **Milestone**: Production-ready system for full team deployment
+    
+
+**Phase 4: Deployment & Scale (Month 7+)**
+
+- **Go-Live**: Full team onboarding, data migration from current systems
+    
+- **Monitoring**: KPI tracking, user feedback collection, bug fixes
+    
+- **Iteration**: Feature refinement based on real-world usage
+    
+- **Milestone**: Stable production system achieving success metrics
+    
+
+**Resource Considerations:**
+
+- **Development**: Recommended 1-2 full-stack developers (or AI-assisted development via BMad Method)​
+    
+- **Design**: UX/UI designer for 2-4 weeks (or leverage figma templates)
+    
+- **Project Management**: Part-time PM or founder oversight (10-15 hrs/week)
+    
+- **Budget**: Estimated $15,000-$40,000 for 6-month MVP depending on team composition (can optimize with AI-assisted development)
+    
+- **Infrastructure**: AWS/Vercel hosting ($50-$200/month initially), third-party API costs ($100-$300/month)​
+    
+
+9 sources
+
+Analysis Phase Responses
+
+## 6. Research Focus Areas
+
+**Primary Research Objectives:**
+
+**Market Research:**
+
+- **Target Market Validation**: Confirm demand for wholesaler-specific CRM vs. adapting general real estate tools
+    
+- **Pricing Strategy**: Analyze competitive pricing tiers ($49-$2,500/month range) to position Flipstackk 6.0[](https://coastandvalleypm.com/best-crm-for-real-estate-investors/)​
+    
+- **Feature Prioritization**: Identify must-have vs. nice-to-have features based on competitor gaps
+    
+- **Geographic Expansion**: Research requirements for Florida, Massachusetts, Rhode Island, and nationwide scaling​
+    
+
+**Feature Requirements Research:**
+
+- **Lead Scoring Enhancement**: Expand RELAS motivation scoring with additional real estate signals (equity position, days on market, probate status)​
+    
+- **Buyer Matching Intelligence**: Research algorithms for matching property characteristics to buyer buy-boxes
+    
+- **Offer Automation**: Analyze contract templates, e-signature workflows, and regulatory compliance requirements
+    
+- **Integration Needs**: Assess priority for Twilio (SMS), DocuSign vs. PandaDoc, MLS data feeds, Zapier workflows​
+    
+
+**Pricing Model Research:**
+
+- **Subscription Tiers**: Solo operator ($99-$149/month), Small Team 2-5 users ($199-$299/month), Growth Team 6-15 users ($399-$599/month)[](https://resimpli.com/blog/investor-crm-showdown/)​
+    
+- **Usage-Based Components**: Skip tracing credits, SMS/call minutes, e-signature sends, data export limits
+    
+- **Value Metric**: Per-user, per-deal, or flat-rate pricing models
+    
+- **Free Trial**: 14-30 day trial with feature limitations vs. full access
+    
+
+**User Experience Research:**
+
+- **Workflow Analysis**: Observe current team processes to identify friction points and automation opportunities
+    
+- **Mobile Requirements**: Assess need for mobile app for field activities (driving for dollars, property photos)[](https://resimpli.com/blog/real-estate-wholesaling-software-tools/)​​
+    
+- **Dashboard Priorities**: Determine most critical metrics for each user role
+    
+- **Onboarding Flow**: Design first-time user experience to minimize learning curve
+    
+
+## 7. Existing Data Sources
+
+**Available Data Assets:**
+
+**User Feedback:**​
+
+- **Pain Points Documentation**: Flipstackk 3.0 Project Brief captures current workflow problems (disjointed workflows, lack of centralization, inefficient lead management, suboptimal offer generation, poor buyer management)​
+    
+- **Team Input**: Insights from co-founders, VA team lead, and sales reps on current tool limitations​
+    
+- **Success Stories**: Existing deal flow data showing current conversion rates and cycle times as baseline
+    
+
+**Lead Statistics from RELAS:**​
+
+- **Monthly Volume**: 500 properties scraped → 150-200 qualified leads (score >60)​
+    
+- **Scoring Distribution**: 70-100 (hot leads), 50-69 (warm leads), 30-49 (cold leads), 0-29 (unlikely)​
+    
+- **Conversion Rates**: 2-5% hot lead conversion, 1-2% warm lead conversion​
+    
+- **Property Characteristics**: Absentee ownership rates, years owned, assessed values, property types
+    
+- **Geographic Data**: Jacksonville/Duval County patterns, potential for Clay County and St. Johns County expansion​
+    
+
+**CRM Exports (if available):**
+
+- **Historical Deals**: Past deal data showing lead source, time to close, profit margins, buyer assignments
+    
+- **Buyer Database**: Existing buyer profiles with buy boxes, proof of funds, past purchase history
+    
+- **Communication Logs**: Email/SMS history, call notes, seller interaction patterns
+    
+- **Team Performance**: Individual team member activity levels, deals closed, tasks completed
+    
+
+**Competitive Intelligence:**[](https://resimpli.com/blog/propstream-alternatives-real-estate/)​​
+
+- **Feature Comparison**: Detailed competitive analysis of REsimpli, InvestorLift, PropStream, DataFlik, Privy[](https://www.realestateskills.com/blog/dataflik-review)​​
+    
+- **Pricing Benchmarks**: $49-$2,500/month range across competitors with various feature sets[](https://softwarefinder.com/resources/best-crm-for-real-estate-wholesalers)​
+    
+- **User Reviews**: G2, Capterra, and industry forum feedback on competitor strengths/weaknesses[](https://www.g2.com/products/resimpli/competitors/alternatives)​
+    
+- **Market Trends**: PropTech adoption of AI, predictive analytics, embedded payments, construction tech[](https://cdn.hl.com/pdf/2025/1h-2025-proptech-market-update-september-2025-hl.pdf)​
+    
+
+## 8. Key Open Questions
+
+**Critical Unknowns to Resolve:**
+
+**Product Strategy:**
+
+- **RELAS Integration Approach**: Should RELAS remain standalone Python system with API integration, or rebuild lead scoring engine within Flipstackk 6.0 Node.js backend?​
+    
+- **Data Acquisition Strategy**: Build proprietary county scraping (like RELAS multi-county expansion) vs. integrate third-party data providers (PropStream API, BatchLeads)?[](https://resimpli.com/blog/propstream-alternatives-real-estate/)​​
+    
+- **Mobile App Priority**: Is native iOS/Android app required for MVP, or mobile-responsive web sufficient initially?[](https://resimpli.com/blog/real-estate-wholesaling-software-tools/)​​
+    
+- **AI Feature Scope**: Which AI capabilities are MVP vs. Phase 2 - lead scoring, buyer matching, offer suggestions, call script generation, email drafting?[](https://resimpli.com/blog/investor-crm-showdown/)​​
+    
+
+**Technical Architecture:**
+
+- **Microservices vs. Monolith**: Given team size and speed priorities, is monolithic Next.js app sufficient, or justify microservices complexity?[](https://artkai.io/blog/crm-development-guide)​​
+    
+- **Database Strategy**: PostgreSQL sufficient for all data types, or hybrid approach with Redis for caching/queues, ElasticSearch for property search?[](https://artkai.io/blog/crm-development-guide)​​
+    
+- **Real-Time Requirements**: Which features need WebSocket/real-time updates (team activity, lead status changes) vs. polling acceptable?[](https://artkai.io/blog/crm-development-guide)​
+    
+- **Multi-Tenancy Design**: How to architect data isolation if offering SaaS version in future?​[](https://artkai.io/blog/crm-development-guide)​
+    
+
+**Business Model:**
+
+- **Pricing Tiers**: Should Flipstackk 6.0 offer tiered pricing (solo/team/enterprise) or single all-inclusive plan initially?[](https://coastandvalleypm.com/best-crm-for-real-estate-investors/)​
+    
+- **Revenue Streams**: Primary subscription revenue, or add usage-based components (skip tracing, SMS, e-signatures)?[](https://www.realestateskills.com/blog/dataflik-review)​​
+    
+- **Internal vs. SaaS**: Launch as internal tool for KevnBen Estate first, or build for external customers from Day 1?​
+    
+- **Free Trial Strategy**: Offer trial to external users, or focus on proven internal adoption before external launch?
+    
+
+**Regulatory & Compliance:**
+
+- **Data Privacy**: GDPR/CCPA compliance requirements for storing property owner PII, communication consent management?​
+    
+- **Real Estate Licensing**: Do CRM features (offer generation, contract management) trigger licensing requirements in different states?
+    
+- **E-Signature Compliance**: ESIGN Act and state-specific electronic signature requirements for contract validity?
+    
+- **Fair Housing**: Automated buyer matching and marketing must comply with Fair Housing Act - what guardrails needed?
+    
+
+**Integration Priorities:**
+
+- **Must-Have Integrations MVP**: Which are non-negotiable - PandaDoc, Google Voice, Zillow/Redfin data, Twilio, DocuSign?​
+    
+- **Nice-to-Have Integrations**: Zapier, Notion sync, accounting software (QuickBooks), title company portals?[](https://resimpli.com/blog/real-estate-wholesaling-software-tools/)​​
+    
+- **RELAS API Design**: What endpoints needed to integrate RELAS lead scoring and enrichment with Flipstackk UI?​
+    
+- **Webhook Strategy**: Which external services need webhook support for real-time updates (e-signature status, SMS delivery)?​
+    
+
+## 9. Affected Stakeholders
+
+**Internal Stakeholders:**
+
+- **Co-Founders** (Benji & Kevin): Strategic direction, budget approval, feature prioritization, ultimate success accountability​
+    
+- **VA Team Lead** (Ibby): Training coordination, workflow design input, team adoption champion​
+    
+- **Virtual Assistants (3 VAs)**: Daily users for data entry, lead management, cold calling - critical for adoption feedback​
+    
+- **Sales Reps (3 commission-based)**: Inbound lead handling, offer generation, buyer communication - need efficient tools or compensation suffers​
+    
+- **Cold Caller**: Script integration, call logging requirements, lead status updates​
+    
+
+**External Stakeholders:**
+
+- **Property Sellers**: Benefit from faster response times, professional offer presentation, smoother transactions
+    
+- **Buyers/Investors**: Improved property matching to buy boxes, timely deal notifications, streamlined assignment process
+    
+- **Title Companies**: Integration for closing coordination, document exchange, status updates
+    
+- **Development Partners**: If outsourcing dev work, clear communication of requirements and success criteria critical
+    
+- **Future SaaS Customers**: If planning external launch, design decisions impact scalability and multi-tenancy​
+    
+
+**Technology Partners:**
+
+- **PandaDoc**: E-signature integration partner for contract workflow​
+    
+- **Google Voice**: Communication platform provider​
+    
+- **Data Providers**: Zillow, Redfin, RentCast, or alternative property data sources​
+    
+- **OpenAI**: AI assistance integration for scripts, analysis, content generation​
+    
+- **Cloud Provider**: AWS, Vercel, or alternative infrastructure host​
+    
+
+## 10. Key Assumptions to Validate
+
+**Product Assumptions:**
+
+- **Wholesaler Pain Points**: Current documented problems (disjointed workflows, manual processes) are universal across market, not unique to KevnBen Estate​
+    
+- **All-in-One Value**: Users prefer integrated platform vs. best-of-breed tools connected via Zapier/integrations
+    
+- **Simplicity Premium**: Wholesalers will choose focused, easy-to-use tool over feature-rich but complex competitors[](https://resimpli.com/blog/investor-crm-showdown/)​​
+    
+- **AI Acceptance**: Users trust and adopt AI-powered lead scoring and recommendations vs. preferring manual judgment[](https://resimpli.com/blog/investor-crm-showdown/)​​
+    
+
+**Market Assumptions:**
+
+- **Market Size**: Sufficient addressable market of real estate wholesalers to justify SaaS development (if external launch planned)​
+    
+- **Willingness to Pay**: Wholesalers will pay $99-$299/month for purpose-built CRM vs. free/low-cost generic tools[](https://softwarefinder.com/resources/best-crm-for-real-estate-wholesalers)​
+    
+- **Switching Barriers**: Users will migrate from established competitors despite switching costs and learning curve
+    
+- **Geographic Demand**: Florida, Massachusetts, Rhode Island have sufficient deal volume to validate before nationwide expansion​
+    
+
+**Technical Assumptions:**
+
+- **Performance Requirements**: PostgreSQL + Node.js can handle expected data volumes (500-1000 leads/month, 50-100 buyers) without performance degradation​
+    
+- **Integration Availability**: Key third-party services (PandaDoc, Google Voice, property data APIs) have documented APIs and reasonable pricing​
+    
+- **RELAS Portability**: RELAS lead scoring logic can be translated from Python to TypeScript/Node.js or integrated via API without loss of accuracy​
+    
+- **Mobile Responsiveness**: Mobile-responsive web app meets 80%+ of mobile use cases, negating need for native iOS/Android apps initially​
+    
+
+**Business Assumptions:**
+
+- **Internal Adoption**: KevnBen Estate team will fully adopt Flipstackk 6.0, providing real-world validation before external launch​
+    
+- **Development Timeline**: 6-month timeline realistic for MVP development given team resources and complexity
+    
+- **Cost Recovery**: Internal efficiency gains justify development costs even if external SaaS launch delayed/cancelled​
+    
+- **Scalability Path**: Internal tool can evolve to multi-tenant SaaS without major architectural rework​
+    
+
+**User Behavior Assumptions:**
+
+- **Data Entry Discipline**: VAs and team will consistently enter complete, accurate lead data vs. shortcuts degrading data quality​
+    
+- **Feature Utilization**: Users will leverage advanced features (lead scoring, buyer matching, automation) vs. reverting to manual workflows
+    
+- **Mobile Usage**: Field team actually uses mobile interface for property visits, photo uploads, driving for dollars[](https://resimpli.com/blog/real-estate-wholesaling-software-tools/)​​
+    
+- **Dashboard Engagement**: Decision-makers regularly review KPI dashboards and adjust strategy based on insights vs. ignoring analytics​
+    
+
+![coastandvalleypm.com favicon](https://www.google.com/s2/favicons?sz=128&domain=coastandvalleypm.com)
+
+![resimpli.com favicon](https://www.google.com/s2/favicons?sz=128&domain=resimpli.com)
+
+![resimpli.com favicon](https://www.google.com/s2/favicons?sz=128&domain=resimpli.com)
+
+13 sources
+
+Architecture Phase Responses
+
+## 11. Reuse vs. Build from Scratch
+
+**Recommended Approach: Hybrid - Iterative Enhancement of Flipstackk 3.0 Foundation**​
+
+**Reuse Components from Flipstackk 3.0:**​
+
+- **Technology Stack**: Continue with Next.js 14 App Router, TypeScript, Tailwind CSS, shadcn/ui (Modern, proven, team-familiar)​
+    
+- **Database & ORM**: PostgreSQL with Prisma ORM (Robust, type-safe, good migration support)​
+    
+- **Authentication Pattern**: NextAuth Credentials with RBAC (admin, acquisitions, caller, investor roles)​
+    
+- **Core Data Models**: Lead structure, buyer profiles, status pipeline concepts can evolve vs. rebuild from zero
+    
+- **UI Component Library**: shadcn/ui provides consistent, accessible components avoiding reinventing basics​
+    
+
+**Build New for Flipstackk 6.0:**
+
+- **Architecture Patterns**: Implement cleaner separation of concerns, domain-driven design principles vs. 3.0 structure[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+- **RELAS Integration**: Design API layer to connect RELAS Python lead scoring engine or rebuild in TypeScript​
+    
+- **Real-Time Features**: Add WebSocket support for team collaboration, live lead updates not in 3.0[](https://artkai.io/blog/crm-development-guide)​
+    
+- **Advanced Automation**: Build workflow engine for automated follow-ups, lead routing, buyer notifications[](https://resimpli.com/blog/real-estate-wholesaling-software-tools/)​​
+    
+- **AI Integration Layer**: OpenAI integration for intelligent features (call script generation, offer suggestions, duplicate detection)[](https://resimpli.com/blog/investor-crm-showdown/)​​
+    
+
+**Justification:**
+
+- **Speed to Market**: Leveraging proven Next.js/TypeScript stack reduces learning curve and accelerates development​
+    
+- **Risk Mitigation**: Reusing tested technologies (PostgreSQL, Prisma) avoids database selection paralysis and migration risks[](https://artkai.io/blog/crm-development-guide)​​
+    
+- **Team Continuity**: If original Flipstackk developers involved, familiar tech stack maximizes productivity
+    
+- **Strategic Flexibility**: Clean architecture on proven foundation supports future microservices extraction if scaling requires[](https://artkai.io/blog/crm-development-guide)​
+    
+
+**Critical Decision Points:**
+
+- **Migration Path**: Can Flipstackk 3.0 production data (if any exists) migrate to 6.0 schema, or clean-slate start acceptable?
+    
+- **Repository Strategy**: Monorepo (single Next.js app) vs. polyrepo (separate frontend/backend/RELAS services)?​
+    
+- **Deployment Continuity**: Can Flipstackk 6.0 deploy alongside 3.0 initially for parallel testing, or hard cutover required?
+    
+
+## 12. Platform Integration Requirements
+
+**Must-Have Integrations (MVP):**
+
+**RELAS Lead Automation System:**​
+
+- **Integration Type**: RESTful API or direct database access
+    
+- **Capabilities Needed**:
+    
+    - Lead scoring endpoint (property data → motivation score 0-100)
+        
+    - Enrichment services (absentee detection, years owned calculation)
+        
+    - CSV export trigger for marketing campaigns
+        
+    - Webhook for new hot leads (score >70) real-time notification
+        
+- **Data Flow**: Flipstackk 6.0 UI → RELAS API → scored leads → Flipstackk database
+    
+- **Authentication**: API key or JWT-based auth for service-to-service communication
+    
+
+**Google Voice / Twilio (Communication):**​
+
+- **Integration Type**: Twilio API (industry standard vs. Google Voice limited API)
+    
+- **Capabilities Needed**:
+    
+    - SMS sending/receiving with lead associations
+        
+    - Call logging with recordings
+        
+    - Two-way sync: calls initiated in Flipstackk, logged in CRM
+        
+    - Phone number management for team members
+        
+- **Pricing Consideration**: Twilio SMS ($0.0079/message), Voice ($0.0085-0.014/min) vs. Google Voice legacy integration complexity​
+    
+
+**PandaDoc / DocuSign (E-Signatures):**​
+
+- **Integration Type**: OAuth 2.0 + Webhooks
+    
+- **Capabilities Needed**:
+    
+    - Template creation from Flipstackk offer data
+        
+    - Document sending with signer routing
+        
+    - Status webhooks (viewed, signed, completed, declined)
+        
+    - PDF retrieval for Flipstackk storage
+        
+    - E-signature audit trails for compliance
+        
+- **Decision Required**: PandaDoc (current) vs. DocuSign (industry leader) vs. both with adapter pattern?​
+    
+
+**Property Data APIs (Comps & Enrichment):**​
+
+- **Current Tools**: RentCast, Zillow, Redfin (manual process)​
+    
+- **Integration Options**:
+    
+    - **RentCast API**: Rental comps, property valuations (pricing varies)
+        
+    - **Zillow API**: Limited public API, may require scraping (legal risks)
+        
+    - **Redfin API**: Not publicly available, scraping complex
+        
+    - **Alternative**: Attom Data, CoreLogic, or PropStream API for reliable, legal property data[](https://resimpli.com/blog/propstream-alternatives-real-estate/)​
+        
+- **Capabilities Needed**: Address → property details, recent sales, tax assessment, ownership history, comparable properties
+    
+
+**Nice-to-Have Integrations (Phase 2+):**
+
+**Zapier (Workflow Automation):**[](https://resimpli.com/blog/real-estate-wholesaling-software-tools/)​​
+
+- **Use Cases**: Connect to 5,000+ apps without custom integrations (e.g., add lead from Facebook form, post deal to Slack, sync to Google Sheets)
+    
+- **Implementation**: Expose Flipstackk webhooks and REST API for Zapier platform integration
+    
+
+**Notion (Documentation Sync):**​
+
+- **Use Cases**: Sync SOPs, training materials, deal notes from Notion workspace to Flipstackk knowledge base
+    
+- **Implementation**: Notion API for bidirectional content sync
+    
+
+**QuickBooks / Xero (Accounting):**
+
+- **Use Cases**: Sync deal financials, assignment fees, expense tracking to accounting software
+    
+- **Implementation**: OAuth + REST API for transaction syncing
+    
+
+**Title Company Portals:**
+
+- **Use Cases**: Closing coordination, document exchange, status updates
+    
+- **Implementation**: Custom integrations per title company (varies by provider)
+    
+
+**Lob.com (Direct Mail Automation):**​
+
+- **Use Cases**: Automated postcard sending to high-scoring leads
+    
+- **Implementation**: REST API for mail piece creation and tracking
+    
+- **Pricing**: $0.89/postcard​
+    
+
+## 13. High-Volume Usage Expectations
+
+**Usage Profile Analysis:**
+
+**Current Team Activity:**​
+
+- **3 VAs**: Data entry, skip tracing, cold calling (assume 8 hrs/day × 3 = 24 concurrent hours daily)
+    
+- **3 Sales Reps**: Inbound handling, offer generation (assume 6 hrs/day × 3 = 18 concurrent hours daily)
+    
+- **1 Cold Caller**: Part-time calling (assume 4 hrs/day)
+    
+- **2 Co-Founders**: Strategic oversight, occasional heavy usage (assume 2 hrs/day × 2 = 4 hours)
+    
+- **Total**: ~50 person-hours/day, ~1,000-1,500 person-hours/month
+    
+
+**Data Volume Projections:**​
+
+- **Lead Volume**: 500 properties/month scraped → 150-200 qualified leads​
+    
+- **Annual Leads**: ~6,000 leads/year, 24,000 leads over 4 years (consider data retention policies)
+    
+- **Buyer Database**: Start with 50-100 buyers, grow to 500-1,000 over 2 years
+    
+- **Deals**: 2-5 closed deals/month → 24-60 deals/year​
+    
+- **Communications**: Estimate 50-100 SMS/emails per lead × 500 leads = 25,000-50,000 messages/month
+    
+- **Documents**: ~500 offers/month generated, ~100 contracts/month signed
+    
+
+**Performance Requirements:**
+
+**Response Time Targets:**
+
+- **Page Load**: <2 seconds for dashboard, <1 second for lead list
+    
+- **Search**: <500ms for lead/buyer search with filters
+    
+- **API Endpoints**: <200ms for CRUD operations, <1s for complex calculations (MAO, comps)
+    
+- **Real-Time Updates**: <500ms latency for WebSocket events (lead status changes, team notifications)
+    
+
+**Concurrency:**
+
+- **Peak Usage**: Assume 5-10 concurrent users during business hours (8am-6pm EST)
+    
+- **Database Connections**: PostgreSQL pool of 20-50 connections sufficient for foreseeable growth[](https://artkai.io/blog/crm-development-guide)​​
+    
+- **API Rate Limits**: Design for 100 requests/minute per user (conservative buffer)
+    
+
+**Scalability Checkpoints:**
+
+- **Milestone 1**: 10 concurrent users, 10,000 leads, 1,000 buyers (Year 1)
+    
+- **Milestone 2**: 25 concurrent users, 50,000 leads, 5,000 buyers (Year 2-3 if SaaS launch)
+    
+- **Milestone 3**: 100+ concurrent users, 500,000+ leads, 50,000+ buyers (Long-term SaaS scale)
+    
+
+**High-Volume Considerations:**
+
+- **Database Indexing**: Critical indexes on lead search fields (status, score, zip, date added), buyer buy-box criteria[](https://artkai.io/blog/crm-development-guide)​
+    
+- **Caching Strategy**: Redis for frequently accessed data (active leads, user sessions, dashboard KPIs)[](https://artkai.io/blog/crm-development-guide)​
+    
+- **Background Jobs**: Queue system (Bull/BullMQ with Redis) for long-running tasks (lead enrichment, bulk SMS, report generation)​[](https://artkai.io/blog/crm-development-guide)​
+    
+- **CDN**: CloudFront or Vercel Edge for static assets (images, property photos, PDFs)
+    
+- **Monitoring**: Implement application performance monitoring (APM) from Day 1 (Sentry, DataDog, or New Relic)
+    
+
+## 14. Development Priorities: Speed, Cost, or Flexibility
+
+**Recommended Priority: Speed First, Cost-Conscious, Flexibility for Scale**
+
+**Speed Justification:**
+
+- **Market Opportunity**: Real estate wholesaling is competitive - faster to market captures deals and validates product​
+    
+- **Internal Validation**: KevnBen Estate needs functional tool quickly to improve current operations and prove ROI before SaaS investment​
+    
+- **Competitive Dynamics**: Competitors (REsimpli, InvestorLift) constantly adding features - delayed launch risks obsolescence[](https://www.realestateskills.com/blog/dataflik-review)​
+    
+- **Team Momentum**: Extended development cycles risk team disengagement and scope creep
+    
+
+**Speed Optimization Strategies:**
+
+- **Proven Tech Stack**: Next.js, TypeScript, PostgreSQL - no experimental technologies reducing debugging time​
+    
+- **Component Libraries**: shadcn/ui, Tailwind CSS provide pre-built UI components vs. custom design​
+    
+- **Incremental Delivery**: Ship MVP features sequentially, gather feedback, iterate vs. Big Bang launch
+    
+- **AI-Assisted Development**: Leverage BMad Method agents and AI coding tools (GitHub Copilot, Cursor) to accelerate implementation​
+    
+- **Defer Optimizations**: Accept technical debt in non-critical paths, refactor later based on real usage patterns
+    
+
+**Cost Consciousness:**
+
+- **Infrastructure**: Vercel Hobby plan ($0) or Pro ($20/month) sufficient for MVP vs. AWS complexity​
+    
+- **Database**: PostgreSQL on Vercel/Railway/Supabase (<$25/month) vs. RDS ($50-$200/month)
+    
+- **Third-Party Services**: Leverage free tiers where available (Twilio trial credits, PandaDoc sandbox)​
+    
+- **Development**: Consider AI-assisted solo developer vs. full team if budget constrained (trade time for cost)
+    
+- **Monitoring**: Start with free tiers (Sentry, LogRocket) vs. enterprise APM tools ($300+/month)
+    
+
+**Flexibility for Future Scale:**
+
+- **Clean Architecture**: Implement domain-driven design separating business logic from infrastructure for future extraction[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+- **API-First Design**: Build internal APIs assuming external clients in future (SaaS customers, mobile apps, integrations)[](https://artkai.io/blog/crm-development-guide)​
+    
+- **Database Schema Versioning**: Use Prisma migrations for schema evolution, avoid breaking changes​
+    
+- **Feature Flags**: Implement feature flag system (LaunchDarkly free tier or custom) for gradual rollouts and A/B testing
+    
+- **Multi-Tenancy Prep**: Design data isolation patterns (tenant_id in tables) even if single-tenant initially[](https://artkai.io/blog/crm-development-guide)​
+    
+
+**Trade-Off Decisions:**
+
+- **Monolith vs. Microservices**: Start with Next.js monolith for speed, extract services only when scaling demands (avoid premature optimization)[](https://artkai.io/blog/crm-development-guide)​​
+    
+- **Custom vs. Third-Party**: Use SaaS tools (e.g., PostHog for analytics, Resend for transactional email) vs. building custom for faster delivery
+    
+- **Perfect vs. Good**: Ship 80% solution quickly, iterate to perfection based on user feedback vs. 6-month polishing before launch
+    
+
+## 15. Modular Architecture for Future Expansion
+
+**Recommended: Domain-Driven Monolith with Service Extraction Readiness**[](https://www.halo-lab.com/blog/crm-system-design)​
+
+**Core Domain Modules (Bounded Contexts):**
+
+**Lead Management Domain:**
+
+- **Entities**: Lead, PropertyData, OwnerContact, MotivationScore
+    
+- **Services**: LeadIngestion, LeadEnrichment (RELAS integration), LeadQualification, LeadAssignment
+    
+- **Repository**: LeadRepository (database abstraction)
+    
+- **API**: `/api/leads/*` RESTful endpoints
+    
+- **Future Extract**: If lead volume explodes (100,000+ leads), extract to dedicated microservice with own database
+    
+
+**Buyer Relationship Management Domain:**
+
+- **Entities**: Buyer, BuyBox, ProofOfFunds, PurchaseHistory
+    
+- **Services**: BuyerMatching, BuyerNotification, BuyerSegmentation
+    
+- **Repository**: BuyerRepository
+    
+- **API**: `/api/buyers/*` endpoints
+    
+- **Future Extract**: If building marketplace connecting wholesalers to buyers, extract as separate service
+    
+
+**Deal Workflow Domain:**
+
+- **Entities**: Deal, Offer, Contract, Assignment, Closing
+    
+- **Services**: OfferGeneration, ContractManagement (PandaDoc integration), DealPipeline, ClosingCoordination
+    
+- **Repository**: DealRepository
+    
+- **API**: `/api/deals/*` endpoints
+    
+- **Future Extract**: Deal orchestration could become separate workflow engine (temporal.io integration)
+    
+
+**Communication Domain:**
+
+- **Entities**: SMS, Email, Call, Note
+    
+- **Services**: MessageSending (Twilio), CallLogging, CommunicationHistory
+    
+- **Repository**: CommunicationRepository
+    
+- **API**: `/api/communications/*` endpoints
+    
+- **Future Extract**: High-volume messaging could justify dedicated service with queue-based architecture
+    
+
+**Analytics & Reporting Domain:**
+
+- **Entities**: KPI, Report, Dashboard
+    
+- **Services**: MetricsCalculation, ReportGeneration, DashboardBuilder
+    
+- **Repository**: AnalyticsRepository (potentially separate read-optimized database)
+    
+- **API**: `/api/analytics/*` endpoints
+    
+- **Future Extract**: OLAP workloads may justify data warehouse (Snowflake, BigQuery) with ETL pipelines
+    
+
+**User & Team Management Domain:**
+
+- **Entities**: User, Team, Role, Permission
+    
+- **Services**: Authentication, Authorization, TeamManagement, ActivityTracking
+    
+- **Repository**: UserRepository
+    
+- **API**: `/api/users/*`, `/api/teams/*` endpoints
+    
+- **Future Extract**: If multi-tenant SaaS, centralized identity service across all modules
+    
+
+**Modular Architecture Patterns:**[](https://www.halo-lab.com/blog/crm-system-design)​
+
+**Monorepo Structure:**​
+
+text
+
+`flipstackk-6.0/ ├── apps/ │   ├── web/                 # Next.js web application │   │   ├── app/             # App Router pages │   │   ├── components/      # UI components │   │   └── lib/             # Client utilities │   └── mobile/              # Future React Native app (placeholder) ├── packages/ │   ├── api/                 # tRPC API definitions │   ├── database/            # Prisma schema and migrations │   ├── core/                # Shared business logic │   │   ├── leads/           # Lead domain │   │   ├── buyers/          # Buyer domain │   │   ├── deals/           # Deal domain │   │   ├── communications/  # Communication domain │   │   └── analytics/       # Analytics domain │   ├── integrations/        # Third-party service wrappers │   │   ├── relas/           # RELAS API client │   │   ├── twilio/          # Twilio SDK wrapper │   │   ├── pandadoc/        # PandaDoc integration │   │   └── property-data/   # Property data API clients │   └── ui/                  # Shared UI components (shadcn/ui) ├── services/ │   └── relas/               # RELAS Python service (Docker) └── infrastructure/     ├── terraform/           # IaC for AWS/Vercel    └── docker/              # Container definitions`
+
+**Interface Design for Future Marketplace:**
+
+- **Public API Layer**: Design `/api/v1/public/*` endpoints with OAuth 2.0 for external developers (future marketplace apps)
+    
+- **Webhook System**: Emit events (lead.created, deal.closed, buyer.matched) for external system subscriptions​
+    
+- **Data Export**: Build bulk export APIs (CSV, JSON) for data portability and marketplace integrations
+    
+- **White-Label UI**: Component architecture supporting theme customization for potential white-label offerings
+    
+
+**Mobile App Readiness:**[](https://resimpli.com/blog/real-estate-wholesaling-software-tools/)​​
+
+- **API-First**: All functionality accessible via REST/tRPC APIs, not coupled to Next.js server components
+    
+- **Responsive Design**: Web UI mobile-optimized as stopgap, but architected for native app data syncing
+    
+- **Offline Support Prep**: Design data models considering eventual offline-first mobile architecture (local SQLite, sync conflicts)
+    
+- **Push Notifications**: Implement notification service (Firebase Cloud Messaging) usable by both web and mobile
+    
+
+**Scalability Patterns:**[](https://artkai.io/blog/crm-development-guide)​
+
+- **Database Sharding**: Design schema with `tenant_id` for future sharding by customer
+    
+- **CQRS Preparation**: Separate read models (dashboards, reports) from write models (lead entry, deal updates) for future event sourcing
+    
+- **Microservices Gateway**: If extracting services, use API gateway pattern (Kong, Tyk) for unified routing and authentication
+    
+- **Event Bus**: Implement in-memory event bus (Node.js EventEmitter) that can evolve to distributed (Kafka, RabbitMQ) if microservices emerge
+    
+
+![halo-lab.com favicon](https://www.google.com/s2/favicons?sz=128&domain=halo-lab.com)
+
+11 sources
+
+Development Phase Responses
+
+## 16. First Feature/Component Priority
+
+**Recommended First Development Priority: Foundational Infrastructure + Lead Management Core**
+
+**Sprint 1 (Weeks 1-2): Project Foundation**
+
+- **Repository Setup**: Initialize monorepo with Turborepo or Nx, configure ESLint/Prettier, set up CI/CD (GitHub Actions)​
+    
+- **Authentication**: Implement NextAuth with credential provider, RBAC (admin, acquisitions, caller, investor roles), demo user seeding​
+    
+- **Database Foundation**: Prisma schema for User, Team, Role tables, initial migrations​
+    
+- **UI Framework**: Configure Next.js 14 App Router, Tailwind CSS, shadcn/ui component library, establish design system tokens​
+    
+- **Dev Environment**: Docker Compose for local PostgreSQL, environment variable management, API route structure
+    
+- **Testing Setup**: Vitest for unit tests, Playwright for E2E, basic test examples​
+    
+
+**Sprint 2 (Weeks 3-4): Core Lead Management**
+
+- **Lead Data Model**: Prisma schema for Lead entity (property address, owner info, motivation score, status, timestamps)​
+    
+- **Lead Intake UI**: Form for manual lead entry with validation (address autocomplete, owner name, contact details, property type)​
+    
+- **Lead List View**: Paginated table with sorting, filtering (status, score, date added), search by address/owner[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+- **Lead Detail Page**: Single lead view with all property details, communication history, status timeline[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+- **Status Pipeline**: Kanban board or dropdown for lead progression (New → Contacted → Qualified → Offer Sent → Under Contract → Assigned → Closed)​
+    
+
+**Sprint 3 (Weeks 5-6): RELAS Integration + Lead Scoring**
+
+- **RELAS API Client**: Wrapper for calling RELAS endpoints (lead enrichment, motivation scoring)​
+    
+- **Automatic Enrichment**: Background job triggered on lead creation to fetch absentee status, years owned, calculated score​
+    
+- **Score Display**: Visual indicators (hot/warm/cold) based on score ranges (70-100, 50-69, 30-49)​
+    
+- **Bulk Import**: CSV upload for batch lead creation with queued RELAS enrichment​
+    
+- **Lead Export**: Generate CSV of leads filtered by criteria for marketing campaigns​
+    
+
+**Rationale:**
+
+- **User Value**: Lead management is the starting point of wholesaling workflow - no leads, no business​
+    
+- **Data Foundation**: Establishes core database schema and API patterns for all future features to build upon[](https://artkai.io/blog/crm-development-guide)​
+    
+- **Early Feedback**: VAs and acquisitions managers can test lead entry/management immediately, providing real-world feedback​
+    
+- **RELAS Validation**: Proves RELAS integration works, validating key architectural decision early​
+    
+- **Incremental Delivery**: Functional subsystem deployable for pilot testing while building other features
+    
+
+**Deferred to Later Sprints:**
+
+- **Offer Generator**: Sprint 4-5 (requires lead data to exist first)
+    
+- **Buyer CRM**: Sprint 5-6 (can be built in parallel with deal workflow)
+    
+- **Communication Integration**: Sprint 6-7 (Twilio SMS/calling after core CRM stable)
+    
+- **Advanced Analytics**: Sprint 8+ (requires historical data accumulation)
+    
+
+## 17. Multi-Device Support Requirements
+
+**Recommended Approach: Responsive Web-First, Native Mobile Phase 2**
+
+**MVP (Phase 1): Mobile-Responsive Web Application**​
+
+**Responsive Design Strategy:**[](https://www.halo-lab.com/blog/crm-system-design)​
+
+- **Breakpoints**: Mobile (<640px), Tablet (640-1024px), Desktop (1024px+)
+    
+- **Tailwind CSS**: Responsive utilities for fluid layouts (`sm:`, `md:`, `lg:` prefixes)
+    
+- **Mobile-First Components**: Design for smallest screen, progressively enhance for larger devices
+    
+- **Touch-Friendly**: Minimum 44×44px touch targets, swipe gestures for navigation
+    
+- **Adaptive Navigation**: Hamburger menu on mobile, sidebar on desktop
+    
+
+**Device-Specific Features (Web):**
+
+**Mobile (Phone):**
+
+- **Priority Views**: Lead list (compact cards), lead detail, quick status update, call/SMS buttons
+    
+- **Simplified Forms**: Multi-step lead entry with progress indicators, large input fields
+    
+- **Quick Actions**: Floating action button for "Add Lead", swipe-to-call/text from lead list
+    
+- **Camera Integration**: Photo upload from lead detail page for property condition documentation[](https://resimpli.com/blog/real-estate-wholesaling-software-tools/)​​
+    
+
+**Tablet:**
+
+- **Split-View**: Lead list + detail side-by-side on iPad landscape
+    
+- **Dashboard**: KPI widgets with touch-friendly interactions
+    
+- **Note-Taking**: Optimized keyboard input for call notes, property observations during field visits
+    
+
+**Desktop:**
+
+- **Multi-Column Layouts**: Sidebar navigation, lead list, detail panel, activity feed simultaneously visible
+    
+- **Keyboard Shortcuts**: Hotkeys for power users (Ctrl+K command palette, arrow navigation in lists)
+    
+- **Advanced Filtering**: Complex filter UI with multiple criteria dropdowns, date pickers
+    
+
+**Progressive Web App (PWA) Features:**[](https://artkai.io/blog/crm-development-guide)​
+
+- **Installable**: Add to home screen on iOS/Android for app-like experience
+    
+- **Offline Fallback**: Service worker caching for basic read-only access to recently viewed leads
+    
+- **Push Notifications**: Web push for hot lead alerts, deal status changes (requires user opt-in)
+    
+
+**Phase 2: Native Mobile Apps (If Validated Need):**​[](https://resimpli.com/blog/real-estate-wholesaling-software-tools/)​
+
+**Use Cases Justifying Native Development:**
+
+- **Offline-First**: Field agents need full CRUD on leads without connectivity (driving for dollars in rural areas)[](https://resimpli.com/blog/real-estate-wholesaling-software-tools/)​
+    
+- **Advanced Camera**: Multi-photo capture with annotations, property exterior/interior documentation
+    
+- **GPS Integration**: Location tracking for driving for dollars routes, property proximity alerts[](https://resimpli.com/blog/real-estate-wholesaling-software-tools/)​
+    
+- **Native Performance**: Large data sets (10,000+ leads) perform better in native vs. web
+    
+- **Push Reliability**: Native push notifications more reliable than web push for time-sensitive alerts
+    
+
+**Technology Options:**
+
+- **React Native**: Reuse React/TypeScript skills from web app, Expo for rapid development
+    
+- **Flutter**: If team has Dart experience, excellent performance and UI consistency
+    
+- **Native (Swift/Kotlin)**: Maximum performance and platform integration, but highest development cost
+    
+
+**Decision Framework:**
+
+- **Validate First**: Measure mobile web usage analytics - if <30% of team uses mobile web, defer native apps
+    
+- **Budget Check**: Native apps require $30,000-$60,000+ development for iOS+Android vs. $0 additional for responsive web
+    
+- **Maintenance Burden**: Native apps require ongoing updates for OS changes, app store approvals, separate QA cycles
+    
+
+**Current Recommendation: Responsive Web + PWA for MVP**[](https://www.halo-lab.com/blog/crm-system-design)​​
+
+- **Rationale**: 80% of mobile use cases (viewing leads, updating status, making calls) work well in mobile browser​
+    
+- **Cost-Effective**: Single codebase for all devices, focus development on features vs. platform-specific code
+    
+- **Fast Iteration**: Update web app anytime without app store approval delays
+    
+- **Re-Evaluate**: If user feedback shows critical mobile-only needs (offline, GPS features), revisit native apps in Phase 2[](https://resimpli.com/blog/real-estate-wholesaling-software-tools/)​
+    
+
+## 18. Themes, Accessibility, Internationalization (i18n)
+
+**Themes:**
+
+**MVP Approach: Single Professional Theme**[](https://www.halo-lab.com/blog/crm-system-design)​​
+
+- **Design System**: Define color palette, typography, spacing using Tailwind CSS design tokens​
+    
+- **Brand Consistency**: Align with KevnBen Estate brand if exists, or create clean, professional real estate aesthetic
+    
+- **shadcn/ui Components**: Leverage pre-built, themeable components (buttons, forms, dialogs) for consistency​
+    
+
+**Future Theme Support (If SaaS Launch):**
+
+- **Light/Dark Mode**: Implement theme toggle using Tailwind dark mode classes, user preference persistence
+    
+- **Custom Branding**: Allow enterprise customers to customize logo, primary colors (CSS variables approach)
+    
+- **White-Label**: Full theme customization for resellers (requires theme builder UI, increased complexity)
+    
+
+**Accessibility (a11y):**[](https://www.halo-lab.com/blog/crm-system-design)​
+
+**WCAG AA Compliance Target:**[](https://www.halo-lab.com/blog/crm-system-design)​​
+
+- **Semantic HTML**: Use proper heading hierarchy (`<h1>`-`<h6>`), landmark elements (`<nav>`, `<main>`, `<aside>`)
+    
+- **Keyboard Navigation**: All interactive elements accessible via Tab, Enter, Escape keys (no mouse-only interactions)[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+- **Focus Indicators**: Visible focus outlines on all interactive elements (Tailwind `focus:` utilities)[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+- **Color Contrast**: Minimum 4.5:1 ratio for text, 3:1 for UI components (use Tailwind's accessible color scales)[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+- **Screen Reader Support**: ARIA labels for icon buttons, live regions for status updates, descriptive link text[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+- **Form Accessibility**: Associated labels, error messages, required field indicators, validation feedback[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+
+**Priority Accessibility Features:**
+
+- **Skip Links**: "Skip to main content" for keyboard users to bypass navigation[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+- **Alt Text**: Descriptive alt attributes for property photos, icons
+    
+- **Tooltips**: Context for icon-only buttons using accessible tooltip components
+    
+- **Error Handling**: Clear error messages associated with form fields, not just color coding
+    
+
+**Testing:**
+
+- **Automated**: Axe DevTools or pa11y in CI/CD pipeline to catch common violations[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+- **Manual**: Keyboard-only navigation testing, screen reader testing (NVDA, JAWS, VoiceOver)
+    
+
+**Internationalization (i18n):**
+
+**MVP Approach: English-Only, i18n-Ready Architecture**
+
+**Current Justification:**​
+
+- **Market Focus**: KevnBen Estate operates in Florida, Massachusetts, Rhode Island (English-speaking markets)​
+    
+- **User Base**: Team and customers are English speakers
+    
+- **Development Speed**: Avoid i18n complexity in MVP to ship faster
+    
+
+**i18n-Ready Patterns:**
+
+- **String Externalization**: Use `next-intl` or `react-i18next` library from Day 1, even if only English locale
+    
+- **Date/Time Formatting**: Use `Intl.DateTimeFormat` for locale-aware dates (defaults to US formats for MVP)
+    
+- **Currency**: Use `Intl.NumberFormat` for currency display (USD for MVP, easy to extend)
+    
+- **No Hardcoded Strings**: All UI text in translation files (JSON), not inline in components
+    
+
+**Future i18n Expansion (If Needed):**
+
+- **Spanish**: If expanding to Hispanic wholesalers or Florida's Spanish-speaking markets
+    
+- **Regional Dialects**: Canadian English, British English if expanding internationally
+    
+- **Right-to-Left (RTL)**: Hebrew, Arabic if Middle East markets relevant (requires CSS adjustments)
+    
+
+**Decision Point:** Defer full i18n implementation until validated demand. Use i18n-ready architecture but don't translate until 10% of target users request non-English support.
+
+## 19. API Requirements & Existing Integrations
+
+**Internal APIs (Flipstackk 6.0 Backend):**
+
+**API Architecture Pattern: tRPC for Type-Safe RPC**​
+
+- **Rationale**: tRPC provides end-to-end type safety between Next.js frontend and backend without OpenAPI schema maintenance​
+    
+- **Alternative**: RESTful API with OpenAPI/Swagger if exposing public API to external developers
+    
+
+**Core API Modules:**[](https://artkai.io/blog/crm-development-guide)​​
+
+**Authentication API:**
+
+- `auth.login(credentials)` - User login with JWT issuance
+    
+- `auth.logout()` - Session termination
+    
+- `auth.me()` - Current user profile and permissions​
+    
+- `auth.refreshToken()` - JWT refresh flow
+    
+
+**Leads API:**
+
+- `leads.create(leadData)` - Create new lead
+    
+- `leads.update(id, changes)` - Update lead fields
+    
+- `leads.delete(id)` - Soft delete lead
+    
+- `leads.list(filters, pagination)` - Query leads with filtering[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+- `leads.get(id)` - Fetch single lead details
+    
+- `leads.updateStatus(id, newStatus)` - Status pipeline progression​
+    
+- `leads.enrich(id)` - Trigger RELAS enrichment​
+    
+- `leads.exportCSV(filters)` - Bulk export​
+    
+
+**Buyers API:**
+
+- `buyers.create(buyerData)` - Add buyer to CRM
+    
+- `buyers.update(id, changes)` - Update buyer profile
+    
+- `buyers.list(filters, pagination)` - Query buyers
+    
+- `buyers.matchProperties(buyerId)` - Find properties matching buy box​
+    
+- `buyers.uploadPOF(buyerId, file)` - Proof of funds document​
+    
+
+**Deals API:**
+
+- `deals.create(leadId, dealData)` - Create deal from lead
+    
+- `deals.generateOffer(dealId, templateId)` - Generate offer/LOI​
+    
+- `deals.sendForSignature(dealId)` - PandaDoc integration​
+    
+- `deals.updateStage(dealId, newStage)` - Move deal through pipeline
+    
+- `deals.calculateMAO(dealId)` - Maximum Allowable Offer calculation​
+    
+
+**Communications API:**
+
+- `communications.sendSMS(leadId, message)` - Send text message via Twilio​
+    
+- `communications.logCall(leadId, callData)` - Record call activity​
+    
+- `communications.getHistory(leadId)` - Fetch all communications for lead
+    
+
+**Analytics API:**
+
+- `analytics.getKPIs(dateRange)` - Fetch dashboard metrics​
+    
+- `analytics.getConversionFunnel()` - Lead status progression rates​
+    
+- `analytics.getTeamPerformance()` - Individual performance metrics​
+    
+
+**External API Integrations:**
+
+**RELAS API (Lead Scoring):**​
+
+- **Endpoint**: `POST /api/enrich` - Submit property data for enrichment
+    
+- **Request**: `{ address, city, state, zip, ownerName, ownerMailingAddress, lastSaleDate, assessedValue, propertyUse }`
+    
+- **Response**: `{ isAbsentee, yearsOwned, motivationScore, scoringFactors[] }`
+    
+- **Authentication**: API key in header
+    
+- **Rate Limits**: 100 requests/minute (batch requests for bulk enrichment)
+    
+- **Error Handling**: Retry logic with exponential backoff for transient failures
+    
+- **Deployment**: RELAS deployed as Docker container alongside Flipstackk, or separate Python service with health checks​
+    
+
+**Twilio API (SMS & Voice):**​
+
+- **SDK**: `twilio` npm package
+    
+- **Capabilities**:
+    
+    - Send SMS: `client.messages.create({ body, to, from: twilioNumber })`
+        
+    - Initiate call: `client.calls.create({ url: callbackUrl, to, from })`
+        
+    - Webhooks: Receive incoming SMS/calls, delivery status updates
+        
+- **Phone Number Management**: Provision numbers for team members, track usage
+    
+- **Pricing**: SMS $0.0079/message, Voice $0.0085-0.014/min​
+    
+- **Compliance**: Store message consent, opt-out handling (STOP keyword)
+    
+
+**PandaDoc API (E-Signatures):**​
+
+- **SDK**: `@pandadoc/node-sdk`
+    
+- **OAuth 2.0**: User grants Flipstackk permission to send documents on their behalf
+    
+- **Workflow**:
+    
+    1. Create document from template with Flipstackk offer data
+        
+    2. Add recipients (seller, buyer) with signer roles
+        
+    3. Send for signature via `POST /documents/{id}/send`
+        
+    4. Webhooks: `document.viewed`, `document.completed` events update deal status in Flipstackk
+        
+- **Document Retrieval**: `GET /documents/{id}/download` to store signed PDF in Flipstackk storage
+    
+- **Pricing**: Check PandaDoc tier limits (document sends/month)​
+    
+
+**Property Data APIs (Comps & Enrichment):**​
+
+- **Options**:
+    
+    - **Attom Data API**: Property details, sales history, valuations (enterprise pricing)
+        
+    - **RentCast API**: Rental comps, estimated values (check pricing tiers)​
+        
+    - **PropStream API**: If integrating vs. competing[](https://resimpli.com/blog/propstream-alternatives-real-estate/)​
+        
+- **Rate Limits**: Cache frequently accessed data (property details for active leads) to reduce API costs
+    
+- **Fallback**: Manual comp entry UI if API unavailable or expensive
+    
+
+**API Documentation:**
+
+- **Internal**: tRPC infers types automatically, but maintain markdown docs for workflow examples​
+    
+- **External**: If exposing public API, generate OpenAPI schema and host Swagger UI docs
+    
+
+## 20. First Sprint Length & Launch Milestone
+
+**Recommended Sprint Structure: 2-Week Sprints with Agile Ceremonies**
+
+**Sprint Cadence:**​
+
+- **Sprint Length**: 2 weeks (10 business days) - balances planning overhead vs. flexibility​
+    
+- **Sprint Planning**: Day 1 - Review PRD, select stories from backlog, commit to sprint goal​
+    
+- **Daily Standups**: 15 min async or sync - progress, blockers, plan for day
+    
+- **Sprint Review**: Day 10 - Demo completed features to stakeholders (co-founders, VAs)​
+    
+- **Sprint Retrospective**: Day 10 - Team reflection, process improvements​
+    
+- **Backlog Refinement**: Mid-sprint - clarify upcoming stories with PM
+    
+
+**Sprint 0 (Pre-Development - Week 0):**​
+
+- **Deliverables**: Finalized PRD, architecture document, UI/UX spec, tech stack decisions
+    
+- **Infrastructure**: AWS/Vercel account setup, GitHub repo, CI/CD pipeline skeleton
+    
+- **Team Onboarding**: Developers review docs, clarify questions, set up local environments
+    
+- **Definition of Done**: All epics and stories written, acceptance criteria clear, architecture reviewed
+    
+
+**MVP Launch Milestone: 6-Month Timeline (12 Sprints)**
+
+**Phase 1: Foundation (Sprints 1-3, Months 1-1.5):**
+
+- **Sprint 1-2**: Authentication, database schema, Next.js app structure, basic UI components​
+    
+- **Sprint 3**: Lead data model, manual lead entry, lead list view​
+    
+- **Milestone**: Deployable foundation with authentication, basic lead CRUD
+    
+
+**Phase 2: Core Features (Sprints 4-7, Months 2-3.5):**
+
+- **Sprint 4**: Status pipeline, lead detail page, activity logging​
+    
+- **Sprint 5**: RELAS integration, automatic lead scoring, bulk import​
+    
+- **Sprint 6**: Buyer CRM - buyer profiles, buy box definition, proof of funds upload​
+    
+- **Sprint 7**: Buyer-property matching, buyer notifications​
+    
+- **Milestone**: Core CRM functional for lead and buyer management
+    
+
+**Phase 3: Deal Workflow (Sprints 8-10, Months 4-5):**
+
+- **Sprint 8**: Deal creation, offer/LOI generation, deal pipeline​
+    
+- **Sprint 9**: PandaDoc integration, e-signature workflow, contract status tracking​
+    
+- **Sprint 10**: MAO calculator, comp sheet generation, deal analytics​
+    
+- **Milestone**: End-to-end deal workflow from lead to signed contract
+    
+
+**Phase 4: Communication & Polish (Sprints 11-12, Months 5.5-6):**
+
+- **Sprint 11**: Twilio SMS integration, call logging, communication history​
+    
+- **Sprint 12**: Dashboard KPIs, team performance reporting, UX refinements​
+    
+- **Milestone**: MVP feature-complete, ready for full team deployment
+    
+
+**Launch Criteria:**
+
+- **Functional Completeness**: All MVP stories from PRD marked "Done"
+    
+- **Quality**: <10 critical bugs, 90%+ test coverage on core workflows​
+    
+- **Performance**: Dashboard loads <2s, lead search <500ms under expected load[](https://artkai.io/blog/crm-development-guide)​
+    
+- **Data Migration**: Historical leads and buyers imported from current systems (if applicable)
+    
+- **Training**: User guides, video tutorials, onboarding materials completed
+    
+- **Team Readiness**: All users trained, feedback incorporated, adoption plan in place
+    
+
+**Post-Launch Support (Month 7+):**
+
+- **Stabilization**: 2-week bug fix sprint addressing launch issues
+    
+- **Feedback Loop**: Weekly check-ins with team to gather enhancement requests
+    
+- **Iteration Planning**: Prioritize Phase 2 features based on real-world usage data
+    
+- **Success Metrics Review**: Measure KPIs (lead conversion, deal cycle time, user satisfaction) against baseline​
+    
+
+9 sources
+
+Testing Phase Responses
+
+## 21. Critical User Journeys to Test
+
+**Priority 1: Lead-to-Deal Core Workflow**
+
+**Journey 1: Lead Intake to Qualified Lead**​
+
+1. **Scenario**: Acquisitions manager receives seller call, enters lead into Flipstackk
+    
+2. **Steps**:
+    
+    - Log in with acquisitions role credentials
+        
+    - Click "Add Lead" button
+        
+    - Fill out lead form (property address with autocomplete, owner name, phone, motivation notes)
+        
+    - Submit form
+        
+    - RELAS enrichment triggers automatically (background job)​
+        
+    - Lead appears in list with "Pending Enrichment" status
+        
+    - After enrichment (1-2 min), lead shows motivation score (e.g., 78 - Hot Lead)​
+        
+    - Manager reviews enriched data (absentee owner: Yes, years owned: 12.3)​
+        
+    - Updates status to "Contacted" → "Qualified"
+        
+3. **Expected Outcomes**:
+    
+    - Lead created successfully with all data saved
+        
+    - RELAS enrichment completes without errors, score calculated​
+        
+    - Lead visible in appropriate filtered views (Hot Leads dashboard widget)
+        
+    - Status pipeline updates reflected in lead list and detail view
+        
+    - Activity log records status changes with timestamps and user
+        
+4. **Edge Cases**:
+    
+    - Duplicate lead detection (same address warns user)​
+        
+    - Invalid address handling (geocoding failure, manual override)
+        
+    - RELAS API timeout (retry logic, fallback to manual scoring)
+        
+    - Concurrent edits (last-write-wins or conflict detection)
+        
+
+**Journey 2: Qualified Lead to Offer Sent**​
+
+1. **Scenario**: Acquisitions manager qualifies lead, generates and sends offer
+    
+2. **Steps**:
+    
+    - Open qualified lead detail page
+        
+    - Click "Create Offer" button
+        
+    - Select offer template (e.g., "Cash Offer - As-Is")
+        
+    - Review MAO calculator (ARV: $200k, Repairs: $30k, Fee: $10k → MAO: $100k)​
+        
+    - Adjust offer price based on motivation score (offer $95k for hot lead)
+        
+    - Generate offer PDF with pre-filled property and owner details
+        
+    - Review offer in PandaDoc integration modal
+        
+    - Add seller email, send for e-signature​
+        
+    - Offer sent successfully, status updates to "Offer Sent"
+        
+3. **Expected Outcomes**:
+    
+    - MAO calculated correctly based on property data​
+        
+    - Offer PDF generated with accurate details (no placeholder text)
+        
+    - PandaDoc API call succeeds, document ID stored in deal record​
+        
+    - Seller receives email with offer link (PandaDoc confirms delivery)​
+        
+    - Deal status updates, offer visible in "Pending Signature" view
+        
+    - Notification sent to team (Slack/email): "Offer sent to [address]"
+        
+4. **Edge Cases**:
+    
+    - Missing property data (ARV unknown - manual entry required)
+        
+    - PandaDoc API failure (retry logic, error message to user)​
+        
+    - Seller doesn't receive email (resend functionality, phone backup)
+        
+    - Offer declined (webhook updates status to "Offer Rejected")
+        
+
+**Journey 3: Signed Contract to Buyer Match to Assignment**​
+
+1. **Scenario**: Seller signs offer, disposition finds buyer, assigns contract
+    
+2. **Steps**:
+    
+    - PandaDoc webhook triggers on `document.completed` event​
+        
+    - Flipstackk updates deal status to "Under Contract"
+        
+    - Notification to disposition team: "New signed contract - [address]"
+        
+    - Dispo user opens deal, clicks "Find Buyers"
+        
+    - System matches property to buyer buy boxes (3 matches found)​
+        
+    - Dispo selects buyer, generates assignment contract
+        
+    - Sends assignment contract via PandaDoc to buyer​
+        
+    - Buyer signs, deal status updates to "Assigned"
+        
+    - Closing coordinator receives notification to schedule closing
+        
+3. **Expected Outcomes**:
+    
+    - Webhook correctly updates deal status without user action
+        
+    - Buyer matching algorithm returns relevant buyers (location, price range, property type match)​
+        
+    - Assignment contract pre-filled with seller contract terms
+        
+    - Buyer receives assignment contract, signs successfully​
+        
+    - Deal appears in "Closing Pipeline" dashboard
+        
+    - Assignment fee calculated and displayed ($10k in this example)
+        
+4. **Edge Cases**:
+    
+    - No buyer matches found (manual buyer outreach workflow)
+        
+    - Buyer selected but proof of funds missing (POF upload prompt)​
+        
+    - Assignment contract terms conflict with original contract (validation warnings)
+        
+    - Buyer doesn't sign (reminder emails, deal falls through workflow)
+        
+
+**Priority 2: Team Collaboration & Communication**​
+
+**Journey 4: Lead Assignment and Follow-Up**​
+
+1. **Scenario**: VA cold calls lead, assigns to sales rep for follow-up
+    
+2. **Steps**:
+    
+    - VA logs call outcome (answered, motivated, requested more info)
+        
+    - Assigns lead to sales rep "Kevin" for follow-up
+        
+    - Kevin receives notification (in-app + email)
+        
+    - Kevin opens lead, reviews call notes
+        
+    - Sends SMS via Flipstackk-Twilio integration: "Hi [name], I can make you an offer today..."​
+        
+    - Seller responds via SMS (Twilio webhook captures response)​
+        
+    - Kevin schedules property visit, adds calendar event to deal
+        
+3. **Expected Outcomes**:
+    
+    - Lead assignment triggers notification to correct user
+        
+    - Call notes visible in lead activity timeline
+        
+    - SMS sends successfully, thread visible in Communications tab​
+        
+    - Inbound SMS appears in real-time (WebSocket or polling)​
+        
+    - Calendar event syncs to Google Calendar (if integration enabled)
+        
+4. **Edge Cases**:
+    
+    - Assigned user not available (reassignment to backup)
+        
+    - SMS delivery failure (Twilio error, fallback to phone call prompt)​
+        
+    - Inbound SMS from unknown number (lead matching by phone)
+        
+
+**Journey 5: Dashboard KPI Review by Owner**​
+
+1. **Scenario**: Benji reviews weekly performance metrics
+    
+2. **Steps**:
+    
+    - Log in with admin role
+        
+    - Navigate to Analytics dashboard
+        
+    - View KPI widgets: leads added (120 this week), hot leads (35), offers sent (18), contracts signed (4), deals closed (2)​
+        
+    - Drill into conversion funnel: New (500) → Contacted (320) → Qualified (150) → Offer Sent (60) → Under Contract (12) → Assigned (8) → Closed (5)
+        
+    - Filter by team member performance (Kevin closed 3 deals, Mike closed 2)
+        
+    - Export weekly report to PDF for investor update
+        
+3. **Expected Outcomes**:
+    
+    - All KPIs display accurate data (cross-check with database queries)​
+        
+    - Conversion funnel percentages calculated correctly
+        
+    - Date range filters work (this week, last month, custom range)
+        
+    - Team performance metrics reflect individual contributions
+        
+    - PDF export generates formatted report with charts
+        
+4. **Edge Cases**:
+    
+    - Zero deals in time range (handle empty state gracefully)
+        
+    - Data discrepancies (audit trail for status changes)
+        
+
+**Priority 3: Error Recovery & Edge Cases**
+
+**Journey 6: System Failure Recovery**
+
+1. **Scenario**: Database connection lost, API timeout, user handles gracefully
+    
+2. **Steps**:
+    
+    - User editing lead details when database becomes unavailable
+        
+    - Save button clicked
+        
+    - Error displayed: "Unable to save. Connection issue. Changes saved locally."
+        
+    - Network reconnects
+        
+    - System auto-retries save, success message appears
+        
+3. **Expected Outcomes**:
+    
+    - No data loss (client-side caching or optimistic UI)
+        
+    - Clear error messages without technical jargon
+        
+    - Automatic retry without user intervention
+        
+    - Transaction rollback if partial save occurs
+        
+4. **Testing**: Simulate network failures, database connection pool exhaustion, third-party API outages[](https://artkai.io/blog/crm-development-guide)​
+    
+
+## 22. Load Testing vs. Feature Validation
+
+**MVP Approach: Prioritize Feature Validation, Basic Load Testing**
+
+**Feature Validation (Primary Focus):**
+
+**Manual Testing (Exploratory):**
+
+- **Stakeholder Testing**: Co-founders, VAs, sales reps test features during Sprint Reviews​
+    
+- **Dogfooding**: Use Flipstackk 6.0 for real deals during pilot phase (parallel with old system)
+    
+- **User Acceptance Testing (UAT)**: Formal sign-off on each epic before marking complete
+    
+- **Cross-Browser Testing**: Chrome, Firefox, Safari, Edge (desktop + mobile)
+    
+- **Device Testing**: iPhone, Android phones, iPad, desktop (responsive design validation)[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+
+**Automated Testing:**​
+
+- **Unit Tests**: Vitest for business logic (MAO calculation, lead scoring, buyer matching algorithms)​
+    
+- **Integration Tests**: Test API endpoints with real database (Prisma + test containers)
+    
+- **E2E Tests**: Playwright for critical user journeys (login → add lead → generate offer → send for signature)​
+    
+- **Visual Regression**: Percy or Chromatic for UI consistency across changes
+    
+- **Coverage Target**: 80%+ code coverage for core domains (leads, deals, buyers)​
+    
+
+**Load Testing (Secondary - Basic Validation):**
+
+**Rationale:**
+
+- **Small Team**: 10-15 concurrent users max initially (not high-scale scenario)​
+    
+- **Gradual Growth**: Can add load testing infrastructure if/when scaling to SaaS
+    
+- **Cost-Benefit**: Load testing tooling (k6, Gatling, LoadRunner) and expertise expensive for MVP
+    
+
+**Minimal Load Testing:**
+
+- **Baseline Performance**: Measure response times for common operations under normal load (1-5 concurrent users)
+    
+- **Spike Testing**: Simulate 20-30 concurrent users hitting lead list endpoint (2-3x expected peak) to identify bottlenecks[](https://artkai.io/blog/crm-development-guide)​
+    
+- **Database Query Performance**: Use PostgreSQL's `EXPLAIN ANALYZE` to optimize slow queries (>100ms)[](https://artkai.io/blog/crm-development-guide)​
+    
+- **API Endpoint Benchmarking**: Apache Bench or wrk to test critical endpoints (100 req/sec target)[](https://artkai.io/blog/crm-development-guide)​
+    
+
+**Defer to Phase 2+:**
+
+- **Stress Testing**: Breaking point testing (hundreds of concurrent users)
+    
+- **Endurance Testing**: 24-hour soak tests for memory leaks, connection pool exhaustion
+    
+- **Scalability Testing**: Validating horizontal scaling (multiple app instances, load balancer)
+    
+
+**Decision Point:** If transitioning to multi-tenant SaaS with 100+ customers, invest in comprehensive load testing infrastructure. For internal tool serving <20 users, feature validation ROI is higher.
+
+## 23. QA Tools
+
+**Recommended QA Toolchain:**
+
+**Automated Testing:**​
+
+**Unit & Integration Testing:**
+
+- **Vitest**: Fast, modern test runner for TypeScript/JavaScript (Vite-based)​
+    
+- **Testing Library**: React Testing Library for component testing (user-centric assertions)
+    
+- **Prisma Test Environment**: Isolated test databases using Docker or in-memory SQLite
+    
+- **Example**:
+    
+    typescript
+    
+    `describe('MAO Calculator', () => {   it('calculates maximum allowable offer correctly', () => {    const result = calculateMAO({ arv: 200000, repairs: 30000, fee: 10000 });    expect(result).toBe(100000); // (200k * 0.7) - 30k - 10k  }); });`
+    
+
+**API Testing:**
+
+- **Supertest**: HTTP assertions for Next.js API routes
+    
+- **Postman Collections**: Shareable API test suites for manual and automated testing
+    
+- **tRPC Testing**: Call tRPC procedures directly in tests (type-safe, no HTTP overhead)​
+    
+
+**End-to-End Testing:**​
+
+- **Playwright**: Cross-browser E2E testing (Chromium, Firefox, WebKit support)​
+    
+- **Features**: Video recording of failures, network interception, parallel execution
+    
+- **Example**:
+    
+    typescript
+    
+    `test('create lead and verify in list', async ({ page }) => {   await page.goto('/leads/new');  await page.fill('input[name="address"]', '123 Main St');  await page.fill('input[name="ownerName"]', 'John Doe');  await page.click('button[type="submit"]');  await expect(page.locator('text=Lead created')).toBeVisible();  await page.goto('/leads');  await expect(page.locator('text=123 Main St')).toBeVisible(); });`
+    
+
+**Manual Testing Tools:**
+
+**Bug Tracking:**
+
+- **Linear**: Modern issue tracking with GitHub integration, keyboard shortcuts
+    
+- **GitHub Issues**: Free, integrated with code repo, simple for small teams
+    
+- **Notion**: If team already uses Notion, database for bug tracking​
+    
+
+**Exploratory Testing:**
+
+- **Session-Based Testing**: Structured manual testing with charters (e.g., "Test lead status transitions for 60 min")
+    
+- **Checklists**: Pre-deployment checklist for smoke testing critical features
+    
+
+**Code Quality:**
+
+**Linting & Formatting:**​
+
+- **ESLint**: Catch common errors, enforce code style
+    
+- **Prettier**: Consistent code formatting across team
+    
+- **TypeScript Strict Mode**: Maximum type safety (`strict: true` in tsconfig)​
+    
+- **Husky + lint-staged**: Pre-commit hooks to prevent committing unformatted code
+    
+
+**Static Analysis:**
+
+- **SonarQube**: Code smell detection, security vulnerability scanning (free tier for small projects)
+    
+- **Snyk**: Dependency vulnerability scanning in CI/CD
+    
+
+**Performance Monitoring:**[](https://artkai.io/blog/crm-development-guide)​
+
+**APM (Application Performance Monitoring):**
+
+- **Sentry**: Error tracking, performance monitoring (free tier: 5k errors/month)
+    
+- **Vercel Analytics**: Built-in Web Vitals tracking if deploying to Vercel​
+    
+
+**Database Monitoring:**
+
+- **Prisma Logging**: Enable query logging in dev to identify slow queries​
+    
+- **PostgreSQL pg_stat_statements**: Track query performance in production[](https://artkai.io/blog/crm-development-guide)​
+    
+
+**Synthetic Monitoring:**
+
+- **Checkly**: Uptime monitoring + E2E checks in production (runs Playwright tests on schedule)
+    
+
+**CI/CD Integration:**​
+
+**GitHub Actions Workflow:**
+
+text
+
+`name: CI on: [push, pull_request] jobs:   test:    runs-on: ubuntu-latest    steps:      - uses: actions/checkout@v3      - uses: actions/setup-node@v3        with:          node-version: 20      - run: npm ci      - run: npm run lint      - run: npm run type-check      - run: npm run test:unit      - run: npm run test:e2e      - run: npm run build`
+
+**Quality Gates:**
+
+- **Required Checks**: All tests pass, no linting errors, TypeScript compiles​
+    
+- **Code Review**: At least one approval before merge to main branch
+    
+- **Coverage Threshold**: 80% unit test coverage maintained​
+    
+
+## 24. Sensitive System Components
+
+**Highest Sensitivity Areas (Priority Security & Testing):**
+
+**Personal Identifiable Information (PII):**​
+
+**Lead Owner Data:**​
+
+- **Sensitivity**: Owner names, phone numbers, email addresses, mailing addresses
+    
+- **Regulatory**: CCPA (California), GDPR (if any EU customers), state privacy laws​
+    
+- **Security Measures**:
+    
+    - Encrypt PII at rest (PostgreSQL column encryption or AWS RDS encryption)
+        
+    - Encrypt in transit (HTTPS/TLS for all API calls)
+        
+    - Access control (RBAC - only acquisitions and admin roles can view owner details)​
+        
+    - Audit logging (track who accessed which lead data, when)​
+        
+    - Data retention policy (delete leads after X months if deal not closed)​
+        
+    - Opt-out mechanism (seller requests data deletion, CCPA compliance)​
+        
+
+**Buyer Information:**​
+
+- **Sensitivity**: Buyer contact info, proof of funds documents (bank statements, credit reports)
+    
+- **Security Measures**:
+    
+    - POF documents stored in encrypted S3 bucket with signed URLs (time-limited access)​
+        
+    - Redact sensitive buyer data in logs (no PII in Sentry error reports)
+        
+    - Buyer data access limited to dispo team and admin roles​
+        
+
+**Financial & Deal Information:**
+
+**Deal Terms & Assignment Fees:**​
+
+- **Sensitivity**: Contract terms, purchase prices, assignment fees (competitive intelligence if leaked)
+    
+- **Security Measures**:
+    
+    - Role-based access (VAs cannot view assignment fees, only acquisition managers and up)​
+        
+    - Audit trail for deal changes (who modified offer price, when)
+        
+    - Backup/disaster recovery (daily database backups to secure off-site storage)[](https://artkai.io/blog/crm-development-guide)​
+        
+
+**Contract Documents:**​
+
+- **Sensitivity**: Signed contracts contain seller signatures, legal terms
+    
+- **Security Measures**:
+    
+    - Store in secured S3 bucket (not public-readable)
+        
+    - Access via signed URLs with expiration (1 hour validity)
+        
+    - Integration with PandaDoc for secure document workflow (PandaDoc handles encryption)​
+        
+    - Immutable audit trail (contract versions, signature timestamps)
+        
+
+**Authentication & Authorization:**​
+
+**User Credentials:**​
+
+- **Sensitivity**: Passwords must never be stored in plaintext
+    
+- **Security Measures**:
+    
+    - bcrypt password hashing (work factor 12+)​
+        
+    - Secure session management (HttpOnly, Secure, SameSite cookies)​
+        
+    - Multi-factor authentication (MFA) for admin roles (Phase 2)
+        
+    - Rate limiting on login endpoint (prevent brute force - 5 attempts/min max)
+        
+
+**API Keys & Secrets:**​
+
+- **Sensitivity**: RELAS API key, Twilio auth token, PandaDoc API key, database connection string​
+    
+- **Security Measures**:
+    
+    - Environment variables (never commit to Git)​
+        
+    - Secrets management (AWS Secrets Manager, Vercel Environment Variables)
+        
+    - Rotate secrets quarterly or on team member departure
+        
+    - Least privilege (API keys with minimal required permissions)
+        
+
+**Business Logic Integrity:**
+
+**Lead Scoring Algorithm (RELAS):**​
+
+- **Sensitivity**: Scoring accuracy directly impacts deal prioritization and revenue
+    
+- **Testing**:
+    
+    - Unit tests for each scoring factor (absentee: +30 points, 10+ years owned: +25 points)​
+        
+    - Integration tests with known leads (assert score 85 for known hot lead)​
+        
+    - Regression tests (ensure scoring doesn't drift with code changes)
+        
+    - Manual validation (acquisitions managers compare scores to their judgment)
+        
+
+**MAO Calculator:**​
+
+- **Sensitivity**: Incorrect MAO calculation leads to unprofitable offers or lost deals
+    
+- **Testing**:
+    
+    - Unit tests with various property scenarios (high ARV/low repairs, low ARV/high repairs)
+        
+    - Edge cases (negative MAO, zero repairs, missing ARV - should error gracefully)
+        
+    - User acceptance testing (acquisitions managers verify calculations match manual comps)
+        
+
+**Buyer Matching:**​
+
+- **Sensitivity**: Poor matches waste time, good matches close deals faster
+    
+- **Testing**:
+    
+    - Test buy box criteria filtering (price range, location radius, property type)
+        
+    - Edge cases (buyer wants "3-4 bed" matched to 3-bed property, not 2-bed)
+        
+    - Performance testing (query 10,000 buyers for matches in <500ms)[](https://artkai.io/blog/crm-development-guide)​
+        
+
+**Data Integrity:**
+
+**Database Transactions:**[](https://artkai.io/blog/crm-development-guide)​
+
+- **Sensitivity**: Concurrent updates (two users editing same lead) must not corrupt data
+    
+- **Testing**:
+    
+    - Concurrency tests (simulate simultaneous updates, verify last-write-wins or conflict detection)
+        
+    - Transaction rollback testing (ensure partial saves don't leave inconsistent state)[](https://artkai.io/blog/crm-development-guide)​
+        
+
+**External Integration Reliability:**​
+
+**RELAS API:**​
+
+- **Failure Modes**: Timeout, 500 error, invalid response format
+    
+- **Testing**:
+    
+    - Mock RELAS failures in tests, verify graceful degradation (lead saved, enrichment retried later)
+        
+    - Circuit breaker pattern (stop calling RELAS if failure rate >50% for 1 min, retry after cooldown)​
+        
+
+**PandaDoc API:**​
+
+- **Failure Modes**: OAuth token expired, API rate limit exceeded, webhook delivery failure
+    
+- **Testing**:
+    
+    - Mock PandaDoc errors, verify user sees meaningful error message
+        
+    - Webhook idempotency (handle duplicate `document.completed` events)
+        
+    - Retry logic (exponential backoff for failed API calls)​
+        
+
+**Twilio API:**​
+
+- **Failure Modes**: SMS delivery failure, phone number invalid, rate limit exceeded
+    
+- **Testing**:
+    
+    - Mock Twilio errors, verify SMS marked as "failed" with retry option
+        
+    - Handle invalid phone numbers (validation before sending)
+        
+    - Monitor usage to avoid exceeding Twilio account limits​
+        
+
+## 25. Confirmation & Validation Strategy
+
+**Pre-Deployment Validation:**
+
+**Staging Environment Testing:**[](https://artkai.io/blog/crm-development-guide)​
+
+- **Environment**: Staging environment mirroring production (same tech stack, scaled-down resources)
+    
+- **Data**: Seed staging database with anonymized production-like data (100 leads, 50 buyers, 20 deals)
+    
+- **Process**:
+    
+    - Deploy to staging after all Sprint tests pass
+        
+    - Smoke test critical user journeys (login, add lead, generate offer)
+        
+    - Stakeholder UAT (co-founders, VA team lead test for 2-3 days)​
+        
+    - Bug fixes deployed to staging, retested before production
+        
+
+**Production Deployment Checklist:**​
+
+-  All Sprint Review demos completed and approved
+    
+-  Automated tests passing (unit, integration, E2E)​
+    
+-  Manual regression testing completed (core features still work after changes)
+    
+-  Performance benchmarks met (dashboard <2s, search <500ms)[](https://artkai.io/blog/crm-development-guide)​
+    
+-  Security review (no new secrets in Git, RBAC tested)​
+    
+-  Database migrations tested (apply to staging, verify schema changes)​
+    
+-  Third-party integrations tested (RELAS, Twilio, PandaDoc API calls successful)​
+    
+-  Backup created (database snapshot before deployment)[](https://artkai.io/blog/crm-development-guide)​
+    
+-  Rollback plan documented (revert to previous deploy in <10 min if critical bug)
+    
+-  Monitoring alerts configured (error rate spike, response time degradation)[](https://artkai.io/blog/crm-development-guide)​
+    
+-  Team notified (announce deployment window, expected downtime if any)
+    
+
+**Post-Deployment Verification:**
+
+**Smoke Tests (Immediate - 15 min):**​
+
+- **Login**: Authenticate with each role (admin, acquisitions, caller, investor)​
+    
+- **Lead Operations**: Create lead, view in list, update status
+    
+- **Search**: Query leads by various filters
+    
+- **Offer Generation**: Generate offer PDF, verify data accuracy
+    
+- **Dashboard**: Confirm KPIs display without errors​
+    
+- **Integrations**: Send test SMS via Twilio, verify delivery​
+    
+
+**Monitoring (First 24 Hours):**[](https://artkai.io/blog/crm-development-guide)​
+
+- **Error Rate**: Sentry dashboard for new errors or spikes in error frequency
+    
+- **Performance**: Vercel Analytics or New Relic for response time regressions​
+    
+- **User Feedback**: Slack channel or Linear project for team to report issues quickly
+    
+- **Database Health**: PostgreSQL connection pool usage, slow query log[](https://artkai.io/blog/crm-development-guide)​
+    
+
+**Validation Windows:**
+
+**Pilot Testing (Weeks 1-2 Post-Launch):**​
+
+- **Participants**: 3-5 early adopters from team (co-founders, VA team lead, 1 sales rep)​
+    
+- **Scope**: Use Flipstackk 6.0 for 50% of deals, parallel with old system
+    
+- **Feedback**: Daily 15-min check-in to surface bugs, usability issues
+    
+- **Success Criteria**:
+    
+    - Zero critical bugs (data loss, security breach)
+        
+    - <10 medium bugs (workarounds available)
+        
+    - User Net Promoter Score >6/10
+        
+
+**Full Team Rollout (Week 3+):**​
+
+- **Training**: 1-hour onboarding session for all users, recorded video tutorial
+    
+- **Support**: Dedicated Slack channel for questions, co-founder on-call for first week
+    
+- **Data Migration**: Import historical leads/buyers from old system (CSV import or API sync)
+    
+- **Cutover**: Turn off old system access, Flipstackk 6.0 becomes system of record
+    
+
+**Success Metrics Tracking (Month 1-3):**​
+
+- **Leading Indicators** (measure weekly):
+    
+    - User adoption rate (% of team logging in daily)
+        
+    - Lead entry volume (are VAs entering leads consistently?)
+        
+    - Feature usage (how many offers generated, buyers matched?)
+        
+- **Lagging Indicators** (measure monthly):
+    
+    - Lead conversion rate (% progressing to closed deals)​
+        
+    - Deal cycle time (days from lead entry to closing)​
+        
+    - Team efficiency (deals per team member)​
+        
+    - Revenue impact (assignment fees collected)​
+        
+
+**Validation Checkpoints:**​
+
+- **1 Month**: Review KPIs, gather user feedback, prioritize top 10 improvements
+    
+- **3 Months**: Assess if MVP success criteria met, decide on Phase 2 features or pivot
+    
+- **6 Months**: Evaluate SaaS viability (if applicable) - internal ROI proven, ready for external customers?​
+    
+
+**Continuous Validation:**
+
+- **Weekly Sprint Reviews**: Demo new features, gather feedback before production deployment​
+    
+- **Monthly Retrospectives**: Process improvements, technical debt prioritization​
+    
+- **Quarterly Planning**: Review strategic goals, adjust roadmap based on learnings​
+    
+
+---
+
+6 sources
+
+Summary & Next Steps
+
+This comprehensive framework addresses all 25 questions across the Planning, Analysis, Architecture, Development, and Testing phases for Flipstackk 6.0. Based on your existing documentation and market research, the recommendations prioritize:
+
+**Key Strategic Decisions:**
+
+1. **Vision**: Wholesaler-first CRM focused on speed and simplicity vs. feature bloat​
+    
+2. **Differentiation**: Integrated lead scoring (RELAS), intuitive UX, affordable pricing vs. competitors[](https://coastandvalleypm.com/best-crm-for-real-estate-investors/)​​
+    
+3. **Timeline**: 6-month MVP with 2-week sprints, internal validation before SaaS launch​
+    
+4. **Architecture**: Next.js monolith with domain-driven design, RELAS API integration, mobile-responsive web​[](https://www.halo-lab.com/blog/crm-system-design)​
+    
+5. **Testing**: Feature validation priority, automated testing (Vitest, Playwright), pilot rollout strategy​
+    
+
+**Immediate Actions:**
+
+1. **Finalize PRD**: Use Flipstackk 3.0 Project Brief as foundation, incorporate RELAS insights, validate with stakeholders​
+    
+2. **Architecture Design**: Detail tech stack decisions (Next.js, PostgreSQL, Prisma, tRPC), RELAS integration approach, deployment strategy[](https://artkai.io/blog/crm-development-guide)​​
+    
+3. **Sprint 0 Planning**: Set up repository, CI/CD pipeline, staging environment, team onboarding​
+    
+4. **Stakeholder Alignment**: Present this framework to co-founders for approval, budget allocation, timeline commitment​
+    
+
+**Critical Open Questions to Resolve:**
+
+- RELAS integration: API vs. rebuild in TypeScript?​
+    
+- Mobile app: Responsive web sufficient or native required?[](https://www.halo-lab.com/blog/crm-system-design)​​
+    
+- Pricing model: Internal tool first or SaaS from Day 1?[](https://resimpli.com/blog/propstream-alternatives-real-estate/)​​
+    
+- Data providers: Build scrapers vs. integrate PropStream/Attom APIs?[](https://www.realestateskills.com/blog/dataflik-review)​​
+    
+
+This framework serves as your comprehensive planning document for Flipstackk 6.0. Each section can be expanded into detailed specifications (PRD, Architecture Doc, Test Plan) as you progress through development phases using the BMad Method agents or traditional development workflows.​
