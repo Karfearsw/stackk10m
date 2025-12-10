@@ -1,0 +1,17 @@
+{
+  "name": "stackk10m-root",
+  "private": true,
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "dev": "npm --prefix FrameworkPlanner run dev",
+    "build": "npm --prefix FrameworkPlanner run build",
+    "start": "npm --prefix FrameworkPlanner run start",
+    "check": "npm --prefix FrameworkPlanner run check",
+    "db:push": "npm --prefix FrameworkPlanner run db:push"
+  },
+  "dependencies": {
+    "jose": "^6.1.3"
+  }
+}
