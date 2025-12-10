@@ -42,12 +42,21 @@ export function useSignalWire() {
 
   const connectWithToken = async (tokenData: any) => {
     try {
+      console.log("[SW-Diag] Importing @signalwire/js...");
       const SW = await import("@signalwire/js");
+      console.log("[SW-Diag] Module loaded. Keys:", Object.keys(SW));
+      
       const SignalWire = (SW as any)?.SignalWire;
+      console.log("[SW-Diag] SignalWire constructor type:", typeof SignalWire);
+
       if (typeof SignalWire !== "function") {
+        console.error("[SW-Diag] SignalWire constructor missing in module:", SW);
         throw new Error("SignalWire client unavailable");
       }
+      
+      console.log("[SW-Diag] Initializing client with token...");
       const client: any = await SignalWire({ token: tokenData.token });
+      console.log("[SW-Diag] Client initialized. Keys:", Object.keys(client || {}));
 
       setReady(true);
       relayRef.current = client;
@@ -57,34 +66,43 @@ export function useSignalWire() {
         if (typeof disconnect === "function") disconnect.call(client);
       };
     } catch (error) {
-      console.error("Failed to connect to SignalWire:", error);
+      console.error("[SW-Diag] Failed to connect to SignalWire:", error);
       throw error;
     }
   };
 
   const makeCall = async (number: string) => {
     try {
+      console.log("[SW-Diag] makeCall invoked for:", number);
       // Get token from server
       const tokenData = await getToken(number);
       setToken(tokenData.token);
       
       // Connect with token if not already connected
       if (!ready) {
+        console.log("[SW-Diag] Client not ready, connecting...");
         await connectWithToken(tokenData);
       }
       
       if (!relayRef.current) {
+        console.error("[SW-Diag] relayRef is null after connection attempt");
         throw new Error("SignalWire not ready");
       }
       
       const dial = (relayRef.current as any)?.dial;
+      console.log("[SW-Diag] Checking dial method. Type:", typeof dial);
+      
       if (typeof dial !== "function") {
+        console.error("[SW-Diag] dial method missing on client:", relayRef.current);
         throw new Error("SignalWire dial unavailable");
       }
+      
+      console.log("[SW-Diag] Calling dial...");
       const session = await dial.call(relayRef.current, {
         to: number,
         from: tokenData.from || tokenData.project,
       });
+      console.log("[SW-Diag] Dial successful. Session ID:", session.callId || session.id);
 
       setCall({
         id: session.callId || session.id || "unknown",
