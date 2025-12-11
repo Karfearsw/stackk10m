@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { SignalWire } from "@signalwire/js";
 
 interface SignalWireConfig {
   host: string;
@@ -42,31 +43,15 @@ export function useSignalWire() {
 
   const connectWithToken = async (tokenData: any) => {
     try {
-      console.log("[SW-Diag] Importing @signalwire/js...");
-      const SW = await import("@signalwire/js");
-      console.log("[SW-Diag] Module loaded. Keys:", Object.keys(SW));
-      
-      const SignalWire = (SW as any)?.SignalWire;
-      console.log("[SW-Diag] SignalWire constructor type:", typeof SignalWire);
-
-      if (typeof SignalWire !== "function") {
-        console.error("[SW-Diag] SignalWire constructor missing in module:", SW);
-        throw new Error("SignalWire client unavailable");
-      }
-      
-      console.log("[SW-Diag] Initializing client with token...");
       const client: any = await SignalWire({ token: tokenData.token });
-      console.log("[SW-Diag] Client initialized. Keys:", Object.keys(client || {}));
-
       setReady(true);
       relayRef.current = client;
-
       return () => {
         const disconnect = (client as any)?.disconnect || (client as any)?.offline;
         if (typeof disconnect === "function") disconnect.call(client);
       };
     } catch (error) {
-      console.error("[SW-Diag] Failed to connect to SignalWire:", error);
+      console.error("Failed to connect to SignalWire:", error);
       throw error;
     }
   };
