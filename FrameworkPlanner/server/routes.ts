@@ -771,8 +771,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         scope: 'voice',
         resource: {
           type: 'call',
-          to: to,
-          from: from || process.env.DIALER_DEFAULT_FROM_NUMBER
+          to: String(to),
+          from: String(from || process.env.DIALER_DEFAULT_FROM_NUMBER)
         }
       };
       const secret = new TextEncoder().encode(token);

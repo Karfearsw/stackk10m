@@ -62,7 +62,7 @@ export default function Dialer() {
       const res = await fetch(`/api/telephony/calls`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ direction, number, status: "dialing", startedAt: new Date().toISOString() }),
+        body: JSON.stringify({ direction, number: String(number), status: "dialing", startedAt: new Date().toISOString() }),
       });
       if (!res.ok) throw new Error(await res.text());
       const log = await res.json();

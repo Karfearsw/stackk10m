@@ -26,7 +26,7 @@ export function useSignalWire() {
       const response = await fetch("/api/telephony/signalwire/token", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, from }),
+        body: JSON.stringify({ to: String(to), from: from ? String(from) : undefined }),
       });
       
       if (!response.ok) {
