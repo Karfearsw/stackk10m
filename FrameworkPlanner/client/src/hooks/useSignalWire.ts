@@ -43,8 +43,8 @@ export function useSignalWire() {
 
   const connectWithToken = async (tokenData: any) => {
     try {
-      const host = (tokenData.space || "").replace(/^wss:\/\//, "");
-      const client: any = await SignalWire({ token: tokenData.token, host });
+      // const host = (tokenData.space || "").replace(/^wss:\/\//, "");
+      const client: any = await SignalWire({ token: tokenData.token });
       setReady(true);
       relayRef.current = client;
       return () => {
