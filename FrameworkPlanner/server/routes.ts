@@ -753,15 +753,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Destination number (to) is required" });
       }
       
-      const space = process.env.SIGNALWIRE_SPACE_URL?.replace(/^https?:\/\//, "");
-      const project = process.env.SIGNALWIRE_PROJECT_ID;
-      const token = process.env.SIGNALWIRE_API_TOKEN;
+      const space = process.env.SIGNALWIRE_SPACE_URL?.replace(/^https?:\/\//, "").trim();
+      const project = process.env.SIGNALWIRE_PROJECT_ID?.trim();
+      const token = process.env.SIGNALWIRE_API_TOKEN?.trim();
       
       if (!space || !project || !token) {
         return res.status(500).json({ message: "SignalWire credentials not configured" });
       }
       
       // Generate a short-lived JWT token for WebRTC
+      // resource must be a string identifier for the client (e.g. the phone number)
+      const resource = String(from || process.env.DIALER_DEFAULT_FROM_NUMBER);
+      
       const payload = {
         iss: project,
         sub: req.session.userId?.toString() || 'anonymous',
@@ -769,12 +772,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         exp: Math.floor(Date.now() / 1000) + 300, // 5 minutes
         iat: Math.floor(Date.now() / 1000),
         scope: 'voice',
-        resource: {
-          type: 'call',
-          to: String(to),
-          from: String(from || process.env.DIALER_DEFAULT_FROM_NUMBER)
-        }
+        resource: resource 
       };
+      
+      console.log("[JWT] Generating token with payload:", JSON.stringify(payload, null, 2));
+
       const secret = new TextEncoder().encode(token);
       const jwtToken = await new SignJWT(payload as any)
         .setProtectedHeader({ alg: 'HS256' })
