@@ -6,7 +6,8 @@ import { storage } from "./storage.js";
 import { db } from "./db.js";
 import { sql } from "drizzle-orm";
 import { 
-  insertLeadSchema, 
+  insertLeadSchema,
+  type InsertLead, 
   insertPropertySchema, 
   insertContactSchema, 
   insertContractSchema,
@@ -324,7 +325,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/leads/:id", async (req, res) => {
     try {
-      const partial = insertLeadSchema.partial().parse(req.body);
+      const partial = insertLeadSchema.partial().parse(req.body) as Partial<InsertLead>;
       const id = parseInt(req.params.id);
       const before = await storage.getLeadById(id);
       const lead = await storage.updateLead(id, partial);
