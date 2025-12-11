@@ -12,6 +12,7 @@ import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock, ImageIcon,
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
+import { runSignalWireDiagnostics } from "@/debug/signalwireDiag";
 
 function SettingsContent() {
   const queryClient = useQueryClient();
@@ -1037,6 +1038,14 @@ function SettingsContent() {
                 data-testid="button-system-health"
               >
                 Open System Health
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => runSignalWireDiagnostics()}
+                aria-label="Run SignalWire Diagnostics"
+                data-testid="button-signalwire-diagnostics"
+              >
+                Run SignalWire Diagnostics
               </Button>
             </CardContent>
           </Card>
