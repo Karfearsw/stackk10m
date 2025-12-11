@@ -61,7 +61,7 @@ export function useSignalWire() {
     try {
       console.log("[SW-Diag] makeCall invoked for:", number);
       // Get token from server
-      const tokenData = await getToken(number);
+      const tokenData = await getToken(number, "+12314060943");
       setToken(tokenData.token);
       
       // Connect with token if not already connected
