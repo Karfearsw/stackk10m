@@ -775,7 +775,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         resource: resource 
       };
       
-      console.log("[JWT] Generating token with payload:", JSON.stringify(payload, null, 2));
+      console.log("[JWT] Generating token (v2) with payload:", JSON.stringify(payload, null, 2));
 
       const secret = new TextEncoder().encode(token);
       const jwtToken = await new SignJWT(payload as any)
