@@ -75,18 +75,19 @@ export function useSignalWire() {
         throw new Error("SignalWire not ready");
       }
       
-      const dial = (relayRef.current as any)?.dial;
-      console.log("[SW-Diag] Checking dial method. Type:", typeof dial);
+      const client = relayRef.current as any;
+      const dialMethod = client?.voice?.dialPhone || client?.calling?.dialPhone || client?.dial;
+      console.log("[SW-Diag] Checking dial method. Type:", typeof dialMethod);
       
-      if (typeof dial !== "function") {
+      if (typeof dialMethod !== "function") {
         console.error("[SW-Diag] dial method missing on client:", relayRef.current);
         throw new Error("SignalWire dial unavailable");
       }
       
       console.log("[SW-Diag] Calling dial...");
-      const session = await dial.call(relayRef.current, {
+      const session = await dialMethod.call(relayRef.current, {
         to: number,
-        from: tokenData.from || tokenData.project,
+        from: "+12314060943",
       });
       console.log("[SW-Diag] Dial successful. Session ID:", session.callId || session.id);
 
