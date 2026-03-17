@@ -9,7 +9,7 @@
   "scripts": {
     "dev:client": "node ./node_modules/vite/bin/vite.js dev --port 3000",
     "dev": "cross-env NODE_ENV=development node ./node_modules/tsx/dist/cli.mjs server/index-dev.ts",
-    "build": "node ./node_modules/vite/bin/vite.js build && node ./node_modules/esbuild/bin/esbuild server/index-prod.ts --platform=node --packages=external --bundle --format=esm --outfile=dist-server/index.js",
+    "build": "node ./node_modules/vite/bin/vite.js build; node ./node_modules/esbuild/bin/esbuild server/index-prod.ts --platform=node --packages=external --bundle --format=esm --outfile=dist-server/index.js",
     "start": "cross-env NODE_ENV=production node dist-server/index.js",
     "check": "node ./node_modules/typescript/bin/tsc",
     "db:push": "node ./node_modules/drizzle-kit/bin.cjs push",
