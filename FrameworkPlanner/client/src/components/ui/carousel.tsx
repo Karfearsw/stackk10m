@@ -75,6 +75,13 @@ const Carousel = React.forwardRef<
       setCanScrollNext(api.canScrollNext())
     }, [])
 
+    const setApiRef = React.useRef(setApi)
+    const lastApiRef = React.useRef<CarouselApi | null>(null)
+
+    React.useEffect(() => {
+      setApiRef.current = setApi
+    }, [setApi])
+
     const scrollPrev = React.useCallback(() => {
       api?.scrollPrev()
     }, [api])
@@ -97,12 +104,17 @@ const Carousel = React.forwardRef<
     )
 
     React.useEffect(() => {
-      if (!api || !setApi) {
+      if (!api || !setApiRef.current) {
         return
       }
 
-      setApi(api)
-    }, [api, setApi])
+      if (lastApiRef.current === api) {
+        return
+      }
+
+      lastApiRef.current = api
+      setApiRef.current(api)
+    }, [api])
 
     React.useEffect(() => {
       if (!api) {
