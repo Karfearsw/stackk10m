@@ -10,6 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -33,6 +34,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
+import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 
 interface Buyer {
   id: number;
@@ -86,6 +88,7 @@ export default function Buyers() {
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBuyer, setSelectedBuyer] = useState<Buyer | null>(null);
+  const [isBuyerSheetOpen, setIsBuyerSheetOpen] = useState(false);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [commType, setCommType] = useState("call");
@@ -462,20 +465,23 @@ export default function Buyers() {
             </h1>
             <p className="text-muted-foreground">Manage your buyer relationships and track deals</p>
           </div>
-          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button data-testid="button-add-buyer">
-                <Plus className="h-4 w-4 mr-2" /> Add Buyer
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Add New Buyer</DialogTitle>
-                <DialogDescription>Add a cash buyer to your network</DialogDescription>
-              </DialogHeader>
-              <BuyerForm />
-            </DialogContent>
-          </Dialog>
+          <div className="flex items-center gap-2">
+            <CrmImportExportDialog entityType="buyer" />
+            <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+              <DialogTrigger asChild>
+                <Button data-testid="button-add-buyer">
+                  <Plus className="h-4 w-4 mr-2" /> Add Buyer
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>Add New Buyer</DialogTitle>
+                  <DialogDescription>Add a cash buyer to your network</DialogDescription>
+                </DialogHeader>
+                <BuyerForm />
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
       </div>
 
@@ -564,7 +570,10 @@ export default function Buyers() {
                         className={`p-4 rounded-lg border cursor-pointer transition-colors ${
                           selectedBuyer?.id === buyer.id ? "bg-primary/10 border-primary" : "hover:bg-muted"
                         }`}
-                        onClick={() => setSelectedBuyer(buyer)}
+                        onClick={() => {
+                          setSelectedBuyer(buyer);
+                          setIsBuyerSheetOpen(true);
+                        }}
                         data-testid={`buyer-card-${buyer.id}`}
                       >
                         <div className="flex items-start justify-between">
@@ -827,6 +836,111 @@ export default function Buyers() {
           )}
         </div>
       </div>
+
+      <Sheet open={isBuyerSheetOpen} onOpenChange={setIsBuyerSheetOpen}>
+        <SheetContent className="sm:max-w-lg">
+          <SheetHeader>
+            <SheetTitle>{selectedBuyer ? selectedBuyer.name : "Buyer Profile"}</SheetTitle>
+          </SheetHeader>
+          {selectedBuyer ? (
+            <div className="mt-6 space-y-4">
+              <div className="flex items-center gap-2">
+                {selectedBuyer.isVip && (
+                  <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
+                    <Star className="h-3 w-3 mr-1" /> VIP
+                  </Badge>
+                )}
+                {selectedBuyer.proofOfFunds && (
+                  <Badge className="bg-red-600 text-white hover:bg-red-700 border-0">
+                    <CheckCircle className="h-3 w-3 mr-1" /> Flipstackk Verified
+                  </Badge>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-xs text-muted-foreground">Phone</div>
+                  <div className="font-medium">{selectedBuyer.phone || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Email</div>
+                  <div className="font-medium">{selectedBuyer.email || "—"}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Budget</div>
+                  <div className="font-medium">
+                    {formatCurrency(selectedBuyer.minBudget)} - {formatCurrency(selectedBuyer.maxBudget)}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Deals/Month</div>
+                  <div className="font-medium">{selectedBuyer.dealsPerMonth || "—"}</div>
+                </div>
+              </div>
+
+              {selectedBuyer.preferredPropertyTypes && selectedBuyer.preferredPropertyTypes.length > 0 && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">Preferred Property Types</div>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedBuyer.preferredPropertyTypes.map((t, i) => (
+                      <Badge key={i} variant="outline" className="text-xs">
+                        {t}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selectedBuyer.preferredAreas && selectedBuyer.preferredAreas.length > 0 && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">Preferred Areas</div>
+                  <div className="flex flex-wrap gap-1">
+                    {selectedBuyer.preferredAreas.map((a, i) => (
+                      <Badge key={i} variant="secondary" className="text-xs">
+                        {a}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selectedBuyer.notes && (
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">Notes</div>
+                  <div className="whitespace-pre-wrap text-sm border rounded-md p-3 bg-muted/30">{selectedBuyer.notes}</div>
+                </div>
+              )}
+
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => {
+                    setIsBuyerSheetOpen(false);
+                    handleEditClick(selectedBuyer);
+                  }}
+                >
+                  Edit
+                </Button>
+                <Button
+                  variant="destructive"
+                  className="flex-1"
+                  onClick={() => {
+                    if (confirm("Delete this buyer?")) {
+                      deleteBuyerMutation.mutate(selectedBuyer.id);
+                      setIsBuyerSheetOpen(false);
+                    }
+                  }}
+                >
+                  Delete
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-6 text-sm text-muted-foreground">Select a buyer to view details.</div>
+          )}
+        </SheetContent>
+      </Sheet>
 
       <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">

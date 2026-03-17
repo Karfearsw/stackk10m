@@ -58,7 +58,7 @@ describe('PropertyDetail page', () => {
       </QueryClientProvider>
     )
 
-    const textarea = await screen.findByPlaceholderText('Add a note...')
+    const textarea = await screen.findByPlaceholderText('Add a note...');
     (textarea as HTMLTextAreaElement).value = 'Test note'
     textarea.dispatchEvent(new Event('input', { bubbles: true }))
     const addBtn = await screen.findByText('Add')

@@ -4,7 +4,7 @@ import express, { type Express, type Request, Response, NextFunction } from "exp
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import helmet from "helmet";
-import { db, pool } from "./db.js";
+import { db, pool, pgSslOptions } from "./db.js";
 import { registerRoutes } from "./routes.js";
 import { initSentry, Sentry } from "./sentry.js";
 import crypto from "node:crypto";
@@ -64,24 +64,51 @@ if (process.env.NODE_ENV === 'production' && !process.env.EMPLOYEE_ACCESS_CODE) 
 // Use PostgreSQL-backed session store for production-ready persistence
 const PgSession = connectPgSimple(session);
 
-app.use(session({
-  store: new PgSession({
-    conObject: {
-      connectionString: process.env.DATABASE_URL,
-    },
-    tableName: 'session',
-    createTableIfMissing: true,
-  }),
-  secret: sessionSecret,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    httpOnly: true,
-    maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
-    sameSite: 'lax',
-  }
-}));
+app.set("trust proxy", 1);
+
+const hasDatabaseUrl = Boolean(process.env.DATABASE_URL && String(process.env.DATABASE_URL).trim());
+
+if (!sessionSecret) {
+  app.use("/api", (_req, res) => {
+    res.status(503).json({ message: "Server authentication is not configured" });
+  });
+  app.use((_req, _res, next) => {
+    next(new Error("SESSION_SECRET is required"));
+  });
+} else if (process.env.NODE_ENV === "production" && !hasDatabaseUrl) {
+  app.use("/api", (_req, res) => {
+    res.status(503).json({ message: "Server database is not configured" });
+  });
+  app.use((_req, _res, next) => {
+    next(new Error("DATABASE_URL is required in production"));
+  });
+} else {
+  const store = hasDatabaseUrl
+    ? new PgSession({
+        conObject: {
+          connectionString: process.env.DATABASE_URL,
+          ssl: pgSslOptions(),
+        },
+        tableName: "session",
+        createTableIfMissing: true,
+      })
+    : undefined;
+
+  app.use(
+    session({
+      store,
+      secret: sessionSecret,
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        secure: process.env.NODE_ENV === "production",
+        httpOnly: true,
+        maxAge: 1000 * 60 * 60 * 24 * 7,
+        sameSite: "lax",
+      },
+    }),
+  );
+}
 
 app.use(express.json({
   verify: (req, _res, buf) => {
@@ -157,7 +184,11 @@ export default async function runApp(
   const server = await registerRoutes(app);
 
   // Start background automation worker
-  if (process.env.NODE_ENV !== 'test') {
+  const enableAutomationWorker =
+    typeof process.env.ENABLE_AUTOMATION_WORKER === "string"
+      ? process.env.ENABLE_AUTOMATION_WORKER.toLowerCase() === "true"
+      : process.env.NODE_ENV !== "test";
+  if (enableAutomationWorker) {
     startAutomationWorker(60000); // Run every minute
   }
 

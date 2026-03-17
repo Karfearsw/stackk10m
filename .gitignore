@@ -5,3 +5,6 @@ FrameworkPlanner/dist-server
 .env
 .vercel
 *.log
+.trae/
+.local/
+FrameworkPlanner/node_modules__old_*/

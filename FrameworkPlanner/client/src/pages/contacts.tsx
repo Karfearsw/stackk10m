@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useEffect, useState } from "react";
 import { Search, UserPlus } from "lucide-react";
+import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 
 interface ContactItem { id: number; name: string; email?: string; phone?: string; }
 
@@ -41,9 +42,12 @@ export default function Contacts() {
   return (
     <Layout>
       <Card>
-        <CardHeader>
-          <CardTitle>Contacts</CardTitle>
-          <CardDescription>Manage contacts and speed dial</CardDescription>
+        <CardHeader className="flex flex-row items-start justify-between gap-2">
+          <div>
+            <CardTitle>Contacts</CardTitle>
+            <CardDescription>Manage contacts and speed dial</CardDescription>
+          </div>
+          <CrmImportExportDialog entityType="contact" />
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-2 mb-4">
@@ -60,7 +64,22 @@ export default function Contacts() {
               <div key={c.id} className="flex items-center justify-between py-2">
                 <div>
                   <div className="font-medium">{c.name}</div>
-                  <div className="text-sm text-muted-foreground">{c.phone || "N/A"}</div>
+                  <div className="text-sm text-muted-foreground">
+                    {c.phone ? (
+                      <a className="underline underline-offset-2" href={`tel:${c.phone}`}>
+                        {c.phone}
+                      </a>
+                    ) : (
+                      "N/A"
+                    )}
+                  </div>
+                  {c.email ? (
+                    <div className="text-sm text-muted-foreground">
+                      <a className="underline underline-offset-2" href={`mailto:${c.email}`}>
+                        {c.email}
+                      </a>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ))}

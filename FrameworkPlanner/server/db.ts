@@ -6,12 +6,36 @@ if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is required");
 }
 
+function shouldUseSsl(connectionString: string | undefined) {
+  if (!connectionString) return false;
+  try {
+    const u = new URL(connectionString);
+    const sslmode = (u.searchParams.get("sslmode") || process.env.PGSSLMODE || "").toLowerCase();
+    if (sslmode === "require" || sslmode === "verify-full" || sslmode === "verify-ca") return true;
+    if (u.hostname.endsWith(".neon.tech")) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export function pgSslOptions() {
+  const useSsl = shouldUseSsl(process.env.DATABASE_URL);
+  if (!useSsl) return undefined;
+  const raw = String(process.env.DB_SSL_REJECT_UNAUTHORIZED ?? "").trim().toLowerCase();
+  const rejectUnauthorized = raw ? raw === "1" || raw === "true" || raw === "yes" || raw === "on" : true;
+  return { rejectUnauthorized };
+}
+
 // Use connection string from environment
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  ssl: pgSslOptions(),
   max: 3,
   idleTimeoutMillis: 10000,
-  connectionTimeoutMillis: 5000,
+  connectionTimeoutMillis: process.env.DB_CONNECTION_TIMEOUT_MS
+    ? parseInt(String(process.env.DB_CONNECTION_TIMEOUT_MS), 10)
+    : 20000,
 });
 
 // Log connection errors

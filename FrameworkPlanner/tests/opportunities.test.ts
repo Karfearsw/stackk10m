@@ -12,6 +12,10 @@ describe('Opportunity Endpoints', () => {
     app = express()
     app.use(express.json())
     app.use(session({ secret: 'test', resave: false, saveUninitialized: false }))
+    app.use((req, _res, next) => {
+      req.session.userId = 1
+      next()
+    })
 
     // Mock storage methods
     storage.getProperties = async () => []

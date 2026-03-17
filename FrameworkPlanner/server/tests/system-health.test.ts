@@ -1,14 +1,16 @@
-import request from "supertest";
-import { app } from "../../server/app";
+function baseUrl() {
+  return process.env.TEST_BASE_URL || "http://localhost:3000";
+}
 
-describe("/api/system/health", () => {
+(process.env.TEST_BASE_URL ? describe : describe.skip)("/api/system/health", () => {
   it("returns diagnostics JSON", async () => {
-    const res = await request(app).get("/api/system/health");
+    const res = await fetch(`${baseUrl()}/api/system/health`);
     expect(res.status).toBeLessThan(500);
-    expect(res.headers["content-type"]).toMatch(/json/);
-    expect(res.body).toHaveProperty("status");
-    expect(res.body).toHaveProperty("db");
-    expect(res.body).toHaveProperty("signalwire");
-    expect(res.body).toHaveProperty("env");
+    expect(res.headers.get("content-type") || "").toMatch(/json/);
+    const body = await res.json();
+    expect(body).toHaveProperty("status");
+    expect(body).toHaveProperty("db");
+    expect(body).toHaveProperty("signalwire");
+    expect(body).toHaveProperty("env");
   });
 });

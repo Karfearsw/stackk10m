@@ -1,0 +1,99 @@
+import { describe, it, expect } from "vitest";
+import crypto from "node:crypto";
+import {
+  computeBuyerDedupeKey,
+  computeContactDedupeKey,
+  computeLeadDedupeKey,
+  computeOpportunityDedupeKey,
+  mapAndValidateRow,
+  suggestMapping,
+  verifyExportToken,
+} from "../server/crm/import-export";
+
+describe("CRM import/export helpers", () => {
+  it("computes stable lead dedupe keys", () => {
+    const key = computeLeadDedupeKey({
+      address: "  123  Main St ",
+      city: " Tampa ",
+      state: "fl",
+      zipCode: "33602",
+      ownerName: "  Jane   Smith ",
+    });
+    expect(key).toBe("123 main st|tampa|fl|33602|jane smith");
+  });
+
+  it("computes stable opportunity dedupe keys (includes apn)", () => {
+    const key = computeOpportunityDedupeKey({
+      apn: "  01-23-45-678  ",
+      address: "123 Main St",
+      city: "Tampa",
+      state: "FL",
+      zipCode: "33602",
+    });
+    expect(key).toBe("01-23-45-678|123 main st|tampa|fl|33602");
+  });
+
+  it("computes stable contact and buyer dedupe keys", () => {
+    expect(computeContactDedupeKey({ name: " Jane  Smith ", email: "Jane@Example.com", phone: " 555-1234 " })).toBe(
+      "jane@example.com|555-1234|jane smith",
+    );
+    expect(computeBuyerDedupeKey({ name: " ACME Capital ", company: " ACME ", email: null, phone: "(555) 999-0000" })).toBe(
+      "|(555) 999-0000|acme capital|acme",
+    );
+  });
+
+  it("suggests mapping based on common header synonyms", () => {
+    const suggested = suggestMapping("lead", ["Owner Email", "Street Address", "Zip", "State", "City", "Owner Name"]);
+    expect(suggested.address).toBe("Street Address");
+    expect(suggested.ownerEmail).toBe("Owner Email");
+    expect(suggested.zipCode).toBe("Zip");
+  });
+
+  it("validates required fields and formats with row-level errors", () => {
+    const row = { "Street Address": "123 Main St", City: "Tampa", State: "Florida", Zip: "ABC", "Owner Name": "" };
+    const mapping = {
+      address: "Street Address",
+      city: "City",
+      state: "State",
+      zipCode: "Zip",
+      ownerName: "Owner Name",
+    };
+    const r = mapAndValidateRow("lead", row, mapping);
+    expect(r.ok).toBe(false);
+    const messages = (r as any).errors.map((e: any) => `${e.field}:${e.message}`).join("|");
+    expect(messages).toContain("state:State must be 2 letters");
+    expect(messages).toContain("zipCode:Zip Code must be 5 digits (or ZIP+4)");
+    expect(messages).toContain("ownerName:Required");
+  });
+
+  it("parses buyer arrays and booleans", () => {
+    const row = {
+      Name: "Bob Buyer",
+      Email: "bob@example.com",
+      "Preferred Areas": "Tampa; Orlando",
+      Tags: "vip, proofed",
+      VIP: "yes",
+    };
+    const mapping = {
+      name: "Name",
+      email: "Email",
+      preferredAreas: "Preferred Areas",
+      tags: "Tags",
+      isVip: "VIP",
+    };
+    const r = mapAndValidateRow("buyer", row, mapping);
+    expect(r.ok).toBe(true);
+    expect((r as any).data.preferredAreas).toEqual(["Tampa", "Orlando"]);
+    expect((r as any).data.tags).toEqual(["vip", "proofed"]);
+    expect((r as any).data.isVip).toBe(true);
+  });
+
+  it("verifies export tokens using a stored hash", () => {
+    const token = "test-token";
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    expect(verifyExportToken({ tokenHash, expiresAt: new Date(Date.now() + 60_000) } as any, token)).toBe(true);
+    expect(verifyExportToken({ tokenHash, expiresAt: new Date(Date.now() + 60_000).toISOString() } as any, token)).toBe(true);
+    expect(verifyExportToken({ tokenHash, expiresAt: new Date(Date.now() - 60_000) } as any, token)).toBe(false);
+    expect(verifyExportToken({ tokenHash, expiresAt: new Date(Date.now() + 60_000) } as any, "nope")).toBe(false);
+  });
+});

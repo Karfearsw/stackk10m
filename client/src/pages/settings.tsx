@@ -6,17 +6,19 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock, ImageIcon, Camera, Upload, X, Trash2, Server, Database, Phone, Bot } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLocation } from "wouter";
 
 function SettingsContent() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("account");
   const [showCreateGoal, setShowCreateGoal] = useState(false);
+  const [phone, setPhone] = useState("");
   const [passwordData, setPasswordData] = useState({
     current: "",
     new: "",
@@ -24,13 +26,24 @@ function SettingsContent() {
   });
   const { user } = useAuth();
 
-  // Hardcoded team ID for now - would come from user's team membership
-  const CURRENT_TEAM_ID = 1;
+  const [location, setLocation] = useLocation();
+
+  useEffect(() => {
+    const raw = location.includes("?") ? location.split("?")[1] : "";
+    const tab = new URLSearchParams(raw).get("tab");
+    if (!tab) return;
+    const allowed = new Set(["account", "security", "notifications", "team", "goals", "offers", "appearance", "system"]);
+    if (allowed.has(tab) && tab !== activeTab) setActiveTab(tab);
+  }, [activeTab, location]);
 
   // Fetch user data
   const { data: userData, isLoading: userLoading } = useQuery<any>({
     queryKey: [`/api/users/${user!.id}`],
   });
+
+  useEffect(() => {
+    setPhone(userData?.phone || "");
+  }, [userData?.phone]);
 
   // Fetch 2FA status
   const { data: twoFactorData } = useQuery<any>({
@@ -44,7 +57,7 @@ function SettingsContent() {
 
   // Fetch team members
   const { data: teamMembers = [], isLoading: teamLoading } = useQuery<any[]>({
-    queryKey: [`/api/teams/${CURRENT_TEAM_ID}/members`],
+    queryKey: [`/api/users`],
   });
 
   // Fetch goals
@@ -257,7 +270,14 @@ function SettingsContent() {
         <p className="text-muted-foreground">Manage your account and application preferences.</p>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => {
+          setActiveTab(value);
+          setLocation(`/settings?tab=${encodeURIComponent(value)}`);
+        }}
+        className="w-full"
+      >
         <TabsList className="border-b rounded-none bg-transparent p-0 h-auto flex-wrap">
           <TabsTrigger value="account" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <User className="w-4 h-4 mr-2" />
@@ -341,7 +361,8 @@ function SettingsContent() {
                     id="phone" 
                     name="phone"
                     placeholder="(555) 123-4567" 
-                    defaultValue={userData?.phone || ''} 
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
                     data-testid="input-phone"
                   />
                 </div>
@@ -673,26 +694,30 @@ function SettingsContent() {
                   <CardDescription>Manage your team and their permissions.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {teamMembers.length === 0 ? (
+                  {teamMembers.filter((m: any) => m.isActive !== false).length === 0 ? (
                     <div className="text-center py-8 text-muted-foreground">
                       <Users className="w-12 h-12 mx-auto mb-3 opacity-50" />
                       <p>No team members yet</p>
                       <p className="text-sm mt-1">Start by inviting your first team member</p>
                     </div>
                   ) : (
-                    teamMembers.map((member, index) => (
-                      <div key={member.id} className="flex items-center justify-between border rounded p-3" data-testid={`team-member-${index}`}>
-                        <div>
-                          <p className="font-medium">Team Member {member.userId}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {member.role || 'Member'} • {member.status || 'Active'}
-                          </p>
+                    teamMembers
+                      .filter((m: any) => m.isActive !== false)
+                      .map((member: any, index: number) => (
+                        <div key={member.id} className="flex items-center justify-between border rounded p-3" data-testid={`team-member-${index}`}>
+                          <div className="min-w-0">
+                            <p className="font-medium truncate">
+                              {member.firstName || member.lastName ? `${member.firstName || ""} ${member.lastName || ""}`.trim() : member.email}
+                            </p>
+                            <p className="text-sm text-muted-foreground truncate">
+                              {member.role || "Member"} • Active
+                            </p>
+                          </div>
+                          <Button variant="ghost" size="sm" disabled data-testid={`button-remove-member-${index}`}>
+                            Remove
+                          </Button>
                         </div>
-                        <Button variant="ghost" size="sm" data-testid={`button-remove-member-${index}`}>
-                          Remove
-                        </Button>
-                      </div>
-                    ))
+                      ))
                   )}
                   <Button className="w-full bg-primary hover:bg-primary/90 text-white mt-4" data-testid="button-add-team-member">
                     Add Team Member

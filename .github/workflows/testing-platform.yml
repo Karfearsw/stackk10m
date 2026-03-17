@@ -1,0 +1,108 @@
+name: Testing Platform (Staging)
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Target base URL for smoke/perf/security tests (e.g., https://staging.example.com)"
+        required: false
+        type: string
+  schedule:
+    - cron: "0 6 * * *"
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20.x]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+          cache-dependency-path: FrameworkPlanner/package-lock.json
+      - name: Install dependencies
+        working-directory: FrameworkPlanner
+        run: npm ci
+      - name: Type Check
+        working-directory: FrameworkPlanner
+        run: npm run check
+      - name: Build
+        working-directory: FrameworkPlanner
+        run: npm run build
+      - name: Unit tests
+        working-directory: FrameworkPlanner
+        run: npm run test:unit
+
+  smoke:
+    runs-on: ubuntu-latest
+    needs: [unit]
+    if: ${{ inputs.base_url != '' || secrets.STAGING_BASE_URL != '' }}
+    strategy:
+      matrix:
+        node-version: [20.x]
+    env:
+      TEST_BASE_URL: ${{ inputs.base_url || secrets.STAGING_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+          cache-dependency-path: FrameworkPlanner/package-lock.json
+      - name: Install dependencies
+        working-directory: FrameworkPlanner
+        run: npm ci
+      - name: Smoke tests (against staging)
+        working-directory: FrameworkPlanner
+        run: npm run test:smoke
+
+  security:
+    runs-on: ubuntu-latest
+    needs: [unit]
+    if: ${{ inputs.base_url != '' || secrets.STAGING_BASE_URL != '' }}
+    strategy:
+      matrix:
+        node-version: [20.x]
+    env:
+      TARGET_URL: ${{ inputs.base_url || secrets.STAGING_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+          cache-dependency-path: FrameworkPlanner/package-lock.json
+      - name: Install dependencies
+        working-directory: FrameworkPlanner
+        run: npm ci
+      - name: Dependency audit
+        working-directory: FrameworkPlanner
+        run: npm run security:audit
+      - name: ZAP baseline scan (against staging)
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ env.TARGET_URL }}
+          fail_action: false
+          allow_issue_writing: false
+          cmd_options: "-a"
+
+  performance:
+    runs-on: ubuntu-latest
+    needs: [unit]
+    if: ${{ inputs.base_url != '' || secrets.STAGING_BASE_URL != '' }}
+    env:
+      BASE_URL: ${{ inputs.base_url || secrets.STAGING_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: k6 load test (against staging)
+        uses: grafana/k6-action@v0.3.1
+        with:
+          filename: FrameworkPlanner/perf/k6-smoke.js
+        env:
+          BASE_URL: ${{ env.BASE_URL }}

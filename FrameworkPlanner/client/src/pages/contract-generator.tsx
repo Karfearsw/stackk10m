@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -24,6 +24,18 @@ export default function ContractGenerator() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("list");
+  const deepLink = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("tab") || "";
+    const propertyIdRaw = params.get("propertyId") || "";
+    const propertyId = propertyIdRaw ? parseInt(propertyIdRaw, 10) : 0;
+    const validTab = tab && ["list", "create", "closing", "templates", "lois"].includes(tab) ? tab : "";
+    return { tab: validTab, propertyId: Number.isFinite(propertyId) ? propertyId : 0 };
+  }, []);
+
+  useEffect(() => {
+    if (deepLink.tab) setActiveTab(deepLink.tab);
+  }, [deepLink.tab]);
 
   // Fetch contracts
   const { data: contracts = [], isLoading: contractsLoading } = useQuery<any[]>({
@@ -95,7 +107,7 @@ export default function ContractGenerator() {
 
           {/* Create Contract Tab */}
           <TabsContent value="create" className="space-y-4">
-            <ContractCreator templates={templates} properties={properties} />
+            <ContractCreator templates={templates} properties={properties} initialPropertyId={deepLink.propertyId || undefined} />
           </TabsContent>
 
           {/* Templates Tab */}
@@ -114,9 +126,10 @@ export default function ContractGenerator() {
 }
 
 // Contract Creator Component
-function ContractCreator({ templates, properties }: { templates: any[], properties: any[] }) {
+function ContractCreator({ templates, properties, initialPropertyId }: { templates: any[], properties: any[], initialPropertyId?: number }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const appliedInitial = useRef(false);
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [formData, setFormData] = useState({
     title: "",
@@ -126,6 +139,23 @@ function ContractCreator({ templates, properties }: { templates: any[], properti
     amount: "",
     terms: "",
   });
+
+  useEffect(() => {
+    if (appliedInitial.current) return;
+    if (!initialPropertyId) return;
+    if (!properties.length) return;
+    const match = properties.find((p: any) => p?.id === initialPropertyId);
+    setFormData((prev) => {
+      const next: any = { ...prev };
+      if (!next.propertyId) next.propertyId = String(initialPropertyId);
+      if (!next.title && match?.address) next.title = `Purchase Agreement - ${match.address}`;
+      if (!next.amount && typeof match?.price !== "undefined" && match?.price !== null && String(match.price).trim() !== "") {
+        next.amount = String(match.price);
+      }
+      return next;
+    });
+    appliedInitial.current = true;
+  }, [initialPropertyId, properties]);
 
   const createMutation = useMutation({
     mutationFn: async (data: any) => {

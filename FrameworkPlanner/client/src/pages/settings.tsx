@@ -5,33 +5,47 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock, ImageIcon, Camera, Upload, X, Trash2, Server, Database, Phone, Bot } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
 import { runSignalWireDiagnostics } from "@/debug/signalwireDiag";
+import { useLocation } from "wouter";
 
 function SettingsContent() {
   const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState("account");
   const [showCreateGoal, setShowCreateGoal] = useState(false);
+  const [phone, setPhone] = useState("");
   const [passwordData, setPasswordData] = useState({
     current: "",
     new: "",
     confirm: "",
   });
-  const { user } = useAuth();
 
-  // Hardcoded team ID for now - would come from user's team membership
-  const CURRENT_TEAM_ID = 1;
+  const [location, setLocation] = useLocation();
+
+  useEffect(() => {
+    const raw = location.includes("?") ? location.split("?")[1] : "";
+    const tab = new URLSearchParams(raw).get("tab");
+    if (!tab) return;
+    const allowed = new Set(["account", "security", "notifications", "team", "goals", "offers", "pipeline", "appearance", "system"]);
+    if (allowed.has(tab) && tab !== activeTab) setActiveTab(tab);
+  }, [activeTab, location]);
+  const { user } = useAuth();
 
   // Fetch user data
   const { data: userData, isLoading: userLoading } = useQuery<any>({
     queryKey: [`/api/users/${user!.id}`],
   });
+
+  useEffect(() => {
+    setPhone(userData?.phone || "");
+  }, [userData?.phone]);
 
   // Fetch 2FA status
   const { data: twoFactorData } = useQuery<any>({
@@ -45,7 +59,7 @@ function SettingsContent() {
 
   // Fetch team members
   const { data: teamMembers = [], isLoading: teamLoading } = useQuery<any[]>({
-    queryKey: [`/api/teams/${CURRENT_TEAM_ID}/members`],
+    queryKey: [`/api/users`],
   });
 
   // Fetch goals
@@ -61,6 +75,73 @@ function SettingsContent() {
       if (!res.ok) throw new Error('Failed to fetch offers');
       return res.json();
     },
+  });
+
+  const { data: leadPipelineConfig } = useQuery<any>({
+    queryKey: ["/api/pipeline-config", "lead"],
+    queryFn: async () => {
+      const res = await fetch(`/api/pipeline-config?entityType=lead`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch lead pipeline config");
+      return res.json();
+    },
+  });
+
+  const { data: opportunityPipelineConfig } = useQuery<any>({
+    queryKey: ["/api/pipeline-config", "opportunity"],
+    queryFn: async () => {
+      const res = await fetch(`/api/pipeline-config?entityType=opportunity`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch opportunity pipeline config");
+      return res.json();
+    },
+  });
+
+  const [didInitPipeline, setDidInitPipeline] = useState(false);
+  const [leadPipelineColumns, setLeadPipelineColumns] = useState<Array<{ value: string; label: string }>>([]);
+  const [opportunityPipelineColumns, setOpportunityPipelineColumns] = useState<Array<{ value: string; label: string }>>([]);
+
+  useEffect(() => {
+    if (didInitPipeline) return;
+    const leadCols = Array.isArray(leadPipelineConfig?.columns) ? leadPipelineConfig.columns : null;
+    const oppCols = Array.isArray(opportunityPipelineConfig?.columns) ? opportunityPipelineConfig.columns : null;
+    if (leadCols) setLeadPipelineColumns(leadCols.map((c: any) => ({ value: String(c.value || ""), label: String(c.label || "") })));
+    if (oppCols) setOpportunityPipelineColumns(oppCols.map((c: any) => ({ value: String(c.value || ""), label: String(c.label || "") })));
+    if (leadCols || oppCols) setDidInitPipeline(true);
+  }, [didInitPipeline, leadPipelineConfig?.columns, opportunityPipelineConfig?.columns]);
+
+  const saveLeadPipelineMutation = useMutation({
+    mutationFn: async (columns: Array<{ value: string; label: string }>) => {
+      const res = await fetch(`/api/pipeline-config?entityType=lead`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ columns }),
+      });
+      if (!res.ok) throw new Error("Failed to save lead pipeline");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pipeline-config", "lead"] });
+      toast.success("Lead pipeline updated");
+    },
+    onError: () => toast.error("Failed to update lead pipeline"),
+  });
+
+  const saveOpportunityPipelineMutation = useMutation({
+    mutationFn: async (columns: Array<{ value: string; label: string }>) => {
+      const res = await fetch(`/api/pipeline-config?entityType=opportunity`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ columns }),
+      });
+      if (!res.ok) throw new Error("Failed to save opportunity pipeline");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pipeline-config", "opportunity"] });
+      toast.success("Opportunity pipeline updated");
+    },
+    onError: () => toast.error("Failed to update opportunity pipeline"),
   });
 
   // System health checks
@@ -258,7 +339,14 @@ function SettingsContent() {
         <p className="text-muted-foreground">Manage your account and application preferences.</p>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+      <Tabs
+        value={activeTab}
+        onValueChange={(value) => {
+          setActiveTab(value);
+          setLocation(`/settings?tab=${encodeURIComponent(value)}`);
+        }}
+        className="w-full"
+      >
         <TabsList className="border-b rounded-none bg-transparent p-0 h-auto flex-wrap">
           <TabsTrigger value="account" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <User className="w-4 h-4 mr-2" />
@@ -283,6 +371,10 @@ function SettingsContent() {
           <TabsTrigger value="offers" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <FileText className="w-4 h-4 mr-2" />
             Offers
+          </TabsTrigger>
+          <TabsTrigger value="pipeline" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Database className="w-4 h-4 mr-2" />
+            Pipeline
           </TabsTrigger>
           <TabsTrigger value="appearance" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <ImageIcon className="w-4 h-4 mr-2" />
@@ -342,7 +434,8 @@ function SettingsContent() {
                     id="phone" 
                     name="phone"
                     placeholder="(555) 123-4567" 
-                    defaultValue={userData?.phone || ''} 
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
                     data-testid="input-phone"
                   />
                 </div>
@@ -674,26 +767,30 @@ function SettingsContent() {
                   <CardDescription>Manage your team and their permissions.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {teamMembers.length === 0 ? (
+                  {teamMembers.filter((m: any) => m.isActive !== false).length === 0 ? (
                     <div className="text-center py-8 text-muted-foreground">
                       <Users className="w-12 h-12 mx-auto mb-3 opacity-50" />
                       <p>No team members yet</p>
                       <p className="text-sm mt-1">Start by inviting your first team member</p>
                     </div>
                   ) : (
-                    teamMembers.map((member, index) => (
-                      <div key={member.id} className="flex items-center justify-between border rounded p-3" data-testid={`team-member-${index}`}>
-                        <div>
-                          <p className="font-medium">Team Member {member.userId}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {member.role || 'Member'} • {member.status || 'Active'}
-                          </p>
+                    teamMembers
+                      .filter((m: any) => m.isActive !== false)
+                      .map((member: any, index: number) => (
+                        <div key={member.id} className="flex items-center justify-between border rounded p-3" data-testid={`team-member-${index}`}>
+                          <div className="min-w-0">
+                            <p className="font-medium truncate">
+                              {member.firstName || member.lastName ? `${member.firstName || ""} ${member.lastName || ""}`.trim() : member.email}
+                            </p>
+                            <p className="text-sm text-muted-foreground truncate">
+                              {member.role || "Member"} • Active
+                            </p>
+                          </div>
+                          <Button variant="ghost" size="sm" disabled data-testid={`button-remove-member-${index}`}>
+                            Remove
+                          </Button>
                         </div>
-                        <Button variant="ghost" size="sm" data-testid={`button-remove-member-${index}`}>
-                          Remove
-                        </Button>
-                      </div>
-                    ))
+                      ))
                   )}
                   <Button className="w-full bg-primary hover:bg-primary/90 text-white mt-4" data-testid="button-add-team-member">
                     Add Team Member
@@ -763,15 +860,21 @@ function SettingsContent() {
                       );
                     })
                   )}
-                  
-                  {showCreateGoal && <GoalCreator onClose={() => setShowCreateGoal(false)} onSubmit={createGoalMutation} />}
-                  
-                  <Button 
-                    className="w-full bg-primary hover:bg-primary/90 text-white" 
+                  <Dialog open={showCreateGoal} onOpenChange={setShowCreateGoal}>
+                    <DialogContent className="sm:max-w-xl">
+                      <DialogHeader>
+                        <DialogTitle>Create New Goal</DialogTitle>
+                      </DialogHeader>
+                      <GoalCreator onClose={() => setShowCreateGoal(false)} onSubmit={createGoalMutation} />
+                    </DialogContent>
+                  </Dialog>
+
+                  <Button
+                    className="w-full bg-primary hover:bg-primary/90 text-white"
                     data-testid="button-add-goal"
-                    onClick={() => setShowCreateGoal(!showCreateGoal)}
+                    onClick={() => setShowCreateGoal(true)}
                   >
-                    {showCreateGoal ? 'Cancel' : 'Create New Goal'}
+                    Create New Goal
                   </Button>
                 </CardContent>
               </Card>
@@ -868,6 +971,134 @@ function SettingsContent() {
               </Card>
             </>
           )}
+        </TabsContent>
+
+        <TabsContent value="pipeline" className="mt-6 space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Lead Pipeline Columns</CardTitle>
+              <CardDescription>Configure the columns used in the Leads pipeline and status pickers.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-3">
+                {leadPipelineColumns.map((col, idx) => (
+                  <div key={`${col.value}-${idx}`} className="grid grid-cols-12 gap-2 items-center">
+                    <div className="col-span-5">
+                      <Label className="sr-only">Label</Label>
+                      <Input value={col.label} onChange={(e) => {
+                        const next = [...leadPipelineColumns];
+                        next[idx] = { ...next[idx], label: e.target.value };
+                        setLeadPipelineColumns(next);
+                      }} placeholder="Label" />
+                    </div>
+                    <div className="col-span-5">
+                      <Label className="sr-only">Value</Label>
+                      <Input value={col.value} onChange={(e) => {
+                        const next = [...leadPipelineColumns];
+                        next[idx] = { ...next[idx], value: e.target.value };
+                        setLeadPipelineColumns(next);
+                      }} placeholder="value_slug" />
+                    </div>
+                    <div className="col-span-2 flex justify-end gap-2">
+                      <Button type="button" variant="outline" size="sm" disabled={idx === 0} onClick={() => {
+                        const next = [...leadPipelineColumns];
+                        const tmp = next[idx - 1];
+                        next[idx - 1] = next[idx];
+                        next[idx] = tmp;
+                        setLeadPipelineColumns(next);
+                      }}>Up</Button>
+                      <Button type="button" variant="outline" size="sm" disabled={idx === leadPipelineColumns.length - 1} onClick={() => {
+                        const next = [...leadPipelineColumns];
+                        const tmp = next[idx + 1];
+                        next[idx + 1] = next[idx];
+                        next[idx] = tmp;
+                        setLeadPipelineColumns(next);
+                      }}>Down</Button>
+                      <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => {
+                        setLeadPipelineColumns(leadPipelineColumns.filter((_, i) => i !== idx));
+                      }}>Remove</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2 justify-between">
+                <Button type="button" variant="secondary" onClick={() => setLeadPipelineColumns([...leadPipelineColumns, { value: "", label: "" }])}>
+                  Add Column
+                </Button>
+                <Button type="button" className="bg-primary hover:bg-primary/90 text-white" onClick={() => {
+                  const cleaned = leadPipelineColumns
+                    .map((c) => ({ value: String(c.value || "").trim(), label: String(c.label || "").trim() }))
+                    .filter((c) => c.value && c.label);
+                  saveLeadPipelineMutation.mutate(cleaned);
+                }} disabled={saveLeadPipelineMutation.isPending}>
+                  Save
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Opportunity Pipeline Columns</CardTitle>
+              <CardDescription>Configure the columns used in the Opportunities pipeline and status pickers.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-3">
+                {opportunityPipelineColumns.map((col, idx) => (
+                  <div key={`${col.value}-${idx}`} className="grid grid-cols-12 gap-2 items-center">
+                    <div className="col-span-5">
+                      <Label className="sr-only">Label</Label>
+                      <Input value={col.label} onChange={(e) => {
+                        const next = [...opportunityPipelineColumns];
+                        next[idx] = { ...next[idx], label: e.target.value };
+                        setOpportunityPipelineColumns(next);
+                      }} placeholder="Label" />
+                    </div>
+                    <div className="col-span-5">
+                      <Label className="sr-only">Value</Label>
+                      <Input value={col.value} onChange={(e) => {
+                        const next = [...opportunityPipelineColumns];
+                        next[idx] = { ...next[idx], value: e.target.value };
+                        setOpportunityPipelineColumns(next);
+                      }} placeholder="value_slug" />
+                    </div>
+                    <div className="col-span-2 flex justify-end gap-2">
+                      <Button type="button" variant="outline" size="sm" disabled={idx === 0} onClick={() => {
+                        const next = [...opportunityPipelineColumns];
+                        const tmp = next[idx - 1];
+                        next[idx - 1] = next[idx];
+                        next[idx] = tmp;
+                        setOpportunityPipelineColumns(next);
+                      }}>Up</Button>
+                      <Button type="button" variant="outline" size="sm" disabled={idx === opportunityPipelineColumns.length - 1} onClick={() => {
+                        const next = [...opportunityPipelineColumns];
+                        const tmp = next[idx + 1];
+                        next[idx + 1] = next[idx];
+                        next[idx] = tmp;
+                        setOpportunityPipelineColumns(next);
+                      }}>Down</Button>
+                      <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => {
+                        setOpportunityPipelineColumns(opportunityPipelineColumns.filter((_, i) => i !== idx));
+                      }}>Remove</Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2 justify-between">
+                <Button type="button" variant="secondary" onClick={() => setOpportunityPipelineColumns([...opportunityPipelineColumns, { value: "", label: "" }])}>
+                  Add Column
+                </Button>
+                <Button type="button" className="bg-primary hover:bg-primary/90 text-white" onClick={() => {
+                  const cleaned = opportunityPipelineColumns
+                    .map((c) => ({ value: String(c.value || "").trim(), label: String(c.label || "").trim() }))
+                    .filter((c) => c.value && c.label);
+                  saveOpportunityPipelineMutation.mutate(cleaned);
+                }} disabled={saveOpportunityPipelineMutation.isPending}>
+                  Save
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* APPEARANCE TAB */}

@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,7 +38,7 @@ import { Badge } from "@/components/ui/badge";
 import { Filter, Plus, Search, Building2, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
 
 const statusOptions = [
@@ -56,6 +57,14 @@ export default function Leads() {
   const { toast } = useToast();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<any>(null);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filters, setFilters] = useState({
+    query: "",
+    status: "all",
+    owner: "",
+    createdFrom: "",
+    createdTo: "",
+  });
   const [newLead, setNewLead] = useState({
     address: "",
     city: "",
@@ -202,6 +211,53 @@ export default function Leads() {
     }
   };
 
+  const filteredLeads = useMemo(() => {
+    const q = filters.query.trim().toLowerCase();
+    const owner = filters.owner.trim().toLowerCase();
+    const from = filters.createdFrom ? new Date(filters.createdFrom) : null;
+    const to = filters.createdTo ? new Date(filters.createdTo) : null;
+    if (from) from.setHours(0, 0, 0, 0);
+    if (to) to.setHours(23, 59, 59, 999);
+
+    return (leads || []).filter((lead: any) => {
+      if (filters.status !== "all" && lead.status !== filters.status) return false;
+
+      if (q) {
+        const haystack = [
+          lead.address,
+          lead.city,
+          lead.state,
+          lead.zipCode,
+          lead.ownerName,
+          lead.ownerPhone,
+          lead.ownerEmail,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+
+      if (owner) {
+        const name = String(lead.ownerName || "").toLowerCase();
+        if (!name.includes(owner)) return false;
+      }
+
+      if (from || to) {
+        const createdAt = lead.createdAt ? new Date(lead.createdAt) : null;
+        if (!createdAt || Number.isNaN(createdAt.getTime())) return false;
+        if (from && createdAt < from) return false;
+        if (to && createdAt > to) return false;
+      }
+
+      return true;
+    });
+  }, [filters.createdFrom, filters.createdTo, filters.owner, filters.query, filters.status, leads]);
+
+  const clearFilters = () => {
+    setFilters({ query: "", status: "all", owner: "", createdFrom: "", createdTo: "" });
+  };
+
   if (isLoading) {
     return (
       <Layout>
@@ -220,11 +276,79 @@ export default function Leads() {
         <div className="flex items-center gap-2">
           <div className="relative hidden md:block">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Filter leads..." className="w-[200px] pl-9" />
+            <Input
+              placeholder="Search leads..."
+              className="w-[200px] pl-9"
+              value={filters.query}
+              onChange={(e) => setFilters(prev => ({ ...prev, query: e.target.value }))}
+              data-testid="input-leads-search"
+            />
           </div>
-          <Button variant="outline" size="sm">
-            <Filter className="mr-2 h-4 w-4" /> Filter
-          </Button>
+          <Popover open={filterOpen} onOpenChange={setFilterOpen}>
+            <PopoverTrigger asChild>
+              <Button variant="outline" size="sm" data-testid="button-leads-filter">
+                <Filter className="mr-2 h-4 w-4" /> Filter
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-80">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Select value={filters.status} onValueChange={(value) => setFilters(prev => ({ ...prev, status: value }))}>
+                    <SelectTrigger data-testid="select-filter-status">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      {statusOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Owner</Label>
+                  <Input
+                    placeholder="Owner name"
+                    value={filters.owner}
+                    onChange={(e) => setFilters(prev => ({ ...prev, owner: e.target.value }))}
+                    data-testid="input-filter-owner"
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>From</Label>
+                    <Input
+                      type="date"
+                      value={filters.createdFrom}
+                      onChange={(e) => setFilters(prev => ({ ...prev, createdFrom: e.target.value }))}
+                      data-testid="input-filter-from"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>To</Label>
+                    <Input
+                      type="date"
+                      value={filters.createdTo}
+                      onChange={(e) => setFilters(prev => ({ ...prev, createdTo: e.target.value }))}
+                      data-testid="input-filter-to"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-between">
+                  <Button variant="ghost" size="sm" onClick={clearFilters} data-testid="button-filter-clear">
+                    Clear
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => setFilterOpen(false)} data-testid="button-filter-apply">
+                    Apply
+                  </Button>
+                </div>
+              </div>
+            </PopoverContent>
+          </Popover>
           
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
@@ -297,7 +421,7 @@ export default function Leads() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {leads.map((lead: any) => (
+            {filteredLeads.map((lead: any) => (
               <TableRow key={lead.id} className="hover:bg-muted/50 transition-colors" data-testid={`row-lead-${lead.id}`}>
                 <TableCell className="font-medium">{lead.address}, {lead.city}</TableCell>
                 <TableCell>{lead.ownerName}</TableCell>

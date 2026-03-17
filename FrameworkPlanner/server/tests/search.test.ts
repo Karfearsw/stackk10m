@@ -1,25 +1,18 @@
-import assert from "node:assert";
-import { setTimeout as delay } from "node:timers/promises";
-
-async function get(url: string) {
-  const res = await fetch(url);
-  const json = await res.json();
-  return { status: res.status, json };
+function baseUrl() {
+  return process.env.TEST_BASE_URL || "http://localhost:3000";
 }
 
-async function run() {
-  const base = process.env.TEST_BASE_URL || "http://localhost:3000";
-  const q = "st";
-  const { status, json } = await get(`${base}/api/search?q=${encodeURIComponent(q)}&limit=10`);
-  assert.equal(status, 200);
-  assert.ok(json && typeof json === "object");
-  assert.ok(Array.isArray(json.results));
-  assert.ok(json.counts && typeof json.counts.total === "number");
-  console.log("/api/search ok", { total: json.counts.total, sample: json.results[0] });
-}
-
-run().catch((e) => {
-  console.error("search test failed", e);
-  process.exit(1);
+(process.env.TEST_BASE_URL ? describe : describe.skip)("/api/search", () => {
+  it("returns results payload", async () => {
+    const q = "st";
+    const res = await fetch(
+      `${baseUrl()}/api/search?q=${encodeURIComponent(q)}&limit=10`,
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json && typeof json === "object").toBe(true);
+    expect(Array.isArray(json.results)).toBe(true);
+    expect(typeof json.counts?.total).toBe("number");
+  });
 });
 

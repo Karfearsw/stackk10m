@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useLocation } from 'wouter';
+import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -9,6 +10,7 @@ import { toast } from 'sonner';
 
 export default function Signup() {
   const [, setLocation] = useLocation();
+  const { signup } = useAuth();
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
@@ -45,30 +47,9 @@ export default function Signup() {
         return;
       }
 
-      // Create new employee account
-      const res = await fetch('/api/auth/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          firstName,
-          lastName,
-          email,
-          password,
-          employeeCode,
-          role: 'employee',
-          isSuperAdmin: false,
-          isActive: true,
-        }),
-        credentials: 'include',
-      });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.message || 'Signup failed');
-      }
-
-      toast.success('Account created! Redirecting to login...');
-      setTimeout(() => setLocation('/login'), 1500);
+      await signup({ firstName, lastName, email, password, employeeCode });
+      toast.success('Account created! Redirecting...');
+      setTimeout(() => setLocation('/'), 500);
     } catch (error: any) {
       toast.error(error.message || 'Signup failed');
     } finally {

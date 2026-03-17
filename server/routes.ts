@@ -523,6 +523,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const id = parseInt(req.params.id);
       const patch = req.body || {};
       if (patch.metadata && typeof patch.metadata !== "string") patch.metadata = JSON.stringify(patch.metadata);
+      if (typeof patch.startedAt === "string" || typeof patch.startedAt === "number") patch.startedAt = new Date(patch.startedAt);
+      if (typeof patch.endedAt === "string" || typeof patch.endedAt === "number") patch.endedAt = new Date(patch.endedAt);
+      if (typeof patch.durationMs !== "undefined") patch.durationMs = Number(patch.durationMs);
       const updated = await storage.updateCallLog(id, patch);
       res.json(updated);
     } catch (error: any) {

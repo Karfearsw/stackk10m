@@ -1,26 +1,19 @@
-import assert from "node:assert";
-
-async function get(url: string) {
-  const res = await fetch(url);
-  const json = await res.json();
-  return { status: res.status, json };
+function baseUrl() {
+  return process.env.TEST_BASE_URL || "http://localhost:3000";
 }
 
-async function run() {
-  const base = process.env.TEST_BASE_URL || "http://localhost:4000";
-  const list = await get(`${base}/api/opportunities`);
-  assert.equal(list.status, 200);
-  const items = list.json as any[];
-  if (!items.length) {
-    console.log("no opportunities to test");
-    return;
-  }
-  const id = items[0].id;
-  const detail = await get(`${base}/api/opportunities/${id}`);
-  assert.equal(detail.status, 200);
-  assert.ok(detail.json && detail.json.property && typeof detail.json.property.id === "number");
-  console.log("opportunity detail ok", { id, hasLead: !!detail.json.lead });
-}
+(process.env.TEST_BASE_URL ? describe : describe.skip)("/api/opportunities/:id", () => {
+  it("returns detail payload when opportunities exist", async () => {
+    const listRes = await fetch(`${baseUrl()}/api/opportunities`);
+    expect(listRes.status).toBe(200);
+    const items = (await listRes.json()) as any[];
+    if (!items.length) return;
 
-run().catch((e) => { console.error(e); process.exit(1); });
+    const id = items[0].id;
+    const detailRes = await fetch(`${baseUrl()}/api/opportunities/${id}`);
+    expect(detailRes.status).toBe(200);
+    const json = await detailRes.json();
+    expect(typeof json?.property?.id).toBe("number");
+  });
+});
 

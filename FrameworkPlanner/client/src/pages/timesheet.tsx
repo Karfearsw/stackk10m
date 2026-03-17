@@ -18,11 +18,14 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Clock, Plus, Trash2, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { PomodoroTimer } from "@/components/timesheet/PomodoroTimer";
+import { Clock, Plus, Trash2, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { addWeeks, endOfWeek, format, startOfWeek } from "date-fns";
 
 interface TimeEntry {
   id: number;
@@ -42,6 +45,15 @@ export default function Timesheet() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const [openDialog, setOpenDialog] = useState(false);
+  const isManager = useMemo(() => {
+    const role = String(user?.role || "").toLowerCase();
+    return !!user?.isSuperAdmin || role === "admin" || role === "manager" || role === "owner";
+  }, [user?.isSuperAdmin, user?.role]);
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
+  const weekEnd = useMemo(() => endOfWeek(weekStart, { weekStartsOn: 1 }), [weekStart]);
+  const from = useMemo(() => format(weekStart, "yyyy-MM-dd"), [weekStart]);
+  const to = useMemo(() => format(weekEnd, "yyyy-MM-dd"), [weekEnd]);
+  const [selectedUserId, setSelectedUserId] = useState<string>("all");
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split("T")[0],
     employee: "",
@@ -51,9 +63,68 @@ export default function Timesheet() {
     hourlyRate: 50,
   });
 
+  useEffect(() => {
+    if (!user?.id) return;
+    const employee =
+      user.firstName || user.lastName
+        ? `${user.firstName || ""} ${user.lastName || ""}`.trim()
+        : user.email || "";
+    setFormData((prev) => (prev.employee ? prev : { ...prev, employee }));
+  }, [user?.id, user?.email, user?.firstName, user?.lastName]);
+
+  const { data: allUsers = [] } = useQuery<any[]>({
+    queryKey: ["/api/users"],
+    enabled: !!user?.id && isManager,
+  });
+
+  const timesheetUrl = useMemo(() => {
+    const params = new URLSearchParams({ from, to });
+    if (isManager && selectedUserId !== "all") params.set("userId", selectedUserId);
+    return `/api/timesheet?${params.toString()}`;
+  }, [from, to, isManager, selectedUserId]);
+
   const { data: entries = [], isLoading } = useQuery<TimeEntry[]>({
-    queryKey: [`/api/users/${user?.id}/timesheet`],
+    queryKey: [timesheetUrl],
     enabled: !!user?.id,
+  });
+
+  const { data: activeSession } = useQuery<any>({
+    queryKey: ["/api/timeclock/current"],
+    enabled: !!user?.id,
+    refetchInterval: 60_000,
+  });
+
+  const [clockNow, setClockNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!activeSession?.id) return;
+    const id = window.setInterval(() => setClockNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [activeSession?.id]);
+
+  const [activeTask, setActiveTask] = useState("");
+  useEffect(() => {
+    if (!activeSession?.id) return;
+    setActiveTask(String(activeSession.task || ""));
+  }, [activeSession?.id]);
+
+  const updateTaskMutation = useMutation({
+    mutationFn: async (task: string) => {
+      const res = await fetch("/api/timeclock/current", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to update task");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/timeclock/current"] });
+      toast.success("Active task updated");
+    },
+    onError: () => {
+      toast.error("Failed to update task");
+    },
   });
 
   const calculateHours = (start: string, end: string): number => {
@@ -82,17 +153,17 @@ export default function Timesheet() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/users/${user?.id}/timesheet`] });
+      queryClient.invalidateQueries({ queryKey: [timesheetUrl] });
       toast.success("Time entry added");
       setOpenDialog(false);
-      setFormData({
+      setFormData((prev) => ({
         date: new Date().toISOString().split("T")[0],
-        employee: "",
+        employee: prev.employee,
         task: "",
         startTime: "09:00",
         endTime: "17:00",
         hourlyRate: 50,
-      });
+      }));
     },
     onError: () => {
       toast.error("Failed to add time entry");
@@ -109,7 +180,7 @@ export default function Timesheet() {
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/users/${user?.id}/timesheet`] });
+      queryClient.invalidateQueries({ queryKey: [timesheetUrl] });
       toast.success("Entry deleted");
     },
     onError: () => {
@@ -128,12 +199,70 @@ export default function Timesheet() {
   };
 
   const employees = Array.from(new Set(entries.map((e) => e.employee)));
+  const maxHours = Math.max(...employees.map(getEmployeeTotal), 1);
+
+  const weeklyRows = useMemo(() => {
+    return employees
+      .map((employee) => {
+        const hours = getEmployeeTotal(employee);
+        const cost = entries
+          .filter((e) => e.employee === employee)
+          .reduce((sum, e) => sum + parseFloat(e.hours.toString()) * parseFloat(e.hourlyRate.toString()), 0);
+        return { employee, hours, cost };
+      })
+      .sort((a, b) => b.hours - a.hours);
+  }, [employees, entries]);
+
+  const clockInMs = activeSession?.clockInAt ? new Date(activeSession.clockInAt).getTime() : 0;
+  const elapsedSeconds = clockInMs ? Math.max(0, Math.floor((clockNow - clockInMs) / 1000)) : 0;
+  const elapsedLabel = useMemo(() => {
+    const h = Math.floor(elapsedSeconds / 3600);
+    const m = Math.floor((elapsedSeconds % 3600) / 60);
+    const s = elapsedSeconds % 60;
+    const pad2 = (n: number) => String(n).padStart(2, "0");
+    return `${pad2(h)}:${pad2(m)}:${pad2(s)}`;
+  }, [elapsedSeconds]);
 
   return (
     <Layout>
       <div className="space-y-1 mb-6">
         <h1 className="text-3xl font-bold tracking-tight">Team Timesheet</h1>
         <p className="text-muted-foreground">Track team member hours and labor costs.</p>
+      </div>
+
+      <div className="flex flex-col gap-3 mb-6">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => setWeekStart((d) => addWeeks(d, -1))} data-testid="button-week-prev">
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <div className="text-sm font-medium">
+            Week: {from} – {to}
+          </div>
+          <Button variant="outline" size="sm" onClick={() => setWeekStart((d) => addWeeks(d, 1))} data-testid="button-week-next">
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+
+          {isManager && (
+            <div className="ml-auto flex items-center gap-2">
+              <Select value={selectedUserId} onValueChange={setSelectedUserId}>
+                <SelectTrigger className="w-[240px]" data-testid="select-timesheet-employee">
+                  <SelectValue placeholder="All employees" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All employees</SelectItem>
+                  {allUsers.map((u) => {
+                    const name = u?.firstName || u?.lastName ? `${u?.firstName || ""} ${u?.lastName || ""}`.trim() : u?.email || `User ${u?.id}`;
+                    return (
+                      <SelectItem key={u.id} value={String(u.id)}>
+                        {name}
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4 mb-6">
@@ -328,44 +457,92 @@ export default function Timesheet() {
         </div>
 
         <div className="space-y-4">
-          <h2 className="text-lg font-semibold">Employee Summary</h2>
-          {employees.length === 0 ? (
-            <Card>
-              <CardContent className="pt-4">
-                <p className="text-sm text-muted-foreground">No employees yet</p>
-              </CardContent>
-            </Card>
-          ) : (
-            <div className="space-y-3">
-              {employees.map((emp) => {
-                const empTotal = getEmployeeTotal(emp);
-                const empCost = entries
-                  .filter((e) => e.employee === emp)
-                  .reduce((sum, e) => sum + parseFloat(e.hours.toString()) * parseFloat(e.hourlyRate.toString()), 0);
-                const maxHours = Math.max(...employees.map(getEmployeeTotal), 1);
-                return (
-                  <Card key={emp} data-testid={`card-employee-${emp}`}>
-                    <CardContent className="pt-4">
-                      <div className="space-y-2">
-                        <p className="font-medium text-sm">{emp}</p>
-                        <div className="flex justify-between text-sm">
-                          <span className="text-muted-foreground">Hours:</span>
-                          <span className="font-medium">{empTotal.toFixed(1)}h</span>
+          <Card data-testid="card-timeclock">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm text-muted-foreground">Time Clock</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {activeSession?.id ? (
+                <>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Clocked in</span>
+                    <span className="font-medium tabular-nums">{elapsedLabel}</span>
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Started: {new Date(activeSession.clockInAt).toLocaleString()}
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="active-task">Active Task</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        id="active-task"
+                        value={activeTask}
+                        onChange={(e) => setActiveTask(e.target.value)}
+                        placeholder="General"
+                        data-testid="input-active-task"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => updateTaskMutation.mutate(activeTask.trim())}
+                        disabled={updateTaskMutation.isPending || !activeTask.trim()}
+                        data-testid="button-save-active-task"
+                      >
+                        {updateTaskMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Save
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Not clocked in right now.</p>
+                  <p className="text-xs text-muted-foreground">Auto clock-in starts on login and stops on logout.</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <PomodoroTimer />
+
+          <div className="space-y-2">
+            <h2 className="text-lg font-semibold">Weekly Summary</h2>
+            {weeklyRows.length === 0 ? (
+              <Card>
+                <CardContent className="pt-4">
+                  <p className="text-sm text-muted-foreground">No entries for this week</p>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="space-y-3">
+                {weeklyRows.map((row) => {
+                  const overtime = row.hours > 40;
+                  return (
+                    <Card key={row.employee} data-testid={`card-weekly-${row.employee}`}>
+                      <CardContent className="pt-4">
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <p className="font-medium text-sm">{row.employee}</p>
+                            {overtime && <p className="text-xs font-medium text-primary">OT</p>}
+                          </div>
+                          <div className="flex justify-between text-sm">
+                            <span className="text-muted-foreground">Hours:</span>
+                            <span className="font-medium">{row.hours.toFixed(1)}h</span>
+                          </div>
+                          <div className="flex justify-between text-sm mb-2">
+                            <span className="text-muted-foreground">Est. Cost:</span>
+                            <span className="font-medium text-primary">${row.cost.toFixed(2)}</span>
+                          </div>
+                          <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                            <div className="h-full bg-primary" style={{ width: `${(row.hours / maxHours) * 100}%` }} />
+                          </div>
                         </div>
-                        <div className="flex justify-between text-sm mb-2">
-                          <span className="text-muted-foreground">Est. Cost:</span>
-                          <span className="font-medium text-primary">${empCost.toFixed(2)}</span>
-                        </div>
-                        <div className="h-2 bg-secondary rounded-full overflow-hidden">
-                          <div className="h-full bg-primary" style={{ width: `${(empTotal / maxHours) * 100}%` }} />
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </Layout>

@@ -1,18 +1,23 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Plus, Filter, Search, Home, Upload, X, ChevronLeft, ChevronRight, Trash2, Edit, ImageIcon } from "lucide-react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { PipelineBoard } from "@/components/pipeline/PipelineBoard";
+import { OpportunityPipelineCard } from "@/components/pipeline/OpportunityPipelineCard";
+import { EntityActivity } from "@/components/activity/EntityActivity";
+import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 
 interface Property {
   id: number;
@@ -25,6 +30,7 @@ interface Property {
   sqft?: number;
   price?: string;
   status?: string;
+  notes?: string | null;
   apn?: string;
   yearBuilt?: number;
   lotSize?: string;
@@ -89,10 +95,12 @@ function PropertyImageCarousel({ images }: { images: string[] }) {
 
 function PropertyForm({ 
   property, 
+  statusOptions,
   onClose, 
   onSubmit 
 }: { 
   property?: Property; 
+  statusOptions: Array<{ value: string; label: string }>;
   onClose: () => void; 
   onSubmit: (data: any) => void;
 }) {
@@ -114,6 +122,31 @@ function PropertyForm({
     repairCost: property?.repairCost?.toString() || "",
     images: property?.images || [] as string[],
   });
+  const [addressSearch, setAddressSearch] = useState("");
+  const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
+  const [addressSuggestOpen, setAddressSuggestOpen] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      const q = addressSearch.trim();
+      if (q.length < 2) {
+        setAddressSuggestions([]);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/address/suggest?q=${encodeURIComponent(q)}`);
+        if (!res.ok) {
+          setAddressSuggestions([]);
+          return;
+        }
+        const json = await res.json();
+        setAddressSuggestions(Array.isArray(json?.suggestions) ? json.suggestions : []);
+      } catch {
+        setAddressSuggestions([]);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [addressSearch]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -206,6 +239,44 @@ function PropertyForm({
 
       <div className="grid grid-cols-2 gap-4">
         <div className="col-span-2 space-y-2">
+          <Label htmlFor="addressSearch">Address Search</Label>
+          <Input
+            id="addressSearch"
+            value={addressSearch}
+            onChange={(e) => {
+              setAddressSearch(e.target.value);
+              setAddressSuggestOpen(true);
+            }}
+            onFocus={() => setAddressSuggestOpen(true)}
+            placeholder="Start typing an address…"
+          />
+          {addressSuggestOpen && addressSuggestions.length > 0 && (
+            <div className="border rounded-md bg-background max-h-40 overflow-y-auto">
+              {addressSuggestions.map((s: any, idx: number) => (
+                <button
+                  key={s.placeId || `${s.label}-${idx}`}
+                  type="button"
+                  className="w-full text-left px-3 py-2 hover:bg-accent text-sm"
+                  onClick={() => {
+                    setFormData((prev) => ({
+                      ...prev,
+                      address: s.address || prev.address,
+                      city: s.city || prev.city,
+                      state: s.state || prev.state,
+                      zipCode: s.zipCode || prev.zipCode,
+                    }));
+                    setAddressSearch(s.label || "");
+                    setAddressSuggestions([]);
+                    setAddressSuggestOpen(false);
+                  }}
+                >
+                  {s.label || s.address}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="col-span-2 space-y-2">
           <Label htmlFor="address">Address *</Label>
           <Input
             id="address"
@@ -257,11 +328,11 @@ function PropertyForm({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="under_contract">Under Contract</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="sold">Sold</SelectItem>
-              <SelectItem value="withdrawn">Withdrawn</SelectItem>
+              {statusOptions.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -402,6 +473,11 @@ export default function Opportunities() {
   const [editingProperty, setEditingProperty] = useState<Property | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [noteOpportunity, setNoteOpportunity] = useState<Property | null>(null);
+  const [noteText, setNoteText] = useState("");
+  const [isNoteDialogOpen, setIsNoteDialogOpen] = useState(false);
+  const [activityPropertyId, setActivityPropertyId] = useState<number | null>(null);
+  const [isActivityDialogOpen, setIsActivityDialogOpen] = useState(false);
 
   const { data: properties = [], isLoading } = useQuery<Property[]>({
     queryKey: ["/api/opportunities"],
@@ -411,6 +487,30 @@ export default function Opportunities() {
       return res.json();
     }
   });
+
+  const { data: opportunityPipelineConfig } = useQuery({
+    queryKey: ["/api/pipeline-config", "opportunity"],
+    queryFn: async () => {
+      const res = await fetch(`/api/pipeline-config?entityType=opportunity`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch pipeline config");
+      return res.json();
+    },
+  });
+
+  const pipelineColumns = useMemo(() => {
+    const cols = (opportunityPipelineConfig as any)?.columns;
+    if (Array.isArray(cols) && cols.length) {
+      return cols.map((c: any) => ({ value: String(c.value || ""), label: String(c.label || "") })).filter((c: any) => c.value && c.label);
+    }
+    return [
+      { value: "active", label: "Active" },
+      { value: "negotiation", label: "Negotiation" },
+      { value: "under_contract", label: "Under Contract" },
+      { value: "pending", label: "Pending" },
+      { value: "sold", label: "Sold" },
+      { value: "withdrawn", label: "Withdrawn" },
+    ];
+  }, [opportunityPipelineConfig]);
 
   const createPropertyMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -449,6 +549,25 @@ export default function Opportunities() {
       setIsDialogOpen(false);
       setEditingProperty(null);
       toast.success("Opportunity updated successfully!");
+    },
+    onError: () => {
+      toast.error("Failed to update opportunity");
+    },
+  });
+
+  const quickUpdatePropertyMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: any }) => {
+      const res = await fetch(`/api/opportunities/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error("Failed to update opportunity");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/opportunities"] });
+      toast.success("Opportunity updated");
     },
     onError: () => {
       toast.error("Failed to update opportunity");
@@ -526,6 +645,7 @@ export default function Opportunities() {
           <p className="text-muted-foreground">Browse and manage all opportunities in your pipeline.</p>
         </div>
         <div className="flex items-center gap-2">
+          <CrmImportExportDialog entityType="opportunity" />
           <div className="relative hidden md:block">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input 
@@ -543,11 +663,11 @@ export default function Opportunities() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Status</SelectItem>
-              <SelectItem value="active">Active</SelectItem>
-              <SelectItem value="under_contract">Under Contract</SelectItem>
-              <SelectItem value="pending">Pending</SelectItem>
-              <SelectItem value="sold">Sold</SelectItem>
-              <SelectItem value="withdrawn">Withdrawn</SelectItem>
+              {pipelineColumns.map((c) => (
+                <SelectItem key={c.value} value={c.value}>
+                  {c.label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Dialog open={isDialogOpen} onOpenChange={(open) => {
@@ -565,6 +685,7 @@ export default function Opportunities() {
               </DialogHeader>
               <PropertyForm
                 property={editingProperty || undefined}
+                statusOptions={pipelineColumns}
                 onClose={() => {
                   setIsDialogOpen(false);
                   setEditingProperty(null);
@@ -576,132 +697,208 @@ export default function Opportunities() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 mt-6">
-        {filteredProperties.map((prop) => (
-          <Card key={prop.id} className="overflow-hidden hover:shadow-lg transition-shadow group" data-testid={`card-opportunity-${prop.id}`}>
-            <div className="relative h-40 bg-muted overflow-hidden">
-              <PropertyImageCarousel images={prop.images || []} />
-              <div className="absolute top-2 right-2">
-                <Badge className={getStatusColor(prop.status || "active")}>
-                  {(prop.status || "active").replace("_", " ")}
-                </Badge>
-              </div>
-              <div className="absolute top-2 left-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <Button
-                  size="icon"
-                  variant="secondary"
-                  className="h-7 w-7"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openEditDialog(prop);
-                  }}
-                  data-testid={`button-edit-opportunity-${prop.id}`}
-                >
-                  <Edit className="h-3 w-3" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="destructive"
-                  className="h-7 w-7"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (confirm("Delete this opportunity?")) {
-                      deletePropertyMutation.mutate(prop.id);
-                    }
-                  }}
-                  data-testid={`button-delete-opportunity-${prop.id}`}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-              </div>
-              {prop.images && prop.images.length > 0 && (
-                <div className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded">
-                  {prop.images.length} photo{prop.images.length > 1 ? "s" : ""}
+      <Tabs defaultValue="list" className="mt-6">
+        <TabsList>
+          <TabsTrigger value="list">List</TabsTrigger>
+          <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="list" className="mt-4">
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {filteredProperties.map((prop) => (
+              <Card key={prop.id} className="overflow-hidden hover:shadow-lg transition-shadow group" data-testid={`card-opportunity-${prop.id}`}>
+                <div className="relative h-40 bg-muted overflow-hidden">
+                  <PropertyImageCarousel images={prop.images || []} />
+                  <div className="absolute top-2 right-2">
+                    <Badge className={getStatusColor(prop.status || "active")}>
+                      {(prop.status || "active").replace("_", " ")}
+                    </Badge>
+                  </div>
+                  <div className="absolute top-2 left-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <Button
+                      size="icon"
+                      variant="secondary"
+                      className="h-7 w-7"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        openEditDialog(prop);
+                      }}
+                      data-testid={`button-edit-opportunity-${prop.id}`}
+                    >
+                      <Edit className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="destructive"
+                      className="h-7 w-7"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm("Delete this opportunity?")) {
+                          deletePropertyMutation.mutate(prop.id);
+                        }
+                      }}
+                      data-testid={`button-delete-opportunity-${prop.id}`}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                  {prop.images && prop.images.length > 0 && (
+                    <div className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded">
+                      {prop.images.length} photo{prop.images.length > 1 ? "s" : ""}
+                    </div>
+                  )}
                 </div>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-lg line-clamp-1">{prop.address}</CardTitle>
+                  <p className="text-sm text-muted-foreground">{prop.city}, {prop.state} {prop.zipCode}</p>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex justify-between items-center">
+                    <div className="text-2xl font-bold text-primary">
+                      ${prop.price ? parseInt(prop.price).toLocaleString() : "—"}
+                    </div>
+                    {prop.arv && (
+                      <div className="text-right">
+                        <p className="text-xs text-muted-foreground">ARV</p>
+                        <p className="text-sm font-semibold text-green-600">
+                          ${parseInt(prop.arv).toLocaleString()}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-sm">
+                    <div>
+                      <p className="text-muted-foreground">Beds</p>
+                      <p className="font-medium">{prop.beds || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">Baths</p>
+                      <p className="font-medium">{prop.baths || "—"}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted-foreground">SqFt</p>
+                      <p className="font-medium">{prop.sqft ? prop.sqft.toLocaleString() : "—"}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 mb-2 overflow-x-auto pb-1">
+                    {["active", "negotiation", "under_contract", "closed"].map((stage) => (
+                      <div
+                        key={stage}
+                        className={`h-1.5 flex-1 rounded-full ${
+                          (prop.status === stage)
+                            ? "bg-primary"
+                            : (["active", "negotiation", "under_contract", "closed"].indexOf(prop.status || "active") > ["active", "negotiation", "under_contract", "closed"].indexOf(stage))
+                              ? "bg-primary/40"
+                              : "bg-secondary"
+                        }`}
+                      />
+                    ))}
+                  </div>
+
+                  {prop.repairCost && (
+                    <div className="text-sm">
+                      <span className="text-muted-foreground">Repairs: </span>
+                      <span className="font-medium text-orange-600">${parseInt(prop.repairCost).toLocaleString()}</span>
+                    </div>
+                  )}
+                  <Button
+                    className="w-full bg-primary hover:bg-primary/90 text-white"
+                    onClick={() => setLocation(`/opportunities/${prop.id}`)}
+                    data-testid={`button-view-opportunity-${prop.id}`}
+                  >
+                    View Details
+                  </Button>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {filteredProperties.length === 0 && (
+            <div className="text-center py-12">
+              <Home className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+              <h3 className="text-lg font-semibold mb-2">No opportunities found</h3>
+              <p className="text-muted-foreground mb-4">
+                {searchQuery || statusFilter !== "all"
+                  ? "Try adjusting your search or filter criteria."
+                  : "Get started by adding your first opportunity."}
+              </p>
+              {!searchQuery && statusFilter === "all" && (
+                <Button onClick={openNewDialog} data-testid="button-add-first-opportunity">
+                  <Plus className="mr-2 h-4 w-4" /> Add Opportunity
+                </Button>
               )}
             </div>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg line-clamp-1">{prop.address}</CardTitle>
-              <p className="text-sm text-muted-foreground">{prop.city}, {prop.state} {prop.zipCode}</p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex justify-between items-center">
-                <div className="text-2xl font-bold text-primary">
-                  ${prop.price ? parseInt(prop.price).toLocaleString() : "—"}
-                </div>
-                {prop.arv && (
-                  <div className="text-right">
-                    <p className="text-xs text-muted-foreground">ARV</p>
-                    <p className="text-sm font-semibold text-green-600">
-                      ${parseInt(prop.arv).toLocaleString()}
-                    </p>
-                  </div>
-                )}
-              </div>
-              <div className="grid grid-cols-3 gap-2 text-sm">
-                <div>
-                  <p className="text-muted-foreground">Beds</p>
-                  <p className="font-medium">{prop.beds || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Baths</p>
-                  <p className="font-medium">{prop.baths || "—"}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">SqFt</p>
-                  <p className="font-medium">{prop.sqft ? prop.sqft.toLocaleString() : "—"}</p>
-                </div>
-              </div>
-              
-              <div className="flex items-center gap-2 mb-2 overflow-x-auto pb-1">
-                {["active", "negotiation", "under_contract", "closed"].map((stage) => (
-                  <div 
-                    key={stage}
-                    className={`h-1.5 flex-1 rounded-full ${
-                      (prop.status === stage) 
-                        ? "bg-primary" 
-                        : (["active", "negotiation", "under_contract", "closed"].indexOf(prop.status || "active") > ["active", "negotiation", "under_contract", "closed"].indexOf(stage))
-                          ? "bg-primary/40"
-                          : "bg-secondary"
-                    }`}
-                  />
-                ))}
-              </div>
-
-              {prop.repairCost && (
-                <div className="text-sm">
-                  <span className="text-muted-foreground">Repairs: </span>
-                  <span className="font-medium text-orange-600">${parseInt(prop.repairCost).toLocaleString()}</span>
-                </div>
-              )}
-              <Button 
-                className="w-full bg-primary hover:bg-primary/90 text-white"
-                onClick={() => setLocation(`/opportunities/${prop.id}`)}
-                data-testid={`button-view-opportunity-${prop.id}`}
-              >
-                View Details
-              </Button>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {filteredProperties.length === 0 && (
-        <div className="text-center py-12">
-          <Home className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-          <h3 className="text-lg font-semibold mb-2">No opportunities found</h3>
-          <p className="text-muted-foreground mb-4">
-            {searchQuery || statusFilter !== "all" 
-              ? "Try adjusting your search or filter criteria."
-              : "Get started by adding your first opportunity."}
-          </p>
-          {!searchQuery && statusFilter === "all" && (
-            <Button onClick={openNewDialog} data-testid="button-add-first-opportunity">
-              <Plus className="mr-2 h-4 w-4" /> Add Opportunity
-            </Button>
           )}
-        </div>
-      )}
+        </TabsContent>
+
+        <TabsContent value="pipeline" className="mt-4">
+          <PipelineBoard
+            columns={pipelineColumns}
+            items={filteredProperties}
+            getId={(p: any) => p.id}
+            getStatus={(p: any) => p.status}
+            emptyText="No opportunities"
+            renderItem={(p: any) => (
+              <OpportunityPipelineCard
+                opportunity={p}
+                columns={pipelineColumns}
+                onUpdateStatus={(id, status) => quickUpdatePropertyMutation.mutate({ id, data: { status } })}
+                onAddNote={(op) => {
+                  setNoteOpportunity(op as any);
+                  setNoteText("");
+                  setIsNoteDialogOpen(true);
+                }}
+                onOpenActivity={(op) => {
+                  setActivityPropertyId((op as any).id);
+                  setIsActivityDialogOpen(true);
+                }}
+              />
+            )}
+          />
+        </TabsContent>
+      </Tabs>
+
+      <Dialog open={isNoteDialogOpen} onOpenChange={setIsNoteDialogOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Add Note</DialogTitle>
+            <DialogDescription>{noteOpportunity?.address ? `Opportunity: ${noteOpportunity.address}` : ""}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="opp-note-text">Note</Label>
+            <Textarea id="opp-note-text" value={noteText} onChange={(e) => setNoteText(e.target.value)} placeholder="Type a note…" />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsNoteDialogOpen(false)}>Cancel</Button>
+            <Button
+              className="bg-primary hover:bg-primary/90 text-white"
+              disabled={!noteOpportunity || !noteText.trim() || quickUpdatePropertyMutation.isPending}
+              onClick={async () => {
+                if (!noteOpportunity) return;
+                const existing = String(noteOpportunity.notes || "").trim();
+                const stamped = `[${new Date().toLocaleString()}] ${noteText.trim()}`;
+                const notes = existing ? `${existing}\n\n${stamped}` : stamped;
+                await quickUpdatePropertyMutation.mutateAsync({ id: noteOpportunity.id, data: { notes } });
+                setIsNoteDialogOpen(false);
+                setNoteOpportunity(null);
+                setNoteText("");
+              }}
+            >
+              Save Note
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isActivityDialogOpen} onOpenChange={setIsActivityDialogOpen}>
+        <DialogContent className="sm:max-w-[640px]">
+          <DialogHeader>
+            <DialogTitle>Activity</DialogTitle>
+          </DialogHeader>
+          {activityPropertyId ? <EntityActivity propertyId={activityPropertyId} /> : null}
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

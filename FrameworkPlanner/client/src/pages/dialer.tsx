@@ -25,9 +25,29 @@ export default function Dialer() {
   const [callId, setCallId] = useState<number | null>(null);
   const [startTs, setStartTs] = useState<number | null>(null);
   const timerRef = useRef<number>(0);
+  const wasConnectedRef = useRef(false);
+  const lastPatchedStatusRef = useRef<string | null>(null);
   const queryClient = useQueryClient();
   const { ready: signalWireReady, call: activeCall, makeCall, endCall: endSignalWireCall, toggleMute, toggleHold } = useSignalWire();
   const [, navigate] = useLocation();
+  const initialNumber = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    const params = new URLSearchParams(window.location.search);
+    return params.get("number") || params.get("to") || "";
+  }, []);
+  const initialMetadata = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    const leadIdRaw = params.get("leadId");
+    const propertyIdRaw = params.get("propertyId");
+    const leadId = leadIdRaw ? parseInt(leadIdRaw, 10) : 0;
+    const propertyId = propertyIdRaw ? parseInt(propertyIdRaw, 10) : 0;
+    const meta: any = {};
+    if (leadId) meta.leadId = leadId;
+    if (propertyId) meta.propertyId = propertyId;
+    return Object.keys(meta).length ? meta : null;
+  }, []);
+  const callMetadataRef = useRef<any>(initialMetadata);
   const historyInterval = useMemo(() => {
     if (typeof document !== "undefined" && document.visibilityState === "hidden") return false as any;
     if (status === "connected") return 300;
@@ -56,13 +76,32 @@ export default function Dialer() {
     refetchInterval: historyInterval as any,
   });
 
+  const patchCallLog = async (id: number, patch: any) => {
+    try {
+      const res = await fetch(`/api/telephony/calls/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return await res.json();
+    } catch {
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    if (!initialNumber) return;
+    setNumber(initialNumber);
+  }, [initialNumber]);
+
   const createCall = useMutation({
     mutationFn: async ({ direction, number }: { direction: "outbound"|"inbound"; number: string }) => {
       // First create the call log
       const res = await fetch(`/api/telephony/calls`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ direction, number: String(number), status: "dialing", startedAt: new Date().toISOString() }),
+        body: JSON.stringify({ direction, number: String(number), status: "dialing", startedAt: new Date().toISOString(), metadata: callMetadataRef.current }),
       });
       if (!res.ok) throw new Error(await res.text());
       const log = await res.json();
@@ -74,11 +113,7 @@ export default function Dialer() {
         } catch (error) {
           console.error("SignalWire call failed:", error);
           // Update call log to failed status
-          await fetch(`/api/telephony/calls/${log.id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ status: "failed" }),
-          });
+          await patchCallLog(log.id, { status: "failed", endedAt: new Date().toISOString() });
           throw error;
         }
       }
@@ -89,6 +124,8 @@ export default function Dialer() {
       setCallId(log.id);
       setStatus("dialing");
       setStartTs(Date.now());
+      wasConnectedRef.current = false;
+      lastPatchedStatusRef.current = "dialing";
       queryClient.invalidateQueries({ queryKey: ["/api/telephony/history"] });
     },
   });
@@ -105,21 +142,23 @@ export default function Dialer() {
       }
       
       const durationMs = startTs ? Date.now() - startTs : 0;
-      const res = await fetch(`/api/telephony/calls/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: succeeded ? "ended" : "failed", durationMs }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
+      const nextStatus = succeeded ? (wasConnectedRef.current ? "answered" : "missed") : "failed";
+      lastPatchedStatusRef.current = nextStatus;
+      return await patchCallLog(id, { status: nextStatus, endedAt: new Date().toISOString(), durationMs });
     },
     onSuccess: () => {
       setStatus("ended");
       setCallId(null);
       setStartTs(null);
+      wasConnectedRef.current = false;
       queryClient.invalidateQueries({ queryKey: ["/api/telephony/history"] });
     },
   });
+
+  useEffect(() => {
+    if (!initialNumber) return;
+    setNumber((prev) => prev || initialNumber);
+  }, [initialNumber]);
 
   useEffect(() => {
     let handle: any;
@@ -137,6 +176,57 @@ export default function Dialer() {
     if (activeCall.state === "active") setStatus("connected");
     if (activeCall.state === "finished") setStatus("ended");
   }, [activeCall?.state]);
+
+  useEffect(() => {
+    if (!callId) return;
+    if (!activeCall) return;
+
+    const durationMs = startTs ? Date.now() - startTs : 0;
+
+    if (activeCall.state === "ringing" && lastPatchedStatusRef.current !== "ringing") {
+      lastPatchedStatusRef.current = "ringing";
+      patchCallLog(callId, { status: "ringing" }).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/telephony/history"] });
+      });
+      return;
+    }
+
+    if (activeCall.state === "active") {
+      wasConnectedRef.current = true;
+      if (lastPatchedStatusRef.current !== "answered") {
+        lastPatchedStatusRef.current = "answered";
+        patchCallLog(callId, { status: "answered" }).then(() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/telephony/history"] });
+        });
+      }
+      return;
+    }
+
+    if (activeCall.state === "finished") {
+      const finalStatus = wasConnectedRef.current ? "answered" : "missed";
+      if (lastPatchedStatusRef.current !== finalStatus) {
+        lastPatchedStatusRef.current = finalStatus;
+        patchCallLog(callId, { status: finalStatus, endedAt: new Date().toISOString(), durationMs }).then(() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/telephony/history"] });
+        });
+      }
+    }
+  }, [activeCall?.state, callId, queryClient, startTs]);
+
+  useEffect(() => {
+    if (!callId) return;
+    if (activeCall) return;
+    if (status === "idle" || status === "ended" || status === "failed") return;
+
+    const durationMs = startTs ? Date.now() - startTs : 0;
+    const finalStatus = wasConnectedRef.current ? "answered" : "missed";
+    if (lastPatchedStatusRef.current !== finalStatus) {
+      lastPatchedStatusRef.current = finalStatus;
+      patchCallLog(callId, { status: finalStatus, endedAt: new Date().toISOString(), durationMs }).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/telephony/history"] });
+      });
+    }
+  }, [activeCall, callId, queryClient, startTs, status]);
 
   const formatted = useMemo(() => formatE164(number), [number]);
 

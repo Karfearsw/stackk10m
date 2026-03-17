@@ -19,6 +19,8 @@ export const leads = pgTable("leads", {
   status: varchar("status", { length: 50 }).default("new"),
   notes: text("notes"),
   source: varchar("source", { length: 100 }),
+  assignedTo: integer("assigned_to"),
+  dedupeKey: varchar("dedupe_key", { length: 400 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -48,6 +50,58 @@ export const properties = pgTable("properties", {
   repairCost: decimal("repair_cost", { precision: 12, scale: 2 }),
   assignedTo: integer("assigned_to"),
   sourceLeadId: integer("source_lead_id"),
+  notes: text("notes"),
+  dedupeKey: varchar("dedupe_key", { length: 400 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const crmImportJobs = pgTable("crm_import_jobs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 32 }).notNull(),
+  createdBy: integer("created_by").notNull(),
+  status: varchar("status", { length: 32 }).default("queued"),
+  originalFilename: varchar("original_filename", { length: 255 }),
+  fileMimeType: varchar("file_mime_type", { length: 100 }),
+  fileBase64: text("file_base64").notNull(),
+  mapping: text("mapping").notNull(),
+  options: text("options").notNull(),
+  totalRows: integer("total_rows"),
+  processedRows: integer("processed_rows").default(0),
+  createdCount: integer("created_count").default(0),
+  updatedCount: integer("updated_count").default(0),
+  skippedCount: integer("skipped_count").default(0),
+  errorCount: integer("error_count").default(0),
+  startedAt: timestamp("started_at"),
+  finishedAt: timestamp("finished_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const crmImportJobErrors = pgTable("crm_import_job_errors", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  jobId: integer("job_id").notNull(),
+  rowNumber: integer("row_number").notNull(),
+  errors: text("errors").notNull(),
+  rawRow: text("raw_row"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const crmExportFiles = pgTable("crm_export_files", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 32 }).notNull(),
+  createdBy: integer("created_by").notNull(),
+  status: varchar("status", { length: 32 }).default("queued"),
+  format: varchar("format", { length: 16 }).notNull(),
+  filename: varchar("filename", { length: 255 }),
+  mimeType: varchar("mime_type", { length: 100 }),
+  contentBase64: text("content_base64"),
+  tokenHash: varchar("token_hash", { length: 64 }),
+  expiresAt: timestamp("expires_at"),
+  filters: text("filters").notNull(),
+  columns: text("columns").notNull(),
+  startedAt: timestamp("started_at"),
+  finishedAt: timestamp("finished_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -376,6 +430,23 @@ export const insertTimesheetEntrySchema = createInsertSchema(timesheetEntries).o
 export type TimesheetEntry = typeof timesheetEntries.$inferSelect;
 export type InsertTimesheetEntry = z.infer<typeof insertTimesheetEntrySchema>;
 
+export const timeClockSessions = pgTable("time_clock_sessions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  employee: varchar("employee", { length: 255 }).notNull(),
+  task: varchar("task", { length: 255 }).default("General").notNull(),
+  clockInAt: timestamp("clock_in_at").notNull(),
+  clockOutAt: timestamp("clock_out_at"),
+  tzOffsetMinutes: integer("tz_offset_minutes").notNull(),
+  autoStarted: boolean("auto_started").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTimeClockSessionSchema = createInsertSchema(timeClockSessions).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type TimeClockSession = typeof timeClockSessions.$inferSelect;
+export type InsertTimeClockSession = z.infer<typeof insertTimeClockSessionSchema>;
+
 // GLOBAL ACTIVITY LOG TABLE (company-wide activity visible to all team members)
 export const globalActivityLogs = pgTable("global_activity_logs", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -483,3 +554,48 @@ export const callLogs = pgTable("call_logs", {
 export const insertCallLogSchema = createInsertSchema(callLogs).omit({ id: true, createdAt: true } as any);
 export type CallLog = typeof callLogs.$inferSelect;
 export type InsertCallLog = z.infer<typeof insertCallLogSchema>;
+
+export const underwritingTemplates = pgTable("underwriting_templates", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  name: varchar("name", { length: 120 }).notNull(),
+  configJson: text("config_json").notNull().default("{}"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertUnderwritingTemplateSchema = createInsertSchema(underwritingTemplates).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type UnderwritingTemplate = typeof underwritingTemplates.$inferSelect;
+export type InsertUnderwritingTemplate = z.infer<typeof insertUnderwritingTemplateSchema>;
+
+export const playgroundPropertySessions = pgTable("playground_property_sessions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  address: varchar("address", { length: 500 }).notNull(),
+  addressKey: text("address_key").notNull(),
+  propertyType: varchar("property_type", { length: 50 }),
+  currentUrl: text("current_url"),
+  tagsJson: text("tags_json").notNull().default("[]"),
+  bookmarksJson: text("bookmarks_json").notNull().default("[]"),
+  checklistJson: text("checklist_json").notNull().default("{}"),
+  notesJson: text("notes_json").notNull().default("[]"),
+  underwritingJson: text("underwriting_json").notNull().default("{}"),
+  leadId: integer("lead_id"),
+  propertyId: integer("property_id"),
+  assignedTo: integer("assigned_to"),
+  assignmentDueAt: timestamp("assignment_due_at"),
+  assignmentStatus: varchar("assignment_status", { length: 50 }),
+  createdBy: integer("created_by").notNull(),
+  updatedBy: integer("updated_by"),
+  lastOpenedBy: integer("last_opened_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  lastOpenedAt: timestamp("last_opened_at").defaultNow(),
+});
+
+export const insertPlaygroundPropertySessionSchema = createInsertSchema(playgroundPropertySessions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+} as any);
+export type PlaygroundPropertySession = typeof playgroundPropertySessions.$inferSelect;
+export type InsertPlaygroundPropertySession = z.infer<typeof insertPlaygroundPropertySessionSchema>;

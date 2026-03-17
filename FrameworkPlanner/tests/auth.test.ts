@@ -9,6 +9,9 @@ describe('Auth Endpoints', () => {
   let app: express.Express
 
   beforeAll(async () => {
+    process.env.EMPLOYEE_ACCESS_CODE = '3911'
+    process.env.SESSION_SECRET = 'test'
+
     app = express()
     app.use(express.json())
     app.use(session({ secret: 'test', resave: false, saveUninitialized: false }))
@@ -28,10 +31,19 @@ describe('Auth Endpoints', () => {
 
     expect(res.status).toBe(201)
     expect(res.body.user.email).toBe('new@example.com')
+    expect(typeof res.body.token === 'string' || res.body.token === null).toBe(true)
 
     const me = await agent.get('/api/auth/me')
     expect(me.status).toBe(200)
     expect(me.body.email).toBe('new@example.com')
+
+    if (res.body.token) {
+      const tokenMe = await request(app)
+        .get('/api/auth/me')
+        .set('Authorization', `Bearer ${res.body.token}`)
+      expect(tokenMe.status).toBe(200)
+      expect(tokenMe.body.email).toBe('new@example.com')
+    }
   })
 })
 

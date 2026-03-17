@@ -14,8 +14,23 @@ async function run() {
     const p = join(dir, f);
     const sql = readFileSync(p, "utf8");
     console.log(`Applying migration: ${f}`);
-    await pool.query(sql);
-    console.log(`Applied: ${f}`);
+    try {
+      await pool.query(sql);
+      console.log(`Applied: ${f}`);
+    } catch (e: any) {
+      const code = String(e?.code || "");
+      const msg = String(e?.message || "");
+      const alreadyExists =
+        code === "42710" ||
+        code === "42P07" ||
+        code === "42701" ||
+        /already exists/i.test(msg);
+      if (alreadyExists) {
+        console.log(`Skipped: ${f}`);
+        continue;
+      }
+      throw e;
+    }
   }
 }
 

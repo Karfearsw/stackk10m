@@ -11,8 +11,9 @@ import { toast } from 'sonner';
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [employeeCode, setEmployeeCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, devBypass } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,6 +24,18 @@ export default function Login() {
       toast.success('Welcome back!');
     } catch (error: any) {
       toast.error(error.message || 'Invalid email or password');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDevBypass = async () => {
+    setIsLoading(true);
+    try {
+      await devBypass(email, employeeCode);
+      toast.success('Dev bypass active');
+    } catch (error: any) {
+      toast.error(error.message || 'Dev bypass failed');
     } finally {
       setIsLoading(false);
     }
@@ -82,6 +95,32 @@ export default function Login() {
               Sign In
             </Button>
           </form>
+
+          {import.meta.env.DEV && (
+            <div className="mt-4 space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="employeeCode">Employee Access Code</Label>
+                <Input
+                  id="employeeCode"
+                  type="password"
+                  placeholder="Enter employee code"
+                  value={employeeCode}
+                  onChange={(e) => setEmployeeCode(e.target.value)}
+                  disabled={isLoading}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full"
+                disabled={isLoading || !email || !employeeCode}
+                onClick={handleDevBypass}
+              >
+                {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Dev Bypass Sign In
+              </Button>
+            </div>
+          )}
           
           <div className="mt-6 text-center text-sm text-muted-foreground">
             <p>Real Estate Wholesaling CRM</p>

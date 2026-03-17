@@ -141,7 +141,9 @@ export default function Analytics() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl font-bold text-primary" data-testid="value-revenue">
-              ${(ytdMetrics.revenue / 1000).toFixed(1)}K
+              {ytdMetrics.revenue >= 1000
+                ? `$${(ytdMetrics.revenue / 1000).toFixed(1)}K`
+                : `$${ytdMetrics.revenue > 0 ? Math.round(ytdMetrics.revenue).toLocaleString() : "0"}`}
             </div>
             <p className="text-xs text-muted-foreground mt-1">From closed deals</p>
           </CardContent>

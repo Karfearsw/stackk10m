@@ -1,10 +1,27 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import bcrypt from "bcryptjs";
-import { SignJWT } from "jose";
+import { SignJWT, jwtVerify } from "jose";
+import multer from "multer";
 import { storage } from "./storage.js";
 import { db } from "./db.js";
 import { sql } from "drizzle-orm";
+import {
+  createExportJob,
+  createImportJob,
+  computeLeadDedupeKey,
+  computeOpportunityDedupeKey,
+  detectFormat,
+  getCrmFieldDefs,
+  getExportJob,
+  getImportJob,
+  listImportJobErrors,
+  parseUpload,
+  processExportJob,
+  processImportJob,
+  suggestMapping,
+  verifyExportToken,
+} from "./crm/import-export.js";
 import { 
   insertLeadSchema,
   type InsertLead, 
@@ -28,10 +45,310 @@ import {
   insertTimesheetEntrySchema,
   insertBuyerSchema,
   insertBuyerCommunicationSchema,
-  insertDealAssignmentSchema
+  insertDealAssignmentSchema,
+  insertPlaygroundPropertySessionSchema,
+  insertUnderwritingTemplateSchema
 } from "./shared-schema.js";
+import { z } from "zod";
+import { computeArvFromComps, computeDealMath, computeRepairTotal, underwritingSchemaV1, underwritingTemplateConfigSchema } from "../shared/underwriting.js";
+
+function authJwtSecret() {
+  const secret = process.env.AUTH_JWT_SECRET || process.env.SESSION_SECRET;
+  if (!secret || !String(secret).trim()) return null;
+  return new TextEncoder().encode(String(secret));
+}
+
+function isDbConnectivityError(error: any): boolean {
+  const code = error?.code;
+  if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
+  const nested = error?.errors;
+  if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
+  const message = String(error?.message || "");
+  return message.includes("DATABASE_URL");
+}
+
+async function issueAuthToken(payload: { sub: string; email?: string }) {
+  const secret = authJwtSecret();
+  if (!secret) return null;
+  return await new SignJWT({ email: payload.email })
+    .setProtectedHeader({ alg: "HS256" })
+    .setSubject(payload.sub)
+    .setIssuedAt()
+    .setExpirationTime("7d")
+    .sign(secret);
+}
+
+function isManagerUser(user: any) {
+  const role = String(user?.role || "").toLowerCase();
+  return !!user?.isSuperAdmin || role === "admin" || role === "manager" || role === "owner";
+}
+
+async function requireAuth(req: any, res: any) {
+  const userId = req.session?.userId;
+  if (!userId) {
+    res.status(401).json({ message: "Unauthorized" });
+    return null;
+  }
+  const user = await storage.getUserById(userId);
+  if (!user) {
+    res.status(401).json({ message: "Unauthorized" });
+    return null;
+  }
+  return user;
+}
+
+function isImportExportEntityType(entityType: string) {
+  return entityType === "lead" || entityType === "opportunity" || entityType === "contact" || entityType === "buyer";
+}
+
+async function writeAuthAuditLog(input: {
+  action: string;
+  outcome: string;
+  userId?: number | null;
+  email?: string | null;
+  ip?: string | null;
+  userAgent?: string | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  try {
+    const metadataText = input.metadata ? JSON.stringify(input.metadata) : null;
+    await db.execute(sql`
+      INSERT INTO auth_audit_logs (action, outcome, user_id, email, ip, user_agent, metadata)
+      VALUES (
+        ${input.action},
+        ${input.outcome},
+        ${input.userId ?? null},
+        ${input.email ?? null},
+        ${input.ip ?? null},
+        ${input.userAgent ?? null},
+        ${metadataText}
+      )
+    `);
+  } catch {}
+}
+
+function isLoopbackIp(ip: string | undefined) {
+  if (!ip) return false;
+  const v = ip.trim();
+  return v === "127.0.0.1" || v === "::1" || v === "::ffff:127.0.0.1";
+}
+
+function isDevEmployeeBypassEnabled() {
+  if (process.env.NODE_ENV === "production") return false;
+  const v = String(process.env.DEV_AUTH_BYPASS_ENABLED || "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+function toAddressKey(address: string) {
+  return address.trim().toLowerCase();
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 },
+  });
+
+  app.use("/api", async (req, _res, next) => {
+    try {
+      if (req.session?.userId) return next();
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith("Bearer ")) return next();
+
+      const secret = authJwtSecret();
+      if (!secret) return next();
+
+      const token = authHeader.slice("Bearer ".length);
+      const { payload } = await jwtVerify(token, secret);
+      const sub = payload.sub ? parseInt(String(payload.sub), 10) : NaN;
+      if (!Number.isFinite(sub)) return next();
+
+      req.session.userId = sub;
+      if (typeof payload.email === "string") req.session.email = payload.email;
+      next();
+    } catch {
+      next();
+    }
+  });
+
+  app.get("/api/crm/fields", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    const entityType = String(req.query.entityType || "");
+    if (!isImportExportEntityType(entityType)) {
+      return res.status(400).json({ message: "Invalid entityType" });
+    }
+    return res.json({ entityType, fields: getCrmFieldDefs(entityType as any) });
+  });
+
+  app.post("/api/crm/import/preview", upload.single("file"), async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    const entityType = String(req.body.entityType || "");
+    if (!isImportExportEntityType(entityType)) {
+      return res.status(400).json({ message: "Invalid entityType" });
+    }
+
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) return res.status(400).json({ message: "file is required" });
+
+    const format = detectFormat(file.originalname, file.mimetype);
+    if (!format) return res.status(400).json({ message: "Unsupported file type" });
+
+    const parsed = await parseUpload(file.buffer, format);
+    const headers = parsed.headers;
+    const samples = parsed.rows.slice(0, 5);
+    const suggested = suggestMapping(entityType as any, headers);
+    return res.json({
+      entityType,
+      format,
+      headers,
+      sampleRows: samples,
+      suggestedMapping: suggested,
+      totalRows: parsed.rows.length,
+    });
+  });
+
+  app.post("/api/crm/import/jobs", upload.single("file"), async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    const entityType = String(req.body.entityType || "");
+    if (!isImportExportEntityType(entityType)) {
+      return res.status(400).json({ message: "Invalid entityType" });
+    }
+
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) return res.status(400).json({ message: "file is required" });
+
+    const mapping = req.body.mapping ? JSON.parse(String(req.body.mapping)) : {};
+    const options = req.body.options ? JSON.parse(String(req.body.options)) : { onDuplicate: "merge" };
+
+    const format = detectFormat(file.originalname, file.mimetype);
+    if (!format) return res.status(400).json({ message: "Unsupported file type" });
+
+    const fileBase64 = file.buffer.toString("base64");
+    const job = await createImportJob({
+      entityType: entityType as any,
+      createdBy: user.id,
+      fileBase64,
+      originalFilename: file.originalname,
+      fileMimeType: file.mimetype,
+      mapping,
+      options,
+    });
+
+    setImmediate(() => {
+      processImportJob(job.id).catch(() => {});
+    });
+
+    return res.status(201).json({ jobId: job.id });
+  });
+
+  app.get("/api/crm/import/jobs/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    const jobId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
+
+    const job = await getImportJob(jobId);
+    if (!job) return res.status(404).json({ message: "Not found" });
+    if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
+
+    const errors = await listImportJobErrors(jobId, 50);
+    return res.json({ job, errors });
+  });
+
+  app.get("/api/crm/import/jobs/:id/errors.csv", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    const jobId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
+
+    const job = await getImportJob(jobId);
+    if (!job) return res.status(404).json({ message: "Not found" });
+    if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
+
+    const errors = await listImportJobErrors(jobId, 10000);
+    const esc = (v: any) => {
+      const s = String(v ?? "");
+      if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const lines = ["rowNumber,errors,rawRow"];
+    for (const e of errors) lines.push([e.rowNumber, e.errors, e.rawRow || ""].map(esc).join(","));
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="import-errors-${jobId}.csv"`);
+    return res.send(lines.join("\n"));
+  });
+
+  app.post("/api/crm/export/jobs", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    const entityType = String(req.body.entityType || "");
+    if (!isImportExportEntityType(entityType)) {
+      return res.status(400).json({ message: "Invalid entityType" });
+    }
+    const format = String(req.body.format || "csv");
+    if (format !== "csv" && format !== "xlsx") return res.status(400).json({ message: "Invalid format" });
+
+    const filters = req.body.filters || {};
+    const columns = Array.isArray(req.body.columns) ? req.body.columns : [];
+
+    const { job, token } = await createExportJob({
+      entityType: entityType as any,
+      createdBy: user.id,
+      format: format as any,
+      filters,
+      columns,
+    });
+
+    setImmediate(() => {
+      processExportJob(job.id).catch(() => {});
+    });
+
+    const downloadUrl = `/api/crm/export/files/${job.id}/download?token=${encodeURIComponent(token)}`;
+    return res.status(201).json({ jobId: job.id, downloadUrl });
+  });
+
+  app.get("/api/crm/export/jobs/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    const exportId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(exportId)) return res.status(400).json({ message: "Invalid export id" });
+
+    const job = await getExportJob(exportId);
+    if (!job) return res.status(404).json({ message: "Not found" });
+    if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
+
+    return res.json({ job });
+  });
+
+  app.get("/api/crm/export/files/:id/download", async (req, res) => {
+    const exportId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(exportId)) return res.status(400).json({ message: "Invalid export id" });
+    const token = String(req.query.token || "");
+    if (!token) return res.status(401).json({ message: "Missing token" });
+
+    const job = await getExportJob(exportId);
+    if (!job) return res.status(404).json({ message: "Not found" });
+    if (job.status !== "completed") return res.status(409).json({ message: "Export not ready" });
+    if (!verifyExportToken(job as any, token)) return res.status(403).json({ message: "Invalid token" });
+    if (!job.contentBase64 || !job.mimeType) return res.status(500).json({ message: "Export content missing" });
+
+    const buf = Buffer.from(String(job.contentBase64), "base64");
+    res.setHeader("Content-Type", job.mimeType);
+    res.setHeader("Content-Disposition", `attachment; filename="${job.filename || `export-${exportId}`}"`);
+    return res.send(buf);
+  });
+
   // HEALTH CHECK
   app.get("/api/health", async (req, res) => {
     try {
@@ -41,6 +358,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Health check failed:", error);
       res.status(500).json({ status: "error", db: "disconnected", message: error.message });
+    }
+  });
+
+  app.get("/api/address/suggest", async (req, res) => {
+    try {
+      const qRaw = (req.query.q as string) || "";
+      const q = qRaw.trim();
+      if (q.length < 2) return res.json({ q: qRaw, provider: null, suggestions: [] });
+
+      const providerHint = String(process.env.ADDRESS_PROVIDER || "").toLowerCase();
+      const mapboxToken = process.env.MAPBOX_ACCESS_TOKEN || process.env.MAPBOX_TOKEN;
+      const smartyAuthId = process.env.SMARTY_AUTH_ID || process.env.SMARTY_STREETS_AUTH_ID;
+      const smartyAuthToken = process.env.SMARTY_AUTH_TOKEN || process.env.SMARTY_STREETS_AUTH_TOKEN;
+
+      const canUseMapbox = !!mapboxToken;
+      const canUseSmarty = !!(smartyAuthId && smartyAuthToken);
+
+      const provider =
+        providerHint === "mapbox" && canUseMapbox ? "mapbox"
+        : providerHint === "smarty" && canUseSmarty ? "smarty"
+        : canUseMapbox ? "mapbox"
+        : canUseSmarty ? "smarty"
+        : null;
+
+      if (!provider) {
+        return res.json({ q: qRaw, provider: null, suggestions: [] });
+      }
+
+      if (provider === "mapbox") {
+        const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?autocomplete=true&types=address&country=US&limit=8&access_token=${encodeURIComponent(String(mapboxToken))}`;
+        const r = await fetch(url);
+        if (!r.ok) return res.status(502).json({ message: "Address provider error" });
+        const json: any = await r.json();
+        const suggestions = (json?.features || []).map((f: any) => {
+          const ctx: any[] = Array.isArray(f.context) ? f.context : [];
+          const postcode = ctx.find((c) => typeof c?.id === "string" && c.id.startsWith("postcode."));
+          const place = ctx.find((c) => typeof c?.id === "string" && c.id.startsWith("place."));
+          const region = ctx.find((c) => typeof c?.id === "string" && c.id.startsWith("region."));
+          const address = f.address ? `${f.address} ${f.text || ""}`.trim() : String(f.place_name || "");
+          return {
+            label: String(f.place_name || f.text || ""),
+            address,
+            city: String(place?.text || ""),
+            state: String(region?.short_code || region?.text || "").replace(/^us-/i, "").toUpperCase(),
+            zipCode: String(postcode?.text || ""),
+            placeId: String(f.id || ""),
+          };
+        });
+        return res.json({ q: qRaw, provider, suggestions });
+      }
+
+      const url = `https://us-autocomplete-pro.api.smarty.com/lookup?search=${encodeURIComponent(q)}&auth-id=${encodeURIComponent(String(smartyAuthId))}&auth-token=${encodeURIComponent(String(smartyAuthToken))}&max_results=8`;
+      const r = await fetch(url);
+      if (!r.ok) return res.status(502).json({ message: "Address provider error" });
+      const json: any = await r.json();
+      const suggestions = (json?.suggestions || []).map((s: any) => ({
+        label: String(s.text || [s.street_line, s.city, s.state, s.zipcode].filter(Boolean).join(", ")),
+        address: String(s.street_line || ""),
+        city: String(s.city || ""),
+        state: String(s.state || ""),
+        zipCode: String(s.zipcode || ""),
+        placeId: String(s.street_line || ""),
+      }));
+      return res.json({ q: qRaw, provider, suggestions });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
@@ -77,7 +460,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const resultsQuery = sql`(
         SELECT 'lead' AS type, l.id AS id, l.address AS title, (l.city || ', ' || l.state) AS subtitle,
-               '/leads' AS path,
+               ('/leads?leadId=' || l.id)::text AS path,
                CASE 
                  WHEN lower(l.address) LIKE lower(${term}) THEN 1
                  WHEN lower(l.owner_name) LIKE lower(${term}) THEN 2
@@ -144,21 +527,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       if (adminEmail && email === adminEmail && adminPassword && password === adminPassword) {
         console.log(`[Auth] Admin bypass used for ${email}`);
+        void writeAuthAuditLog({
+          action: "admin_bypass",
+          outcome: "attempt",
+          email,
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          metadata: { path: req.path },
+        });
         try {
             const user = await storage.getUserByEmail(email);
             if (user) {
                 req.session.userId = user.id;
                 req.session.email = user.email;
                 const { passwordHash, ...userWithoutPassword } = user;
-                return res.json({ user: userWithoutPassword });
+                const token = await issueAuthToken({ sub: String(user.id), email: user.email });
+                void writeAuthAuditLog({
+                  action: "admin_bypass",
+                  outcome: "granted",
+                  userId: user.id,
+                  email: user.email,
+                  ip: req.ip,
+                  userAgent: String(req.headers["user-agent"] || ""),
+                  metadata: { path: req.path },
+                });
+                return res.json({ user: userWithoutPassword, token });
             } else {
                 console.error(`[Auth] Admin user ${email} matches env but not found in DB`);
+                void writeAuthAuditLog({
+                  action: "admin_bypass",
+                  outcome: "user_not_found",
+                  email,
+                  ip: req.ip,
+                  userAgent: String(req.headers["user-agent"] || ""),
+                  metadata: { path: req.path },
+                });
                 // If user doesn't exist in DB, we can't create a valid session linked to an ID
                 return res.status(401).json({ message: "Admin user not found in database. Run bootstrap-admin script." });
             }
         } catch (dbError) {
              console.error(`[Auth] Admin bypass DB error:`, dbError);
-             return res.status(500).json({ message: "Database connection failed during admin login" });
+             void writeAuthAuditLog({
+               action: "admin_bypass",
+               outcome: "error",
+               email,
+               ip: req.ip,
+               userAgent: String(req.headers["user-agent"] || ""),
+               metadata: { path: req.path, error: String((dbError as any)?.message || dbError) },
+             });
+             return res.status(503).json({ message: "Database connection failed during admin login" });
         }
       }
 
@@ -180,10 +597,120 @@ export async function registerRoutes(app: Express): Promise<Server> {
       req.session.email = user.email;
 
       const { passwordHash, ...userWithoutPassword } = user;
-      res.json({ user: userWithoutPassword });
+      const token = await issueAuthToken({ sub: String(user.id), email: user.email });
+      res.json({ user: userWithoutPassword, token });
     } catch (error: any) {
       console.error("[Auth] Login error:", error);
+      if (isDbConnectivityError(error)) {
+        return res.status(503).json({ message: "Database is unavailable" });
+      }
       res.status(500).json({ message: `Login failed: ${error.message}` });
+    }
+  });
+
+  app.post("/api/auth/dev-bypass", async (req, res) => {
+    try {
+      if (!isDevEmployeeBypassEnabled()) {
+        return res.status(404).json({ message: "Not found" });
+      }
+
+      if (!isLoopbackIp(req.ip)) {
+        void writeAuthAuditLog({
+          action: "dev_employee_bypass",
+          outcome: "forbidden_ip",
+          email: String((req.body as any)?.email || ""),
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          metadata: { path: req.path },
+        });
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      const accessCode = process.env.EMPLOYEE_ACCESS_CODE;
+      if (!accessCode || !String(accessCode).trim()) {
+        return res.status(503).json({ message: "Employee access code is not configured" });
+      }
+
+      const { employeeCode, email } = req.body as { employeeCode?: string; email?: string };
+      if (!employeeCode || employeeCode !== accessCode) {
+        console.warn(`[Auth] Dev bypass denied ip=${req.ip} email=${String(email || "")}`);
+        void writeAuthAuditLog({
+          action: "dev_employee_bypass",
+          outcome: "invalid_code",
+          email: String(email || ""),
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          metadata: { path: req.path },
+        });
+        return res.status(403).json({ message: "Invalid employee code" });
+      }
+      if (!email || !String(email).trim()) {
+        void writeAuthAuditLog({
+          action: "dev_employee_bypass",
+          outcome: "missing_email",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          metadata: { path: req.path },
+        });
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      const user = await storage.getUserByEmail(String(email).trim());
+      if (!user) {
+        console.warn(`[Auth] Dev bypass user not found ip=${req.ip} email=${String(email || "")}`);
+        void writeAuthAuditLog({
+          action: "dev_employee_bypass",
+          outcome: "user_not_found",
+          email: String(email || ""),
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          metadata: { path: req.path },
+        });
+        return res.status(404).json({ message: "User not found" });
+      }
+      if (!user.isActive) {
+        void writeAuthAuditLog({
+          action: "dev_employee_bypass",
+          outcome: "inactive_user",
+          userId: user.id,
+          email: user.email,
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          metadata: { path: req.path },
+        });
+        return res.status(403).json({ message: "Account is inactive" });
+      }
+
+      req.session.userId = user.id;
+      req.session.email = user.email;
+
+      const { passwordHash, ...userWithoutPassword } = user;
+      const token = await issueAuthToken({ sub: String(user.id), email: user.email });
+      console.log(`[Auth] Dev bypass granted ip=${req.ip} userId=${user.id} email=${user.email}`);
+      void writeAuthAuditLog({
+        action: "dev_employee_bypass",
+        outcome: "granted",
+        userId: user.id,
+        email: user.email,
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path },
+      });
+      return res.json({ user: userWithoutPassword, token, bypass: true });
+    } catch (error: any) {
+      console.error("[Auth] Dev bypass error:", error);
+      void writeAuthAuditLog({
+        action: "dev_employee_bypass",
+        outcome: "error",
+        email: String((req.body as any)?.email || ""),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path, error: String(error?.message || error) },
+      });
+      if (isDbConnectivityError(error)) {
+        return res.status(503).json({ message: "Database is unavailable" });
+      }
+      return res.status(500).json({ message: `Dev bypass failed: ${error.message}` });
     }
   });
 
@@ -195,7 +722,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "All fields are required" });
       }
 
-      const accessCode = process.env.EMPLOYEE_ACCESS_CODE || "3911";
+      const accessCode = process.env.EMPLOYEE_ACCESS_CODE;
+      if (!accessCode || !String(accessCode).trim()) {
+        return res.status(503).json({ message: "Employee access code is not configured" });
+      }
       if (!employeeCode || employeeCode !== accessCode) {
         return res.status(403).json({ message: "Invalid employee code" });
       }
@@ -221,9 +751,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       req.session.email = newUser.email;
 
       const { passwordHash: _, ...userWithoutPassword } = newUser;
-      res.status(201).json({ user: userWithoutPassword });
+      const token = await issueAuthToken({ sub: String(newUser.id), email: newUser.email });
+      res.status(201).json({ user: userWithoutPassword, token });
     } catch (error: any) {
       console.error("[Auth] Signup error:", error);
+      if (isDbConnectivityError(error)) {
+        return res.status(503).json({ message: "Database is unavailable" });
+      }
       res.status(500).json({ message: `Signup failed: ${error.message}` });
     }
   });
@@ -253,6 +787,417 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(userWithoutPassword);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/playground/sessions/recent", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
+      const items = await storage.listRecentPlaygroundPropertySessions(limit);
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/playground/sessions/open", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const address = String(req.body?.address || "").trim();
+      if (!address) return res.status(400).json({ message: "address is required" });
+      const addressKey = toAddressKey(address);
+      const leadIdRaw = req.body?.leadId;
+      const propertyIdRaw = req.body?.propertyId;
+      const leadId = typeof leadIdRaw === "number" ? leadIdRaw : typeof leadIdRaw === "string" ? parseInt(leadIdRaw, 10) : NaN;
+      const propertyId = typeof propertyIdRaw === "number" ? propertyIdRaw : typeof propertyIdRaw === "string" ? parseInt(propertyIdRaw, 10) : NaN;
+
+      let session = await storage.getPlaygroundPropertySessionByAddressKey(addressKey);
+      if (!session) {
+        const validated = insertPlaygroundPropertySessionSchema.parse({
+          address,
+          addressKey,
+          leadId: Number.isFinite(leadId) ? leadId : undefined,
+          propertyId: Number.isFinite(propertyId) ? propertyId : undefined,
+          tagsJson: "[]",
+          bookmarksJson: "[]",
+          checklistJson: "{}",
+          notesJson: "[]",
+          underwritingJson: "{}",
+          createdBy: userId,
+          updatedBy: userId,
+          lastOpenedBy: userId,
+          lastOpenedAt: new Date(),
+        } as any);
+        session = await storage.createPlaygroundPropertySession(validated as any);
+      } else {
+        const nextLeadId = Number.isFinite(leadId) ? leadId : undefined;
+        const nextPropertyId = Number.isFinite(propertyId) ? propertyId : undefined;
+        session = await storage.updatePlaygroundPropertySession(session.id, {
+          lastOpenedBy: userId,
+          lastOpenedAt: new Date(),
+          updatedBy: userId,
+          leadId: session.leadId ?? nextLeadId,
+          propertyId: session.propertyId ?? nextPropertyId,
+        } as any);
+      }
+
+      await storage.createGlobalActivity({
+        userId,
+        action: "playground_open_session",
+        description: `Opened playground session: ${session.address}`,
+        metadata: JSON.stringify({ playgroundSessionId: session.id, address: session.address, leadId: session.leadId ?? null, propertyId: session.propertyId ?? null }),
+      } as any);
+
+      res.json(session);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/playground/sessions", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const address = String(req.body?.address || "").trim();
+      if (!address) return res.status(400).json({ message: "address is required" });
+      const addressKey = toAddressKey(address);
+
+      const validated = insertPlaygroundPropertySessionSchema.parse({
+        ...req.body,
+        address,
+        addressKey,
+        tagsJson: typeof req.body?.tagsJson === "string" ? req.body.tagsJson : "[]",
+        bookmarksJson: typeof req.body?.bookmarksJson === "string" ? req.body.bookmarksJson : "[]",
+        checklistJson: typeof req.body?.checklistJson === "string" ? req.body.checklistJson : "{}",
+        notesJson: typeof req.body?.notesJson === "string" ? req.body.notesJson : "[]",
+        underwritingJson: typeof req.body?.underwritingJson === "string" ? req.body.underwritingJson : "{}",
+        createdBy: userId,
+        updatedBy: userId,
+        lastOpenedBy: userId,
+        lastOpenedAt: new Date(),
+      } as any);
+
+      const session = await storage.createPlaygroundPropertySession(validated as any);
+      res.status(201).json(session);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/playground/sessions/:id", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const id = parseInt(req.params.id);
+      const session = await storage.getPlaygroundPropertySessionById(id);
+      if (!session) return res.status(404).json({ message: "Not found" });
+      res.json(session);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/playground/sessions/:id", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const id = parseInt(req.params.id);
+      const leadIdRaw = req.body?.leadId;
+      const propertyIdRaw = req.body?.propertyId;
+      const leadId = typeof leadIdRaw === "number" ? leadIdRaw : typeof leadIdRaw === "string" ? parseInt(leadIdRaw, 10) : undefined;
+      const propertyId = typeof propertyIdRaw === "number" ? propertyIdRaw : typeof propertyIdRaw === "string" ? parseInt(propertyIdRaw, 10) : undefined;
+
+      const underwritingJson =
+        typeof req.body?.underwritingJson === "string"
+          ? req.body.underwritingJson
+          : req.body?.underwritingJson && typeof req.body.underwritingJson === "object"
+            ? JSON.stringify(req.body.underwritingJson)
+            : undefined;
+
+      const patch: any = {
+        propertyType: req.body?.propertyType,
+        currentUrl: req.body?.currentUrl,
+        tagsJson: req.body?.tagsJson,
+        bookmarksJson: req.body?.bookmarksJson,
+        checklistJson: req.body?.checklistJson,
+        notesJson: req.body?.notesJson,
+        underwritingJson,
+        leadId: typeof leadId === "number" && Number.isFinite(leadId) ? leadId : undefined,
+        propertyId: typeof propertyId === "number" && Number.isFinite(propertyId) ? propertyId : undefined,
+        assignedTo: req.body?.assignedTo,
+        assignmentDueAt: req.body?.assignmentDueAt === null ? null : req.body?.assignmentDueAt ? new Date(req.body.assignmentDueAt) : undefined,
+        assignmentStatus: req.body?.assignmentStatus,
+        updatedBy: userId,
+      };
+
+      Object.keys(patch).forEach((k) => patch[k] === undefined && delete patch[k]);
+      const updated = await storage.updatePlaygroundPropertySession(id, patch);
+
+      const fields = Object.keys(patch).filter((f) => f !== "updatedBy");
+      let action = "playground_update_session";
+      if (fields.includes("notesJson")) action = "playground_notes_saved";
+      else if (fields.includes("bookmarksJson")) action = "playground_bookmarks_updated";
+      else if (fields.includes("underwritingJson")) action = "playground_underwriting_saved";
+      else if (fields.includes("assignedTo") || fields.includes("assignmentDueAt") || fields.includes("assignmentStatus")) action = "playground_assignment_updated";
+
+      await storage.createGlobalActivity({
+        userId,
+        action,
+        description: `Playground: ${updated.address}`,
+        metadata: JSON.stringify({
+          playgroundSessionId: updated.id,
+          leadId: updated.leadId,
+          propertyId: updated.propertyId,
+          fields,
+        }),
+      } as any);
+
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/playground/sessions/:id/send", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const id = parseInt(req.params.id);
+      const session = await storage.getPlaygroundPropertySessionById(id);
+      if (!session) return res.status(404).json({ message: "Not found" });
+
+      const targetType = String(req.body?.targetType || "").trim();
+      const targetIdRaw = req.body?.targetId;
+      const targetId = typeof targetIdRaw === "number" ? targetIdRaw : typeof targetIdRaw === "string" ? parseInt(targetIdRaw, 10) : NaN;
+      if (targetType !== "lead" && targetType !== "opportunity") {
+        return res.status(400).json({ message: "Invalid targetType" });
+      }
+      if (!Number.isFinite(targetId) || targetId <= 0) {
+        return res.status(400).json({ message: "Invalid targetId" });
+      }
+
+      let underwriting: any = {};
+      let bookmarks: any[] = [];
+      let notes: any[] = [];
+      try {
+        underwriting = session.underwritingJson ? JSON.parse(session.underwritingJson as any) : {};
+      } catch {}
+      try {
+        bookmarks = session.bookmarksJson ? JSON.parse(session.bookmarksJson as any) : [];
+      } catch {}
+      try {
+        notes = session.notesJson ? JSON.parse(session.notesJson as any) : [];
+      } catch {}
+
+      const lines: string[] = [];
+      lines.push("Playground Research");
+      lines.push(`Address: ${session.address}`);
+      const uw = [
+        underwriting.arv ? `ARV: ${underwriting.arv}` : null,
+        underwriting.mao ? `MAO: ${underwriting.mao}` : null,
+        underwriting.repairEstimate ? `Repairs: ${underwriting.repairEstimate}` : null,
+        underwriting.offerMin || underwriting.offerMax ? `Offer Range: ${underwriting.offerMin || "?"} - ${underwriting.offerMax || "?"}` : null,
+        underwriting.exitStrategy ? `Exit Strategy: ${underwriting.exitStrategy}` : null,
+      ].filter(Boolean) as string[];
+      if (uw.length) {
+        lines.push("");
+        lines.push("Underwriting");
+        lines.push(...uw);
+      }
+
+      const topLinks = Array.isArray(bookmarks) ? bookmarks.slice(0, 8) : [];
+      if (topLinks.length) {
+        lines.push("");
+        lines.push("Links");
+        topLinks.forEach((b: any) => {
+          const name = String(b?.name || "Link").trim();
+          const url = String(b?.url || "").trim();
+          if (url) lines.push(`- ${name}: ${url}`);
+        });
+      }
+
+      const topNotes = Array.isArray(notes) ? notes.slice(0, 5) : [];
+      if (topNotes.length) {
+        lines.push("");
+        lines.push("Notes");
+        topNotes.forEach((n: any) => {
+          const title = String(n?.title || "Note").trim();
+          const content = String(n?.content || "").trim();
+          const preview = content.length > 220 ? `${content.slice(0, 220)}…` : content;
+          lines.push(`- ${title}${preview ? `: ${preview.replace(/\s+/g, " ")}` : ""}`);
+        });
+      }
+
+      const stamped = `[${new Date().toLocaleString()}]\n${lines.join("\n")}`;
+
+      let leadId: number | null = session.leadId ?? null;
+      let propertyId: number | null = session.propertyId ?? null;
+
+      if (targetType === "lead") {
+        const lead = await storage.getLeadById(targetId);
+        if (!lead) return res.status(404).json({ message: "Lead not found" });
+        const existing = String(lead.notes || "").trim();
+        const nextNotes = existing ? `${existing}\n\n${stamped}` : stamped;
+        await storage.updateLead(lead.id, { notes: nextNotes } as any);
+        leadId = lead.id;
+      } else {
+        const property = await storage.getPropertyById(targetId);
+        if (!property) return res.status(404).json({ message: "Opportunity not found" });
+        const existing = String(property.notes || "").trim();
+        const nextNotes = existing ? `${existing}\n\n${stamped}` : stamped;
+        await storage.updateProperty(property.id, { notes: nextNotes } as any);
+        propertyId = property.id;
+      }
+
+      const updated = await storage.updatePlaygroundPropertySession(session.id, {
+        leadId,
+        propertyId,
+        updatedBy: userId,
+      } as any);
+
+      await storage.createGlobalActivity({
+        userId,
+        action: "playground_send_to_crm",
+        description: `Sent playground research to ${targetType}: ${targetId}`,
+        metadata: JSON.stringify({ playgroundSessionId: session.id, targetType, targetId, leadId, propertyId }),
+      } as any);
+
+      res.json({ session: updated, leadId, propertyId });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/playground/sessions/:id", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const id = parseInt(req.params.id);
+      await storage.deletePlaygroundPropertySession(id);
+      res.json({ message: "Deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/underwriting/templates", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const templates = await storage.getUnderwritingTemplates(userId);
+      const mapped = templates.map((t: any) => {
+        let config: any = {};
+        try {
+          config = underwritingTemplateConfigSchema.parse(t.configJson ? JSON.parse(t.configJson) : {});
+        } catch {
+          config = underwritingTemplateConfigSchema.parse({});
+        }
+        return { id: t.id, name: t.name, config };
+      });
+      res.json(mapped);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/underwriting/templates", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const name = String(req.body?.name || "").trim();
+      if (!name) return res.status(400).json({ message: "name is required" });
+
+      const configInput = req.body?.config;
+      const configObj = typeof configInput === "string" ? JSON.parse(configInput || "{}") : configInput && typeof configInput === "object" ? configInput : {};
+      const config = underwritingTemplateConfigSchema.parse(configObj);
+
+      const validated = insertUnderwritingTemplateSchema.parse({
+        userId,
+        name,
+        configJson: JSON.stringify(config),
+      } as any);
+      const created = await storage.createUnderwritingTemplate(validated as any);
+      res.status(201).json({ id: created.id, name: created.name, config });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/underwriting/templates/:id", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const id = parseInt(req.params.id);
+      const existing = await storage.getUnderwritingTemplateById(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Not found" });
+
+      const patch: any = {};
+      if (req.body?.name !== undefined) {
+        const name = String(req.body?.name || "").trim();
+        if (!name) return res.status(400).json({ message: "name is required" });
+        patch.name = name;
+      }
+      if (req.body?.config !== undefined) {
+        const configInput = req.body?.config;
+        const configObj = typeof configInput === "string" ? JSON.parse(configInput || "{}") : configInput && typeof configInput === "object" ? configInput : {};
+        const config = underwritingTemplateConfigSchema.parse(configObj);
+        patch.configJson = JSON.stringify(config);
+      }
+      if (!Object.keys(patch).length) return res.json({ id: existing.id, name: existing.name, config: JSON.parse(existing.configJson || "{}") });
+
+      const updated = await storage.updateUnderwritingTemplate(id, patch);
+      const config = underwritingTemplateConfigSchema.parse(updated.configJson ? JSON.parse(updated.configJson) : {});
+      res.json({ id: updated.id, name: updated.name, config });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/underwriting/templates/:id", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const id = parseInt(req.params.id);
+      const existing = await storage.getUnderwritingTemplateById(id);
+      if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Not found" });
+      await storage.deleteUnderwritingTemplate(id);
+      res.json({ message: "Deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/underwriting/ai", async (req, res) => {
+    const schema = z.object({
+      subject: z.object({ sqft: z.number().finite().optional().nullable() }).default({}),
+      underwriting: underwritingSchemaV1,
+      templateConfig: underwritingTemplateConfigSchema.optional(),
+    });
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const payload = schema.parse(req.body || {});
+
+      const repairsTotal = computeRepairTotal(payload.underwriting.repairs);
+      const arvFromComps = computeArvFromComps({ subjectSqft: payload.subject.sqft ?? null, comps: payload.underwriting.comps });
+      const template = payload.templateConfig ?? underwritingTemplateConfigSchema.parse({});
+      const arv = payload.underwriting.arv.value ?? arvFromComps.value ?? 0;
+
+      const dealMath = arv > 0 ? computeDealMath({ arv, repairs: repairsTotal, assumptions: payload.underwriting.assumptions, targetDiscountPct: template.targetDiscountPct }) : payload.underwriting.dealMath;
+
+      res.json({
+        suggestedArvRange: { low: arvFromComps.low, high: arvFromComps.high, value: arvFromComps.value },
+        repairsTotal,
+        dealMath,
+        notes: {
+          summary: "Suggested values are computed from selected comps and your template assumptions.",
+        },
+      });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
     }
   });
 
@@ -290,23 +1235,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/leads", async (req, res) => {
     try {
-      const validated = insertLeadSchema.parse(req.body);
+      const validated = insertLeadSchema.parse(req.body) as InsertLead;
 
-      // Duplicate detection: exact address + ownerName (normalized)
-      const normAddress = (validated.address || "").trim().toLowerCase();
-      const normOwner = (validated.ownerName || "").trim().toLowerCase();
-      const dupRows: any = await db.execute(sql`
-        SELECT id FROM leads 
-        WHERE lower(trim(address)) = ${normAddress} 
-          AND lower(trim(owner_name)) = ${normOwner}
-        LIMIT 1
-      `);
-      if ((dupRows as any).rows?.length) {
-        const existingId = (dupRows as any).rows[0].id;
-        return res.status(409).json({ message: "Duplicate lead: address and owner already exist", leadId: existingId });
-      }
+      const dedupeKey = computeLeadDedupeKey(validated as any);
 
-      const lead = await storage.createLead(validated);
+      try {
+        const dupRows: any = await db.execute(sql`
+          SELECT id FROM leads
+          WHERE dedupe_key = ${dedupeKey}
+          LIMIT 1
+        `);
+        if ((dupRows as any).rows?.length) {
+          const existingId = (dupRows as any).rows[0].id;
+          return res.status(409).json({ message: "Duplicate lead: address and owner already exist", leadId: existingId });
+        }
+      } catch {}
+
+      const lead = await storage.createLead({ ...(validated as any), dedupeKey } as any);
       
       if (req.session.userId) {
         await storage.createGlobalActivity({
@@ -328,6 +1273,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const partial = insertLeadSchema.partial().parse(req.body) as Partial<InsertLead>;
       const id = parseInt(req.params.id);
       const before = await storage.getLeadById(id);
+      if (before) {
+        const merged: any = { ...before, ...(partial as any) };
+        if (merged.address && merged.city && merged.state && merged.zipCode && merged.ownerName) {
+          (partial as any).dedupeKey = computeLeadDedupeKey(merged);
+        }
+      }
       const lead = await storage.updateLead(id, partial);
       try {
         const property = await storage.getPropertyBySourceLeadId(id);
@@ -484,7 +1435,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/opportunities", async (req, res) => {
     try {
       const validated = insertPropertySchema.parse(req.body);
-      const property = await storage.createProperty(validated);
+      const dedupeKey = computeOpportunityDedupeKey(validated as any);
+
+      try {
+        const dupRows: any = await db.execute(sql`
+          SELECT id FROM properties
+          WHERE dedupe_key = ${dedupeKey}
+          LIMIT 1
+        `);
+        if ((dupRows as any).rows?.length) {
+          const existingId = (dupRows as any).rows[0].id;
+          return res.status(409).json({ message: "Duplicate opportunity: address already exists", opportunityId: existingId });
+        }
+      } catch {}
+
+      const property = await storage.createProperty({ ...(validated as any), dedupeKey } as any);
       
       if (req.session.userId) {
         await storage.createGlobalActivity({
@@ -504,13 +1469,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/opportunities/:id", async (req, res) => {
     try {
       const partial = insertPropertySchema.partial().parse(req.body);
-      const property = await storage.updateProperty(parseInt(req.params.id), partial);
+      const id = parseInt(req.params.id);
+      const before = await storage.getPropertyById(id);
+      if (before) {
+        const merged: any = { ...(before as any), ...(partial as any) };
+        if (merged.address && merged.city && merged.state && merged.zipCode) {
+          (partial as any).dedupeKey = computeOpportunityDedupeKey(merged);
+        }
+      }
+      const property = await storage.updateProperty(id, partial);
       
       if (req.session.userId) {
+        const onlyNotesChanged = before && typeof (partial as any).notes !== "undefined" && (partial as any).notes !== (before as any).notes && Object.keys(partial as any).length === 1;
+        const action = onlyNotesChanged ? "added_note" : "updated_opportunity";
+        const description = onlyNotesChanged ? `Added note to opportunity: ${property.address}` : `Updated opportunity: ${property.address}`;
         await storage.createGlobalActivity({
           userId: req.session.userId,
-          action: "updated_opportunity",
-          description: `Updated opportunity: ${property.address}`,
+          action,
+          description,
           metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
         });
       }
@@ -567,6 +1543,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         startedAt: startedAt ? new Date(startedAt) : new Date(),
         metadata: metadata ? JSON.stringify(metadata) : null as any,
       } as any);
+      if (req.session.userId && metadata && typeof metadata === "object") {
+        const leadId = (metadata as any).leadId ? Number((metadata as any).leadId) : null;
+        const propertyId = (metadata as any).propertyId ? Number((metadata as any).propertyId) : null;
+        if (leadId || propertyId) {
+          await storage.createGlobalActivity({
+            userId: req.session.userId,
+            action: "call_started",
+            description: `Started call to ${String(number || "")}`,
+            metadata: JSON.stringify({ leadId: leadId || undefined, propertyId: propertyId || undefined, callLogId: log.id, number: String(number || "") }),
+          } as any);
+        }
+      }
       res.status(201).json(log);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -576,16 +1564,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.patch("/api/telephony/calls/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
+      let beforeStatus: string | null = null;
+      let beforeMetadataText: string | null = null;
+      try {
+        const beforeRows: any = await db.execute(sql`SELECT status, metadata FROM call_logs WHERE id = ${id} LIMIT 1`);
+        const row = (beforeRows as any).rows?.[0];
+        beforeStatus = row?.status ?? null;
+        beforeMetadataText = row?.metadata ?? null;
+      } catch {}
       const patch = req.body || {};
       if (patch.metadata && typeof patch.metadata !== "string") patch.metadata = JSON.stringify(patch.metadata);
       if ((patch.status === "ended" || patch.status === "failed")) {
         patch.endedAt = new Date();
       }
       if (typeof patch.startedAt === "string" || typeof patch.startedAt === "number") patch.startedAt = new Date(patch.startedAt);
+      if (typeof patch.endedAt === "string" || typeof patch.endedAt === "number") patch.endedAt = new Date(patch.endedAt);
       if (typeof patch.durationMs !== "undefined") patch.durationMs = Number(patch.durationMs);
-      if (patch.endedAt) console.log(`[calls.patch] endedAt type=${typeof patch.endedAt} value=${patch.endedAt}`);
-      if (patch.startedAt) console.log(`[calls.patch] startedAt type=${typeof patch.startedAt} value=${patch.startedAt}`);
       const updated = await storage.updateCallLog(id, patch);
+      const nextStatus = patch.status ? String(patch.status) : null;
+      if (req.session.userId && nextStatus && nextStatus !== beforeStatus) {
+        const terminal = new Set(["answered", "missed", "failed"]);
+        if (terminal.has(nextStatus)) {
+          let meta: any = null;
+          try {
+            meta = beforeMetadataText ? JSON.parse(beforeMetadataText) : null;
+          } catch {}
+          const leadId = meta?.leadId ? Number(meta.leadId) : null;
+          const propertyId = meta?.propertyId ? Number(meta.propertyId) : null;
+          if (leadId || propertyId) {
+            await storage.createGlobalActivity({
+              userId: req.session.userId,
+              action: `call_${nextStatus}`,
+              description: `Call ${nextStatus}: ${String(updated.number || "")}`,
+              metadata: JSON.stringify({ leadId: leadId || undefined, propertyId: propertyId || undefined, callLogId: updated.id, status: nextStatus }),
+            } as any);
+          }
+        }
+      }
       res.json(updated);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -798,17 +1813,34 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/telephony/sms", async (req, res) => {
     try {
-      const { to, from, body } = req.body || {};
+      const { to, from, body, metadata } = req.body || {};
       const space = process.env.SIGNALWIRE_SPACE_URL?.replace(/^https?:\/\//, "") || "";
       const project = process.env.SIGNALWIRE_PROJECT_ID || "";
       const token = process.env.SIGNALWIRE_API_TOKEN || "";
       const url = `https://${space}/api/laml/2010-04-01/Accounts/${project}/Messages.json`;
-      const form = new URLSearchParams({ From: from, To: to, Body: body });
+      const resolvedFrom = from || process.env.DIALER_DEFAULT_FROM_NUMBER || "";
+      if (!resolvedFrom) return res.status(400).json({ message: "Missing from number" });
+      if (!to || !body) return res.status(400).json({ message: "Missing to/body" });
+      const form = new URLSearchParams({ From: resolvedFrom, To: to, Body: body });
       const auth = Buffer.from(`${project}:${token}`).toString("base64");
       const resp = await fetch(url, { method: "POST", headers: { "Authorization": `Basic ${auth}`, "Content-Type": "application/x-www-form-urlencoded" }, body: form });
       const data = await resp.json();
       if (!resp.ok) return res.status(resp.status).json(data);
-      res.json({ sid: data.sid || data.Sid || null, status: data.status || data.Status || "queued" });
+      const sid = data.sid || data.Sid || null;
+      const smsStatus = data.status || data.Status || "queued";
+      if (req.session.userId && metadata && typeof metadata === "object") {
+        const leadId = (metadata as any).leadId ? Number((metadata as any).leadId) : null;
+        const propertyId = (metadata as any).propertyId ? Number((metadata as any).propertyId) : null;
+        if (leadId || propertyId) {
+          await storage.createGlobalActivity({
+            userId: req.session.userId,
+            action: "sms_sent",
+            description: `Sent SMS to ${String(to || "")}`,
+            metadata: JSON.stringify({ leadId: leadId || undefined, propertyId: propertyId || undefined, to: String(to || ""), sid, status: smsStatus }),
+          } as any);
+        }
+      }
+      res.json({ sid, status: smsStatus });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -1077,10 +2109,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // CONTRACTS ENDPOINTS
   app.get("/api/contracts", async (req, res) => {
     try {
+      const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
       const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
       const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
-      const allContracts = await storage.getContracts(limit, offset);
-      res.json(allContracts);
+      if (propertyId) {
+        const items = await storage.getContractsByPropertyId(propertyId, limit, offset);
+        return res.json(items);
+      }
+      const items = await storage.getContracts(limit, offset);
+      res.json(items);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -1466,12 +2503,87 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  const defaultPipelineColumnsByEntityType: Record<string, Array<{ value: string; label: string }>> = {
+    lead: [
+      { value: "new", label: "New" },
+      { value: "contacted", label: "Contacted" },
+      { value: "qualified", label: "Qualified" },
+      { value: "negotiation", label: "Negotiation" },
+      { value: "under_contract", label: "Under Contract" },
+      { value: "closed", label: "Closed" },
+      { value: "lost", label: "Lost" },
+    ],
+    opportunity: [
+      { value: "active", label: "Active" },
+      { value: "negotiation", label: "Negotiation" },
+      { value: "under_contract", label: "Under Contract" },
+      { value: "pending", label: "Pending" },
+      { value: "sold", label: "Sold" },
+      { value: "withdrawn", label: "Withdrawn" },
+    ],
+  };
+
+  app.get("/api/pipeline-config", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+      const entityType = String(req.query.entityType || "").trim();
+      const defaults = defaultPipelineColumnsByEntityType[entityType];
+      if (!defaults) return res.status(400).json({ message: "Invalid entityType" });
+
+      const row = await storage.getPipelineConfig(userId, entityType);
+      if (!row) return res.json({ entityType, columns: defaults });
+
+      let parsed: any = defaults;
+      try {
+        const json = JSON.parse(row.columns);
+        if (Array.isArray(json)) parsed = json;
+      } catch {}
+
+      res.json({ entityType, columns: parsed });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.put("/api/pipeline-config", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+      const entityType = String(req.query.entityType || "").trim();
+      const defaults = defaultPipelineColumnsByEntityType[entityType];
+      if (!defaults) return res.status(400).json({ message: "Invalid entityType" });
+
+      const columns = req.body?.columns;
+      if (!Array.isArray(columns) || !columns.length) return res.status(400).json({ message: "Invalid columns" });
+
+      const cleaned = columns
+        .map((c: any) => ({ value: String(c?.value || "").trim(), label: String(c?.label || "").trim() }))
+        .filter((c: any) => c.value && c.label);
+
+      if (!cleaned.length) return res.status(400).json({ message: "Invalid columns" });
+
+      const updated = await storage.upsertPipelineConfig(userId, entityType, JSON.stringify(cleaned));
+      let parsed: any = cleaned;
+      try {
+        const json = JSON.parse(updated.columns);
+        if (Array.isArray(json)) parsed = json;
+      } catch {}
+      res.json({ entityType, columns: parsed });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // GLOBAL ACTIVITY ENDPOINT
   app.get("/api/activity", async (req, res) => {
     try {
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
       const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
       const leadId = req.query.leadId ? parseInt(req.query.leadId as string) : undefined;
+      const playgroundSessionId = req.query.playgroundSessionId ? parseInt(req.query.playgroundSessionId as string) : undefined;
       const logs = await storage.getGlobalActivityLogs(limit);
       
       const logsWithUsers = await Promise.all(
@@ -1493,11 +2605,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })
       );
       const filtered = logsWithUsers.filter((log: any) => {
+        if (playgroundSessionId && log.metadataParsed?.playgroundSessionId !== playgroundSessionId) return false;
         if (propertyId && log.metadataParsed?.propertyId !== propertyId) return false;
         if (leadId && log.metadataParsed?.leadId !== leadId) return false;
         return true;
       });
       res.json(filtered);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/activity", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+      const action = String(req.body?.action || "").trim();
+      const description = typeof req.body?.description === "string" ? req.body.description : null;
+      const metadata = req.body?.metadata && typeof req.body.metadata === "object" ? req.body.metadata : null;
+      if (!action) return res.status(400).json({ message: "Missing action" });
+
+      const log = await storage.createGlobalActivity({
+        userId,
+        action,
+        description,
+        metadata: metadata ? JSON.stringify(metadata) : null,
+      } as any);
+
+      res.status(201).json(log);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -1822,6 +2958,105 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       await storage.deleteOffer(parseInt(req.params.id));
       res.json({ message: "Offer deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/timeclock/current", async (req, res) => {
+    try {
+      if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+      const session = await storage.getOpenTimeClockSession(req.session.userId);
+      res.json(session || null);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/timeclock/auto-start", async (req, res) => {
+    try {
+      if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+      const { clientNow, tzOffsetMinutes } = req.body || {};
+      if (typeof clientNow !== "string" || typeof tzOffsetMinutes !== "number") {
+        return res.status(400).json({ message: "clientNow and tzOffsetMinutes are required" });
+      }
+      const clockInAt = new Date(clientNow);
+      if (Number.isNaN(clockInAt.getTime())) return res.status(400).json({ message: "Invalid clientNow" });
+
+      const open = await storage.getOpenTimeClockSession(req.session.userId);
+      if (open) return res.json(open);
+
+      const user = await storage.getUserById(req.session.userId);
+      const employee = user?.firstName || user?.lastName
+        ? `${user?.firstName || ""} ${user?.lastName || ""}`.trim()
+        : user?.email || "Employee";
+
+      try {
+        const created = await storage.createTimeClockSession({
+          userId: req.session.userId,
+          employee,
+          task: "General",
+          clockInAt,
+          tzOffsetMinutes,
+          autoStarted: true,
+        } as any);
+        return res.status(201).json(created);
+      } catch (e) {
+        const existing = await storage.getOpenTimeClockSession(req.session.userId);
+        if (existing) return res.json(existing);
+        throw e;
+      }
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/timeclock/auto-stop", async (req, res) => {
+    try {
+      if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+      const { clientNow, tzOffsetMinutes } = req.body || {};
+      if (typeof clientNow !== "string" || typeof tzOffsetMinutes !== "number") {
+        return res.status(400).json({ message: "clientNow and tzOffsetMinutes are required" });
+      }
+      const clockOutAt = new Date(clientNow);
+      if (Number.isNaN(clockOutAt.getTime())) return res.status(400).json({ message: "Invalid clientNow" });
+
+      const result = await storage.closeOpenTimeClockSessionAndCreateEntry(req.session.userId, { clockOutAt, tzOffsetMinutes });
+      if (!result) return res.json({ stopped: false });
+      res.json({ stopped: true, entry: result.entry });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/timeclock/current", async (req, res) => {
+    try {
+      if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+      const { task } = req.body || {};
+      if (typeof task !== "string" || !task.trim()) return res.status(400).json({ message: "task is required" });
+      const updated = await storage.updateOpenTimeClockSession(req.session.userId, { task: task.trim() } as any);
+      if (!updated) return res.status(404).json({ message: "No active session" });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/timesheet", async (req, res) => {
+    try {
+      if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
+      const sessionUser = await storage.getUserById(req.session.userId);
+      const manager = isManagerUser(sessionUser);
+
+      const from = typeof req.query.from === "string" ? req.query.from : undefined;
+      const to = typeof req.query.to === "string" ? req.query.to : undefined;
+      const userId = typeof req.query.userId === "string" ? parseInt(req.query.userId) : undefined;
+      const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit) : undefined;
+      const offset = typeof req.query.offset === "string" ? parseInt(req.query.offset) : 0;
+
+      const effectiveUserId = manager ? userId : req.session.userId;
+      const entries = await storage.getTimesheetEntriesFiltered({ userId: effectiveUserId, from, to, limit, offset });
+      res.json(entries);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

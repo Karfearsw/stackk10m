@@ -209,7 +209,7 @@ export function Sidebar() {
           {showLabels && (
             <div 
               className="bg-sidebar-accent/50 rounded-lg p-3 mb-4 cursor-pointer hover:bg-sidebar-accent/70 transition-colors"
-              onClick={() => setLocation('/settings')}
+              onClick={() => setLocation('/settings?tab=goals')}
             >
               <p className="text-xs font-medium text-sidebar-foreground/60 uppercase tracking-wider mb-1">Current Goal</p>
               {activeGoal ? (
@@ -241,7 +241,7 @@ export function Sidebar() {
               <TooltipTrigger asChild>
                 <div 
                   className="flex justify-center mb-3 cursor-pointer"
-                  onClick={() => setLocation('/settings')}
+                  onClick={() => setLocation('/settings?tab=goals')}
                 >
                   <div className="relative h-10 w-10">
                     <svg className="h-10 w-10 -rotate-90" viewBox="0 0 36 36">

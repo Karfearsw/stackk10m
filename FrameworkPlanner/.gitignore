@@ -6,3 +6,6 @@ server/public
 vite.config.ts.*
 *.tar.gz
 .env
+backups/
+node_modules__old_*/
+FrameworkPlanner/

@@ -2,8 +2,8 @@ import { db } from "./db.js";
 import { desc } from "drizzle-orm";
 import { 
   leads, properties, contacts, contracts, contractTemplates, contractDocuments, documentVersions, lois,
-  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, offers, timesheetEntries, globalActivityLogs,
-  buyers, buyerCommunications, dealAssignments, callLogs
+  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
+  buyers, buyerCommunications, dealAssignments, callLogs, pipelineConfigs, underwritingTemplates, playgroundPropertySessions
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -25,13 +25,17 @@ import {
   type UserNotification, type InsertUserNotification,
   type Offer, type InsertOffer,
   type TimesheetEntry, type InsertTimesheetEntry,
+  type TimeClockSession, type InsertTimeClockSession,
   type GlobalActivityLog, type InsertGlobalActivityLog,
   type Buyer, type InsertBuyer,
   type BuyerCommunication, type InsertBuyerCommunication,
   type DealAssignment, type InsertDealAssignment,
-  type CallLog, type InsertCallLog
+  type CallLog, type InsertCallLog,
+  type PipelineConfig, type InsertPipelineConfig,
+  type UnderwritingTemplate, type InsertUnderwritingTemplate,
+  type PlaygroundPropertySession, type InsertPlaygroundPropertySession
 } from "./shared-schema.js";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gte, lte, isNull } from "drizzle-orm";
 
 export interface IStorage {
   // Leads
@@ -58,6 +62,7 @@ export interface IStorage {
 
   // Contracts
   getContracts(limit?: number, offset?: number): Promise<Contract[]>;
+  getContractsByPropertyId(propertyId: number, limit?: number, offset?: number): Promise<Contract[]>;
   getContractById(id: number): Promise<Contract | undefined>;
   createContract(contract: InsertContract): Promise<Contract>;
   updateContract(id: number, contract: Partial<InsertContract>): Promise<Contract>;
@@ -159,14 +164,37 @@ export interface IStorage {
 
   // Timesheet Entries
   getTimesheetEntries(userId: number, limit?: number, offset?: number): Promise<TimesheetEntry[]>;
+  getTimesheetEntriesFiltered(input: { userId?: number; from?: string; to?: string; limit?: number; offset?: number }): Promise<TimesheetEntry[]>;
   getTimesheetEntryById(id: number): Promise<TimesheetEntry | undefined>;
   createTimesheetEntry(entry: InsertTimesheetEntry): Promise<TimesheetEntry>;
   updateTimesheetEntry(id: number, entry: Partial<InsertTimesheetEntry>): Promise<TimesheetEntry>;
   deleteTimesheetEntry(id: number): Promise<void>;
 
+  getOpenTimeClockSession(userId: number): Promise<TimeClockSession | undefined>;
+  createTimeClockSession(input: InsertTimeClockSession): Promise<TimeClockSession>;
+  updateOpenTimeClockSession(userId: number, partial: Partial<InsertTimeClockSession>): Promise<TimeClockSession | undefined>;
+  closeOpenTimeClockSessionAndCreateEntry(userId: number, input: { clockOutAt: Date; tzOffsetMinutes: number }): Promise<{ session: TimeClockSession; entry: TimesheetEntry } | undefined>;
+
   // Global Activity Logs
   getGlobalActivityLogs(limit?: number, offset?: number): Promise<GlobalActivityLog[]>;
   createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog>;
+
+  getPlaygroundPropertySessionById(id: number): Promise<PlaygroundPropertySession | undefined>;
+  getPlaygroundPropertySessionByAddressKey(addressKey: string): Promise<PlaygroundPropertySession | undefined>;
+  createPlaygroundPropertySession(input: InsertPlaygroundPropertySession): Promise<PlaygroundPropertySession>;
+  updatePlaygroundPropertySession(id: number, patch: Partial<InsertPlaygroundPropertySession>): Promise<PlaygroundPropertySession>;
+  deletePlaygroundPropertySession(id: number): Promise<void>;
+  listRecentPlaygroundPropertySessions(limit?: number): Promise<PlaygroundPropertySession[]>;
+
+  // Pipeline Configs
+  getPipelineConfig(userId: number, entityType: string): Promise<PipelineConfig | undefined>;
+  upsertPipelineConfig(userId: number, entityType: string, columns: string): Promise<PipelineConfig>;
+
+  getUnderwritingTemplates(userId: number): Promise<UnderwritingTemplate[]>;
+  getUnderwritingTemplateById(id: number): Promise<UnderwritingTemplate | undefined>;
+  createUnderwritingTemplate(template: InsertUnderwritingTemplate): Promise<UnderwritingTemplate>;
+  updateUnderwritingTemplate(id: number, patch: Partial<InsertUnderwritingTemplate>): Promise<UnderwritingTemplate>;
+  deleteUnderwritingTemplate(id: number): Promise<void>;
 
   // Buyers
   getBuyers(limit?: number, offset?: number): Promise<Buyer[]>;
@@ -282,6 +310,12 @@ export class DatabaseStorage implements IStorage {
   // Contracts
   async getContracts(limit?: number, offset: number = 0): Promise<Contract[]> {
     let q: any = db.select().from(contracts);
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q as unknown as Promise<Contract[]>;
+  }
+
+  async getContractsByPropertyId(propertyId: number, limit?: number, offset: number = 0): Promise<Contract[]> {
+    let q: any = db.select().from(contracts).where(eq(contracts.propertyId, propertyId));
     if (typeof limit === "number") q = q.limit(limit).offset(offset);
     return q as unknown as Promise<Contract[]>;
   }
@@ -653,6 +687,18 @@ export class DatabaseStorage implements IStorage {
     return q as unknown as Promise<TimesheetEntry[]>;
   }
 
+  async getTimesheetEntriesFiltered(input: { userId?: number; from?: string; to?: string; limit?: number; offset?: number }): Promise<TimesheetEntry[]> {
+    const conditions: any[] = [];
+    if (typeof input.userId === "number") conditions.push(eq(timesheetEntries.userId, input.userId));
+    if (input.from) conditions.push(gte(timesheetEntries.date, input.from));
+    if (input.to) conditions.push(lte(timesheetEntries.date, input.to));
+
+    let q: any = db.select().from(timesheetEntries);
+    if (conditions.length > 0) q = q.where(and(...conditions));
+    if (typeof input.limit === "number") q = q.limit(input.limit).offset(input.offset || 0);
+    return q as unknown as Promise<TimesheetEntry[]>;
+  }
+
   async getTimesheetEntryById(id: number): Promise<TimesheetEntry | undefined> {
     const result = await db.select().from(timesheetEntries).where(eq(timesheetEntries.id, id)).limit(1);
     return result[0];
@@ -672,6 +718,74 @@ export class DatabaseStorage implements IStorage {
     await db.delete(timesheetEntries).where(eq(timesheetEntries.id, id));
   }
 
+  async getOpenTimeClockSession(userId: number): Promise<TimeClockSession | undefined> {
+    const result = await db
+      .select()
+      .from(timeClockSessions)
+      .where(and(eq(timeClockSessions.userId, userId), isNull(timeClockSessions.clockOutAt)))
+      .limit(1);
+    return result[0];
+  }
+
+  async createTimeClockSession(input: InsertTimeClockSession): Promise<TimeClockSession> {
+    const result = await db.insert(timeClockSessions).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateOpenTimeClockSession(userId: number, partial: Partial<InsertTimeClockSession>): Promise<TimeClockSession | undefined> {
+    const open = await this.getOpenTimeClockSession(userId);
+    if (!open) return undefined;
+    const result = await db
+      .update(timeClockSessions)
+      .set({ ...partial, updatedAt: new Date() } as any)
+      .where(eq(timeClockSessions.id, open.id))
+      .returning();
+    return result[0];
+  }
+
+  async closeOpenTimeClockSessionAndCreateEntry(
+    userId: number,
+    input: { clockOutAt: Date; tzOffsetMinutes: number }
+  ): Promise<{ session: TimeClockSession; entry: TimesheetEntry } | undefined> {
+    const open = await this.getOpenTimeClockSession(userId);
+    if (!open) return undefined;
+
+    const closedRows = await db
+      .update(timeClockSessions)
+      .set({ clockOutAt: input.clockOutAt, updatedAt: new Date() } as any)
+      .where(eq(timeClockSessions.id, open.id))
+      .returning();
+    const session = closedRows[0];
+    if (!session?.clockOutAt) return undefined;
+
+    const toLocalIso = (d: Date, tzOffsetMinutes: number) => {
+      const localMs = d.getTime() - tzOffsetMinutes * 60_000;
+      return new Date(localMs).toISOString();
+    };
+
+    const startIso = toLocalIso(new Date(session.clockInAt as any), session.tzOffsetMinutes);
+    const endIso = toLocalIso(new Date(session.clockOutAt as any), session.tzOffsetMinutes);
+
+    const date = startIso.slice(0, 10);
+    const startTime = startIso.slice(11, 16);
+    const endTime = endIso.slice(11, 16);
+
+    const ms = new Date(session.clockOutAt as any).getTime() - new Date(session.clockInAt as any).getTime();
+    const hours = Math.max(0, ms / 3_600_000);
+
+    const entry = await this.createTimesheetEntry({
+      userId: session.userId,
+      date,
+      employee: session.employee,
+      task: session.task,
+      startTime,
+      endTime,
+      hours: hours.toFixed(2) as any,
+    } as any);
+
+    return { session, entry };
+  }
+
   // Global Activity Logs
   async getGlobalActivityLogs(limit: number = 50, offset: number = 0): Promise<GlobalActivityLog[]> {
     return db.select().from(globalActivityLogs).orderBy(desc(globalActivityLogs.createdAt)).offset(offset).limit(limit);
@@ -680,6 +794,80 @@ export class DatabaseStorage implements IStorage {
   async createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog> {
     const result = await db.insert(globalActivityLogs).values(log as any).returning();
     return result[0];
+  }
+
+  async getPlaygroundPropertySessionById(id: number): Promise<PlaygroundPropertySession | undefined> {
+    const result = await db.select().from(playgroundPropertySessions).where(eq(playgroundPropertySessions.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getPlaygroundPropertySessionByAddressKey(addressKey: string): Promise<PlaygroundPropertySession | undefined> {
+    const result = await db.select().from(playgroundPropertySessions).where(eq(playgroundPropertySessions.addressKey, addressKey)).limit(1);
+    return result[0];
+  }
+
+  async createPlaygroundPropertySession(input: InsertPlaygroundPropertySession): Promise<PlaygroundPropertySession> {
+    const result = await db.insert(playgroundPropertySessions).values(input as any).returning();
+    return result[0];
+  }
+
+  async updatePlaygroundPropertySession(id: number, patch: Partial<InsertPlaygroundPropertySession>): Promise<PlaygroundPropertySession> {
+    const result = await db
+      .update(playgroundPropertySessions)
+      .set({ ...patch, updatedAt: new Date() } as any)
+      .where(eq(playgroundPropertySessions.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deletePlaygroundPropertySession(id: number): Promise<void> {
+    await db.delete(playgroundPropertySessions).where(eq(playgroundPropertySessions.id, id));
+  }
+
+  async listRecentPlaygroundPropertySessions(limit: number = 20): Promise<PlaygroundPropertySession[]> {
+    return db.select().from(playgroundPropertySessions).orderBy(desc(playgroundPropertySessions.lastOpenedAt)).limit(limit);
+  }
+
+  async getPipelineConfig(userId: number, entityType: string): Promise<PipelineConfig | undefined> {
+    const result = await db.select().from(pipelineConfigs).where(and(eq(pipelineConfigs.userId, userId), eq(pipelineConfigs.entityType, entityType))).limit(1);
+    return result[0];
+  }
+
+  async upsertPipelineConfig(userId: number, entityType: string, columns: string): Promise<PipelineConfig> {
+    const existing = await this.getPipelineConfig(userId, entityType);
+    if (existing) {
+      const result = await db.update(pipelineConfigs).set({ columns, updatedAt: new Date() } as any).where(eq(pipelineConfigs.id, existing.id)).returning();
+      return result[0];
+    }
+    const result = await db.insert(pipelineConfigs).values({ userId, entityType, columns } as InsertPipelineConfig as any).returning();
+    return result[0];
+  }
+
+  async getUnderwritingTemplates(userId: number): Promise<UnderwritingTemplate[]> {
+    return db.select().from(underwritingTemplates).where(eq(underwritingTemplates.userId, userId)).orderBy(desc(underwritingTemplates.updatedAt));
+  }
+
+  async getUnderwritingTemplateById(id: number): Promise<UnderwritingTemplate | undefined> {
+    const result = await db.select().from(underwritingTemplates).where(eq(underwritingTemplates.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createUnderwritingTemplate(template: InsertUnderwritingTemplate): Promise<UnderwritingTemplate> {
+    const result = await db.insert(underwritingTemplates).values(template as any).returning();
+    return result[0];
+  }
+
+  async updateUnderwritingTemplate(id: number, patch: Partial<InsertUnderwritingTemplate>): Promise<UnderwritingTemplate> {
+    const result = await db
+      .update(underwritingTemplates)
+      .set({ ...patch, updatedAt: new Date() } as any)
+      .where(eq(underwritingTemplates.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteUnderwritingTemplate(id: number): Promise<void> {
+    await db.delete(underwritingTemplates).where(eq(underwritingTemplates.id, id));
   }
 
   // Buyers
