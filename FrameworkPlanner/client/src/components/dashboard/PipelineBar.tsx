@@ -3,9 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import { Users, Handshake, FileText, CheckCircle2 } from "lucide-react";
 
 export function PipelineBar() {
-  const { data: leads = [] } = useQuery<any[]>({
-    queryKey: ['/api/leads'],
+  const { data: leadsResp } = useQuery<any>({
+    queryKey: ['/api/leads?limit=500'],
   });
+  const leads = Array.isArray(leadsResp?.items) ? leadsResp.items : [];
 
   const { data: opportunities = [] } = useQuery<any[]>({
     queryKey: ['/api/opportunities'], // We will implement this endpoint shortly
@@ -16,10 +17,10 @@ export function PipelineBar() {
   });
 
   // Calculate counts for each stage
-  const leadCount = leads.filter(l => l.status === 'new' || l.status === 'contacted').length;
-  const negotiationCount = opportunities.filter(o => o.status === 'active' || o.status === 'negotiation').length;
-  const contractCount = contracts.filter(c => c.status === 'pending').length;
-  const closedCount = contracts.filter(c => c.status === 'closed').length;
+  const leadCount = leads.filter((l: any) => l.status === 'new' || l.status === 'contacted').length;
+  const negotiationCount = opportunities.filter((o: any) => o.status === 'active' || o.status === 'negotiation').length;
+  const contractCount = contracts.filter((c: any) => c.status === 'pending').length;
+  const closedCount = contracts.filter((c: any) => c.status === 'closed').length;
 
   const stages = [
     {

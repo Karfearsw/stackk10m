@@ -55,21 +55,24 @@ function formatTime(dueAt: string | null) {
   }
 }
 
-function SwipeRow(props: { task: Task; onComplete: () => void; onOpen: () => void }) {
+function SwipeRow(props: { task: Task; onComplete: () => void; onOpen: () => void; disabled?: boolean }) {
   const startX = useRef<number | null>(null);
   const [dx, setDx] = useState(0);
 
   const onTouchStart = (e: React.TouchEvent) => {
+    if (props.disabled) return;
     startX.current = e.touches[0]?.clientX ?? null;
     setDx(0);
   };
   const onTouchMove = (e: React.TouchEvent) => {
+    if (props.disabled) return;
     if (startX.current === null) return;
     const x = e.touches[0]?.clientX ?? startX.current;
     const delta = x - startX.current;
     setDx(Math.max(0, Math.min(140, delta)));
   };
   const onTouchEnd = () => {
+    if (props.disabled) return;
     if (dx > 90) props.onComplete();
     startX.current = null;
     setDx(0);
@@ -82,11 +85,12 @@ function SwipeRow(props: { task: Task; onComplete: () => void; onOpen: () => voi
       </div>
       <button
         type="button"
+        disabled={props.disabled}
         onClick={props.onOpen}
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
-        className="relative w-full bg-background p-3 text-left transition-transform"
+        className="relative w-full bg-background p-3 text-left transition-transform disabled:opacity-60 disabled:pointer-events-none"
         style={{ transform: `translateX(${dx}px)` }}
       >
         <div className="flex items-center justify-between gap-2">
@@ -129,11 +133,26 @@ export default function TodayPage() {
       const res = await apiRequest("POST", `/api/tasks/${id}/complete`);
       return res.json();
     },
+    onMutate: async (id: number) => {
+      await qc.cancelQueries({ queryKey: [listKey] });
+      const previous = qc.getQueryData<TaskListResponse>([listKey]);
+      if (previous?.items) {
+        qc.setQueryData<TaskListResponse>([listKey], {
+          ...previous,
+          items: previous.items.filter((t) => t.id !== id),
+          total: Math.max(0, Number(previous.total || 0) - 1),
+        });
+      }
+      return { previous };
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [listKey] });
       toast.success("Task completed");
     },
-    onError: (e: any) => toast.error(String(e?.message || e)),
+    onError: (e: any, _id: number, ctx: any) => {
+      if (ctx?.previous) qc.setQueryData([listKey], ctx.previous);
+      toast.error(String(e?.message || e));
+    },
   });
 
   const rescheduleMutation = useMutation({
@@ -141,11 +160,29 @@ export default function TodayPage() {
       const res = await apiRequest("PATCH", `/api/tasks/${input.id}`, { dueAt: input.dueAt.toISOString(), status: "open" });
       return res.json();
     },
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: [listKey] });
+      const previous = qc.getQueryData<TaskListResponse>([listKey]);
+      if (previous?.items) {
+        const dueAtIso = input.dueAt.toISOString();
+        const shouldRemove = input.dueAt.getTime() > todayEnd.getTime();
+        qc.setQueryData<TaskListResponse>([listKey], {
+          ...previous,
+          items: shouldRemove
+            ? previous.items.filter((t) => t.id !== input.id)
+            : previous.items.map((t) => (t.id === input.id ? { ...t, dueAt: dueAtIso, status: "open" } : t)),
+        });
+      }
+      return { previous };
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [listKey] });
       toast.success("Rescheduled");
     },
-    onError: (e: any) => toast.error(String(e?.message || e)),
+    onError: (e: any, _input: any, ctx: any) => {
+      if (ctx?.previous) qc.setQueryData([listKey], ctx.previous);
+      toast.error(String(e?.message || e));
+    },
   });
 
   const [rescheduleDate, setRescheduleDate] = useState("");
@@ -180,6 +217,7 @@ export default function TodayPage() {
                   <div key={t.id} className="space-y-2">
                     <SwipeRow
                       task={t}
+                      disabled={completeMutation.isPending || rescheduleMutation.isPending}
                       onComplete={() => completeMutation.mutate(t.id)}
                       onOpen={() => {
                         const link = taskLink(t);
@@ -187,15 +225,15 @@ export default function TodayPage() {
                       }}
                     />
                     <div className="flex flex-wrap gap-2">
-                      <Button size="sm" variant="outline" onClick={() => rescheduleMutation.mutate({ id: t.id, dueAt: addDays(new Date(), 1) })}>
+                      <Button size="sm" variant="outline" disabled={rescheduleMutation.isPending || completeMutation.isPending} onClick={() => rescheduleMutation.mutate({ id: t.id, dueAt: addDays(new Date(), 1) })}>
                         Tomorrow
                       </Button>
-                      <Button size="sm" variant="outline" onClick={() => rescheduleMutation.mutate({ id: t.id, dueAt: addDays(new Date(), 7) })}>
+                      <Button size="sm" variant="outline" disabled={rescheduleMutation.isPending || completeMutation.isPending} onClick={() => rescheduleMutation.mutate({ id: t.id, dueAt: addDays(new Date(), 7) })}>
                         Next week
                       </Button>
                       <Dialog>
                         <DialogTrigger asChild>
-                          <Button size="sm" variant="outline">
+                          <Button size="sm" variant="outline" disabled={rescheduleMutation.isPending || completeMutation.isPending}>
                             Pick date
                           </Button>
                         </DialogTrigger>
@@ -206,7 +244,7 @@ export default function TodayPage() {
                           <Input type="date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)} />
                           <DialogFooter>
                             <Button
-                              disabled={!rescheduleDate || rescheduleMutation.isPending}
+                              disabled={!rescheduleDate || rescheduleMutation.isPending || completeMutation.isPending}
                               onClick={() => {
                                 const d = rescheduleDate ? new Date(`${rescheduleDate}T09:00:00`) : null;
                                 if (!d) return;
@@ -238,6 +276,7 @@ export default function TodayPage() {
                   <div key={t.id} className="space-y-2">
                     <SwipeRow
                       task={t}
+                      disabled={completeMutation.isPending || rescheduleMutation.isPending}
                       onComplete={() => completeMutation.mutate(t.id)}
                       onOpen={() => {
                         const link = taskLink(t);
@@ -245,10 +284,10 @@ export default function TodayPage() {
                       }}
                     />
                     <div className="flex flex-wrap gap-2">
-                      <Button size="sm" variant="outline" onClick={() => rescheduleMutation.mutate({ id: t.id, dueAt: addDays(new Date(), 1) })}>
+                      <Button size="sm" variant="outline" disabled={rescheduleMutation.isPending || completeMutation.isPending} onClick={() => rescheduleMutation.mutate({ id: t.id, dueAt: addDays(new Date(), 1) })}>
                         Tomorrow
                       </Button>
-                      <Button size="sm" variant="outline" onClick={() => rescheduleMutation.mutate({ id: t.id, dueAt: addDays(new Date(), 7) })}>
+                      <Button size="sm" variant="outline" disabled={rescheduleMutation.isPending || completeMutation.isPending} onClick={() => rescheduleMutation.mutate({ id: t.id, dueAt: addDays(new Date(), 7) })}>
                         Next week
                       </Button>
                     </div>
@@ -263,4 +302,3 @@ export default function TodayPage() {
     </Layout>
   );
 }
-

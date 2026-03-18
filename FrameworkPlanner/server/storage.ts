@@ -58,6 +58,15 @@ import { eq, and, gte, lte, isNull, inArray, or, ne, isNotNull } from "drizzle-o
 export interface IStorage {
   // Leads
   getLeads(limit?: number, offset?: number): Promise<Lead[]>;
+  listLeads(input: {
+    q?: string;
+    status?: string;
+    owner?: string;
+    createdFrom?: Date;
+    createdTo?: Date;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: Lead[]; total: number }>;
   getLeadById(id: number): Promise<Lead | undefined>;
   createLead(lead: InsertLead): Promise<Lead>;
   updateLead(id: number, lead: Partial<InsertLead>): Promise<Lead>;
@@ -97,6 +106,7 @@ export interface IStorage {
   getProperties(limit?: number, offset?: number): Promise<Property[]>;
   getPropertyById(id: number): Promise<Property | undefined>;
   getPropertyBySourceLeadId(sourceLeadId: number): Promise<Property | undefined>;
+  getPropertiesBySourceLeadIds(sourceLeadIds: number[]): Promise<Array<{ id: number; sourceLeadId: number }>>;
   createProperty(property: InsertProperty): Promise<Property>;
   updateProperty(id: number, property: Partial<InsertProperty>): Promise<Property>;
   deleteProperty(id: number): Promise<void>;
@@ -329,6 +339,62 @@ export class DatabaseStorage implements IStorage {
     return q as unknown as Promise<Lead[]>;
   }
 
+  async listLeads(input: {
+    q?: string;
+    status?: string;
+    owner?: string;
+    createdFrom?: Date;
+    createdTo?: Date;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: Lead[]; total: number }> {
+    const limit = typeof input.limit === "number" ? input.limit : 200;
+    const offset = typeof input.offset === "number" ? input.offset : 0;
+
+    const whereParts: any[] = [];
+
+    const status = String(input.status || "").trim();
+    if (status && status !== "all") whereParts.push(eq(leads.status, status));
+
+    const owner = String(input.owner || "").trim().toLowerCase();
+    if (owner) {
+      const needle = `%${owner}%`;
+      whereParts.push(sql`lower(${leads.ownerName}) LIKE ${needle}`);
+    }
+
+    const qRaw = String(input.q || "").trim().toLowerCase();
+    if (qRaw) {
+      const needle = `%${qRaw}%`;
+      whereParts.push(
+        or(
+          sql`lower(${leads.address}) LIKE ${needle}`,
+          sql`lower(${leads.city}) LIKE ${needle}`,
+          sql`lower(${leads.ownerName}) LIKE ${needle}`,
+          sql`lower(${leads.ownerPhone}) LIKE ${needle}`,
+          sql`lower(${leads.ownerEmail}) LIKE ${needle}`,
+          sql`lower(${leads.zipCode}) LIKE ${needle}`,
+        ),
+      );
+    }
+
+    if (input.createdFrom) whereParts.push(gte(leads.createdAt, input.createdFrom));
+    if (input.createdTo) whereParts.push(lte(leads.createdAt, input.createdTo));
+
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+
+    let q: any = db.select().from(leads);
+    if (whereClause) q = q.where(whereClause);
+    q = q.orderBy(desc(leads.createdAt), desc(leads.id)).limit(limit).offset(offset);
+    const items = (await q) as unknown as Lead[];
+
+    let cq: any = db.select({ count: sql<number>`count(*)::int` }).from(leads);
+    if (whereClause) cq = cq.where(whereClause);
+    const countRows = await cq;
+    const total = Number((countRows as any)?.[0]?.count || 0);
+
+    return { items, total };
+  }
+
   async getLeadById(id: number): Promise<Lead | undefined> {
     const result = await db.select().from(leads).where(eq(leads.id, id)).limit(1);
     return result[0];
@@ -543,6 +609,16 @@ export class DatabaseStorage implements IStorage {
   async getPropertyBySourceLeadId(sourceLeadId: number): Promise<Property | undefined> {
     const result = await db.select().from(properties).where(eq(properties.sourceLeadId, sourceLeadId)).limit(1);
     return result[0];
+  }
+
+  async getPropertiesBySourceLeadIds(sourceLeadIds: number[]): Promise<Array<{ id: number; sourceLeadId: number }>> {
+    const unique = Array.from(new Set((sourceLeadIds || []).filter((v) => typeof v === "number" && Number.isFinite(v) && v > 0)));
+    if (!unique.length) return [];
+    const rows = await db
+      .select({ id: properties.id, sourceLeadId: properties.sourceLeadId })
+      .from(properties)
+      .where(inArray(properties.sourceLeadId, unique));
+    return rows as any;
   }
 
   async createProperty(property: InsertProperty): Promise<Property> {

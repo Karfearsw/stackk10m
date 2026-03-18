@@ -8,9 +8,10 @@ const COLORS = ["#0a0a0a", "#D4AF37", "#C9A227", "#E7D39C", "#F6EED1"];
 
 export default function Analytics() {
   // Fetch real data
-  const { data: leads = [], isLoading: leadsLoading } = useQuery<any[]>({
-    queryKey: ['/api/leads'],
+  const { data: leadsResp, isLoading: leadsLoading } = useQuery<any>({
+    queryKey: ['/api/leads?limit=500'],
   });
+  const leads = Array.isArray(leadsResp?.items) ? leadsResp.items : [];
 
   const { data: contracts = [], isLoading: contractsLoading } = useQuery<any[]>({
     queryKey: ['/api/contracts'],
@@ -85,7 +86,7 @@ export default function Analytics() {
     if (leads.length === 0) return [];
 
     const sources: { [key: string]: number } = {};
-    leads.forEach(lead => {
+    leads.forEach((lead: any) => {
       const source = lead.source || "Unknown";
       sources[source] = (sources[source] || 0) + 1;
     });
@@ -100,11 +101,11 @@ export default function Analytics() {
   // Conversion funnel data
   const conversionFunnelData = useMemo(() => {
     const statusCounts = {
-      "New Leads": leads.filter(l => l.status === 'new').length,
-      "Contacted": leads.filter(l => l.status === 'contacted').length,
-      "Qualified": leads.filter(l => l.status === 'qualified').length,
-      "Negotiating": contracts.filter(c => c.status === 'negotiating' || c.status === 'pending').length,
-      "Closed": contracts.filter(c => c.status === 'signed' || c.status === 'closed').length,
+      "New Leads": leads.filter((l: any) => l.status === 'new').length,
+      "Contacted": leads.filter((l: any) => l.status === 'contacted').length,
+      "Qualified": leads.filter((l: any) => l.status === 'qualified').length,
+      "Negotiating": contracts.filter((c: any) => c.status === 'negotiating' || c.status === 'pending').length,
+      "Closed": contracts.filter((c: any) => c.status === 'signed' || c.status === 'closed').length,
     };
 
     return Object.entries(statusCounts).map(([stage, count]) => ({

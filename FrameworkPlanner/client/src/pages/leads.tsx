@@ -48,6 +48,7 @@ import { LeadPipelineCard } from "@/components/pipeline/LeadPipelineCard";
 import { EntityActivity } from "@/components/activity/EntityActivity";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
+import { apiRequest } from "@/lib/queryClient";
 
 const statusOptions = [
   { value: "new", label: "New" },
@@ -59,12 +60,16 @@ const statusOptions = [
   { value: "lost", label: "Lost" },
 ];
 
+const CUSTOM_SOURCE_VALUE = "__custom__";
+
 export default function Leads() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<any>(null);
+  const [newLeadOtherSource, setNewLeadOtherSource] = useState("");
+  const [editLeadOtherSource, setEditLeadOtherSource] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFilters] = useState({
     query: "",
@@ -73,6 +78,12 @@ export default function Leads() {
     createdFrom: "",
     createdTo: "",
   });
+  const [appliedFilters, setAppliedFilters] = useState(filters);
+  useEffect(() => {
+    const id = setTimeout(() => setAppliedFilters(filters), 250);
+    return () => clearTimeout(id);
+  }, [filters]);
+  const leadsQueryKey = useMemo(() => ["leads", appliedFilters], [appliedFilters]);
   const [selectedLeadId, setSelectedLeadId] = useState<number | null>(null);
   const [isLeadSheetOpen, setIsLeadSheetOpen] = useState(false);
   const [highlightLeadId, setHighlightLeadId] = useState<number | null>(null);
@@ -108,21 +119,28 @@ export default function Leads() {
     status: "new"
   });
 
-  const { data: leads = [], isLoading } = useQuery({
-    queryKey: ["leads"],
+  const { data: leadsResp, isLoading } = useQuery<any>({
+    queryKey: leadsQueryKey,
     queryFn: async () => {
-      const res = await fetch("/api/leads");
-      if (!res.ok) throw new Error("Failed to fetch leads");
-      return res.json();
-    }
+      const p = new URLSearchParams();
+      p.set("limit", "500");
+      if (appliedFilters.query.trim()) p.set("q", appliedFilters.query.trim());
+      if (appliedFilters.status && appliedFilters.status !== "all") p.set("status", appliedFilters.status);
+      if (appliedFilters.owner.trim()) p.set("owner", appliedFilters.owner.trim());
+      if (appliedFilters.createdFrom) p.set("createdFrom", new Date(`${appliedFilters.createdFrom}T00:00:00`).toISOString());
+      if (appliedFilters.createdTo) p.set("createdTo", new Date(`${appliedFilters.createdTo}T23:59:59`).toISOString());
+      const res = await apiRequest("GET", `/api/leads?${p.toString()}`);
+      return await res.json();
+    },
   });
+  const leads = useMemo(() => (Array.isArray(leadsResp?.items) ? leadsResp.items : []), [leadsResp?.items]);
+  const leadsTotal = useMemo(() => Number(leadsResp?.total ?? leads.length ?? 0), [leads.length, leadsResp?.total]);
 
   const { data: leadPipelineConfig } = useQuery({
     queryKey: ["/api/pipeline-config", "lead"],
     queryFn: async () => {
-      const res = await fetch(`/api/pipeline-config?entityType=lead`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch pipeline config");
-      return res.json();
+      const res = await apiRequest("GET", `/api/pipeline-config?entityType=lead`);
+      return await res.json();
     },
   });
 
@@ -137,11 +155,30 @@ export default function Leads() {
   const { data: leadSourceOptions = [] } = useQuery<any[]>({
     queryKey: ["/api/lead-source-options"],
     queryFn: async () => {
-      const res = await fetch("/api/lead-source-options", { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
+      try {
+        const res = await apiRequest("GET", "/api/lead-source-options");
+        return await res.json();
+      } catch {
+        return [];
+      }
     },
   });
+
+  const leadSourceOptionValues = useMemo(() => {
+    return new Set((leadSourceOptions || []).map((o: any) => String(o?.value || "")));
+  }, [leadSourceOptions]);
+
+  const openEditLead = (lead: any) => {
+    const rawSource = String(lead?.source || "").trim();
+    const hasKnownSource = rawSource && leadSourceOptionValues.has(rawSource);
+    const shouldUseCustom = rawSource && !hasKnownSource;
+    setEditLeadOtherSource(shouldUseCustom ? rawSource : "");
+    setEditingLead({
+      ...lead,
+      estimatedValue: lead?.estimatedValue || "",
+      source: shouldUseCustom ? CUSTOM_SOURCE_VALUE : rawSource,
+    });
+  };
 
   useEffect(() => {
     if (newLead.source) return;
@@ -155,23 +192,26 @@ export default function Leads() {
         ...lead,
         estimatedValue: lead.estimatedValue ? parseFloat(lead.estimatedValue) : null,
       };
-      const res = await fetch("/api/leads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) throw new Error("Failed to create lead");
-      return res.json();
+      const res = await apiRequest("POST", "/api/leads", payload);
+      return await res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
       setNewLead({ address: "", city: "", state: "FL", zipCode: "", ownerName: "", ownerPhone: "", ownerEmail: "", estimatedValue: "", source: "", status: "new" });
+      setNewLeadOtherSource("");
       setIsAddDialogOpen(false);
       toast({
         title: "Lead created",
         description: "New lead has been added successfully.",
       });
-    }
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Lead creation failed",
+        description: String(error?.message || error),
+        variant: "destructive",
+      });
+    },
   });
 
   const updateMutation = useMutation({
@@ -180,13 +220,19 @@ export default function Leads() {
         ...data,
         estimatedValue: data.estimatedValue ? parseFloat(data.estimatedValue) : null,
       };
-      const res = await fetch(`/api/leads/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) throw new Error("Failed to update lead");
-      return res.json();
+      const res = await apiRequest("PATCH", `/api/leads/${id}`, payload);
+      return await res.json();
+    },
+    onMutate: async ({ id, data }) => {
+      await queryClient.cancelQueries({ queryKey: ["leads"] });
+      const previous = queryClient.getQueryData<any>(leadsQueryKey);
+      if (Array.isArray(previous?.items)) {
+        queryClient.setQueryData(leadsQueryKey, {
+          ...previous,
+          items: previous.items.map((l: any) => (l?.id === id ? { ...l, ...data } : l)),
+        });
+      }
+      return { previous };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
@@ -195,14 +241,33 @@ export default function Leads() {
         title: "Lead updated",
         description: "Lead has been updated successfully.",
       });
-    }
+    },
+    onError: (error: any, _vars: any, ctx: any) => {
+      if (ctx?.previous) queryClient.setQueryData(leadsQueryKey, ctx.previous);
+      toast({
+        title: "Lead update failed",
+        description: String(error?.message || error),
+        variant: "destructive",
+      });
+    },
   });
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
-      const res = await fetch(`/api/leads/${id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete lead");
-      return res.json();
+      const res = await apiRequest("DELETE", `/api/leads/${id}`);
+      return await res.json();
+    },
+    onMutate: async (id: number) => {
+      await queryClient.cancelQueries({ queryKey: ["leads"] });
+      const previous = queryClient.getQueryData<any>(leadsQueryKey);
+      if (Array.isArray(previous?.items)) {
+        queryClient.setQueryData(leadsQueryKey, {
+          ...previous,
+          items: previous.items.filter((l: any) => l?.id !== id),
+          total: Math.max(0, Number(previous.total || 0) - 1),
+        });
+      }
+      return { previous };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
@@ -210,18 +275,21 @@ export default function Leads() {
         title: "Lead deleted",
         description: "Lead has been removed.",
       });
-    }
+    },
+    onError: (error: any, _id: number, ctx: any) => {
+      if (ctx?.previous) queryClient.setQueryData(leadsQueryKey, ctx.previous);
+      toast({
+        title: "Delete failed",
+        description: String(error?.message || error),
+        variant: "destructive",
+      });
+    },
   });
 
   const convertToPropertyMutation = useMutation({
     mutationFn: async (leadId: number) => {
-      const res = await fetch(`/api/leads/${leadId}/convert-to-property`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" }
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message || "Failed to convert lead");
-      return data;
+      const res = await apiRequest("POST", `/api/leads/${leadId}/convert-to-property`, {});
+      return await res.json();
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
@@ -242,25 +310,42 @@ export default function Leads() {
   });
 
   const handleAddLead = async () => {
-    if (newLead.address && newLead.city && newLead.zipCode && newLead.ownerName && newLead.source) {
-      await createMutation.mutateAsync(newLead);
+    if (!newLead.address || !newLead.city || !newLead.zipCode || !newLead.ownerName) {
+      toast({ title: "Missing required fields", variant: "destructive" });
       return;
     }
-    toast({ title: "Lead source is required", variant: "destructive" });
+
+    const source =
+      newLead.source === CUSTOM_SOURCE_VALUE ? newLeadOtherSource.trim() : String(newLead.source || "").trim();
+    if (!source) {
+      toast({ title: "Lead source is required", variant: "destructive" });
+      return;
+    }
+
+    createMutation.mutate({ ...newLead, source });
   };
 
   const handleUpdateLead = async () => {
     if (editingLead) {
-      await updateMutation.mutateAsync({ 
-        id: editingLead.id, 
-        data: editingLead 
+      const source =
+        String(editingLead.source || "") === CUSTOM_SOURCE_VALUE
+          ? editLeadOtherSource.trim()
+          : String(editingLead.source || "").trim();
+      if (String(editingLead.source || "") === CUSTOM_SOURCE_VALUE && !source) {
+        toast({ title: "Lead source is required", variant: "destructive" });
+        return;
+      }
+
+      updateMutation.mutate({
+        id: editingLead.id,
+        data: { ...editingLead, source: source || null },
       });
     }
   };
 
   const handleConvertToProperty = async (lead: any, e: MouseEvent) => {
     e.stopPropagation();
-    await convertToPropertyMutation.mutateAsync(lead.id);
+    convertToPropertyMutation.mutate(lead.id);
   };
 
   const getStatusBadgeColor = (status: string) => {
@@ -277,47 +362,8 @@ export default function Leads() {
   };
 
   const filteredLeads = useMemo(() => {
-    const q = filters.query.trim().toLowerCase();
-    const owner = filters.owner.trim().toLowerCase();
-    const from = filters.createdFrom ? new Date(filters.createdFrom) : null;
-    const to = filters.createdTo ? new Date(filters.createdTo) : null;
-    if (from) from.setHours(0, 0, 0, 0);
-    if (to) to.setHours(23, 59, 59, 999);
-
-    return (leads || []).filter((lead: any) => {
-      if (filters.status !== "all" && lead.status !== filters.status) return false;
-
-      if (q) {
-        const haystack = [
-          lead.address,
-          lead.city,
-          lead.state,
-          lead.zipCode,
-          lead.ownerName,
-          lead.ownerPhone,
-          lead.ownerEmail,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        if (!haystack.includes(q)) return false;
-      }
-
-      if (owner) {
-        const name = String(lead.ownerName || "").toLowerCase();
-        if (!name.includes(owner)) return false;
-      }
-
-      if (from || to) {
-        const createdAt = lead.createdAt ? new Date(lead.createdAt) : null;
-        if (!createdAt || Number.isNaN(createdAt.getTime())) return false;
-        if (from && createdAt < from) return false;
-        if (to && createdAt > to) return false;
-      }
-
-      return true;
-    });
-  }, [filters.createdFrom, filters.createdTo, filters.owner, filters.query, filters.status, leads]);
+    return leads || [];
+  }, [leads]);
 
   const selectedLead = useMemo(() => {
     if (!selectedLeadId) return null;
@@ -328,19 +374,27 @@ export default function Leads() {
     queryKey: ["/api/leads", selectedLeadId, "skip-trace-latest"],
     enabled: !!selectedLeadId && isLeadSheetOpen,
     queryFn: async () => {
-      const res = await fetch(`/api/leads/${selectedLeadId}/skip-trace/latest`, { credentials: "include" });
-      if (res.status === 404) return null;
-      if (!res.ok) throw new Error("Failed to fetch skip trace");
-      return res.json();
+      try {
+        const res = await apiRequest("GET", `/api/leads/${selectedLeadId}/skip-trace/latest`);
+        return await res.json();
+      } catch (e: any) {
+        const msg = String(e?.message || e);
+        if (msg.startsWith("404:")) return null;
+        throw e;
+      }
     },
   });
 
   const skipTraceMutation = useMutation({
     mutationFn: async (leadId: number) => {
-      const res = await fetch(`/api/leads/${leadId}/skip-trace`, { method: "POST", credentials: "include" });
-      if (res.status === 404) throw new Error("Skip trace is disabled");
-      if (!res.ok) throw new Error("Skip trace failed");
-      return res.json();
+      try {
+        const res = await apiRequest("POST", `/api/leads/${leadId}/skip-trace`, {});
+        return await res.json();
+      } catch (e: any) {
+        const msg = String(e?.message || e);
+        if (msg.startsWith("404:")) throw new Error("Skip trace is disabled");
+        throw e;
+      }
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/leads", selectedLeadId, "skip-trace-latest"] });
@@ -507,7 +561,13 @@ export default function Leads() {
                 </div>
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="source" className="text-right">Lead Source</Label>
-                  <Select value={newLead.source} onValueChange={(value) => setNewLead({ ...newLead, source: value })}>
+                  <Select
+                    value={newLead.source}
+                    onValueChange={(value) => {
+                      if (value !== CUSTOM_SOURCE_VALUE) setNewLeadOtherSource("");
+                      setNewLead({ ...newLead, source: value });
+                    }}
+                  >
                     <SelectTrigger className="col-span-3" data-testid="select-lead-source">
                       <SelectValue placeholder="Select source" />
                     </SelectTrigger>
@@ -517,9 +577,23 @@ export default function Leads() {
                           {String(o.label || o.value)}
                         </SelectItem>
                       ))}
+                      <SelectItem value={CUSTOM_SOURCE_VALUE}>Other</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
+                {newLead.source === CUSTOM_SOURCE_VALUE && (
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="lead-source-other" className="text-right">Other</Label>
+                    <Input
+                      id="lead-source-other"
+                      className="col-span-3"
+                      placeholder="Enter lead source"
+                      value={newLeadOtherSource}
+                      onChange={(e) => setNewLeadOtherSource(e.target.value)}
+                      data-testid="input-lead-source-other"
+                    />
+                  </div>
+                )}
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="status" className="text-right">Status</Label>
                   <Select value={newLead.status} onValueChange={(value) => setNewLead({...newLead, status: value})}>
@@ -641,7 +715,7 @@ export default function Leads() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem
-                              onClick={() => setEditingLead({ ...lead, estimatedValue: lead.estimatedValue || "" })}
+                              onClick={() => openEditLead(lead)}
                             >
                               <Pencil className="mr-2 h-4 w-4" />
                               Edit
@@ -839,7 +913,7 @@ export default function Leads() {
                   className={selectedLead.linkedPropertyId ? "flex-1" : "w-full"}
                   onClick={() => {
                     setIsLeadSheetOpen(false);
-                    setEditingLead({ ...selectedLead, estimatedValue: selectedLead.estimatedValue || "" });
+                    openEditLead(selectedLead);
                   }}
                 >
                   Edit Lead
@@ -865,7 +939,14 @@ export default function Leads() {
         </SheetContent>
       </Sheet>
 
-      <Dialog open={!!editingLead} onOpenChange={(open) => !open && setEditingLead(null)}>
+      <Dialog
+        open={!!editingLead}
+        onOpenChange={(open) => {
+          if (open) return;
+          setEditingLead(null);
+          setEditLeadOtherSource("");
+        }}
+      >
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle>Edit Lead</DialogTitle>
@@ -895,7 +976,13 @@ export default function Leads() {
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-source" className="text-right">Lead Source</Label>
-                <Select value={String(editingLead.source || "")} onValueChange={(value) => setEditingLead({ ...editingLead, source: value })}>
+                <Select
+                  value={String(editingLead.source || "")}
+                  onValueChange={(value) => {
+                    if (value !== CUSTOM_SOURCE_VALUE) setEditLeadOtherSource("");
+                    setEditingLead({ ...editingLead, source: value });
+                  }}
+                >
                   <SelectTrigger className="col-span-3" data-testid="select-edit-source">
                     <SelectValue placeholder="Select source" />
                   </SelectTrigger>
@@ -905,9 +992,23 @@ export default function Leads() {
                         {String(o.label || o.value)}
                       </SelectItem>
                     ))}
+                    <SelectItem value={CUSTOM_SOURCE_VALUE}>Other</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
+              {String(editingLead.source || "") === CUSTOM_SOURCE_VALUE && (
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="edit-source-other" className="text-right">Other</Label>
+                  <Input
+                    id="edit-source-other"
+                    className="col-span-3"
+                    placeholder="Enter lead source"
+                    value={editLeadOtherSource}
+                    onChange={(e) => setEditLeadOtherSource(e.target.value)}
+                    data-testid="input-edit-source-other"
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-status" className="text-right">Status</Label>
                 <Select value={editingLead.status} onValueChange={(value) => setEditingLead({...editingLead, status: value})}>
@@ -924,7 +1025,15 @@ export default function Leads() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingLead(null)}>Cancel</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditingLead(null);
+                setEditLeadOtherSource("");
+              }}
+            >
+              Cancel
+            </Button>
             <Button onClick={handleUpdateLead} disabled={updateMutation.isPending} className="bg-primary hover:bg-primary/90" data-testid="button-save-lead">
               {updateMutation.isPending ? "Saving..." : "Save Changes"}
             </Button>
@@ -952,10 +1061,12 @@ export default function Leads() {
                 const existing = String(noteLead.notes || "").trim();
                 const stamped = `[${new Date().toLocaleString()}] ${noteText.trim()}`;
                 const notes = existing ? `${existing}\n\n${stamped}` : stamped;
-                await updateMutation.mutateAsync({ id: noteLead.id, data: { notes } });
-                setIsNoteDialogOpen(false);
-                setNoteLead(null);
-                setNoteText("");
+                try {
+                  await updateMutation.mutateAsync({ id: noteLead.id, data: { notes } });
+                  setIsNoteDialogOpen(false);
+                  setNoteLead(null);
+                  setNoteText("");
+                } catch {}
               }}
             >
               Save Note
@@ -990,21 +1101,16 @@ export default function Leads() {
               disabled={!smsLead?.ownerPhone || !smsBody.trim()}
               onClick={async () => {
                 if (!smsLead?.ownerPhone) return;
-                const res = await fetch(`/api/telephony/sms`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  credentials: "include",
-                  body: JSON.stringify({ to: smsLead.ownerPhone, body: smsBody.trim(), metadata: { leadId: smsLead.id } }),
-                });
-                if (!res.ok) {
-                  toast({ title: "SMS failed", description: "Failed to send SMS", variant: "destructive" });
-                  return;
+                try {
+                  await apiRequest("POST", `/api/telephony/sms`, { to: smsLead.ownerPhone, body: smsBody.trim(), metadata: { leadId: smsLead.id } });
+                  toast({ title: "SMS sent", description: "Message queued/sent successfully." });
+                  queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+                  setIsSmsDialogOpen(false);
+                  setSmsLead(null);
+                  setSmsBody("");
+                } catch (e: any) {
+                  toast({ title: "SMS failed", description: String(e?.message || e), variant: "destructive" });
                 }
-                toast({ title: "SMS sent", description: "Message queued/sent successfully." });
-                queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
-                setIsSmsDialogOpen(false);
-                setSmsLead(null);
-                setSmsBody("");
               }}
             >
               Send
@@ -1036,30 +1142,25 @@ export default function Leads() {
               disabled={!emailLead?.ownerEmail}
               onClick={async () => {
                 if (!emailLead?.ownerEmail) return;
-                const res = await fetch(`/api/activity`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  credentials: "include",
-                  body: JSON.stringify({
+                try {
+                  await apiRequest("POST", `/api/activity`, {
                     action: "email_sent",
                     description: emailSubject ? `Sent email: ${emailSubject}` : "Sent email",
                     metadata: { leadId: emailLead.id, to: emailLead.ownerEmail, subject: emailSubject || null },
-                  }),
-                });
-                if (!res.ok) {
-                  toast({ title: "Log failed", description: "Failed to log email", variant: "destructive" });
-                  return;
+                  });
+                  queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+                  const to = String(emailLead.ownerEmail);
+                  const subject = encodeURIComponent(String(emailSubject || ""));
+                  const body = encodeURIComponent(String(emailBody || ""));
+                  const url = `mailto:${to}?subject=${subject}&body=${body}`;
+                  window.location.href = url;
+                  setIsEmailDialogOpen(false);
+                  setEmailLead(null);
+                  setEmailSubject("");
+                  setEmailBody("");
+                } catch (e: any) {
+                  toast({ title: "Log failed", description: String(e?.message || e), variant: "destructive" });
                 }
-                queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
-                const to = String(emailLead.ownerEmail);
-                const subject = encodeURIComponent(String(emailSubject || ""));
-                const body = encodeURIComponent(String(emailBody || ""));
-                const url = `mailto:${to}?subject=${subject}&body=${body}`;
-                window.location.href = url;
-                setIsEmailDialogOpen(false);
-                setEmailLead(null);
-                setEmailSubject("");
-                setEmailBody("");
               }}
             >
               Log & Open Email

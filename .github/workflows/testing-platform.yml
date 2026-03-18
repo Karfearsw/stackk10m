@@ -61,6 +61,36 @@ jobs:
         working-directory: FrameworkPlanner
         run: npm run test:smoke
 
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [unit]
+    if: ${{ inputs.base_url != '' || secrets.STAGING_BASE_URL != '' }}
+    strategy:
+      matrix:
+        node-version: [20.x]
+    env:
+      PLAYWRIGHT_BASE_URL: ${{ inputs.base_url || secrets.STAGING_BASE_URL }}
+      E2E_EMPLOYEE_CODE: ${{ secrets.TEST_EMPLOYEE_CODE }}
+      E2E_PASSWORD: ${{ secrets.TEST_PASSWORD }}
+      E2E_DEV_BYPASS_ENABLED: ${{ secrets.TEST_DEV_BYPASS_ENABLED }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+          cache-dependency-path: FrameworkPlanner/package-lock.json
+      - name: Install dependencies
+        working-directory: FrameworkPlanner
+        run: npm ci
+      - name: Install Playwright browsers
+        working-directory: FrameworkPlanner
+        run: npx playwright install --with-deps
+      - name: E2E (cross-browser) against staging
+        working-directory: FrameworkPlanner
+        run: npm run test:e2e
+
   security:
     runs-on: ubuntu-latest
     needs: [unit]

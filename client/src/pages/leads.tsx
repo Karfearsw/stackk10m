@@ -51,12 +51,26 @@ const statusOptions = [
   { value: "lost", label: "Lost" },
 ];
 
+const leadSourceOptions = [
+  { value: "Cold Call", label: "Cold Call" },
+  { value: "Direct Mail", label: "Direct Mail" },
+  { value: "Referral", label: "Referral" },
+  { value: "SMS", label: "SMS" },
+  { value: "PPC", label: "PPC" },
+  { value: "Driving for Dollars", label: "Driving for Dollars" },
+  { value: "Inbound Call", label: "Inbound Call" },
+];
+
+const CUSTOM_SOURCE_VALUE = "__custom__";
+
 export default function Leads() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<any>(null);
+  const [newLeadOtherSource, setNewLeadOtherSource] = useState("");
+  const [editLeadOtherSource, setEditLeadOtherSource] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFilters] = useState({
     query: "",
@@ -74,8 +88,13 @@ export default function Leads() {
     ownerPhone: "",
     ownerEmail: "",
     estimatedValue: "",
+    source: "",
     status: "new"
   });
+
+  const leadSourceOptionValues = useMemo(() => {
+    return new Set(leadSourceOptions.map((o) => o.value));
+  }, []);
 
   const { data: leads = [], isLoading } = useQuery({
     queryKey: ["leads"],
@@ -102,7 +121,8 @@ export default function Leads() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
-      setNewLead({ address: "", city: "", state: "FL", zipCode: "", ownerName: "", ownerPhone: "", ownerEmail: "", estimatedValue: "", status: "new" });
+      setNewLead({ address: "", city: "", state: "FL", zipCode: "", ownerName: "", ownerPhone: "", ownerEmail: "", estimatedValue: "", source: "", status: "new" });
+      setNewLeadOtherSource("");
       setIsAddDialogOpen(false);
       toast({
         title: "Lead created",
@@ -128,6 +148,7 @@ export default function Leads() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
       setEditingLead(null);
+      setEditLeadOtherSource("");
       toast({
         title: "Lead updated",
         description: "Lead has been updated successfully.",
@@ -178,17 +199,49 @@ export default function Leads() {
     }
   });
 
+  const openEditLead = (lead: any) => {
+    const rawSource = String(lead?.source || "").trim();
+    const hasKnownSource = rawSource && leadSourceOptionValues.has(rawSource);
+    const shouldUseCustom = rawSource && !hasKnownSource;
+
+    setEditLeadOtherSource(shouldUseCustom ? rawSource : "");
+    setEditingLead({
+      ...lead,
+      estimatedValue: lead?.estimatedValue || "",
+      source: shouldUseCustom ? CUSTOM_SOURCE_VALUE : rawSource,
+    });
+  };
+
   const handleAddLead = async () => {
-    if (newLead.address && newLead.city && newLead.zipCode && newLead.ownerName) {
-      await createMutation.mutateAsync(newLead);
+    if (!newLead.address || !newLead.city || !newLead.zipCode || !newLead.ownerName) {
+      toast({ title: "Missing required fields", variant: "destructive" });
+      return;
     }
+
+    const source =
+      newLead.source === CUSTOM_SOURCE_VALUE ? newLeadOtherSource.trim() : String(newLead.source || "").trim();
+    if (!source) {
+      toast({ title: "Lead source is required", variant: "destructive" });
+      return;
+    }
+
+    await createMutation.mutateAsync({ ...newLead, source });
   };
 
   const handleUpdateLead = async () => {
     if (editingLead) {
-      await updateMutation.mutateAsync({ 
-        id: editingLead.id, 
-        data: editingLead 
+      const source =
+        String(editingLead.source || "") === CUSTOM_SOURCE_VALUE
+          ? editLeadOtherSource.trim()
+          : String(editingLead.source || "").trim();
+      if (String(editingLead.source || "") === CUSTOM_SOURCE_VALUE && !source) {
+        toast({ title: "Lead source is required", variant: "destructive" });
+        return;
+      }
+
+      await updateMutation.mutateAsync({
+        id: editingLead.id,
+        data: { ...editingLead, source: source || null },
       });
     }
   };
@@ -384,6 +437,39 @@ export default function Leads() {
                   <Input id="phone" placeholder="(555) 123-4567" className="col-span-3" value={newLead.ownerPhone} onChange={(e) => setNewLead({...newLead, ownerPhone: e.target.value})} data-testid="input-lead-phone" />
                 </div>
                 <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="source" className="text-right">Lead Source</Label>
+                  <Select
+                    value={newLead.source}
+                    onValueChange={(value) => {
+                      if (value !== CUSTOM_SOURCE_VALUE) setNewLeadOtherSource("");
+                      setNewLead({ ...newLead, source: value });
+                    }}
+                  >
+                    <SelectTrigger className="col-span-3" data-testid="select-lead-source">
+                      <SelectValue placeholder="Select source" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {leadSourceOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
+                      <SelectItem value={CUSTOM_SOURCE_VALUE}>Other</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {newLead.source === CUSTOM_SOURCE_VALUE && (
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="lead-source-other" className="text-right">Other</Label>
+                    <Input
+                      id="lead-source-other"
+                      className="col-span-3"
+                      placeholder="Enter lead source"
+                      value={newLeadOtherSource}
+                      onChange={(e) => setNewLeadOtherSource(e.target.value)}
+                      data-testid="input-lead-source-other"
+                    />
+                  </div>
+                )}
+                <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="status" className="text-right">Status</Label>
                   <Select value={newLead.status} onValueChange={(value) => setNewLead({...newLead, status: value})}>
                     <SelectTrigger className="col-span-3" data-testid="select-lead-status">
@@ -455,7 +541,7 @@ export default function Leads() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => setEditingLead({...lead, estimatedValue: lead.estimatedValue || ""})}>
+                        <DropdownMenuItem onClick={() => openEditLead(lead)}>
                           <Pencil className="mr-2 h-4 w-4" />
                           Edit
                         </DropdownMenuItem>
@@ -480,7 +566,14 @@ export default function Leads() {
         )}
       </div>
 
-      <Dialog open={!!editingLead} onOpenChange={(open) => !open && setEditingLead(null)}>
+      <Dialog
+        open={!!editingLead}
+        onOpenChange={(open) => {
+          if (open) return;
+          setEditingLead(null);
+          setEditLeadOtherSource("");
+        }}
+      >
         <DialogContent className="sm:max-w-[425px]">
           <DialogHeader>
             <DialogTitle>Edit Lead</DialogTitle>
@@ -509,6 +602,39 @@ export default function Leads() {
                 <Input id="edit-phone" className="col-span-3" value={editingLead.ownerPhone || ""} onChange={(e) => setEditingLead({...editingLead, ownerPhone: e.target.value})} data-testid="input-edit-phone" />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="edit-source" className="text-right">Lead Source</Label>
+                <Select
+                  value={String(editingLead.source || "")}
+                  onValueChange={(value) => {
+                    if (value !== CUSTOM_SOURCE_VALUE) setEditLeadOtherSource("");
+                    setEditingLead({ ...editingLead, source: value });
+                  }}
+                >
+                  <SelectTrigger className="col-span-3" data-testid="select-edit-source">
+                    <SelectValue placeholder="Select source" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {leadSourceOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                    <SelectItem value={CUSTOM_SOURCE_VALUE}>Other</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {String(editingLead.source || "") === CUSTOM_SOURCE_VALUE && (
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="edit-source-other" className="text-right">Other</Label>
+                  <Input
+                    id="edit-source-other"
+                    className="col-span-3"
+                    placeholder="Enter lead source"
+                    value={editLeadOtherSource}
+                    onChange={(e) => setEditLeadOtherSource(e.target.value)}
+                    data-testid="input-edit-source-other"
+                  />
+                </div>
+              )}
+              <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-status" className="text-right">Status</Label>
                 <Select value={editingLead.status} onValueChange={(value) => setEditingLead({...editingLead, status: value})}>
                   <SelectTrigger className="col-span-3" data-testid="select-edit-status">
@@ -524,7 +650,15 @@ export default function Leads() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditingLead(null)}>Cancel</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditingLead(null);
+                setEditLeadOtherSource("");
+              }}
+            >
+              Cancel
+            </Button>
             <Button onClick={handleUpdateLead} disabled={updateMutation.isPending} className="bg-primary hover:bg-primary/90" data-testid="button-save-lead">
               {updateMutation.isPending ? "Saving..." : "Save Changes"}
             </Button>

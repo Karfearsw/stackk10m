@@ -66,9 +66,10 @@ function formatTimeAgo(dateString: string | null): string {
 }
 
 export default function Dashboard() {
-  const { data: leads = [], isLoading: leadsLoading } = useQuery<any[]>({
-    queryKey: ['/api/leads'],
+  const { data: leadsResp, isLoading: leadsLoading } = useQuery<any>({
+    queryKey: ['/api/leads?limit=500'],
   });
+  const leads = Array.isArray(leadsResp?.items) ? leadsResp.items : [];
 
   const { data: properties = [], isLoading: propertiesLoading } = useQuery<any[]>({
     queryKey: ['/api/properties'],
@@ -114,7 +115,7 @@ export default function Dashboard() {
       return sum + (parseFloat(contract.amount) || 0);
     }, 0);
 
-    const activeLeads = leads.filter(lead => 
+    const activeLeads = leads.filter((lead: any) => 
       lead.status === 'new' || lead.status === 'contacted' || lead.status === 'qualified'
     ).length;
 

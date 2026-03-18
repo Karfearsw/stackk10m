@@ -59,6 +59,18 @@ function fmtDue(dueAt: string | null) {
   }
 }
 
+async function runWithConcurrency<T>(items: T[], limit: number, fn: (item: T) => Promise<void>) {
+  const max = Math.max(1, Math.floor(limit));
+  const queue = [...items];
+  const workers = Array.from({ length: Math.min(max, queue.length || 1) }, async () => {
+    while (queue.length) {
+      const next = queue.shift()!;
+      await fn(next);
+    }
+  });
+  await Promise.all(workers);
+}
+
 function taskLink(t: Task) {
   if (t.relatedEntityType === "lead" && t.relatedEntityId) return `/leads?leadId=${t.relatedEntityId}`;
   if (t.relatedEntityType === "opportunity" && t.relatedEntityId) return `/opportunities/${t.relatedEntityId}`;
@@ -122,37 +134,86 @@ export default function TasksPage() {
       const res = await apiRequest("POST", `/api/tasks/${id}/complete`);
       return res.json();
     },
+    onMutate: async (id: number) => {
+      await qc.cancelQueries({ queryKey: [listKey] });
+      const previous = qc.getQueryData<TaskListResponse>([listKey]);
+      if (previous?.items) {
+        qc.setQueryData<TaskListResponse>([listKey], {
+          ...previous,
+          items: previous.items.filter((t) => t.id !== id),
+          total: Math.max(0, Number(previous.total || 0) - 1),
+        });
+      }
+      return { previous };
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [listKey] });
+      toast.success("Task completed");
+    },
+    onError: (e: any, _id: number, ctx: any) => {
+      if (ctx?.previous) qc.setQueryData([listKey], ctx.previous);
+      toast.error(String(e?.message || e));
     },
   });
 
   const bulkCompleteMutation = useMutation({
     mutationFn: async (ids: number[]) => {
-      for (const id of ids) {
+      await runWithConcurrency(ids, 5, async (id) => {
         await apiRequest("POST", `/api/tasks/${id}/complete`);
+      });
+    },
+    onMutate: async (ids: number[]) => {
+      await qc.cancelQueries({ queryKey: [listKey] });
+      const previous = qc.getQueryData<TaskListResponse>([listKey]);
+      if (previous?.items) {
+        const set = new Set(ids);
+        const kept = previous.items.filter((t) => !set.has(t.id));
+        qc.setQueryData<TaskListResponse>([listKey], {
+          ...previous,
+          items: kept,
+          total: Math.max(0, Number(previous.total || 0) - (previous.items.length - kept.length)),
+        });
       }
+      return { previous };
     },
     onSuccess: () => {
       setSelected({});
       qc.invalidateQueries({ queryKey: [listKey] });
       toast.success("Tasks completed");
     },
-    onError: (e: any) => toast.error(String(e?.message || e)),
+    onError: (e: any, _ids: number[], ctx: any) => {
+      if (ctx?.previous) qc.setQueryData([listKey], ctx.previous);
+      toast.error(String(e?.message || e));
+    },
   });
 
   const assignMutation = useMutation({
     mutationFn: async (input: { ids: number[]; assignedToUserId: number }) => {
-      for (const id of input.ids) {
+      await runWithConcurrency(input.ids, 5, async (id) => {
         await apiRequest("PATCH", `/api/tasks/${id}`, { assignedToUserId: input.assignedToUserId });
+      });
+    },
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: [listKey] });
+      const previous = qc.getQueryData<TaskListResponse>([listKey]);
+      if (previous?.items) {
+        const set = new Set(input.ids);
+        qc.setQueryData<TaskListResponse>([listKey], {
+          ...previous,
+          items: previous.items.map((t) => (set.has(t.id) ? { ...t, assignedToUserId: input.assignedToUserId } : t)),
+        });
       }
+      return { previous };
     },
     onSuccess: () => {
       setSelected({});
       qc.invalidateQueries({ queryKey: [listKey] });
       toast.success("Tasks reassigned");
     },
-    onError: (e: any) => toast.error(String(e?.message || e)),
+    onError: (e: any, _input: any, ctx: any) => {
+      if (ctx?.previous) qc.setQueryData([listKey], ctx.previous);
+      toast.error(String(e?.message || e));
+    },
   });
 
   const createMutation = useMutation({
@@ -415,7 +476,7 @@ export default function TasksPage() {
                             size="sm"
                             variant="outline"
                             disabled={t.status === "completed" || completeMutation.isPending}
-                            onClick={() => completeMutation.mutate(t.id, { onError: (e: any) => toast.error(String(e?.message || e)) })}
+                            onClick={() => completeMutation.mutate(t.id)}
                           >
                             Complete
                           </Button>

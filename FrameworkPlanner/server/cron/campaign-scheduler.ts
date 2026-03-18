@@ -44,6 +44,7 @@ function addDays(d: Date, days: number) {
 
 export function startCampaignScheduler(intervalMs = 60_000) {
   let running = false;
+  let lastErrorAt = 0;
 
   const tick = async () => {
     if (running) return;
@@ -233,7 +234,9 @@ export function startCampaignScheduler(intervalMs = 60_000) {
               assignedTo: (lead as any)?.assignedTo ?? null,
               createdBy,
             });
-          } catch {}
+          } catch (e: any) {
+            console.error(JSON.stringify({ ts: new Date().toISOString(), event: "campaign_scheduler", kind: "on_completed_failed", campaignId, leadId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+          }
         }
 
         try {
@@ -244,13 +247,27 @@ export function startCampaignScheduler(intervalMs = 60_000) {
             description: deliveryStatus === "sent" ? `Campaign step sent (${channel})` : `Campaign step failed (${channel})`,
             metadata: JSON.stringify({ leadId, campaignId, enrollmentId, stepId: Number(step.id), channel, status: deliveryStatus, providerId, error }),
           } as any);
-        } catch {}
+        } catch (e: any) {
+          console.error(JSON.stringify({ ts: new Date().toISOString(), event: "campaign_scheduler", kind: "activity_log_failed", campaignId, leadId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+        }
       }
     } finally {
       running = false;
     }
   };
 
-  tick().catch(() => {});
-  return setInterval(() => tick().catch(() => {}), intervalMs);
+  const runTick = async () => {
+    try {
+      await tick();
+    } catch (e: any) {
+      const now = Date.now();
+      if (now - lastErrorAt >= 60_000) {
+        lastErrorAt = now;
+        console.error(JSON.stringify({ ts: new Date().toISOString(), event: "campaign_scheduler", kind: "tick_failed", message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+      }
+    }
+  };
+
+  void runTick();
+  return setInterval(() => void runTick(), intervalMs);
 }

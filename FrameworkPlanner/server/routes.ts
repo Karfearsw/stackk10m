@@ -74,10 +74,38 @@ function authJwtSecret() {
 function isDbConnectivityError(error: any): boolean {
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
+  if (code === "57P01" || code === "57P02" || code === "57P03") return true;
+  if (code === "08006" || code === "08001" || code === "08004") return true;
+  if (code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "SELF_SIGNED_CERT_IN_CHAIN") return true;
+  if (code === "ERR_TLS_CERT_ALTNAME_INVALID" || code === "CERT_HAS_EXPIRED") return true;
   const nested = error?.errors;
   if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
   const message = String(error?.message || "");
   return message.includes("DATABASE_URL");
+}
+
+function parseLimitOffset(query: any): { limit?: number; offset: number } {
+  const MAX_LIMIT = 500;
+
+  let limit: number | undefined = undefined;
+  const limitRaw = query?.limit;
+  if (typeof limitRaw === "string" && limitRaw.trim() !== "") {
+    const parsed = Number.parseInt(limitRaw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      limit = Math.min(parsed, MAX_LIMIT);
+    }
+  }
+
+  let offset = 0;
+  const offsetRaw = query?.offset;
+  if (typeof offsetRaw === "string" && offsetRaw.trim() !== "") {
+    const parsed = Number.parseInt(offsetRaw, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      offset = parsed;
+    }
+  }
+
+  return { limit, offset };
 }
 
 async function issueAuthToken(payload: { sub: string; email?: string }) {
@@ -301,7 +329,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     setImmediate(() => {
-      processImportJob(job.id).catch(() => {});
+      processImportJob(job.id).catch((e: any) => {
+        console.error(JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "crm_import",
+          kind: "process_failed",
+          jobId: job.id,
+          message: String(e?.message || e),
+          code: e?.code ? String(e.code) : null,
+        }));
+      });
     });
 
     return res.status(201).json({ jobId: job.id });
@@ -370,7 +407,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
 
     setImmediate(() => {
-      processExportJob(job.id).catch(() => {});
+      processExportJob(job.id).catch((e: any) => {
+        console.error(JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "crm_export",
+          kind: "process_failed",
+          jobId: job.id,
+          message: String(e?.message || e),
+          code: e?.code ? String(e.code) : null,
+        }));
+      });
     });
 
     const downloadUrl = `/api/crm/export/files/${job.id}/download?token=${encodeURIComponent(token)}`;
@@ -1312,21 +1358,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // LEADS ENDPOINTS
   app.get("/api/leads", async (req, res) => {
     try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
-      const allLeads = await storage.getLeads(limit, offset);
-      const withLinks = await Promise.all(
-        allLeads.map(async (l: any) => {
-          let linkedPropertyId: number | null = null;
-          try {
-            const p = await storage.getPropertyBySourceLeadId(l.id);
-            if (p) linkedPropertyId = p.id;
-          } catch {}
-          return { ...l, linkedPropertyId };
-        })
-      );
-      res.json(withLinks);
+      const { limit, offset } = parseLimitOffset(req.query);
+      const q = typeof req.query?.q === "string" ? req.query.q : "";
+      const status = typeof req.query?.status === "string" ? req.query.status : "";
+      const owner = typeof req.query?.owner === "string" ? req.query.owner : "";
+
+      let createdFrom: Date | undefined = undefined;
+      let createdTo: Date | undefined = undefined;
+      const createdFromRaw = typeof req.query?.createdFrom === "string" ? req.query.createdFrom : "";
+      const createdToRaw = typeof req.query?.createdTo === "string" ? req.query.createdTo : "";
+      if (createdFromRaw) {
+        const d = new Date(createdFromRaw);
+        if (!Number.isNaN(d.getTime())) createdFrom = d;
+      }
+      if (createdToRaw) {
+        const d = new Date(createdToRaw);
+        if (!Number.isNaN(d.getTime())) createdTo = d;
+      }
+
+      const { items, total } = await storage.listLeads({ q, status, owner, createdFrom, createdTo, limit, offset });
+      const leadIds = items.map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n) && n > 0);
+      const propertyLinks = await storage.getPropertiesBySourceLeadIds(leadIds);
+      const bySourceLeadId = new Map<number, number>();
+      for (const row of propertyLinks) {
+        const sid = Number((row as any).sourceLeadId);
+        const pid = Number((row as any).id);
+        if (Number.isFinite(sid) && Number.isFinite(pid)) bySourceLeadId.set(sid, pid);
+      }
+
+      res.json({
+        items: items.map((l: any) => ({ ...l, linkedPropertyId: bySourceLeadId.get(Number(l.id)) ?? null })),
+        total,
+      });
     } catch (error: any) {
+      console.error("GET /api/leads failed:", error);
+      if (isDbConnectivityError(error)) {
+        return res.status(503).json({ message: "Database is unavailable" });
+      }
       res.status(500).json({ message: error.message });
     }
   });
@@ -1511,7 +1579,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      const rows = await storage.getLeadSourceOptions(user.id);
+      let rows = await storage.getLeadSourceOptions(user.id);
+      if (!rows.length) {
+        const defaults = [
+          "Cold Call",
+          "Direct Mail",
+          "Referral",
+          "SMS",
+          "PPC",
+          "Driving for Dollars",
+          "Inbound Call",
+        ];
+        for (let i = 0; i < defaults.length; i++) {
+          const v = defaults[i];
+          await storage.upsertLeadSourceOption({
+            userId: user.id,
+            value: v,
+            label: v,
+            sortOrder: i,
+            isActive: true,
+          } as any);
+        }
+        rows = await storage.getLeadSourceOptions(user.id);
+      }
       res.json(rows.map((r: any) => ({
         id: r.id,
         value: r.value,
@@ -2101,7 +2191,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/leads", async (req, res) => {
     try {
       const validated = insertLeadSchema.parse(req.body) as InsertLead;
-      if (!String((validated as any).source || "").trim()) {
+      const source = String((validated as any).source || "").trim();
+      if (!source || source === "__custom__") {
         return res.status(400).json({ message: "Lead source is required" });
       }
 
@@ -2293,11 +2384,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // OPPORTUNITIES ENDPOINTS (New Terminology)
   app.get("/api/opportunities", async (req, res) => {
     try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const { limit, offset } = parseLimitOffset(req.query);
       const allProperties = await storage.getProperties(limit, offset);
       res.json(allProperties);
     } catch (error: any) {
+      console.error("GET /api/opportunities failed:", error);
+      if (isDbConnectivityError(error)) {
+        return res.status(503).json({ message: "Database is unavailable" });
+      }
       res.status(500).json({ message: error.message });
     }
   });
@@ -2795,7 +2889,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           LIMIT ${limit}
         `);
         return res.json({ listId, items: result.rows || [] });
-      } catch {
+      } catch (e: any) {
+        console.error(JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "dialer_queue",
+          kind: "primary_query_failed",
+          message: String(e?.message || e),
+          code: e?.code ? String(e.code) : null,
+          listId,
+          limit,
+        }));
         const leadsList: any[] = await storage.getLeads(limit, 0);
         const calls: any[] = await storage.getCallLogs(5000 as any, 0 as any);
         const lastCallByLeadId = new Map<number, string>();
@@ -3375,8 +3478,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const isOptOut = normalized === "STOP" || normalized === "UNSUBSCRIBE" || normalized === "CANCEL" || normalized === "QUIT";
 
             if (leadId && isOptOut) {
-              db.execute(sql`UPDATE leads SET do_not_text = true, updated_at = NOW() WHERE id = ${leadId}`).catch(() => {});
-              db.execute(sql`UPDATE campaign_enrollments SET status = 'opted_out', updated_at = NOW() WHERE lead_id = ${leadId} AND status = 'active'`).catch(() => {});
+              db.execute(sql`UPDATE leads SET do_not_text = true, updated_at = NOW() WHERE id = ${leadId}`).catch((e: any) => {
+                console.error(JSON.stringify({ ts: new Date().toISOString(), event: "sms_webhook", kind: "optout_update_failed", target: "leads", leadId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+              });
+              db.execute(sql`UPDATE campaign_enrollments SET status = 'opted_out', updated_at = NOW() WHERE lead_id = ${leadId} AND status = 'active'`).catch((e: any) => {
+                console.error(JSON.stringify({ ts: new Date().toISOString(), event: "sms_webhook", kind: "optout_update_failed", target: "campaign_enrollments", leadId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+              });
               storage
                 .createGlobalActivity({
                   userId,
@@ -3384,7 +3491,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   description: "Lead opted out via SMS",
                   metadata: JSON.stringify({ leadId, from: String(From || ""), to: String(To || ""), body: bodyText }),
                 } as any)
-                .catch(() => {});
+                .catch((e: any) => {
+                  console.error(JSON.stringify({ ts: new Date().toISOString(), event: "sms_webhook", kind: "activity_log_failed", action: "campaign_opt_out", leadId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+                });
             }
 
             return storage.createGlobalActivity({
@@ -3394,7 +3503,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
               metadata: JSON.stringify({ leadId: leadId || undefined, from: String(From || ""), to: String(To || ""), body: bodyText }),
             } as any);
           })
-          .catch(() => {});
+          .catch((e: any) => {
+            console.error(JSON.stringify({ ts: new Date().toISOString(), event: "sms_webhook", kind: "background_failed", message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+          });
       });
       
     } catch (error: any) {
@@ -3431,7 +3542,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             description: `Inbound call from ${String(From || "")}`,
             metadata: JSON.stringify({ leadId: leadId || undefined, callSid: String(CallSid || ""), from: String(From || ""), to: String(To || "") }),
           } as any);
-        })().catch(() => {});
+        })().catch((e: any) => {
+          console.error(JSON.stringify({ ts: new Date().toISOString(), event: "voice_webhook", kind: "background_failed", message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+        });
       });
       
       // Simple IVR response - can be enhanced with business hours logic
@@ -4238,13 +4351,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         auditJson: JSON.stringify(audit),
       } as any);
 
-      await storage.updateContractDocument(env.documentId, { status: "executed" } as any).catch(() => {});
+      await storage.updateContractDocument(env.documentId, { status: "executed" } as any).catch((e: any) => {
+        console.error(JSON.stringify({ ts: new Date().toISOString(), event: "esign", kind: "document_update_failed", documentId: env.documentId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+      });
       await storage.createGlobalActivity({
         userId: 0,
         action: "contract_signed",
         description: `Contract signed: ${String(doc.title || "")}`,
         metadata: JSON.stringify({ envelopeId: env.id, documentId: env.documentId, signerEmail: env.signerEmail || null }),
-      } as any).catch(() => {});
+      } as any).catch((e: any) => {
+        console.error(JSON.stringify({ ts: new Date().toISOString(), event: "esign", kind: "activity_log_failed", action: "contract_signed", documentId: env.documentId, envelopeId: env.id, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+      });
 
       try {
         await onContractSigned({

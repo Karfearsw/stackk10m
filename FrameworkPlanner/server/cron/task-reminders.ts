@@ -20,6 +20,7 @@ function envInt(name: string, fallback: number) {
 
 export function startTaskReminders(intervalMs = 60_000) {
   let running = false;
+  let lastErrorAt = 0;
 
   const tick = async () => {
     if (running) return;
@@ -53,7 +54,10 @@ export function startTaskReminders(intervalMs = 60_000) {
         const title = String(r.title || "Task due soon");
         const dueAt = r.due_at ? new Date(r.due_at) : null;
 
-        const prefs = (await storage.getNotificationPreferencesByUserId(userId).catch(() => null)) as any;
+        const prefs = (await storage.getNotificationPreferencesByUserId(userId).catch((e: any) => {
+          console.error(JSON.stringify({ ts: new Date().toISOString(), event: "task_reminders", kind: "prefs_fetch_failed", userId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+          return null;
+        })) as any;
         const inAppEnabled = prefs ? prefs.inAppEnabled !== false : true;
         const emailEnabled = prefs ? prefs.emailEnabled !== false : true;
 
@@ -81,7 +85,9 @@ export function startTaskReminders(intervalMs = 60_000) {
                 text: dueAt ? `${title}\nDue: ${dueAt.toISOString()}` : title,
               });
             }
-          } catch {}
+          } catch (e: any) {
+            console.error(JSON.stringify({ ts: new Date().toISOString(), event: "task_reminders", kind: "email_send_failed", userId, taskId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+          }
         }
 
         await db.execute(sql`UPDATE tasks SET reminder_sent_at = NOW(), updated_at = NOW() WHERE id = ${taskId}`);
@@ -109,7 +115,10 @@ export function startTaskReminders(intervalMs = 60_000) {
         const title = String(r.title || "Overdue task");
         const dueAt = r.due_at ? new Date(r.due_at) : null;
 
-        const prefs = (await storage.getNotificationPreferencesByUserId(userId).catch(() => null)) as any;
+        const prefs = (await storage.getNotificationPreferencesByUserId(userId).catch((e: any) => {
+          console.error(JSON.stringify({ ts: new Date().toISOString(), event: "task_reminders", kind: "prefs_fetch_failed", userId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+          return null;
+        })) as any;
         const inAppEnabled = prefs ? prefs.inAppEnabled !== false : true;
         const emailEnabled = prefs ? prefs.emailEnabled !== false : true;
 
@@ -137,7 +146,9 @@ export function startTaskReminders(intervalMs = 60_000) {
                 text: dueAt ? `${title}\nDue: ${dueAt.toISOString()}` : title,
               });
             }
-          } catch {}
+          } catch (e: any) {
+            console.error(JSON.stringify({ ts: new Date().toISOString(), event: "task_reminders", kind: "email_send_failed", userId, taskId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+          }
         }
 
         await db.execute(sql`UPDATE tasks SET overdue_alert_sent_at = NOW(), updated_at = NOW() WHERE id = ${taskId}`);
@@ -147,7 +158,18 @@ export function startTaskReminders(intervalMs = 60_000) {
     }
   };
 
-  tick().catch(() => {});
-  return setInterval(() => tick().catch(() => {}), intervalMs);
-}
+  const runTick = async () => {
+    try {
+      await tick();
+    } catch (e: any) {
+      const now = Date.now();
+      if (now - lastErrorAt >= 60_000) {
+        lastErrorAt = now;
+        console.error(JSON.stringify({ ts: new Date().toISOString(), event: "task_reminders", kind: "tick_failed", message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+      }
+    }
+  };
 
+  void runTick();
+  return setInterval(() => void runTick(), intervalMs);
+}

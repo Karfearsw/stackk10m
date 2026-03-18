@@ -30,6 +30,43 @@ import {
   insertDealAssignmentSchema
 } from "./shared-schema.js";
 
+function isDbConnectivityError(error: any): boolean {
+  const code = error?.code;
+  if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
+  if (code === "57P01" || code === "57P02" || code === "57P03") return true;
+  if (code === "08006" || code === "08001" || code === "08004") return true;
+  if (code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "SELF_SIGNED_CERT_IN_CHAIN") return true;
+  if (code === "ERR_TLS_CERT_ALTNAME_INVALID" || code === "CERT_HAS_EXPIRED") return true;
+  const nested = error?.errors;
+  if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
+  const message = String(error?.message || "");
+  return message.includes("DATABASE_URL");
+}
+
+function parseLimitOffset(query: any): { limit?: number; offset: number } {
+  const MAX_LIMIT = 500;
+
+  let limit: number | undefined = undefined;
+  const limitRaw = query?.limit;
+  if (typeof limitRaw === "string" && limitRaw.trim() !== "") {
+    const parsed = Number.parseInt(limitRaw, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      limit = Math.min(parsed, MAX_LIMIT);
+    }
+  }
+
+  let offset = 0;
+  const offsetRaw = query?.offset;
+  if (typeof offsetRaw === "string" && offsetRaw.trim() !== "") {
+    const parsed = Number.parseInt(offsetRaw, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      offset = parsed;
+    }
+  }
+
+  return { limit, offset };
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // HEALTH CHECK
   app.get("/api/health", async (req, res) => {
@@ -258,11 +295,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // LEADS ENDPOINTS
   app.get("/api/leads", async (req, res) => {
     try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const { limit, offset } = parseLimitOffset(req.query);
       const allLeads = await storage.getLeads(limit, offset);
       res.json(allLeads);
     } catch (error: any) {
+      console.error("GET /api/leads failed:", error);
+      if (isDbConnectivityError(error)) {
+        return res.status(503).json({ message: "Database is unavailable" });
+      }
       res.status(500).json({ message: error.message });
     }
   });
@@ -280,7 +320,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/leads", async (req, res) => {
     try {
       const validated = insertLeadSchema.parse(req.body);
-      const lead = await storage.createLead(validated);
+      const source = String((validated as any).source || "").trim();
+      if (!source || source === "__custom__") {
+        return res.status(400).json({ message: "Lead source is required" });
+      }
+
+      const lead = await storage.createLead({ ...(validated as any), source });
       
       if (req.session.userId) {
         await storage.createGlobalActivity({
@@ -407,11 +452,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // OPPORTUNITIES ENDPOINTS (New Terminology)
   app.get("/api/opportunities", async (req, res) => {
     try {
-      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      const { limit, offset } = parseLimitOffset(req.query);
       const allProperties = await storage.getProperties(limit, offset);
       res.json(allProperties);
     } catch (error: any) {
+      console.error("GET /api/opportunities failed:", error);
+      if (isDbConnectivityError(error)) {
+        return res.status(503).json({ message: "Database is unavailable" });
+      }
       res.status(500).json({ message: error.message });
     }
   });

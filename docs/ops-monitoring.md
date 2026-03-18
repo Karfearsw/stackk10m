@@ -20,6 +20,13 @@
 - Metrics: request/5xx counters via `/api/metrics`.
 - Vercel Monitoring and log drains for centralized observability.
 
+## Database Schema Readiness
+- The API may return `503` with `message: "Database schema is not ready"` and a `missing` list when required tables/columns are not present.
+- Fix by applying migrations:
+  - FrameworkPlanner SQL migrations: `node FrameworkPlanner/server/scripts/apply-migrations.ts`
+  - Drizzle schema push: `npm --prefix FrameworkPlanner run db:push`
+- If the API returns `503` with `message: "DATABASE_URL is not set"` or `message: "Database is unavailable"`, verify the `DATABASE_URL` environment variable and network access to Postgres.
+
 ## Regression Testing
 - Auth, health, and list endpoint tests with storage mocks.
 

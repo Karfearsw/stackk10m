@@ -4,6 +4,7 @@ import { getRvmProvider } from "../services/rvm/provider.js";
 
 export function startRvmPoller(intervalMs = 60_000) {
   let running = false;
+  let lastErrorAt = 0;
   const provider = getRvmProvider();
 
   const tick = async () => {
@@ -40,7 +41,18 @@ export function startRvmPoller(intervalMs = 60_000) {
     }
   };
 
-  tick().catch(() => {});
-  return setInterval(() => tick().catch(() => {}), intervalMs);
-}
+  const runTick = async () => {
+    try {
+      await tick();
+    } catch (e: any) {
+      const now = Date.now();
+      if (now - lastErrorAt >= 60_000) {
+        lastErrorAt = now;
+        console.error(JSON.stringify({ ts: new Date().toISOString(), event: "rvm_poller", kind: "tick_failed", message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+      }
+    }
+  };
 
+  void runTick();
+  return setInterval(() => void runTick(), intervalMs);
+}

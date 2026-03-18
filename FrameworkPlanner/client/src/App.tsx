@@ -7,33 +7,34 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { Loader2 } from "lucide-react";
 import NotFound from "@/pages/not-found";
-import Dashboard from "@/pages/dashboard";
-import Leads from "@/pages/leads";
-import Campaigns from "@/pages/campaigns";
-import RvmPage from "@/pages/rvm";
-import PropertyDetail from "@/pages/property-detail";
-import Properties from "@/pages/properties";
-import Contracts from "@/pages/contracts";
-import ContractGenerator from "@/pages/contract-generator";
-import Analytics from "@/pages/analytics";
-import Settings from "@/pages/settings";
-import Calculator from "@/pages/calculator";
-import Timesheet from "@/pages/timesheet";
 import Login from "@/pages/login";
 import Signup from "@/pages/signup";
-import Notifications from "@/pages/notifications";
-import Playground from "@/pages/playground";
-import Buyers from "@/pages/buyers";
-import TasksPage from "@/pages/tasks";
-import CalendarPage from "@/pages/calendar";
-import TodayPage from "@/pages/today";
-import SignContractPage from "@/pages/sign-contract";
-import FieldModePage from "@/pages/field";
+
+const Dashboard = React.lazy(() => import("@/pages/dashboard"));
+const Leads = React.lazy(() => import("@/pages/leads"));
+const Campaigns = React.lazy(() => import("@/pages/campaigns"));
+const RvmPage = React.lazy(() => import("@/pages/rvm"));
+const PropertyDetail = React.lazy(() => import("@/pages/property-detail"));
+const Properties = React.lazy(() => import("@/pages/properties"));
+const Contracts = React.lazy(() => import("@/pages/contracts"));
+const ContractGenerator = React.lazy(() => import("@/pages/contract-generator"));
+const Analytics = React.lazy(() => import("@/pages/analytics"));
+const Settings = React.lazy(() => import("@/pages/settings"));
+const Calculator = React.lazy(() => import("@/pages/calculator"));
+const Timesheet = React.lazy(() => import("@/pages/timesheet"));
+const Notifications = React.lazy(() => import("@/pages/notifications"));
+const Playground = React.lazy(() => import("@/pages/playground"));
+const Buyers = React.lazy(() => import("@/pages/buyers"));
+const TasksPage = React.lazy(() => import("@/pages/tasks"));
+const CalendarPage = React.lazy(() => import("@/pages/calendar"));
+const TodayPage = React.lazy(() => import("@/pages/today"));
+const Contacts = React.lazy(() => import("@/pages/contacts"));
+const SearchPage = React.lazy(() => import("@/pages/search"));
+const SignContractPage = React.lazy(() => import("@/pages/sign-contract"));
+const FieldModePage = React.lazy(() => import("@/pages/field"));
 const PhoneWorkspace = React.lazy(() => import("@/pages/phone"));
 const DialerWorkspace = React.lazy(() => import("@/pages/dialer-workspace"));
-import Contacts from "@/pages/contacts";
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
-import SearchPage from "@/pages/search";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -72,7 +73,9 @@ function Router() {
   return (
     <Switch>
       <Route path="/sign/:token">
-        <SignContractPage />
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+          <SignContractPage />
+        </Suspense>
       </Route>
       <Route path="/login">
         {isAuthenticated ? <Redirect to="/" /> : <Login />}

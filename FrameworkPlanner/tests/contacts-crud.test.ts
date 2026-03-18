@@ -65,7 +65,6 @@ describe("Contacts CRUD", () => {
   it("DELETE /api/contacts/:id deletes contact", async () => {
     const res = await request(app).delete("/api/contacts/1");
     expect(res.status).toBe(200);
-    expect(String(res.body.message || "")).toLowerCase().includes("deleted");
+    expect(String(res.body.message || "").toLowerCase()).toContain("deleted");
   });
 });
-

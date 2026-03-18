@@ -4,11 +4,12 @@ import express, { type Express, type Request, Response, NextFunction } from "exp
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import helmet from "helmet";
-import { db, pool } from "./db.js";
+import { db, pool, pgSslOptions, databaseUrl } from "./db.js";
 import { registerRoutes } from "./routes.js";
 import { initSentry, Sentry } from "./sentry.js";
 import crypto from "node:crypto";
 import { httpRequestsTotal, httpErrorsTotal, metricsText } from "./metrics.js";
+import { getSchemaReadiness, schemaFixInstructions } from "./schema-readiness.js";
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -27,6 +28,16 @@ log(`[Startup] Server initializing... (Commit: 90e785a)`);
 
 initSentry();
 // Sentry v8+ auto-instruments Express; request handler is no longer required
+
+if (!(globalThis as any).__stackk_process_handlers_installed) {
+  (globalThis as any).__stackk_process_handlers_installed = true;
+  process.on("unhandledRejection", (reason: any) => {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), event: "process", kind: "unhandledRejection", message: String(reason?.message || reason) }));
+  });
+  process.on("uncaughtException", (err: any) => {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), event: "process", kind: "uncaughtException", message: String(err?.message || err), code: err?.code ? String(err.code) : null }));
+  });
+}
 
 app.use(helmet({
   contentSecurityPolicy: false, // Disabled for simplicity with Vite dev server scripts
@@ -64,24 +75,51 @@ if (process.env.NODE_ENV === 'production' && !process.env.EMPLOYEE_ACCESS_CODE) 
 // Use PostgreSQL-backed session store for production-ready persistence
 const PgSession = connectPgSimple(session);
 
-app.use(session({
-  store: new PgSession({
-    conObject: {
-      connectionString: process.env.DATABASE_URL,
-    },
-    tableName: 'session',
-    createTableIfMissing: true,
-  }),
-  secret: sessionSecret,
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    httpOnly: true,
-    maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
-    sameSite: 'lax',
-  }
-}));
+app.set("trust proxy", 1);
+
+const hasDatabaseUrl = Boolean(databaseUrl() && String(databaseUrl()).trim());
+
+if (!sessionSecret) {
+  app.use("/api", (_req, res) => {
+    res.status(503).json({ message: "Server authentication is not configured" });
+  });
+  app.use((_req, _res, next) => {
+    next(new Error("SESSION_SECRET is required"));
+  });
+} else if (process.env.NODE_ENV === "production" && !hasDatabaseUrl) {
+  app.use("/api", (_req, res) => {
+    res.status(503).json({ message: "Server database is not configured" });
+  });
+  app.use((_req, _res, next) => {
+    next(new Error("DATABASE_URL is required in production"));
+  });
+} else {
+  const store = hasDatabaseUrl
+    ? new PgSession({
+        conObject: {
+          connectionString: databaseUrl(),
+          ssl: pgSslOptions(),
+        },
+        tableName: "session",
+        createTableIfMissing: true,
+      })
+    : undefined;
+
+  app.use(
+    session({
+      store,
+      secret: sessionSecret,
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        secure: process.env.NODE_ENV === "production",
+        httpOnly: true,
+        maxAge: 1000 * 60 * 60 * 24 * 7,
+        sameSite: "lax",
+      },
+    }),
+  );
+}
 
 app.use(express.json({
   verify: (req, _res, buf) => {
@@ -89,6 +127,21 @@ app.use(express.json({
   }
 }));
 app.use(express.urlencoded({ extended: false }));
+
+app.use("/api", (req, res, next) => {
+  getSchemaReadiness()
+    .then((r) => {
+      if (r.ok) return next();
+      res.status(503).json({
+        message: r.message,
+        kind: r.kind,
+        missing: r.missing,
+        code: r.code,
+        howToFix: schemaFixInstructions(),
+      });
+    })
+    .catch(next);
+});
 
 app.use((req, res, next) => {
   const start = Date.now();

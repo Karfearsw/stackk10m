@@ -5,7 +5,11 @@ import session from 'express-session';
 import { registerRoutes } from '../server/routes';
 import { storage } from '../server/storage';
 
-storage.getLeads = async (limit?: number) => Array.from({ length: limit ?? 10 }).map((_, i) => ({ id: i + 1 })) as any;
+storage.listLeads = async ({ limit }: any) => ({
+  items: Array.from({ length: limit ?? 10 }).map((_, i) => ({ id: i + 1 })),
+  total: limit ?? 10,
+}) as any;
+storage.getPropertiesBySourceLeadIds = async () => [] as any;
 storage.getProperties = async (limit?: number) => Array.from({ length: limit ?? 10 }).map((_, i) => ({ id: i + 1 })) as any;
 
 describe('List Endpoints Pagination', () => {
@@ -21,7 +25,7 @@ describe('List Endpoints Pagination', () => {
   it('GET /api/leads respects limit', async () => {
     const res = await request(app).get('/api/leads?limit=5');
     expect(res.status).toBe(200);
-    expect(res.body.length).toBe(5);
+    expect(res.body.items.length).toBe(5);
   });
 
   it('GET /api/properties respects limit', async () => {
