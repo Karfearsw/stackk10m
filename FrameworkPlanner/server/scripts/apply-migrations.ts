@@ -1,12 +1,16 @@
-import dotenv from 'dotenv';
-import { join } from "node:path";
-dotenv.config({ path: join(process.cwd(), 'FrameworkPlanner', '.env') });
+import dotenv from "dotenv";
 import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 
-async function run() {
-  const dir = join(process.cwd(), "FrameworkPlanner", "migrations");
+const frameworkRoot = fileURLToPath(new URL("../../..", import.meta.url));
+
+dotenv.config({ path: join(frameworkRoot, ".env") });
+
+export async function applyMigrations() {
+  const dir = join(frameworkRoot, "migrations");
   const files = readdirSync(dir)
-    .filter(f => f.endsWith(".sql"))
+    .filter((f) => f.endsWith(".sql"))
     .sort();
 
   const { pool } = await import("../db.js");
@@ -34,10 +38,19 @@ async function run() {
   }
 }
 
-run().then(() => {
-  console.log("All migrations applied");
-  process.exit(0);
-}).catch((e) => {
-  console.error("Migration failed", e);
-  process.exit(1);
-});
+function isMain() {
+  const self = resolve(fileURLToPath(import.meta.url));
+  const argv = process.argv[1] ? resolve(process.argv[1]) : "";
+  return self === argv;
+}
+
+if (isMain()) {
+  applyMigrations()
+    .then(() => {
+      console.log("All migrations applied");
+    })
+    .catch((e) => {
+      console.error("Migration failed", e);
+      process.exitCode = 1;
+    });
+}

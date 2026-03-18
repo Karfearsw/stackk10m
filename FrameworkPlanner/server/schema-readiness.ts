@@ -58,11 +58,32 @@ async function checkSchemaOnce(): Promise<SchemaReadiness> {
     const tasksRes = await pool.query("select to_regclass('public.tasks') as reg", []);
     if (!String(tasksRes?.rows?.[0]?.reg || "").trim()) missing.push("table:tasks");
 
+    const pcRes = await pool.query("select to_regclass('public.pipeline_configs') as reg", []);
+    if (!String(pcRes?.rows?.[0]?.reg || "").trim()) missing.push("table:pipeline_configs");
+
     const dncRes = await pool.query(
       "select 1 as ok from information_schema.columns where table_schema = 'public' and table_name = 'leads' and column_name = 'do_not_call' limit 1",
       [],
     );
     if (!dncRes?.rows?.length) missing.push("column:leads.do_not_call");
+
+    const dneRes = await pool.query(
+      "select 1 as ok from information_schema.columns where table_schema = 'public' and table_name = 'leads' and column_name = 'do_not_email' limit 1",
+      [],
+    );
+    if (!dneRes?.rows?.length) missing.push("column:leads.do_not_email");
+
+    const plsRes = await pool.query(
+      "select 1 as ok from information_schema.columns where table_schema = 'public' and table_name = 'properties' and column_name = 'lead_source' limit 1",
+      [],
+    );
+    if (!plsRes?.rows?.length) missing.push("column:properties.lead_source");
+
+    const plsDetailRes = await pool.query(
+      "select 1 as ok from information_schema.columns where table_schema = 'public' and table_name = 'properties' and column_name = 'lead_source_detail' limit 1",
+      [],
+    );
+    if (!plsDetailRes?.rows?.length) missing.push("column:properties.lead_source_detail");
 
     if (missing.length) {
       log("error", { kind: "missing", missing, requestId: reqId });
@@ -102,7 +123,9 @@ export async function getSchemaReadiness(): Promise<SchemaReadiness> {
 
 export function schemaFixInstructions() {
   return {
-    applyMigrations: "node FrameworkPlanner/server/scripts/apply-migrations.ts",
-    drizzlePush: "npm --prefix FrameworkPlanner run db:push",
+    applyMigrations: "npm run migrate",
+    applyMigrationsFromRepoRoot: "npm --prefix FrameworkPlanner run migrate",
+    drizzlePush: "npm run db:push",
+    drizzlePushFromRepoRoot: "npm --prefix FrameworkPlanner run db:push",
   };
 }

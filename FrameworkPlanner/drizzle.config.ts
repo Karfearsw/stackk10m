@@ -21,7 +21,7 @@ function sanitizeDatabaseUrl(input: string): string {
 
 export default defineConfig({
   out: "./migrations",
-  schema: "./shared/schema.ts",
+  schema: "./server/shared-schema.ts",
   dialect: "postgresql",
   dbCredentials: {
     url: sanitizeDatabaseUrl(process.env.DATABASE_URL),

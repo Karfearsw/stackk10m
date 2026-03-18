@@ -43,7 +43,12 @@ DEV_AUTH_BYPASS_ENABLED="true"
 - Restrictions: disabled in `NODE_ENV=production` and only accepts loopback requests (`127.0.0.1` / `::1`)
 - Audit trail: writes to `auth_audit_logs` when the table exists
 
-3. Push Database Schema:
+3. Apply Database Migrations:
+   ```bash
+   npm run migrate
+   ```
+
+   Optional (schema sync without SQL migrations):
    ```bash
    npm run db:push
    ```
@@ -81,6 +86,7 @@ Optional env vars:
    - `SESSION_SECRET`: A strong random string.
    - `EMPLOYEE_ACCESS_CODE`: your internal employee access code.
    - `NODE_ENV`: `production`.
+   - `AUTO_APPLY_MIGRATIONS`: `true` (Production only; runs SQL migrations at build time).
 4. Deploy.
 
 ### Troubleshooting Vercel 500 Errors
