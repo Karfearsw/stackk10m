@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { pool } from "./db.js";
+import { pool, databaseUrlResolution } from "./db.js";
 
 type SchemaReadiness =
   | { ok: true; checkedAt: string }
@@ -38,12 +38,17 @@ async function checkSchemaOnce(): Promise<SchemaReadiness> {
   const checkedAt = nowIso();
   const missing: string[] = [];
   try {
-    if (!String(process.env.DATABASE_URL || "").trim()) {
+    const dbUrl = databaseUrlResolution();
+    if (!dbUrl.url) {
+      missing.push("env:DATABASE_URL");
+      missing.push("env:POSTGRES_URL_NON_POOLING");
+      missing.push("env:POSTGRES_PRISMA_URL");
+      missing.push("env:POSTGRES_URL");
       return {
         ok: false,
         checkedAt,
         kind: "db_unavailable",
-        message: "DATABASE_URL is not set",
+        message: "No valid database URL configured",
         code: null,
         missing,
       };

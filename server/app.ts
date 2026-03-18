@@ -4,7 +4,7 @@ import express, { type Express, type Request, Response, NextFunction } from "exp
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import helmet from "helmet";
-import { db, pool, pgSslOptions, databaseUrl } from "./db.js";
+import { pool, databaseUrl } from "./db.js";
 import { registerRoutes } from "./routes.js";
 import { initSentry, Sentry } from "./sentry.js";
 import crypto from "node:crypto";
@@ -79,6 +79,13 @@ app.set("trust proxy", 1);
 
 const hasDatabaseUrl = Boolean(databaseUrl() && String(databaseUrl()).trim());
 
+app.use(express.json({
+  verify: (req, _res, buf) => {
+    req.rawBody = buf;
+  }
+}));
+app.use(express.urlencoded({ extended: false }));
+
 if (!sessionSecret) {
   app.use("/api", (_req, res) => {
     res.status(503).json({ message: "Server authentication is not configured" });
@@ -88,24 +95,43 @@ if (!sessionSecret) {
   });
 } else if (process.env.NODE_ENV === "production" && !hasDatabaseUrl) {
   app.use("/api", (_req, res) => {
-    res.status(503).json({ message: "Server database is not configured" });
+    res.status(503).json({
+      message: "Server database is not configured",
+      kind: "db_unavailable",
+      missing: ["env:DATABASE_URL", "env:POSTGRES_URL_NON_POOLING", "env:POSTGRES_PRISMA_URL", "env:POSTGRES_URL"],
+      code: null,
+      howToFix: schemaFixInstructions(),
+    });
   });
   app.use((_req, _res, next) => {
     next(new Error("DATABASE_URL is required in production"));
   });
 } else {
+  app.use("/api", (req, res, next) => {
+    getSchemaReadiness()
+      .then((r) => {
+        if (r.ok) return next();
+        res.status(503).json({
+          message: r.message,
+          kind: r.kind,
+          missing: r.missing,
+          code: r.code,
+          howToFix: schemaFixInstructions(),
+        });
+      })
+      .catch(next);
+  });
+
   const store = hasDatabaseUrl
     ? new PgSession({
-        conObject: {
-          connectionString: databaseUrl(),
-          ssl: pgSslOptions(),
-        },
+        pool,
         tableName: "session",
         createTableIfMissing: true,
       })
     : undefined;
 
   app.use(
+    "/api",
     session({
       store,
       secret: sessionSecret,
@@ -120,28 +146,6 @@ if (!sessionSecret) {
     }),
   );
 }
-
-app.use(express.json({
-  verify: (req, _res, buf) => {
-    req.rawBody = buf;
-  }
-}));
-app.use(express.urlencoded({ extended: false }));
-
-app.use("/api", (req, res, next) => {
-  getSchemaReadiness()
-    .then((r) => {
-      if (r.ok) return next();
-      res.status(503).json({
-        message: r.message,
-        kind: r.kind,
-        missing: r.missing,
-        code: r.code,
-        howToFix: schemaFixInstructions(),
-      });
-    })
-    .catch(next);
-});
 
 app.use((req, res, next) => {
   const start = Date.now();
