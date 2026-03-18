@@ -1,11 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { SignalWire } from "@signalwire/js";
-
-interface SignalWireConfig {
-  host: string;
-  project: string;
-  token: string;
-}
+import { useCallback, useEffect, useRef, useState } from "react";
+import * as SignalWire from "@signalwire/js";
 
 interface Call {
   id: string;
@@ -15,81 +9,125 @@ interface Call {
 }
 
 export function useSignalWire() {
-  const [ready, setReady] = useState(false);
+  const [connectionState, setConnectionState] = useState<"idle" | "connecting" | "ready" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
   const [call, setCall] = useState<Call | null>(null);
   const relayRef = useRef<any>(null);
   const sessionRef = useRef<any>(null);
-  const [token, setToken] = useState<string | null>(null);
+  const connectPromiseRef = useRef<Promise<void> | null>(null);
+  const didRetryRef = useRef(false);
 
-  const getToken = async (to: string, from?: string) => {
-    try {
-      const response = await fetch("/api/telephony/signalwire/token", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to: String(to), from: from ? String(from) : undefined }),
-      });
-      
-      if (!response.ok) {
-        throw new Error("Failed to get SignalWire token");
-      }
-      
-      const data = await response.json();
-      return data;
-    } catch (error) {
-      console.error("Failed to get SignalWire token:", error);
-      throw error;
+  const getToken = useCallback(async (to: string) => {
+    const response = await fetch("/api/telephony/signalwire/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: String(to) }),
+    });
+
+    if (!response.ok) {
+      const message = response.status === 401 ? "Unauthorized" : "Failed to get SignalWire token";
+      throw new Error(message);
     }
-  };
 
-  const connectWithToken = async (tokenData: any) => {
-    try {
-      // const host = (tokenData.space || "").replace(/^wss:\/\//, "");
-      const client: any = await SignalWire({ token: tokenData.token });
-      setReady(true);
-      relayRef.current = client;
-      return () => {
-        const disconnect = (client as any)?.disconnect || (client as any)?.offline;
-        if (typeof disconnect === "function") disconnect.call(client);
-      };
-    } catch (error) {
-      console.error("Failed to connect to SignalWire:", error);
-      throw error;
-    }
-  };
+    return await response.json();
+  }, []);
 
-  const makeCall = async (number: string) => {
-    try {
-      console.log("[SW-Diag] makeCall invoked for:", number);
-      // Get token from server
-      const tokenData = await getToken(number, "+12314060943");
-      setToken(tokenData.token);
-      
-      // Connect with token if not already connected
-      if (!ready) {
-        console.log("[SW-Diag] Client not ready, connecting...");
-        await connectWithToken(tokenData);
+  const connect = useCallback(
+    async (tokenData: any) => {
+      if (relayRef.current && connectionState === "ready") return;
+      if (connectPromiseRef.current) return await connectPromiseRef.current;
+
+      setConnectionState("connecting");
+      setError(null);
+
+      const connectPromise = (async () => {
+        const client: any = await (SignalWire as any).createClient({ token: tokenData.token });
+
+        client.on("signalwire.ready", () => {
+          relayRef.current = client;
+          setConnectionState("ready");
+        });
+
+        client.on("signalwire.error", (e: any) => {
+          setConnectionState("error");
+          setError(String(e?.message || e || "SignalWire error"));
+        });
+
+        client.on("call.received", (incoming: any) => {
+          setCall({
+            id: incoming.id,
+            remoteNumber: incoming.peer?.number || "unknown",
+            state: "ringing",
+            muted: false,
+          });
+        });
+
+        client.on("call.state", (updated: any) => {
+          setCall((prev) => {
+            if (!prev || prev.id !== updated.id) return prev;
+            return { ...prev, state: updated.state };
+          });
+        });
+
+        await client.connect();
+        relayRef.current = client;
+        setConnectionState("ready");
+        didRetryRef.current = false;
+      })();
+
+      connectPromiseRef.current = connectPromise;
+
+      try {
+        await connectPromise;
+      } catch (e: any) {
+        connectPromiseRef.current = null;
+        setConnectionState("error");
+        setError(String(e?.message || e || "Failed to connect"));
+
+        if (!didRetryRef.current) {
+          didRetryRef.current = true;
+          try {
+            setConnectionState("connecting");
+            await new Promise((r) => setTimeout(r, 750));
+            const client: any = await (SignalWire as any).createClient({ token: tokenData.token });
+            client.on("signalwire.ready", () => {
+              relayRef.current = client;
+              setConnectionState("ready");
+            });
+            client.on("signalwire.error", (err: any) => {
+              setConnectionState("error");
+              setError(String(err?.message || err || "SignalWire error"));
+            });
+            await client.connect();
+            relayRef.current = client;
+            setConnectionState("ready");
+            setError(null);
+            return;
+          } catch {}
+        }
+
+        throw e;
+      } finally {
+        connectPromiseRef.current = null;
       }
-      
+    },
+    [connectionState],
+  );
+
+  const makeCall = useCallback(
+    async (number: string) => {
+      const tokenData = await getToken(number);
+      await connect(tokenData);
+
       if (!relayRef.current) {
-        console.error("[SW-Diag] relayRef is null after connection attempt");
         throw new Error("SignalWire not ready");
       }
-      
+
       const client = relayRef.current as any;
-      const dialMethod = client?.voice?.dialPhone || client?.calling?.dialPhone || client?.dial;
-      console.log("[SW-Diag] Checking dial method. Type:", typeof dialMethod);
-      
-      if (typeof dialMethod !== "function") {
-        console.error("[SW-Diag] dial method missing on client:", relayRef.current);
-        throw new Error("SignalWire dial unavailable");
-      }
-      
-      console.log("[SW-Diag] Calling dial...");
-      const session = await dialMethod.call(relayRef.current, {
-        to: number,
-        from: "+12314060943",
-      });
-      console.log("[SW-Diag] Dial successful. Session ID:", session.callId || session.id);
+      const dial = typeof client.dialPhone === "function" ? client.dialPhone : client?.voice?.dialPhone;
+      if (typeof dial !== "function") throw new Error("SignalWire dial unavailable");
+
+      const session = await dial.call(client, { to: number, from: tokenData.from });
 
       setCall({
         id: session.callId || session.id || "unknown",
@@ -100,61 +138,53 @@ export function useSignalWire() {
 
       sessionRef.current = session;
       return session;
-    } catch (error) {
-      console.error("Failed to make call:", error);
-      throw error;
-    }
-  };
+    },
+    [connect, getToken],
+  );
 
-  const endCall = async () => {
+  const endCall = useCallback(async () => {
     if (!sessionRef.current) return;
     
-    try {
-      await sessionRef.current.hangup();
-      setCall(null);
-      sessionRef.current = null;
-    } catch (error) {
-      console.error("Failed to end call:", error);
-      throw error;
-    }
-  };
+    await sessionRef.current.hangup();
+    setCall(null);
+    sessionRef.current = null;
+  }, []);
 
-  const toggleMute = async () => {
+  const toggleMute = useCallback(async () => {
     if (!sessionRef.current || !call) return;
 
-    try {
-      if (call.muted) {
-        await sessionRef.current.unmute();
-      } else {
-        await sessionRef.current.mute();
-      }
-      
-      setCall(prev => prev ? { ...prev, muted: !prev.muted } : null);
-    } catch (error) {
-      console.error("Failed to toggle mute:", error);
-      throw error;
-    }
-  };
+    if (call.muted) await sessionRef.current.unmute();
+    else await sessionRef.current.mute();
 
-  const toggleHold = async () => {
+    setCall((prev) => (prev ? { ...prev, muted: !prev.muted } : null));
+  }, [call]);
+
+  const toggleHold = useCallback(async () => {
     if (!sessionRef.current || !call) return;
 
-    try {
-      if (call.state === "held") {
-        await sessionRef.current.unhold();
-        setCall(prev => prev ? { ...prev, state: "active" } : null);
-      } else {
-        await sessionRef.current.hold();
-        setCall(prev => prev ? { ...prev, state: "held" } : null);
-      }
-    } catch (error) {
-      console.error("Failed to toggle hold:", error);
-      throw error;
+    if (call.state === "held") {
+      await sessionRef.current.unhold();
+      setCall((prev) => (prev ? { ...prev, state: "active" } : null));
+      return;
     }
-  };
+
+    await sessionRef.current.hold();
+    setCall((prev) => (prev ? { ...prev, state: "held" } : null));
+  }, [call]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        const client = relayRef.current as any;
+        if (client && typeof client.disconnect === "function") client.disconnect();
+      } catch {}
+    };
+  }, []);
 
   return {
-    ready,
+    ready: connectionState === "ready",
+    connectionState,
+    error,
     call,
     makeCall,
     endCall,

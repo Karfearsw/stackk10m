@@ -64,6 +64,7 @@ export function CrmImportExportDialog({
   const [preview, setPreview] = useState<any>(null);
   const [previewError, setPreviewError] = useState<string>("");
   const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [defaultLeadSource, setDefaultLeadSource] = useState<string>("");
   const [onDuplicate, setOnDuplicate] = useState<"merge" | "overwrite" | "skip">("merge");
   const [dryRun, setDryRun] = useState(false);
   const [importJobId, setImportJobId] = useState<number | null>(null);
@@ -90,6 +91,7 @@ export function CrmImportExportDialog({
     setPreviewError("");
     setFile(null);
     setMapping({});
+    setDefaultLeadSource("");
     setOnDuplicate("merge");
     setDryRun(false);
     setImportJobId(null);
@@ -156,13 +158,36 @@ export function CrmImportExportDialog({
     }
   };
 
+  const { data: leadSourceOptions = [] } = useQuery<any[]>({
+    queryKey: ["/api/lead-source-options"],
+    queryFn: async () => {
+      const res = await fetch("/api/lead-source-options", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!user && entityType === "lead",
+  });
+
+  useEffect(() => {
+    if (entityType !== "lead") return;
+    if (defaultLeadSource) return;
+    if (!Array.isArray(leadSourceOptions) || !leadSourceOptions.length) return;
+    const v = String(leadSourceOptions[0]?.value || "").trim();
+    if (v) setDefaultLeadSource(v);
+  }, [defaultLeadSource, entityType, leadSourceOptions]);
+
   const startImport = async () => {
     if (!file) return;
     try {
+      const effectiveMapping: Record<string, string> = { ...(mapping || {}) };
+      if (entityType === "lead" && !effectiveMapping.source && defaultLeadSource) {
+        effectiveMapping.source = `static:${defaultLeadSource}`;
+      }
+
       const fd = new FormData();
       fd.append("entityType", entityType);
       fd.append("file", file);
-      fd.append("mapping", JSON.stringify(mapping || {}));
+      fd.append("mapping", JSON.stringify(effectiveMapping));
       fd.append("options", JSON.stringify({ onDuplicate, dryRun }));
       const res = await fetch("/api/crm/import/jobs", {
         method: "POST",
@@ -227,6 +252,10 @@ export function CrmImportExportDialog({
 
   const supportsStatusFilter = entityType !== "contact";
   const supportsAssignedToFilter = entityType === "lead" || entityType === "opportunity";
+  const missingRequired = requiredFields.some((f) => {
+    if (entityType === "lead" && f.key === "source") return !mapping.source && !defaultLeadSource;
+    return !mapping[f.key];
+  });
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -288,6 +317,24 @@ export function CrmImportExportDialog({
                     <Checkbox checked={dryRun} onCheckedChange={(v) => setDryRun(!!v)} />
                     <Label>Dry run (no writes)</Label>
                   </div>
+
+                  {entityType === "lead" ? (
+                    <div className="space-y-2">
+                      <Label>Default Lead Source</Label>
+                      <Select value={defaultLeadSource} onValueChange={setDefaultLeadSource}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select source" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {(Array.isArray(leadSourceOptions) ? leadSourceOptions : []).map((o: any) => (
+                            <SelectItem key={String(o.value || "")} value={String(o.value || "")}>
+                              {String(o.label || o.value || "")}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null}
 
                   <div className="space-y-3">
                     <Label>Field Mapping (Required)</Label>
@@ -425,7 +472,7 @@ export function CrmImportExportDialog({
             <DialogFooter>
               <Button
                 onClick={() => startImport()}
-                disabled={!preview || !file || requiredFields.some((f) => !mapping[f.key]) || importPolling}
+                disabled={!preview || !file || missingRequired || importPolling}
               >
                 Start Import
               </Button>

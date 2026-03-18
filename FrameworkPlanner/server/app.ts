@@ -51,7 +51,7 @@ if (process.env.NODE_ENV === 'production' && !process.env.SESSION_SECRET) {
 }
 
 const sessionSecret = process.env.SESSION_SECRET || 
-  (process.env.NODE_ENV === 'development' ? 'flipstackk-development-secret-DO-NOT-USE-IN-PRODUCTION' : '');
+  (process.env.NODE_ENV === 'development' ? 'luxe-rm-development-secret-DO-NOT-USE-IN-PRODUCTION' : '');
 
 if (!sessionSecret) {
   console.error('SESSION_SECRET must be set');
@@ -153,6 +153,9 @@ app.use((req, res, next) => {
 });
 
 import { startAutomationWorker } from "./cron/lead-automation.js";
+import { startCampaignScheduler } from "./cron/campaign-scheduler.js";
+import { startRvmPoller } from "./cron/rvm-poller.js";
+import { startTaskReminders } from "./cron/task-reminders.js";
 
 export default async function runApp(
   setup: (app: Express, server: Server) => Promise<void>,
@@ -190,6 +193,27 @@ export default async function runApp(
       : process.env.NODE_ENV !== "test";
   if (enableAutomationWorker) {
     startAutomationWorker(60000); // Run every minute
+  }
+
+  const enableCampaignScheduler = String(process.env.FEATURE_CAMPAIGNS || "").trim().toLowerCase() === "true";
+  if (enableCampaignScheduler) {
+    startCampaignScheduler(60000);
+  }
+
+  const enableRvmWorker = String(process.env.FEATURE_RVM || "").trim().toLowerCase() === "true";
+  if (enableRvmWorker) {
+    startRvmPoller(60000);
+  }
+
+  const taskRemindersEnv = String(process.env.TASK_REMINDERS_ENABLED || "").trim().toLowerCase();
+  const enableTaskReminders =
+    process.env.NODE_ENV !== "test" &&
+    taskRemindersEnv !== "0" &&
+    taskRemindersEnv !== "false" &&
+    taskRemindersEnv !== "no" &&
+    taskRemindersEnv !== "off";
+  if (enableTaskReminders) {
+    startTaskReminders(60000);
   }
 
   app.get("/api/metrics", async (_req, res) => {

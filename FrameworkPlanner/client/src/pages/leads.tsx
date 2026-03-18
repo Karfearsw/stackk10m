@@ -46,6 +46,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PipelineBoard } from "@/components/pipeline/PipelineBoard";
 import { LeadPipelineCard } from "@/components/pipeline/LeadPipelineCard";
 import { EntityActivity } from "@/components/activity/EntityActivity";
+import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 
 const statusOptions = [
@@ -103,6 +104,7 @@ export default function Leads() {
     ownerPhone: "",
     ownerEmail: "",
     estimatedValue: "",
+    source: "",
     status: "new"
   });
 
@@ -132,6 +134,21 @@ export default function Leads() {
     return statusOptions;
   }, [leadPipelineConfig]);
 
+  const { data: leadSourceOptions = [] } = useQuery<any[]>({
+    queryKey: ["/api/lead-source-options"],
+    queryFn: async () => {
+      const res = await fetch("/api/lead-source-options", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  useEffect(() => {
+    if (newLead.source) return;
+    if (!Array.isArray(leadSourceOptions) || !leadSourceOptions.length) return;
+    setNewLead((prev: any) => ({ ...prev, source: String(leadSourceOptions[0]?.value || "") }));
+  }, [leadSourceOptions, newLead.source]);
+
   const createMutation = useMutation({
     mutationFn: async (lead: any) => {
       const payload = {
@@ -148,7 +165,7 @@ export default function Leads() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
-      setNewLead({ address: "", city: "", state: "FL", zipCode: "", ownerName: "", ownerPhone: "", ownerEmail: "", estimatedValue: "", status: "new" });
+      setNewLead({ address: "", city: "", state: "FL", zipCode: "", ownerName: "", ownerPhone: "", ownerEmail: "", estimatedValue: "", source: "", status: "new" });
       setIsAddDialogOpen(false);
       toast({
         title: "Lead created",
@@ -225,9 +242,11 @@ export default function Leads() {
   });
 
   const handleAddLead = async () => {
-    if (newLead.address && newLead.city && newLead.zipCode && newLead.ownerName) {
+    if (newLead.address && newLead.city && newLead.zipCode && newLead.ownerName && newLead.source) {
       await createMutation.mutateAsync(newLead);
+      return;
     }
+    toast({ title: "Lead source is required", variant: "destructive" });
   };
 
   const handleUpdateLead = async () => {
@@ -304,6 +323,34 @@ export default function Leads() {
     if (!selectedLeadId) return null;
     return (leads || []).find((l: any) => l.id === selectedLeadId) || null;
   }, [leads, selectedLeadId]);
+
+  const { data: skipTraceLatest } = useQuery<any>({
+    queryKey: ["/api/leads", selectedLeadId, "skip-trace-latest"],
+    enabled: !!selectedLeadId && isLeadSheetOpen,
+    queryFn: async () => {
+      const res = await fetch(`/api/leads/${selectedLeadId}/skip-trace/latest`, { credentials: "include" });
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error("Failed to fetch skip trace");
+      return res.json();
+    },
+  });
+
+  const skipTraceMutation = useMutation({
+    mutationFn: async (leadId: number) => {
+      const res = await fetch(`/api/leads/${leadId}/skip-trace`, { method: "POST", credentials: "include" });
+      if (res.status === 404) throw new Error("Skip trace is disabled");
+      if (!res.ok) throw new Error("Skip trace failed");
+      return res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/leads", selectedLeadId, "skip-trace-latest"] });
+      await queryClient.invalidateQueries({ queryKey: ["leads"] });
+      toast({ title: "Skip trace completed" });
+    },
+    onError: (e: any) => {
+      toast({ title: e?.message || "Skip trace failed", variant: "destructive" });
+    },
+  });
 
   useEffect(() => {
     if (didApplyQueryLead) return;
@@ -457,6 +504,21 @@ export default function Leads() {
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="phone" className="text-right">Phone</Label>
                   <Input id="phone" placeholder="(555) 123-4567" className="col-span-3" value={newLead.ownerPhone} onChange={(e) => setNewLead({...newLead, ownerPhone: e.target.value})} data-testid="input-lead-phone" />
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="source" className="text-right">Lead Source</Label>
+                  <Select value={newLead.source} onValueChange={(value) => setNewLead({ ...newLead, source: value })}>
+                    <SelectTrigger className="col-span-3" data-testid="select-lead-source">
+                      <SelectValue placeholder="Select source" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {leadSourceOptions.map((o: any) => (
+                        <SelectItem key={String(o.value)} value={String(o.value)}>
+                          {String(o.label || o.value)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="status" className="text-right">Status</Label>
@@ -708,6 +770,53 @@ export default function Leads() {
                 </div>
               </div>
 
+              <div className="space-y-2">
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  disabled={skipTraceMutation.isPending}
+                  onClick={() => skipTraceMutation.mutate(selectedLead.id)}
+                >
+                  Skip Trace Owner
+                </Button>
+                {skipTraceLatest && (
+                  <div className="border rounded-md p-3 text-sm bg-muted/20">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs text-muted-foreground">Last Result</div>
+                      <div className="text-xs text-muted-foreground">
+                        {skipTraceLatest.completedAt
+                          ? new Date(skipTraceLatest.completedAt).toLocaleString()
+                          : skipTraceLatest.requestedAt
+                            ? new Date(skipTraceLatest.requestedAt).toLocaleString()
+                            : "—"}
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-1 gap-1">
+                      <div>
+                        <span className="text-muted-foreground">Status:</span>{" "}
+                        <span className="font-medium">{String(skipTraceLatest.status || "—")}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Phones:</span>{" "}
+                        <span className="font-medium">{Array.isArray(skipTraceLatest.phones) && skipTraceLatest.phones.length ? skipTraceLatest.phones.join(", ") : "—"}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Emails:</span>{" "}
+                        <span className="font-medium">{Array.isArray(skipTraceLatest.emails) && skipTraceLatest.emails.length ? skipTraceLatest.emails.join(", ") : "—"}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Cost:</span>{" "}
+                        <span className="font-medium">
+                          {typeof skipTraceLatest.costCents === "number" ? `$${(skipTraceLatest.costCents / 100).toFixed(2)}` : "—"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <EntityTasksWidget entityType="lead" entityId={selectedLead.id} />
+
               <div>
                 <div className="text-xs text-muted-foreground mb-1">Notes</div>
                 <div className="whitespace-pre-wrap text-sm border rounded-md p-3 bg-muted/30">
@@ -783,6 +892,21 @@ export default function Leads() {
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-phone" className="text-right">Phone</Label>
                 <Input id="edit-phone" className="col-span-3" value={editingLead.ownerPhone || ""} onChange={(e) => setEditingLead({...editingLead, ownerPhone: e.target.value})} data-testid="input-edit-phone" />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="edit-source" className="text-right">Lead Source</Label>
+                <Select value={String(editingLead.source || "")} onValueChange={(value) => setEditingLead({ ...editingLead, source: value })}>
+                  <SelectTrigger className="col-span-3" data-testid="select-edit-source">
+                    <SelectValue placeholder="Select source" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {leadSourceOptions.map((o: any) => (
+                      <SelectItem key={String(o.value)} value={String(o.value)}>
+                        {String(o.label || o.value)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-status" className="text-right">Status</Label>

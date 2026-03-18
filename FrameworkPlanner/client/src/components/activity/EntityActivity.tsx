@@ -64,6 +64,9 @@ export function EntityActivity({
         {items.map((item) => {
           const name = [item.user?.firstName, item.user?.lastName].filter(Boolean).join(" ") || item.user?.email || `User ${item.userId}`;
           const when = item.createdAt ? new Date(item.createdAt).toLocaleString() : "";
+          const meta: any = (item as any).metadataParsed || null;
+          const audioUrl = meta?.audioUrl || meta?.recordingUrl || meta?.RecordingUrl || null;
+          const body = typeof meta?.body === "string" ? meta.body : null;
           return (
             <Card key={item.id} className="p-3">
               <div className="flex items-center justify-between gap-2">
@@ -72,6 +75,9 @@ export function EntityActivity({
               </div>
               <div className="text-xs text-muted-foreground truncate">{name}</div>
               {item.description ? <div className="text-sm mt-2">{item.description}</div> : null}
+              {!item.description && body ? <div className="text-sm mt-2">{body}</div> : null}
+              {item.action === "sms_sent" && body ? <div className="text-sm mt-2">{body}</div> : null}
+              {audioUrl ? <audio className="w-full mt-2" controls src={String(audioUrl)} /> : null}
             </Card>
           );
         })}
@@ -79,4 +85,3 @@ export function EntityActivity({
     </ScrollArea>
   );
 }
-

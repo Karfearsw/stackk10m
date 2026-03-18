@@ -9,7 +9,7 @@ async function bootstrapAdmin() {
     const password = process.env.BOOTSTRAP_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD;
     const firstName = process.env.BOOTSTRAP_ADMIN_FIRST_NAME || "Admin";
     const lastName = process.env.BOOTSTRAP_ADMIN_LAST_NAME || "User";
-    const companyName = process.env.BOOTSTRAP_ADMIN_COMPANY || "FlipStackk";
+    const companyName = process.env.BOOTSTRAP_ADMIN_COMPANY || "Luxe RM";
 
     if (!adminEmail) {
       throw new Error("Missing admin email. Set BOOTSTRAP_ADMIN_EMAIL or ADMIN_USERNAME.");
@@ -46,8 +46,8 @@ async function bootstrapAdmin() {
     console.log(`   Name: ${adminUser.firstName} ${adminUser.lastName}`);
 
     const team = await storage.createTeam({
-      name: "FlipStackk Team",
-      description: "Primary team for FlipStackk operations",
+      name: "Luxe RM Team",
+      description: "Primary team for Luxe RM operations",
       ownerId: adminUser.id,
       isActive: true,
     });

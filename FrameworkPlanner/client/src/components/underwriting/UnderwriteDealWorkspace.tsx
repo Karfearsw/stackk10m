@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { ResearchConsole } from "@/components/underwriting/ResearchConsole";
+import { ResearchHub, type PlaygroundQuickLink, type PlaygroundResearchNote } from "@/components/underwriting/ResearchHub";
 import { UnderwriteDealPanel } from "@/components/underwriting/UnderwriteDealPanel";
 import { makeAddressSearchUrl } from "@/utils/playgroundPersistence";
 import { makeEmptyUnderwritingV1, underwritingSchemaV1, type UnderwritingComp, type UnderwritingV1 } from "@shared/underwriting";
@@ -24,6 +24,49 @@ function nowIso() {
 
 function makeCompId() {
   return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+}
+
+function safeJsonParse(value: unknown, fallback: any) {
+  if (typeof value !== "string") return fallback;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function coerceQuickLinks(raw: any): PlaygroundQuickLink[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PlaygroundQuickLink[] = [];
+  for (const r of raw) {
+    const id = typeof r?.id === "string" && r.id ? r.id : "";
+    const name = typeof r?.name === "string" ? r.name : typeof r?.label === "string" ? r.label : "";
+    const url = typeof r?.url === "string" ? r.url : "";
+    const createdAt = typeof r?.createdAt === "string" && r.createdAt ? r.createdAt : new Date().toISOString();
+    if (!id || !name || !url) continue;
+    out.push({ id, name, url, createdAt });
+  }
+  return out;
+}
+
+function coerceNotes(raw: any): PlaygroundResearchNote[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PlaygroundResearchNote[] = [];
+  for (const r of raw) {
+    const id = typeof r?.id === "string" && r.id ? r.id : "";
+    const typeRaw = typeof r?.type === "string" ? r.type : "residential";
+    const type =
+      typeRaw === "land_vacant" || typeRaw === "commercial" || typeRaw === "multi_family" || typeRaw === "residential"
+        ? typeRaw
+        : "residential";
+    const title = typeof r?.title === "string" ? r.title : "";
+    const content = typeof r?.content === "string" ? r.content : "";
+    const createdAt = typeof r?.createdAt === "string" && r.createdAt ? r.createdAt : new Date().toISOString();
+    const updatedAt = typeof r?.updatedAt === "string" && r.updatedAt ? r.updatedAt : createdAt;
+    if (!id) continue;
+    out.push({ id, type, title, content, createdAt, updatedAt });
+  }
+  return out;
 }
 
 export function UnderwriteDealWorkspace(props: {
@@ -77,6 +120,8 @@ export function UnderwriteDealWorkspace(props: {
 
   const [currentUrl, setCurrentUrl] = useState<string>(() => makeAddressSearchUrl(address));
   const [underwriting, setUnderwriting] = useState<UnderwritingV1>(() => makeEmptyUnderwritingV1(nowIso()));
+  const [quickLinks, setQuickLinks] = useState<PlaygroundQuickLink[]>([]);
+  const [notes, setNotes] = useState<PlaygroundResearchNote[]>([]);
   const hydratedRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
 
@@ -92,6 +137,10 @@ export function UnderwriteDealWorkspace(props: {
     }
     const parsed = underwritingSchemaV1.safeParse(raw);
     setUnderwriting(parsed.success ? parsed.data : makeEmptyUnderwritingV1(nowIso()));
+    const nextLinks = coerceQuickLinks(safeJsonParse(session?.bookmarksJson, []));
+    const nextNotes = coerceNotes(safeJsonParse(session?.notesJson, []));
+    setQuickLinks(nextLinks);
+    setNotes(nextNotes);
     hydratedRef.current = true;
   }, [session, address]);
 
@@ -108,8 +157,9 @@ export function UnderwriteDealWorkspace(props: {
       if (!res.ok) throw new Error(json?.message || "Failed to save session");
       return json;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/playground/sessions/open", sessionKey] });
+    onSuccess: (updated) => {
+      if (!updated) return;
+      qc.setQueryData(["/api/playground/sessions/open", sessionKey], updated);
     },
     onError: (e: any) => {
       toast({ title: "Save failed", description: e?.message || "Unknown error", variant: "destructive" });
@@ -123,6 +173,8 @@ export function UnderwriteDealWorkspace(props: {
     saveTimerRef.current = window.setTimeout(() => {
       patchSession.mutate({
         currentUrl,
+        bookmarksJson: JSON.stringify(quickLinks || []),
+        notesJson: JSON.stringify(notes || []),
         underwritingJson: JSON.stringify({ ...underwriting, updatedAt: nowIso() }),
       });
       saveTimerRef.current = null;
@@ -130,7 +182,7 @@ export function UnderwriteDealWorkspace(props: {
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     };
-  }, [currentUrl, underwriting, session?.id]);
+  }, [currentUrl, notes, quickLinks, underwriting, session?.id]);
 
   const selectedTemplate = useMemo(() => {
     const tid = underwriting.templateId ? parseInt(underwriting.templateId, 10) : NaN;
@@ -200,10 +252,14 @@ export function UnderwriteDealWorkspace(props: {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-[70vh]">
       <div className="lg:col-span-7 min-h-[70vh]">
-        <ResearchConsole
+        <ResearchHub
           address={address}
           currentUrl={currentUrl}
           onUrlChange={setCurrentUrl}
+          quickLinks={quickLinks}
+          onQuickLinksChange={setQuickLinks}
+          notes={notes}
+          onNotesChange={setNotes}
           onSaveComp={(comp) => addComp({ ...comp, url: comp.url || currentUrl })}
         />
       </div>

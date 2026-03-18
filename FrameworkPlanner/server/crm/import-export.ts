@@ -59,7 +59,7 @@ const leadFields: FieldDef[] = [
   { key: "relasScore", label: "Relas Score", type: "int" },
   { key: "motivation", label: "Motivation", type: "string" },
   { key: "status", label: "Status", type: "string" },
-  { key: "source", label: "Source", type: "string" },
+  { key: "source", label: "Source", required: true, type: "string" },
   { key: "assignedTo", label: "Assigned To (User ID)", type: "int" },
   { key: "notes", label: "Notes", type: "string" },
 ];
@@ -413,7 +413,11 @@ export function mapAndValidateRow(entityType: CrmEntityType, row: Record<string,
   for (const def of defs) {
     const col = mapping[def.key];
     if (!col) continue;
-    raw[def.key] = row[col];
+    if (def.key === "source" && typeof col === "string" && col.startsWith("static:")) {
+      raw[def.key] = col.slice("static:".length);
+    } else {
+      raw[def.key] = row[col];
+    }
   }
 
   const errors: ImportRowError[] = [];

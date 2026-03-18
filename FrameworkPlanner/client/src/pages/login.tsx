@@ -47,12 +47,12 @@ export default function Login() {
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center mb-4">
             <img 
-              src="/flipstackk-logo.jpg" 
-              alt="FlipStackk Logo" 
+              src="/luxe-logo.png" 
+              alt="Luxe RM Logo" 
               className="h-24 w-auto object-contain"
             />
           </div>
-          <CardTitle className="text-3xl font-bold">FlipStackk 6.0</CardTitle>
+          <CardTitle className="text-3xl font-bold">Luxe RM</CardTitle>
           <CardDescription>
             Sign in to your account to continue
           </CardDescription>
@@ -87,7 +87,7 @@ export default function Login() {
             </div>
             <Button
               type="submit"
-              className="w-full bg-primary hover:bg-primary/90 text-white"
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
               disabled={isLoading}
               data-testid="button-login"
             >
@@ -123,12 +123,12 @@ export default function Login() {
           )}
           
           <div className="mt-6 text-center text-sm text-muted-foreground">
-            <p>Real Estate Wholesaling CRM</p>
+            <p>Luxe Relationship Management</p>
             <p className="mt-2">Don't have an account?</p>
             <Link href="/signup" className="text-primary hover:underline font-medium">
               Sign up as an employee
             </Link>
-            <p className="mt-4 text-xs">© 2025 FlipStackk. All rights reserved.</p>
+            <p className="mt-4 text-xs">© 2025 Luxe RM. All rights reserved.</p>
           </div>
         </CardContent>
       </Card>

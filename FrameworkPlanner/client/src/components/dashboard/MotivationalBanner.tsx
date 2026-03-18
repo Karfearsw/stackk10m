@@ -25,8 +25,8 @@ const motivationalQuotes = [
   { quote: "The major fortunes in America have been made in land.", author: "John D. Rockefeller" },
   { quote: "Real estate investing, even on a very small scale, remains a tried and true means of building wealth.", author: "Robert Kiyosaki" },
   { quote: "Landlords grow rich in their sleep.", author: "John Stuart Mill" },
-  { quote: "Flip, Stackk, Win! Transform every lead into a deal.", author: "FlipStackk" },
-  { quote: "Your hustle determines your results. Stack those wins!", author: "FlipStackk" },
+  { quote: "Luxe, Close, Win! Transform every lead into a deal.", author: "Luxe RM" },
+  { quote: "Your hustle determines your results. Stack those wins!", author: "Luxe RM" },
 ];
 
 export function MotivationalBanner() {

@@ -20,6 +20,10 @@ export const leads = pgTable("leads", {
   notes: text("notes"),
   source: varchar("source", { length: 100 }),
   assignedTo: integer("assigned_to"),
+  doNotCall: boolean("do_not_call").notNull().default(false),
+  doNotText: boolean("do_not_text").notNull().default(false),
+  nextFollowUpAt: timestamp("next_follow_up_at"),
+  tags: text("tags").array(),
   dedupeKey: varchar("dedupe_key", { length: 400 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -248,6 +252,19 @@ export const insertUserSchema = createInsertSchema(users).omit({ id: true, creat
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
 
+export const userFeatureFlags = pgTable("user_feature_flags", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  flag: varchar("flag", { length: 80 }).notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertUserFeatureFlagSchema = createInsertSchema(userFeatureFlags).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type UserFeatureFlag = typeof userFeatureFlags.$inferSelect;
+export type InsertUserFeatureFlag = z.infer<typeof insertUserFeatureFlagSchema>;
+
 // TWO FACTOR AUTH TABLE
 export const twoFactorAuth = pgTable("two_factor_auth", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -387,6 +404,39 @@ export const userNotifications = pgTable("user_notifications", {
 export const insertUserNotificationSchema = createInsertSchema(userNotifications).omit({ id: true, createdAt: true } as any);
 export type UserNotification = typeof userNotifications.$inferSelect;
 export type InsertUserNotification = z.infer<typeof insertUserNotificationSchema>;
+
+// TASKS TABLE
+export const tasks = pgTable("tasks", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  type: varchar("type", { length: 80 }).default("general"),
+  relatedEntityType: varchar("related_entity_type", { length: 50 }),
+  relatedEntityId: integer("related_entity_id"),
+  dueAt: timestamp("due_at"),
+  completedAt: timestamp("completed_at"),
+  priority: varchar("priority", { length: 20 }).default("medium"),
+  status: varchar("status", { length: 20 }).default("open"),
+  assignedToUserId: integer("assigned_to_user_id"),
+  isRecurring: boolean("is_recurring").notNull().default(false),
+  recurrenceRule: text("recurrence_rule"),
+  createdBy: integer("created_by").notNull(),
+  isPrivate: boolean("is_private").notNull().default(false),
+  reminderSentAt: timestamp("reminder_sent_at"),
+  overdueAlertSentAt: timestamp("overdue_alert_sent_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTaskSchema = createInsertSchema(tasks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  reminderSentAt: true,
+  overdueAlertSentAt: true,
+} as any);
+export type Task = typeof tasks.$inferSelect;
+export type InsertTask = z.infer<typeof insertTaskSchema>;
 
 // OFFERS TABLE
 export const offers = pgTable("offers", {
@@ -541,7 +591,10 @@ export const callLogs = pgTable("call_logs", {
   direction: varchar("direction", { length: 20 }).notNull(),
   number: varchar("number", { length: 20 }).notNull(),
   contactId: integer("contact_id"),
+  leadId: integer("lead_id"),
   status: varchar("status", { length: 50 }).notNull(),
+  disposition: varchar("disposition", { length: 50 }),
+  note: text("note"),
   startedAt: timestamp("started_at").defaultNow(),
   endedAt: timestamp("ended_at"),
   durationMs: integer("duration_ms"),
@@ -554,6 +607,55 @@ export const callLogs = pgTable("call_logs", {
 export const insertCallLogSchema = createInsertSchema(callLogs).omit({ id: true, createdAt: true } as any);
 export type CallLog = typeof callLogs.$inferSelect;
 export type InsertCallLog = z.infer<typeof insertCallLogSchema>;
+
+export const callMedia = pgTable("call_media", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  callLogId: integer("call_log_id"),
+  kind: varchar("kind", { length: 20 }).notNull(),
+  e164: varchar("e164", { length: 20 }),
+  storageKey: text("storage_key"),
+  providerUrl: text("provider_url"),
+  providerSid: varchar("provider_sid", { length: 64 }),
+  mimeType: varchar("mime_type", { length: 100 }),
+  durationSeconds: integer("duration_seconds"),
+  transcript: text("transcript"),
+  isRead: boolean("is_read").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCallMediaSchema = createInsertSchema(callMedia).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type CallMedia = typeof callMedia.$inferSelect;
+export type InsertCallMedia = z.infer<typeof insertCallMediaSchema>;
+
+export const numberReputation = pgTable("number_reputation", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  e164: varchar("e164", { length: 20 }).notNull(),
+  label: varchar("label", { length: 20 }).notNull(),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertNumberReputationSchema = createInsertSchema(numberReputation).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type NumberReputation = typeof numberReputation.$inferSelect;
+export type InsertNumberReputation = z.infer<typeof insertNumberReputationSchema>;
+
+export const callNotes = pgTable("call_notes", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  callLogId: integer("call_log_id").notNull(),
+  disposition: varchar("disposition", { length: 50 }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCallNotesSchema = createInsertSchema(callNotes).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type CallNotes = typeof callNotes.$inferSelect;
+export type InsertCallNotes = z.infer<typeof insertCallNotesSchema>;
 
 export const underwritingTemplates = pgTable("underwriting_templates", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),

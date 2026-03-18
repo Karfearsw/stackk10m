@@ -63,12 +63,12 @@ export default function Signup() {
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center mb-4">
             <img 
-              src="/flipstackk-logo.jpg" 
-              alt="FlipStackk Logo" 
+              src="/luxe-logo.png" 
+              alt="Luxe RM Logo" 
               className="h-24 w-auto object-contain"
             />
           </div>
-          <CardTitle className="text-3xl font-bold">Join FlipStackk</CardTitle>
+          <CardTitle className="text-3xl font-bold">Join Luxe RM</CardTitle>
           <CardDescription>
             Create your employee account
           </CardDescription>
@@ -165,7 +165,7 @@ export default function Signup() {
 
             <Button
               type="submit"
-              className="w-full bg-primary hover:bg-primary/90 text-white"
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
               disabled={isLoading}
               data-testid="button-signup"
             >
@@ -182,7 +182,7 @@ export default function Signup() {
           </div>
 
           <div className="mt-6 text-center text-xs text-muted-foreground">
-            <p>© 2025 FlipStackk. All rights reserved.</p>
+            <p>© 2025 Luxe RM. All rights reserved.</p>
           </div>
         </CardContent>
       </Card>

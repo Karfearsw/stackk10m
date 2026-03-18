@@ -16,8 +16,12 @@ import {
   Lightbulb,
   UserCheck,
   Phone,
+  Send,
   Voicemail,
-  History
+  MapPin,
+  CheckSquare,
+  CalendarDays,
+  CalendarCheck2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -27,12 +31,17 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
+  { name: "Today", href: "/today", icon: CalendarCheck2 },
+  { name: "Tasks", href: "/tasks", icon: CheckSquare },
+  { name: "Calendar", href: "/calendar", icon: CalendarDays },
   { name: "Leads Pipeline", href: "/leads", icon: Users },
+  { name: "Campaigns", href: "/campaigns", icon: Send },
+  { name: "RVM", href: "/rvm", icon: Voicemail },
+  { name: "Field Mode", href: "/field", icon: MapPin },
   { name: "Opportunities", href: "/opportunities", icon: Building2 },
-  { name: "Dialer", href: "/dialer", icon: Phone },
+  { name: "Phone", href: "/phone", icon: Phone },
+  { name: "Dialer Workspace", href: "/dialer/workspace", icon: Phone },
   { name: "Contacts", href: "/contacts", icon: Users },
-  { name: "History", href: "/history", icon: History },
-  { name: "Voicemail", href: "/voicemail", icon: Voicemail },
   { name: "Buyers", href: "/buyers", icon: UserCheck },
   { name: "Contracts", href: "/contracts", icon: FileText },
   { name: "Analytics", href: "/analytics", icon: PieChart },
@@ -87,8 +96,8 @@ export function Sidebar() {
         )}>
           <div className="flex items-center gap-3">
             <img 
-              src="/flipstackk-logo.jpg" 
-              alt="FlipStackk Logo" 
+              src="/luxe-logo.png" 
+              alt="Luxe RM Logo" 
               className={cn(
                 "object-contain transition-all duration-300",
                 isIconOnly ? "h-10 w-10" : "h-12 w-auto"

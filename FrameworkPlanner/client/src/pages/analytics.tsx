@@ -4,7 +4,7 @@ import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Cart
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 
-const COLORS = ["#0a0a0a", "#dc2626", "#7f1d1d", "#fca5a5", "#fee2e2"];
+const COLORS = ["#0a0a0a", "#D4AF37", "#C9A227", "#E7D39C", "#F6EED1"];
 
 export default function Analytics() {
   // Fetch real data
@@ -14,6 +14,15 @@ export default function Analytics() {
 
   const { data: contracts = [], isLoading: contractsLoading } = useQuery<any[]>({
     queryKey: ['/api/contracts'],
+  });
+
+  const { data: sourceReport } = useQuery<any>({
+    queryKey: ["/api/reports/source"],
+    queryFn: async () => {
+      const res = await fetch("/api/reports/source", { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
   });
 
   const isLoading = leadsLoading || contractsLoading;
@@ -103,6 +112,18 @@ export default function Analytics() {
       count
     }));
   }, [leads, contracts]);
+
+  const sourcePerformanceData = useMemo(() => {
+    const items = (sourceReport as any)?.sources;
+    if (!Array.isArray(items)) return [];
+    return items.map((s: any) => ({
+      source: String(s.source || "Unknown"),
+      leads: Number(s.leads || 0),
+      opportunities: Number(s.opportunities || 0),
+      deals: Number(s.deals || 0),
+      revenue: Number(s.revenue || 0),
+    }));
+  }, [sourceReport]);
 
   if (isLoading) {
     return (
@@ -207,6 +228,33 @@ export default function Analytics() {
                     />
                     <Legend />
                     <Bar dataKey="deals" fill="hsl(var(--primary))" name="Deals" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Performance by Source</CardTitle>
+          </CardHeader>
+          <CardContent className="pl-2">
+            {sourcePerformanceData.length === 0 ? (
+              <div className="h-[300px] flex items-center justify-center text-muted-foreground">
+                <p>No attribution data available</p>
+              </div>
+            ) : (
+              <div className="h-[300px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={sourcePerformanceData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                    <XAxis dataKey="source" stroke="hsl(var(--muted-foreground))" />
+                    <YAxis stroke="hsl(var(--muted-foreground))" />
+                    <Tooltip />
+                    <Legend />
+                    <Bar dataKey="revenue" name="Revenue" fill="hsl(var(--primary))" />
+                    <Bar dataKey="deals" name="Deals" fill="hsl(var(--accent))" />
                   </BarChart>
                 </ResponsiveContainer>
               </div>

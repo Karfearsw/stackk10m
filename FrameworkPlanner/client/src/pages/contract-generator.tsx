@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FileText, Download, Plus, Eye, Save, FileSignature, CheckCircle, Send, Clock, DollarSign, ChevronRight, ArrowRight } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -695,6 +696,11 @@ function LOICreator({ properties, onClose }: { properties: any[], onClose: () =>
 function ContractsList({ contracts, isLoading, onCreateNew }: { contracts: any[], isLoading: boolean, onCreateNew: () => void }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendContract, setSendContract] = useState<any>(null);
+  const [signerName, setSignerName] = useState("");
+  const [signerEmail, setSignerEmail] = useState("");
+  const [signerUrl, setSignerUrl] = useState("");
 
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: number, status: string }) => {
@@ -710,6 +716,32 @@ function ContractsList({ contracts, isLoading, onCreateNew }: { contracts: any[]
       toast({ title: "Contract status updated" });
       queryClient.invalidateQueries({ queryKey: ['/api/contract-documents'] });
     },
+  });
+
+  const sendEnvelopeMutation = useMutation({
+    mutationFn: async () => {
+      if (!sendContract?.id) throw new Error("Missing contract");
+      const response = await fetch(`/api/contract-documents/${sendContract.id}/envelopes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ signerName, signerEmail }),
+      });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((json as any).message || "Failed to send");
+      return json;
+    },
+    onSuccess: (data: any) => {
+      setSignerUrl(String(data?.signerUrl || ""));
+      const emailError = typeof data?.emailError === "string" ? String(data.emailError) : "";
+      if (emailError) {
+        toast({ title: "Link created", description: `Email failed: ${emailError}`, variant: "destructive" });
+      } else {
+        toast({ title: "Sent for signature" });
+      }
+      queryClient.invalidateQueries({ queryKey: ['/api/contract-documents'] });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to send", variant: "destructive" }),
   });
 
   const getNextStatus = (current: string): string | null => {
@@ -791,6 +823,20 @@ function ContractsList({ contracts, isLoading, onCreateNew }: { contracts: any[]
                     </div>
                   </div>
                   <div className="flex gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        setSendContract(contract);
+                        setSignerName("");
+                        setSignerEmail("");
+                        setSignerUrl("");
+                        setSendOpen(true);
+                      }}
+                    >
+                      <Send className="w-4 h-4 mr-2" />
+                      E-Sign
+                    </Button>
                     {nextStatus && (
                       <Button 
                         variant="outline" 
@@ -814,6 +860,54 @@ function ContractsList({ contracts, isLoading, onCreateNew }: { contracts: any[]
           </div>
         )}
       </CardContent>
+      <Dialog open={sendOpen} onOpenChange={setSendOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send for Signature</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="text-sm text-muted-foreground">{sendContract?.title || ""}</div>
+            <div className="grid gap-2">
+              <Label>Signer name</Label>
+              <Input value={signerName} onChange={(e) => setSignerName(e.target.value)} placeholder="Seller name" />
+            </div>
+            <div className="grid gap-2">
+              <Label>Signer email</Label>
+              <Input value={signerEmail} onChange={(e) => setSignerEmail(e.target.value)} placeholder="seller@email.com" />
+            </div>
+            {signerUrl ? (
+              <div className="space-y-2">
+                <Label>Signer link</Label>
+                <Input value={signerUrl} readOnly />
+                <Button
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(signerUrl);
+                      toast({ title: "Copied link" });
+                    } catch {
+                      toast({ title: "Copy failed", variant: "destructive" });
+                    }
+                  }}
+                >
+                  Copy link
+                </Button>
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              onClick={() => sendEnvelopeMutation.mutate()}
+              disabled={!signerName.trim() || !signerEmail.trim() || sendEnvelopeMutation.isPending}
+            >
+              Send
+            </Button>
+            <Button variant="outline" onClick={() => setSendOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }

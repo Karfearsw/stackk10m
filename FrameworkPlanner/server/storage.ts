@@ -1,9 +1,9 @@
 import { db } from "./db.js";
-import { desc } from "drizzle-orm";
+import { asc, desc, sql } from "drizzle-orm";
 import { 
-  leads, properties, contacts, contracts, contractTemplates, contractDocuments, documentVersions, lois,
-  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
-  buyers, buyerCommunications, dealAssignments, callLogs, pipelineConfigs, underwritingTemplates, playgroundPropertySessions
+  leads, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
+  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
+  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, dealBuyerMatches
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -12,6 +12,11 @@ import {
   type Contract, type InsertContract,
   type ContractTemplate, type InsertContractTemplate,
   type ContractDocument, type InsertContractDocument,
+  type ContractEnvelope, type InsertContractEnvelope,
+  type SyncIdempotency, type InsertSyncIdempotency,
+  type FieldMediaAsset, type InsertFieldMediaAsset,
+  type CompSnapshot, type InsertCompSnapshot,
+  type DealBuyerMatch, type InsertDealBuyerMatch,
   type DocumentVersion, type InsertDocumentVersion,
   type Loi, type InsertLoi,
   type User, type InsertUser,
@@ -23,6 +28,7 @@ import {
   type NotificationPreference, type InsertNotificationPreference,
   type UserGoal, type InsertUserGoal,
   type UserNotification, type InsertUserNotification,
+  type Task, type InsertTask,
   type Offer, type InsertOffer,
   type TimesheetEntry, type InsertTimesheetEntry,
   type TimeClockSession, type InsertTimeClockSession,
@@ -31,11 +37,23 @@ import {
   type BuyerCommunication, type InsertBuyerCommunication,
   type DealAssignment, type InsertDealAssignment,
   type CallLog, type InsertCallLog,
+  type CallMedia, type InsertCallMedia,
+  type NumberReputation, type InsertNumberReputation,
   type PipelineConfig, type InsertPipelineConfig,
   type UnderwritingTemplate, type InsertUnderwritingTemplate,
-  type PlaygroundPropertySession, type InsertPlaygroundPropertySession
+  type PlaygroundPropertySession, type InsertPlaygroundPropertySession,
+  type UserFeatureFlag, type InsertUserFeatureFlag,
+  type SkipTraceResult, type InsertSkipTraceResult,
+  type LeadSourceOption, type InsertLeadSourceOption,
+  type Campaign, type InsertCampaign,
+  type CampaignStep, type InsertCampaignStep,
+  type CampaignEnrollment, type InsertCampaignEnrollment,
+  type CampaignDelivery, type InsertCampaignDelivery,
+  type RvmAudioAsset, type InsertRvmAudioAsset,
+  type RvmCampaign, type InsertRvmCampaign,
+  type RvmDrop, type InsertRvmDrop
 } from "./shared-schema.js";
-import { eq, and, gte, lte, isNull } from "drizzle-orm";
+import { eq, and, gte, lte, isNull, inArray, or, ne, isNotNull } from "drizzle-orm";
 
 export interface IStorage {
   // Leads
@@ -44,6 +62,36 @@ export interface IStorage {
   createLead(lead: InsertLead): Promise<Lead>;
   updateLead(id: number, lead: Partial<InsertLead>): Promise<Lead>;
   deleteLead(id: number): Promise<void>;
+
+  getLatestSkipTraceForLead(leadId: number): Promise<SkipTraceResult | undefined>;
+  getLatestSkipTraceForProperty(propertyId: number): Promise<SkipTraceResult | undefined>;
+  getLatestSkipTraceByCacheKey(cacheKey: string): Promise<SkipTraceResult | undefined>;
+  createSkipTraceResult(input: InsertSkipTraceResult): Promise<SkipTraceResult>;
+  updateSkipTraceResult(id: number, patch: Partial<InsertSkipTraceResult>): Promise<SkipTraceResult>;
+
+  getLeadSourceOptions(userId: number): Promise<LeadSourceOption[]>;
+  upsertLeadSourceOption(input: InsertLeadSourceOption): Promise<LeadSourceOption>;
+
+  getCampaigns(userId: number): Promise<Campaign[]>;
+  createCampaign(input: InsertCampaign): Promise<Campaign>;
+  updateCampaign(id: number, patch: Partial<InsertCampaign>): Promise<Campaign>;
+  deleteCampaign(id: number): Promise<void>;
+  getCampaignSteps(campaignId: number): Promise<CampaignStep[]>;
+  replaceCampaignSteps(campaignId: number, steps: InsertCampaignStep[]): Promise<CampaignStep[]>;
+  enrollCampaignLeads(campaignId: number, leadIds: number[]): Promise<void>;
+  getCampaignStats(campaignId: number): Promise<{ sends: number; failed: number }>;
+
+  getRvmAudioAssets(userId: number): Promise<RvmAudioAsset[]>;
+  createRvmAudioAsset(input: InsertRvmAudioAsset): Promise<RvmAudioAsset>;
+  deleteRvmAudioAsset(id: number): Promise<void>;
+  getRvmCampaigns(userId: number): Promise<RvmCampaign[]>;
+  createRvmCampaign(input: InsertRvmCampaign): Promise<RvmCampaign>;
+  updateRvmCampaign(id: number, patch: Partial<InsertRvmCampaign>): Promise<RvmCampaign>;
+  deleteRvmCampaign(id: number): Promise<void>;
+  createRvmDrops(drops: InsertRvmDrop[]): Promise<void>;
+  getPendingRvmDrops(limit?: number): Promise<RvmDrop[]>;
+  updateRvmDrop(id: number, patch: Partial<InsertRvmDrop>): Promise<RvmDrop>;
+  getRvmCampaignDrops(campaignId: number, limit?: number): Promise<RvmDrop[]>;
 
   // Properties
   getProperties(limit?: number, offset?: number): Promise<Property[]>;
@@ -82,6 +130,29 @@ export interface IStorage {
   updateContractDocument(id: number, document: Partial<InsertContractDocument>): Promise<ContractDocument>;
   deleteContractDocument(id: number): Promise<void>;
 
+  // Contract Envelopes
+  getContractEnvelopesByDocument(documentId: number): Promise<ContractEnvelope[]>;
+  getContractEnvelopeById(id: number): Promise<ContractEnvelope | undefined>;
+  getContractEnvelopeByTokenHash(tokenHash: string): Promise<ContractEnvelope | undefined>;
+  createContractEnvelope(input: InsertContractEnvelope): Promise<ContractEnvelope>;
+  updateContractEnvelope(id: number, patch: Partial<InsertContractEnvelope>): Promise<ContractEnvelope>;
+
+  // Sync
+  getSyncIdempotency(userId: number, key: string): Promise<SyncIdempotency | undefined>;
+  createSyncIdempotency(input: InsertSyncIdempotency): Promise<SyncIdempotency>;
+
+  // Field Media
+  createFieldMediaAsset(input: InsertFieldMediaAsset): Promise<FieldMediaAsset>;
+  getFieldMediaAssetsByLead(leadId: number, limit?: number): Promise<FieldMediaAsset[]>;
+
+  // Comps
+  createCompSnapshot(input: InsertCompSnapshot): Promise<CompSnapshot>;
+  getCompSnapshotsByProperty(propertyId: number, limit?: number): Promise<CompSnapshot[]>;
+
+  // Buyer matching
+  replaceDealBuyerMatches(propertyId: number, matches: InsertDealBuyerMatch[]): Promise<void>;
+  getDealBuyerMatches(propertyId: number, limit?: number): Promise<DealBuyerMatch[]>;
+
   // Document Versions
   getDocumentVersions(documentId: number): Promise<DocumentVersion[]>;
   createDocumentVersion(version: InsertDocumentVersion): Promise<DocumentVersion>;
@@ -100,6 +171,9 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: number, user: Partial<InsertUser>): Promise<User>;
   deleteUser(id: number): Promise<void>;
+
+  getUserFeatureFlag(userId: number, flag: string): Promise<UserFeatureFlag | undefined>;
+  upsertUserFeatureFlag(input: InsertUserFeatureFlag): Promise<UserFeatureFlag>;
 
   // Two Factor Auth
   getTwoFactorAuthByUserId(userId: number): Promise<TwoFactorAuth | undefined>;
@@ -152,6 +226,30 @@ export interface IStorage {
   createUserGoal(goal: InsertUserGoal): Promise<UserGoal>;
   updateUserGoal(id: number, goal: Partial<InsertUserGoal>): Promise<UserGoal>;
   deleteUserGoal(id: number): Promise<void>;
+
+  // Tasks
+  listTasks(
+    auth: { userId: number; isManager: boolean },
+    input: {
+      assignedToUserId?: number;
+      createdByUserId?: number;
+      status?: string;
+      type?: string;
+      priority?: string;
+      relatedEntityType?: string;
+      relatedEntityId?: number;
+      dueFrom?: Date;
+      dueTo?: Date;
+      includeCompleted?: boolean;
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<{ items: Task[]; total: number }>;
+  getTaskById(id: number): Promise<Task | undefined>;
+  createTask(input: InsertTask): Promise<Task>;
+  updateTask(id: number, patch: Partial<InsertTask>): Promise<Task>;
+  deleteTask(id: number): Promise<void>;
+  completeTask(id: number, input: { completedAt: Date; status?: string }): Promise<Task>;
 
   // Offers
   getOffers(limit?: number, offset?: number): Promise<Offer[]>;
@@ -248,6 +346,186 @@ export class DatabaseStorage implements IStorage {
 
   async deleteLead(id: number): Promise<void> {
     await db.delete(leads).where(eq(leads.id, id));
+  }
+
+  async getLatestSkipTraceForLead(leadId: number): Promise<SkipTraceResult | undefined> {
+    const result = await db
+      .select()
+      .from(skipTraceResults)
+      .where(eq(skipTraceResults.leadId, leadId))
+      .orderBy(desc(skipTraceResults.requestedAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async getLatestSkipTraceForProperty(propertyId: number): Promise<SkipTraceResult | undefined> {
+    const result = await db
+      .select()
+      .from(skipTraceResults)
+      .where(eq(skipTraceResults.propertyId, propertyId))
+      .orderBy(desc(skipTraceResults.requestedAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async getLatestSkipTraceByCacheKey(cacheKey: string): Promise<SkipTraceResult | undefined> {
+    const result = await db
+      .select()
+      .from(skipTraceResults)
+      .where(eq(skipTraceResults.cacheKey, cacheKey))
+      .orderBy(desc(skipTraceResults.requestedAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async createSkipTraceResult(input: InsertSkipTraceResult): Promise<SkipTraceResult> {
+    const result = await db.insert(skipTraceResults).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateSkipTraceResult(id: number, patch: Partial<InsertSkipTraceResult>): Promise<SkipTraceResult> {
+    const result = await db.update(skipTraceResults).set(patch as any).where(eq(skipTraceResults.id, id)).returning();
+    return result[0];
+  }
+
+  async getLeadSourceOptions(userId: number): Promise<LeadSourceOption[]> {
+    return db
+      .select()
+      .from(leadSourceOptions)
+      .where(and(eq(leadSourceOptions.isActive, true), or(isNull(leadSourceOptions.userId), eq(leadSourceOptions.userId, userId))))
+      .orderBy(leadSourceOptions.sortOrder);
+  }
+
+  async upsertLeadSourceOption(input: InsertLeadSourceOption): Promise<LeadSourceOption> {
+    const v: any = input as any;
+    const existing = await db
+      .select()
+      .from(leadSourceOptions)
+      .where(and(eq(leadSourceOptions.userId, v.userId as any), eq(leadSourceOptions.value, v.value)))
+      .limit(1);
+
+    if (existing[0]) {
+      const result = await db
+        .update(leadSourceOptions)
+        .set({ label: v.label, isActive: v.isActive, sortOrder: v.sortOrder, updatedAt: new Date() } as any)
+        .where(eq(leadSourceOptions.id, existing[0].id))
+        .returning();
+      return result[0];
+    }
+
+    const result = await db.insert(leadSourceOptions).values(input as any).returning();
+    return result[0];
+  }
+
+  async getCampaigns(userId: number): Promise<Campaign[]> {
+    return db.select().from(campaigns).where(eq(campaigns.userId, userId)).orderBy(desc(campaigns.createdAt));
+  }
+
+  async createCampaign(input: InsertCampaign): Promise<Campaign> {
+    const result = await db.insert(campaigns).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateCampaign(id: number, patch: Partial<InsertCampaign>): Promise<Campaign> {
+    const result = await db.update(campaigns).set({ ...patch, updatedAt: new Date() } as any).where(eq(campaigns.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteCampaign(id: number): Promise<void> {
+    await db.delete(campaignDeliveries).where(eq(campaignDeliveries.campaignId, id));
+    await db.delete(campaignEnrollments).where(eq(campaignEnrollments.campaignId, id));
+    await db.delete(campaignSteps).where(eq(campaignSteps.campaignId, id));
+    await db.delete(campaigns).where(eq(campaigns.id, id));
+  }
+
+  async getCampaignSteps(campaignId: number): Promise<CampaignStep[]> {
+    return db.select().from(campaignSteps).where(eq(campaignSteps.campaignId, campaignId)).orderBy(campaignSteps.stepOrder);
+  }
+
+  async replaceCampaignSteps(campaignId: number, steps: InsertCampaignStep[]): Promise<CampaignStep[]> {
+    await db.delete(campaignSteps).where(eq(campaignSteps.campaignId, campaignId));
+    if (!steps.length) return [];
+    const result = await db.insert(campaignSteps).values(steps.map((s) => ({ ...s, campaignId })) as any).returning();
+    return result;
+  }
+
+  async enrollCampaignLeads(campaignId: number, leadIds: number[]): Promise<void> {
+    const deduped = Array.from(new Set((leadIds || []).filter((n) => Number.isFinite(n))));
+    if (!deduped.length) return;
+    for (const leadId of deduped) {
+      await db.execute(sql`
+        INSERT INTO campaign_enrollments (campaign_id, lead_id, status, started_at, next_step_order, next_run_at)
+        VALUES (${campaignId}, ${leadId}, 'active', NOW(), 0, NOW())
+        ON CONFLICT DO NOTHING
+      `);
+    }
+  }
+
+  async getCampaignStats(campaignId: number): Promise<{ sends: number; failed: number }> {
+    const rows: any = await db.execute(sql`
+      SELECT
+        SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END)::int AS sends,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END)::int AS failed
+      FROM campaign_deliveries
+      WHERE campaign_id = ${campaignId}
+    `);
+    const r = (rows as any).rows?.[0] || {};
+    return { sends: Number(r.sends || 0), failed: Number(r.failed || 0) };
+  }
+
+  async getRvmAudioAssets(userId: number): Promise<RvmAudioAsset[]> {
+    return db.select().from(rvmAudioAssets).where(eq(rvmAudioAssets.userId, userId)).orderBy(desc(rvmAudioAssets.createdAt));
+  }
+
+  async createRvmAudioAsset(input: InsertRvmAudioAsset): Promise<RvmAudioAsset> {
+    const result = await db.insert(rvmAudioAssets).values(input as any).returning();
+    return result[0];
+  }
+
+  async deleteRvmAudioAsset(id: number): Promise<void> {
+    await db.delete(rvmAudioAssets).where(eq(rvmAudioAssets.id, id));
+  }
+
+  async getRvmCampaigns(userId: number): Promise<RvmCampaign[]> {
+    return db.select().from(rvmCampaigns).where(eq(rvmCampaigns.userId, userId)).orderBy(desc(rvmCampaigns.createdAt));
+  }
+
+  async createRvmCampaign(input: InsertRvmCampaign): Promise<RvmCampaign> {
+    const result = await db.insert(rvmCampaigns).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateRvmCampaign(id: number, patch: Partial<InsertRvmCampaign>): Promise<RvmCampaign> {
+    const result = await db.update(rvmCampaigns).set({ ...patch, updatedAt: new Date() } as any).where(eq(rvmCampaigns.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteRvmCampaign(id: number): Promise<void> {
+    await db.delete(rvmDrops).where(eq(rvmDrops.campaignId, id));
+    await db.delete(rvmCampaigns).where(eq(rvmCampaigns.id, id));
+  }
+
+  async createRvmDrops(drops: InsertRvmDrop[]): Promise<void> {
+    if (!drops.length) return;
+    await db.insert(rvmDrops).values(drops as any);
+  }
+
+  async getPendingRvmDrops(limit = 100): Promise<RvmDrop[]> {
+    return db
+      .select()
+      .from(rvmDrops)
+      .where(inArray(rvmDrops.status, ["queued", "sending"] as any))
+      .orderBy(desc(rvmDrops.requestedAt))
+      .limit(limit);
+  }
+
+  async updateRvmDrop(id: number, patch: Partial<InsertRvmDrop>): Promise<RvmDrop> {
+    const result = await db.update(rvmDrops).set(patch as any).where(eq(rvmDrops.id, id)).returning();
+    return result[0];
+  }
+
+  async getRvmCampaignDrops(campaignId: number, limit = 200): Promise<RvmDrop[]> {
+    return db.select().from(rvmDrops).where(eq(rvmDrops.campaignId, campaignId)).orderBy(desc(rvmDrops.requestedAt)).limit(limit);
   }
 
   // Properties
@@ -391,6 +669,72 @@ export class DatabaseStorage implements IStorage {
     await db.delete(contractDocuments).where(eq(contractDocuments.id, id));
   }
 
+  async getContractEnvelopesByDocument(documentId: number): Promise<ContractEnvelope[]> {
+    return db.select().from(contractEnvelopes).where(eq(contractEnvelopes.documentId, documentId)).orderBy(desc(contractEnvelopes.createdAt));
+  }
+
+  async getContractEnvelopeById(id: number): Promise<ContractEnvelope | undefined> {
+    const result = await db.select().from(contractEnvelopes).where(eq(contractEnvelopes.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getContractEnvelopeByTokenHash(tokenHash: string): Promise<ContractEnvelope | undefined> {
+    const result = await db.select().from(contractEnvelopes).where(eq(contractEnvelopes.tokenHash, tokenHash)).limit(1);
+    return result[0];
+  }
+
+  async createContractEnvelope(input: InsertContractEnvelope): Promise<ContractEnvelope> {
+    const result = await db.insert(contractEnvelopes).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateContractEnvelope(id: number, patch: Partial<InsertContractEnvelope>): Promise<ContractEnvelope> {
+    const result = await db.update(contractEnvelopes).set({ ...patch, updatedAt: new Date() } as any).where(eq(contractEnvelopes.id, id)).returning();
+    return result[0];
+  }
+
+  async getSyncIdempotency(userId: number, key: string): Promise<SyncIdempotency | undefined> {
+    const result = await db
+      .select()
+      .from(syncIdempotency)
+      .where(and(eq(syncIdempotency.userId, userId), eq(syncIdempotency.idempotencyKey, key)))
+      .limit(1);
+    return result[0];
+  }
+
+  async createSyncIdempotency(input: InsertSyncIdempotency): Promise<SyncIdempotency> {
+    const result = await db.insert(syncIdempotency).values(input as any).returning();
+    return result[0];
+  }
+
+  async createFieldMediaAsset(input: InsertFieldMediaAsset): Promise<FieldMediaAsset> {
+    const result = await db.insert(fieldMediaAssets).values(input as any).returning();
+    return result[0];
+  }
+
+  async getFieldMediaAssetsByLead(leadId: number, limit = 50): Promise<FieldMediaAsset[]> {
+    return db.select().from(fieldMediaAssets).where(eq(fieldMediaAssets.leadId, leadId)).orderBy(desc(fieldMediaAssets.createdAt)).limit(limit);
+  }
+
+  async createCompSnapshot(input: InsertCompSnapshot): Promise<CompSnapshot> {
+    const result = await db.insert(compSnapshots).values(input as any).returning();
+    return result[0];
+  }
+
+  async getCompSnapshotsByProperty(propertyId: number, limit = 20): Promise<CompSnapshot[]> {
+    return db.select().from(compSnapshots).where(eq(compSnapshots.propertyId, propertyId)).orderBy(desc(compSnapshots.requestedAt)).limit(limit);
+  }
+
+  async replaceDealBuyerMatches(propertyId: number, matches: InsertDealBuyerMatch[]): Promise<void> {
+    await db.delete(dealBuyerMatches).where(eq(dealBuyerMatches.propertyId, propertyId));
+    if (!matches.length) return;
+    await db.insert(dealBuyerMatches).values(matches.map((m) => ({ ...m, propertyId })) as any);
+  }
+
+  async getDealBuyerMatches(propertyId: number, limit = 25): Promise<DealBuyerMatch[]> {
+    return db.select().from(dealBuyerMatches).where(eq(dealBuyerMatches.propertyId, propertyId)).orderBy(desc(dealBuyerMatches.score)).limit(limit);
+  }
+
   // Document Versions
   async getDocumentVersions(documentId: number, limit?: number, offset: number = 0): Promise<DocumentVersion[]> {
     let q: any = db.select().from(documentVersions).where(eq(documentVersions.documentId, documentId));
@@ -458,6 +802,30 @@ export class DatabaseStorage implements IStorage {
 
   async deleteUser(id: number): Promise<void> {
     await db.delete(users).where(eq(users.id, id));
+  }
+
+  async getUserFeatureFlag(userId: number, flag: string): Promise<UserFeatureFlag | undefined> {
+    const result = await db
+      .select()
+      .from(userFeatureFlags)
+      .where(and(eq(userFeatureFlags.userId, userId), eq(userFeatureFlags.flag, flag)))
+      .limit(1);
+    return result[0];
+  }
+
+  async upsertUserFeatureFlag(input: InsertUserFeatureFlag): Promise<UserFeatureFlag> {
+    const v: any = input as any;
+    const existing = await this.getUserFeatureFlag(v.userId, v.flag);
+    if (existing) {
+      const result = await db
+        .update(userFeatureFlags)
+        .set({ enabled: v.enabled, updatedAt: new Date() } as any)
+        .where(eq(userFeatureFlags.id, existing.id))
+        .returning();
+      return result[0];
+    }
+    const result = await db.insert(userFeatureFlags).values(input as any).returning();
+    return result[0];
   }
 
   // Two Factor Auth
@@ -967,6 +1335,181 @@ export class DatabaseStorage implements IStorage {
   async updateCallLog(id: number, patch: Partial<InsertCallLog & { status?: string; endedAt?: Date; durationMs?: number; errorCode?: string; errorMessage?: string }>): Promise<CallLog> {
     const result = await db.update(callLogs).set(patch as any).where(eq(callLogs.id, id)).returning();
     return result[0];
+  }
+
+  async getNumberReputationByE164s(userId: number, e164s: string[]): Promise<NumberReputation[]> {
+    const normalized = Array.from(new Set((e164s || []).map(v => String(v || "").trim()).filter(Boolean)));
+    if (!normalized.length) return [];
+    return db
+      .select()
+      .from(numberReputation)
+      .where(and(eq(numberReputation.userId, userId), inArray(numberReputation.e164, normalized))) as unknown as Promise<NumberReputation[]>;
+  }
+
+  async upsertNumberReputation(input: InsertNumberReputation): Promise<NumberReputation> {
+    const now = new Date();
+    const v: any = input as any;
+    const result = await db
+      .insert(numberReputation)
+      .values({ ...(input as any), updatedAt: now } as any)
+      .onConflictDoUpdate({
+        target: [numberReputation.userId, numberReputation.e164] as any,
+        set: { label: v.label as any, reason: v.reason as any, updatedAt: now } as any,
+      })
+      .returning();
+    return result[0];
+  }
+
+  async deleteNumberReputation(userId: number, e164: string): Promise<void> {
+    await db.delete(numberReputation).where(and(eq(numberReputation.userId, userId), eq(numberReputation.e164, e164)));
+  }
+
+  async listTasks(
+    auth: { userId: number; isManager: boolean },
+    input: {
+      assignedToUserId?: number;
+      createdByUserId?: number;
+      status?: string;
+      type?: string;
+      priority?: string;
+      relatedEntityType?: string;
+      relatedEntityId?: number;
+      dueFrom?: Date;
+      dueTo?: Date;
+      includeCompleted?: boolean;
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<{ items: Task[]; total: number }> {
+    const limit = typeof input.limit === "number" ? input.limit : 50;
+    const offset = typeof input.offset === "number" ? input.offset : 0;
+
+    const whereParts: any[] = [];
+    if (!auth.isManager) {
+      whereParts.push(
+        or(eq(tasks.isPrivate, false), eq(tasks.createdBy, auth.userId), eq(tasks.assignedToUserId, auth.userId)),
+      );
+    }
+
+    if (typeof input.assignedToUserId === "number") whereParts.push(eq(tasks.assignedToUserId, input.assignedToUserId));
+    if (typeof input.createdByUserId === "number") whereParts.push(eq(tasks.createdBy, input.createdByUserId));
+    if (input.status) whereParts.push(eq(tasks.status, input.status));
+    if (input.type) whereParts.push(eq(tasks.type, input.type));
+    if (input.priority) whereParts.push(eq(tasks.priority, input.priority));
+    if (input.relatedEntityType) whereParts.push(eq(tasks.relatedEntityType, input.relatedEntityType));
+    if (typeof input.relatedEntityId === "number") whereParts.push(eq(tasks.relatedEntityId, input.relatedEntityId));
+
+    if (!input.status && !input.includeCompleted) {
+      whereParts.push(ne(tasks.status, "completed"));
+    }
+
+    if (input.dueFrom) whereParts.push(and(isNotNull(tasks.dueAt), gte(tasks.dueAt, input.dueFrom)));
+    if (input.dueTo) whereParts.push(and(isNotNull(tasks.dueAt), lte(tasks.dueAt, input.dueTo)));
+
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+
+    let q: any = db.select().from(tasks);
+    if (whereClause) q = q.where(whereClause);
+    q = q
+      .orderBy(sql`due_at is null`, asc(tasks.dueAt), desc(tasks.createdAt))
+      .limit(limit)
+      .offset(offset);
+    const items = (await q) as unknown as Task[];
+
+    let cq: any = db.select({ count: sql<number>`count(*)::int` }).from(tasks);
+    if (whereClause) cq = cq.where(whereClause);
+    const countRows = await cq;
+    const total = Number((countRows as any)?.[0]?.count || 0);
+
+    return { items, total };
+  }
+
+  async getTaskById(id: number): Promise<Task | undefined> {
+    const result = await db.select().from(tasks).where(eq(tasks.id, id)).limit(1);
+    return result[0] as any;
+  }
+
+  async createTask(input: InsertTask): Promise<Task> {
+    const result = await db.insert(tasks).values(input as any).returning();
+    return result[0] as any;
+  }
+
+  async updateTask(id: number, patch: Partial<InsertTask>): Promise<Task> {
+    const now = new Date();
+    const updates: any = { ...(patch as any), updatedAt: now };
+    if (Object.prototype.hasOwnProperty.call(patch, "dueAt")) {
+      updates.reminderSentAt = null;
+      updates.overdueAlertSentAt = null;
+    }
+    const result = await db.update(tasks).set(updates).where(eq(tasks.id, id)).returning();
+    return result[0] as any;
+  }
+
+  async deleteTask(id: number): Promise<void> {
+    await db.delete(tasks).where(eq(tasks.id, id));
+  }
+
+  async completeTask(id: number, input: { completedAt: Date; status?: string }): Promise<Task> {
+    const now = new Date();
+    const status = String(input.status || "completed");
+    const result = await db
+      .update(tasks)
+      .set({
+        status,
+        completedAt: input.completedAt,
+        updatedAt: now,
+        reminderSentAt: null,
+        overdueAlertSentAt: null,
+      } as any)
+      .where(eq(tasks.id, id))
+      .returning();
+    return result[0] as any;
+  }
+
+  async listTelephonyMedia(userId: number, kind: string, limit: number = 50): Promise<CallMedia[]> {
+    let q: any = db
+      .select()
+      .from(callMedia)
+      .where(and(eq(callMedia.kind, kind), or(eq(callMedia.userId, userId), eq(callMedia.userId, 0))))
+      .orderBy(desc(callMedia.createdAt));
+    q = q.limit(limit);
+    return q as unknown as Promise<CallMedia[]>;
+  }
+
+  async createCallMedia(input: InsertCallMedia): Promise<CallMedia> {
+    const result = await db.insert(callMedia).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateCallMedia(id: number, patch: Partial<InsertCallMedia>): Promise<CallMedia> {
+    const result = await db
+      .update(callMedia)
+      .set({ ...(patch as any), updatedAt: new Date() } as any)
+      .where(eq(callMedia.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getTelephonyAnalyticsSummary(userId: number, startDate: Date): Promise<{ total: number; answered: number; missed: number; failed: number; talkSeconds: number }> {
+    const rows: any = await db.execute(sql`
+      SELECT
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status = 'answered')::int AS answered,
+        COUNT(*) FILTER (WHERE status = 'missed')::int AS missed,
+        COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+        COALESCE(SUM(duration_ms) FILTER (WHERE status = 'answered'), 0)::bigint AS talk_ms
+      FROM call_logs
+      WHERE user_id = ${userId} AND started_at >= ${startDate}
+    `);
+    const row = (rows as any).rows?.[0] || {};
+    const talkMs = Number(row.talk_ms || 0);
+    return {
+      total: Number(row.total || 0),
+      answered: Number(row.answered || 0),
+      missed: Number(row.missed || 0),
+      failed: Number(row.failed || 0),
+      talkSeconds: Math.round(talkMs / 1000),
+    };
   }
 }
 

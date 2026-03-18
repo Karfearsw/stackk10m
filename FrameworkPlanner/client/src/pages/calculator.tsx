@@ -4,6 +4,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useToast } from "@/hooks/use-toast";
+import { computeRepairTotal, underwritingSchemaV1 } from "@shared/underwriting";
 
 export default function Calculator() {
   const { toast } = useToast();
@@ -25,7 +26,8 @@ export default function Calculator() {
   });
 
   const property = data?.property;
-  const num = (v: unknown) => (typeof v === "string" ? (Number.isFinite(parseFloat(v)) ? parseFloat(v) : 0) : typeof v === "number" ? (Number.isFinite(v) ? v : 0) : 0);
+  const num = (v: unknown) =>
+    typeof v === "string" ? (Number.isFinite(parseFloat(v)) ? parseFloat(v) : 0) : typeof v === "number" ? (Number.isFinite(v) ? v : 0) : 0;
 
   const { data: session, isLoading: sessionLoading } = useQuery<any>({
     queryKey: ["/api/playground/session", sessionId || addressRaw || property?.address || ""],
@@ -57,6 +59,21 @@ export default function Calculator() {
       return {};
     }
   })();
+  const underwritingV1 = underwritingSchemaV1.safeParse(underwriting);
+  const sessionCalc =
+    session && underwriting
+      ? underwritingV1.success
+        ? {
+            arv: underwritingV1.data.arv.value ?? 0,
+            purchasePrice: underwritingV1.data.dealMath.mao ?? 0,
+            repairCosts: computeRepairTotal(underwritingV1.data.repairs) || 0,
+          }
+        : {
+            arv: num((underwriting as any)?.arv),
+            purchasePrice: num((underwriting as any)?.mao),
+            repairCosts: num((underwriting as any)?.repairEstimate),
+          }
+      : null;
 
   return (
     <Layout>
@@ -86,21 +103,29 @@ export default function Calculator() {
           initialValues={
             (session && !sessionLoading) || (propertyId > 0 && !error)
               ? {
-                  arv: num(underwriting?.arv ?? property?.arv),
-                  purchasePrice: num(underwriting?.mao ?? property?.price),
-                  repairCosts: num(underwriting?.repairEstimate ?? property?.repairCost),
+                  arv: sessionCalc ? num(sessionCalc.arv) : num(property?.arv),
+                  purchasePrice: sessionCalc ? num(sessionCalc.purchasePrice) : num(property?.price),
+                  repairCosts: sessionCalc ? num(sessionCalc.repairCosts) : num(property?.repairCost),
                 }
               : undefined
           }
           onSave={async (values) => {
             try {
               if (session?.id) {
-                const nextUw = {
-                  ...(underwriting && typeof underwriting === "object" ? underwriting : {}),
-                  arv: values.arv,
-                  mao: values.purchasePrice,
-                  repairEstimate: values.repairCosts,
-                };
+                const nextUw = underwritingV1.success
+                  ? {
+                      ...underwritingV1.data,
+                      arv: { ...underwritingV1.data.arv, value: values.arv || null },
+                      repairs: { ...underwritingV1.data.repairs, mode: "lite", liteEstimate: values.repairCosts || null },
+                      dealMath: { ...underwritingV1.data.dealMath, mao: values.purchasePrice || null },
+                      updatedAt: new Date().toISOString(),
+                    }
+                  : {
+                      ...(underwriting && typeof underwriting === "object" ? underwriting : {}),
+                      arv: values.arv,
+                      mao: values.purchasePrice,
+                      repairEstimate: values.repairCosts,
+                    };
                 const res = await fetch(`/api/playground/sessions/${session.id}`, {
                   method: "PATCH",
                   credentials: "include",

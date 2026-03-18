@@ -69,9 +69,9 @@ export default function Playground() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2" data-testid="page-title">
             <Lightbulb className="h-8 w-8 text-primary" />
-            Playground
+            Property Playground
           </h1>
-          <div className="text-sm text-muted-foreground">Fast underwriting + comping with minimal typing.</div>
+          <div className="text-sm text-muted-foreground">Research hub for zoning, suppliers, comps, and deal ideas.</div>
         </div>
         <Badge variant="secondary" className="h-6">
           {context.sessionId ? `Session ${context.sessionId}` : "Live"}

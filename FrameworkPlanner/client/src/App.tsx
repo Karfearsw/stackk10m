@@ -9,6 +9,8 @@ import { Loader2 } from "lucide-react";
 import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Leads from "@/pages/leads";
+import Campaigns from "@/pages/campaigns";
+import RvmPage from "@/pages/rvm";
 import PropertyDetail from "@/pages/property-detail";
 import Properties from "@/pages/properties";
 import Contracts from "@/pages/contracts";
@@ -22,10 +24,14 @@ import Signup from "@/pages/signup";
 import Notifications from "@/pages/notifications";
 import Playground from "@/pages/playground";
 import Buyers from "@/pages/buyers";
-const Dialer = React.lazy(() => import("@/pages/dialer"));
+import TasksPage from "@/pages/tasks";
+import CalendarPage from "@/pages/calendar";
+import TodayPage from "@/pages/today";
+import SignContractPage from "@/pages/sign-contract";
+import FieldModePage from "@/pages/field";
+const PhoneWorkspace = React.lazy(() => import("@/pages/phone"));
+const DialerWorkspace = React.lazy(() => import("@/pages/dialer-workspace"));
 import Contacts from "@/pages/contacts";
-import History from "@/pages/history";
-import VoicemailPage from "@/pages/voicemail";
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
 import SearchPage from "@/pages/search";
 
@@ -65,6 +71,9 @@ function Router() {
 
   return (
     <Switch>
+      <Route path="/sign/:token">
+        <SignContractPage />
+      </Route>
       <Route path="/login">
         {isAuthenticated ? <Redirect to="/" /> : <Login />}
       </Route>
@@ -76,6 +85,15 @@ function Router() {
       </Route>
       <Route path="/leads">
         {() => <ProtectedRoute component={Leads} />}
+      </Route>
+      <Route path="/campaigns">
+        {() => <ProtectedRoute component={Campaigns} />}
+      </Route>
+      <Route path="/rvm">
+        {() => <ProtectedRoute component={RvmPage} />}
+      </Route>
+      <Route path="/field">
+        {() => <ProtectedRoute component={FieldModePage} />}
       </Route>
       <Route path="/opportunities">
         {() => <ProtectedRoute component={Properties} />}
@@ -117,19 +135,34 @@ function Router() {
         {() => <ProtectedRoute component={Playground} />}
       </Route>
       <Route path="/dialer">
-        {() => <ProtectedRoute component={Dialer} />}
+        {() => <Redirect to="/phone?tab=dial" />}
+      </Route>
+      <Route path="/dialer/workspace">
+        {() => <ProtectedRoute component={DialerWorkspace} />}
+      </Route>
+      <Route path="/phone">
+        {() => <ProtectedRoute component={PhoneWorkspace} />}
       </Route>
       <Route path="/buyers">
         {() => <ProtectedRoute component={Buyers} />}
+      </Route>
+      <Route path="/tasks">
+        {() => <ProtectedRoute component={TasksPage} />}
+      </Route>
+      <Route path="/calendar">
+        {() => <ProtectedRoute component={CalendarPage} />}
+      </Route>
+      <Route path="/today">
+        {() => <ProtectedRoute component={TodayPage} />}
       </Route>
       <Route path="/contacts">
         {() => <ProtectedRoute component={Contacts} />}
       </Route>
       <Route path="/history">
-        {() => <ProtectedRoute component={History} />}
+        {() => <Redirect to="/phone?tab=history" />}
       </Route>
       <Route path="/voicemail">
-        {() => <ProtectedRoute component={VoicemailPage} />}
+        {() => <Redirect to="/phone?tab=voicemail" />}
       </Route>
       <Route path="/system/health">
         {() => <ProtectedRoute component={SystemHealthPage} />}

@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -32,7 +33,7 @@ import {
   Calendar,
   Send
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 
@@ -102,8 +103,11 @@ export default function Buyers() {
     phone: "",
     preferredPropertyTypes: [] as string[],
     preferredAreas: "",
+    zipCodes: "",
     minBudget: "",
     maxBudget: "",
+    minBeds: "",
+    maxBeds: "",
     dealsPerMonth: "",
     proofOfFunds: false,
     proofOfFundsNotes: "",
@@ -115,6 +119,23 @@ export default function Buyers() {
   const { data: buyers = [], isLoading } = useQuery<Buyer[]>({
     queryKey: ["/api/buyers"],
   });
+
+  const buyerIdFromQuery = useMemo(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const raw = params.get("buyerId") || params.get("highlight") || "";
+      const id = parseInt(String(raw || ""), 10);
+      return Number.isFinite(id) ? id : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!buyerIdFromQuery) return;
+    const found = buyers.find((b) => b.id === buyerIdFromQuery);
+    if (found) setSelectedBuyer(found);
+  }, [buyerIdFromQuery, buyers]);
 
   const { data: communications = [] } = useQuery<BuyerCommunication[]>({
     queryKey: [`/api/buyers/${selectedBuyer?.id}/communications`],
@@ -190,8 +211,11 @@ export default function Buyers() {
       phone: "",
       preferredPropertyTypes: [],
       preferredAreas: "",
+      zipCodes: "",
       minBudget: "",
       maxBudget: "",
+      minBeds: "",
+      maxBeds: "",
       dealsPerMonth: "",
       proofOfFunds: false,
       proofOfFundsNotes: "",
@@ -209,8 +233,11 @@ export default function Buyers() {
       phone: buyer.phone || "",
       preferredPropertyTypes: buyer.preferredPropertyTypes || [],
       preferredAreas: buyer.preferredAreas?.join(", ") || "",
+      zipCodes: (buyer as any).zipCodes?.join(", ") || "",
       minBudget: buyer.minBudget || "",
       maxBudget: buyer.maxBudget || "",
+      minBeds: (buyer as any).minBeds?.toString() || "",
+      maxBeds: (buyer as any).maxBeds?.toString() || "",
       dealsPerMonth: buyer.dealsPerMonth?.toString() || "",
       proofOfFunds: buyer.proofOfFunds || false,
       proofOfFundsNotes: buyer.proofOfFundsNotes || "",
@@ -230,8 +257,12 @@ export default function Buyers() {
       phone: formData.phone || null,
       preferredPropertyTypes: formData.preferredPropertyTypes.length > 0 ? formData.preferredPropertyTypes : null,
       preferredAreas: formData.preferredAreas ? formData.preferredAreas.split(",").map(s => s.trim()) : null,
+      zipCodes: formData.zipCodes ? formData.zipCodes.split(",").map(s => s.trim()).filter(Boolean) : null,
       minBudget: formData.minBudget || null,
       maxBudget: formData.maxBudget || null,
+      minBeds: formData.minBeds ? parseInt(formData.minBeds) : null,
+      maxBeds: formData.maxBeds ? parseInt(formData.maxBeds) : null,
+      propertyTypes: formData.preferredPropertyTypes.length > 0 ? formData.preferredPropertyTypes : null,
       dealsPerMonth: formData.dealsPerMonth ? parseInt(formData.dealsPerMonth) : null,
       proofOfFunds: formData.proofOfFunds,
       isVip: formData.isVip,
@@ -353,6 +384,14 @@ export default function Buyers() {
           data-testid="input-buyer-areas"
         />
       </div>
+      <div>
+        <Label>Zip Codes (comma-separated)</Label>
+        <Input
+          value={formData.zipCodes}
+          onChange={(e) => setFormData({ ...formData, zipCodes: e.target.value })}
+          placeholder="32801, 33602"
+        />
+      </div>
       <div className="grid grid-cols-3 gap-4">
         <div>
           <Label>Min Budget</Label>
@@ -385,7 +424,27 @@ export default function Buyers() {
           />
         </div>
       </div>
-      <div className={`p-3 rounded-lg border-2 ${formData.proofOfFunds ? 'border-red-500 bg-red-50 dark:bg-red-950/20' : 'border-border'}`}>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <Label>Min Beds</Label>
+          <Input
+            type="number"
+            value={formData.minBeds}
+            onChange={(e) => setFormData({ ...formData, minBeds: e.target.value })}
+            placeholder="2"
+          />
+        </div>
+        <div>
+          <Label>Max Beds</Label>
+          <Input
+            type="number"
+            value={formData.maxBeds}
+            onChange={(e) => setFormData({ ...formData, maxBeds: e.target.value })}
+            placeholder="5"
+          />
+        </div>
+      </div>
+      <div className={`p-3 rounded-lg border-2 ${formData.proofOfFunds ? 'border-primary bg-primary/10' : 'border-border'}`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Switch
@@ -394,12 +453,12 @@ export default function Buyers() {
               data-testid="switch-proof-of-funds"
             />
             <div>
-              <Label className="font-semibold">Flipstackk Verified</Label>
+              <Label className="font-semibold">Luxe Verified</Label>
               <p className="text-xs text-muted-foreground">Mark when buyer has submitted proof of funds</p>
             </div>
           </div>
           {formData.proofOfFunds && (
-            <Badge className="bg-red-600 text-white hover:bg-red-700 border-0">
+            <Badge className="bg-primary text-primary-foreground hover:bg-primary/90 border-0">
               <CheckCircle className="h-3 w-3 mr-1" /> Verified
             </Badge>
           )}
@@ -586,8 +645,8 @@ export default function Buyers() {
                                 </Badge>
                               )}
                               {buyer.proofOfFunds && (
-                                <Badge className="bg-red-600 text-white hover:bg-red-700 border-0">
-                                  <CheckCircle className="h-3 w-3 mr-1" /> Flipstackk Verified
+                                <Badge className="bg-primary text-primary-foreground hover:bg-primary/90 border-0">
+                                  <CheckCircle className="h-3 w-3 mr-1" /> Luxe Verified
                                 </Badge>
                               )}
                             </div>
@@ -671,6 +730,7 @@ export default function Buyers() {
                   <TabsList className="w-full">
                     <TabsTrigger value="info" className="flex-1">Info</TabsTrigger>
                     <TabsTrigger value="comms" className="flex-1">Communications</TabsTrigger>
+                    <TabsTrigger value="tasks" className="flex-1">Tasks</TabsTrigger>
                   </TabsList>
 
                   <TabsContent value="info" className="mt-4 space-y-4">
@@ -684,8 +744,8 @@ export default function Buyers() {
                       )}
                       {selectedBuyer.proofOfFunds && (
                         <div className="mt-2">
-                          <Badge className="bg-red-600 text-white hover:bg-red-700 border-0">
-                            <CheckCircle className="h-3 w-3 mr-1" /> Flipstackk Verified
+                          <Badge className="bg-primary text-primary-foreground hover:bg-primary/90 border-0">
+                            <CheckCircle className="h-3 w-3 mr-1" /> Luxe Verified
                           </Badge>
                           {selectedBuyer.proofOfFundsVerifiedAt && (
                             <p className="text-xs text-muted-foreground mt-1">
@@ -822,6 +882,10 @@ export default function Buyers() {
                       </ScrollArea>
                     </div>
                   </TabsContent>
+
+                  <TabsContent value="tasks" className="mt-4">
+                    <EntityTasksWidget entityType="buyer" entityId={selectedBuyer.id} />
+                  </TabsContent>
                 </Tabs>
               </CardContent>
             </Card>
@@ -851,8 +915,8 @@ export default function Buyers() {
                   </Badge>
                 )}
                 {selectedBuyer.proofOfFunds && (
-                  <Badge className="bg-red-600 text-white hover:bg-red-700 border-0">
-                    <CheckCircle className="h-3 w-3 mr-1" /> Flipstackk Verified
+                  <Badge className="bg-primary text-primary-foreground hover:bg-primary/90 border-0">
+                    <CheckCircle className="h-3 w-3 mr-1" /> Luxe Verified
                   </Badge>
                 )}
               </div>

@@ -41,6 +41,7 @@ export async function runLeadAutomation() {
           price: lead.estimatedValue || null,
           status: propertyStatus,
           sourceLeadId: lead.id,
+          leadSource: (lead as any).source || null,
         });
 
         const property = await storage.createProperty(propertyData);

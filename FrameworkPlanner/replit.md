@@ -1,8 +1,8 @@
-# Flipstackk 6.0 - Wholesaler CRM
+# Luxe RM - Wholesaler CRM
 
 ## Overview
 
-Flipstackk 6.0 is a wholesaler-first CRM designed for real estate investors, focusing on speed and simplicity over feature bloat. The application streamlines deal flow management, lead tracking, property analysis, and contract generation for real estate wholesaling operations.
+Luxe RM is a wholesaler-first CRM designed for real estate investors, focusing on speed and simplicity over feature bloat. The application streamlines deal flow management, lead tracking, property analysis, and contract generation for real estate wholesaling operations.
 
 The system is built as a full-stack TypeScript application with a React frontend and Express backend, using PostgreSQL for data persistence and shadcn/ui components for the user interface.
 

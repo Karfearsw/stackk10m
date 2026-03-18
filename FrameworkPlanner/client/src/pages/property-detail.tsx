@@ -12,6 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { DealCalculator } from "@/components/deals/DealCalculator";
+import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
 import { 
   ArrowLeft, 
   MapPin, 
@@ -31,12 +32,14 @@ import propertyImage from "@assets/generated_images/modern_suburban_house_exteri
 import interiorImage from "@assets/generated_images/interior_of_a_modern_living_room_for_real_estate_placeholder.png";
 import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 
 export default function PropertyDetail() {
   const [, params] = useRoute("/opportunities/:id");
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { user } = useAuth();
+  const { toast } = useToast();
   const id = params?.id ? parseInt(params.id) : 0;
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/opportunities", id],
@@ -50,6 +53,120 @@ export default function PropertyDetail() {
   const property = data?.property;
   const lead = data?.lead;
   const num = (v: unknown) => (typeof v === "string" ? (Number.isFinite(parseFloat(v)) ? parseFloat(v) : 0) : typeof v === "number" ? (Number.isFinite(v) ? v : 0) : 0);
+
+  const { data: skipTraceLatest } = useQuery<any>({
+    queryKey: ["/api/opportunities", id, "skip-trace-latest"],
+    enabled: !!id,
+    queryFn: async () => {
+      const res = await fetch(`/api/opportunities/${id}/skip-trace/latest`, { credentials: "include" });
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error("Failed to fetch skip trace");
+      return res.json();
+    },
+  });
+
+  const skipTraceMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/opportunities/${id}/skip-trace`, { method: "POST", credentials: "include" });
+      if (res.status === 404) throw new Error("Skip trace is disabled");
+      if (!res.ok) throw new Error("Skip trace failed");
+      return res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "skip-trace-latest"] });
+      toast({ title: "Skip trace completed" });
+    },
+    onError: (e: any) => {
+      toast({ title: e?.message || "Skip trace failed", variant: "destructive" });
+    },
+  });
+
+  const { data: compSnapshots = [] } = useQuery<any[]>({
+    queryKey: ["/api/opportunities", id, "comps-snapshots"],
+    enabled: !!id,
+    queryFn: async () => {
+      const res = await fetch(`/api/opportunities/${id}/comps/snapshots`, { credentials: "include" });
+      if (res.status === 404) return [];
+      if (!res.ok) throw new Error("Failed to load comps");
+      return res.json();
+    },
+  });
+
+  const pullCompsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/opportunities/${id}/comps/pull`, { method: "POST", credentials: "include" });
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 404) throw new Error("Comps are disabled");
+      if (!res.ok) throw new Error((json as any).message || "Failed to pull comps");
+      return json;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "comps-snapshots"] });
+      toast({ title: "Comps pulled" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to pull comps", variant: "destructive" }),
+  });
+
+  const { data: buyerMatches = [] } = useQuery<any[]>({
+    queryKey: ["/api/opportunities", id, "buyer-matches"],
+    enabled: !!id,
+    queryFn: async () => {
+      const res = await fetch(`/api/opportunities/${id}/buyer-matches`, { credentials: "include" });
+      if (res.status === 404) return [];
+      if (!res.ok) throw new Error("Failed to load buyer matches");
+      return res.json();
+    },
+  });
+
+  const recomputeMatchesMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/opportunities/${id}/buyer-matches/recompute`, { method: "POST", credentials: "include" });
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 404) throw new Error("Buyer matching is disabled");
+      if (!res.ok) throw new Error((json as any).message || "Failed to recompute");
+      return json;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "buyer-matches"] });
+      toast({ title: "Matches recomputed" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to recompute", variant: "destructive" }),
+  });
+
+  const assignBuyerMutation = useMutation({
+    mutationFn: async (buyerId: number) => {
+      const res = await fetch(`/api/deal-assignments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ propertyId: id ? parseInt(String(id), 10) : null, buyerId }),
+        credentials: "include",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((json as any).message || "Failed to assign buyer");
+      return json;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/properties/assignments", id] });
+      toast({ title: "Buyer assigned" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to assign buyer", variant: "destructive" }),
+  });
+
+  const { data: buyers = [] } = useQuery<any[]>({
+    queryKey: ["/api/buyers"],
+    queryFn: async () => {
+      const res = await fetch("/api/buyers", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  const buyerNameById = React.useMemo(() => {
+    const m = new Map<number, string>();
+    for (const b of buyers || []) m.set(Number(b.id), String(b.name || `Buyer ${b.id}`));
+    return m;
+  }, [buyers]);
 
   return (
     <Layout>
@@ -237,6 +354,45 @@ export default function PropertyDetail() {
                         <p className="font-medium">{lead?.motivation ?? "—"}</p>
                       </div>
                     </div>
+                    <div className="space-y-2">
+                      <Button variant="secondary" className="w-full" disabled={skipTraceMutation.isPending} onClick={() => skipTraceMutation.mutate()}>
+                        Skip Trace Owner
+                      </Button>
+                      {skipTraceLatest && (
+                        <div className="border rounded-md p-3 text-sm bg-muted/20">
+                          <div className="flex items-center justify-between">
+                            <div className="text-xs text-muted-foreground">Last Result</div>
+                            <div className="text-xs text-muted-foreground">
+                              {skipTraceLatest.completedAt
+                                ? new Date(skipTraceLatest.completedAt).toLocaleString()
+                                : skipTraceLatest.requestedAt
+                                  ? new Date(skipTraceLatest.requestedAt).toLocaleString()
+                                  : "—"}
+                            </div>
+                          </div>
+                          <div className="mt-2 grid grid-cols-1 gap-1">
+                            <div>
+                              <span className="text-muted-foreground">Status:</span>{" "}
+                              <span className="font-medium">{String(skipTraceLatest.status || "—")}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Phones:</span>{" "}
+                              <span className="font-medium">{Array.isArray(skipTraceLatest.phones) && skipTraceLatest.phones.length ? skipTraceLatest.phones.join(", ") : "—"}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Emails:</span>{" "}
+                              <span className="font-medium">{Array.isArray(skipTraceLatest.emails) && skipTraceLatest.emails.length ? skipTraceLatest.emails.join(", ") : "—"}</span>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Cost:</span>{" "}
+                              <span className="font-medium">
+                                {typeof skipTraceLatest.costCents === "number" ? `$${(skipTraceLatest.costCents / 100).toFixed(2)}` : "—"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -254,6 +410,85 @@ export default function PropertyDetail() {
 
               <TabsContent value="dealroom" className="mt-6">
                 <DealRoomSection propertyId={property?.id} userId={user?.id} />
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Comps Snapshot</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <Button variant="secondary" onClick={() => pullCompsMutation.mutate()} disabled={pullCompsMutation.isPending}>
+                        Pull comps
+                      </Button>
+                      {compSnapshots.length === 0 ? (
+                        <div className="text-sm text-muted-foreground">No snapshots yet.</div>
+                      ) : (
+                        <div className="space-y-2 text-sm">
+                          <div className="text-xs text-muted-foreground">
+                            Latest: {compSnapshots[0]?.requestedAt || compSnapshots[0]?.requested_at ? new Date(compSnapshots[0]?.requestedAt || compSnapshots[0]?.requested_at).toLocaleString() : "—"}
+                          </div>
+                          <div className="grid grid-cols-3 gap-2">
+                            <div className="border rounded-md p-2">
+                              <div className="text-xs text-muted-foreground">ARV</div>
+                              <div className="font-medium">{compSnapshots[0]?.arvSuggestion ?? compSnapshots[0]?.arv_suggestion ?? "—"}</div>
+                            </div>
+                            <div className="border rounded-md p-2">
+                              <div className="text-xs text-muted-foreground">Offer Min</div>
+                              <div className="font-medium">{compSnapshots[0]?.offerRangeMin ?? compSnapshots[0]?.offer_range_min ?? "—"}</div>
+                            </div>
+                            <div className="border rounded-md p-2">
+                              <div className="text-xs text-muted-foreground">Offer Max</div>
+                              <div className="font-medium">{compSnapshots[0]?.offerRangeMax ?? compSnapshots[0]?.offer_range_max ?? "—"}</div>
+                            </div>
+                          </div>
+                          <div className="border rounded-md p-2">
+                            <div className="text-xs text-muted-foreground mb-2">Top comps</div>
+                            {(compSnapshots[0]?.comps || []).slice(0, 5).map((c: any, idx: number) => (
+                              <div key={idx} className="grid grid-cols-5 gap-2 text-xs">
+                                <div>${Number(c.price || 0).toLocaleString()}</div>
+                                <div>{c.beds}bd</div>
+                                <div>{c.baths}ba</div>
+                                <div>{Number(c.sqft || 0).toLocaleString()}sf</div>
+                                <div>{c.distance}mi</div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Buyer Matches</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <Button variant="secondary" onClick={() => recomputeMatchesMutation.mutate()} disabled={recomputeMatchesMutation.isPending}>
+                        Recompute
+                      </Button>
+                      {buyerMatches.length === 0 ? (
+                        <div className="text-sm text-muted-foreground">No matches yet.</div>
+                      ) : (
+                        <div className="border rounded-md p-2 text-sm space-y-1">
+                          {buyerMatches.slice(0, 10).map((m: any) => (
+                            <div key={String(m.id)} className="flex items-center justify-between">
+                              <div className="truncate">{buyerNameById.get(Number(m.buyerId ?? m.buyer_id)) || `Buyer ${m.buyerId ?? m.buyer_id}`}</div>
+                              <div className="flex items-center gap-2">
+                                <div className="font-medium">{Number(m.score || 0)}</div>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => assignBuyerMutation.mutate(Number(m.buyerId ?? m.buyer_id))}
+                                  disabled={assignBuyerMutation.isPending}
+                                >
+                                  Assign
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
               </TabsContent>
               
               <TabsContent value="activity">
@@ -350,6 +585,8 @@ export default function PropertyDetail() {
                   }} />
               </CardContent>
             </Card>
+
+            {property?.id ? <EntityTasksWidget entityType="opportunity" entityId={property.id} /> : null}
           </div>
         </div>
       </div>

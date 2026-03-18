@@ -21,6 +21,13 @@ export const leads = pgTable("leads", {
   notes: text("notes"),
   source: varchar("source", { length: 100 }),
   assignedTo: integer("assigned_to"),
+  doNotCall: boolean("do_not_call").notNull().default(false),
+  doNotText: boolean("do_not_text").notNull().default(false),
+  doNotEmail: boolean("do_not_email").notNull().default(false),
+  lastTouchAt: timestamp("last_touch_at"),
+  nextTouchAt: timestamp("next_touch_at"),
+  nextFollowUpAt: timestamp("next_follow_up_at"),
+  tags: text("tags").array(),
   dedupeKey: varchar("dedupe_key", { length: 400 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -51,6 +58,8 @@ export const properties = pgTable("properties", {
   repairCost: decimal("repair_cost", { precision: 12, scale: 2 }),
   assignedTo: integer("assigned_to"),
   sourceLeadId: integer("source_lead_id"),
+  leadSource: varchar("lead_source", { length: 100 }),
+  leadSourceDetail: varchar("lead_source_detail", { length: 255 }),
   notes: text("notes"),
   dedupeKey: varchar("dedupe_key", { length: 400 }),
   createdAt: timestamp("created_at").defaultNow(),
@@ -122,6 +131,151 @@ export type InsertCrmExportFile = Omit<typeof crmExportFiles.$inferInsert, "id" 
 export const insertPropertySchema = createInsertSchema(properties).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type Property = typeof properties.$inferSelect;
 export type InsertProperty = z.infer<typeof insertPropertySchema>;
+
+export const skipTraceResults = pgTable("skip_trace_results", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  leadId: integer("lead_id"),
+  propertyId: integer("property_id"),
+  providerName: varchar("provider_name", { length: 100 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
+  phonesJson: text("phones_json").notNull().default("[]"),
+  emailsJson: text("emails_json").notNull().default("[]"),
+  costCents: integer("cost_cents"),
+  requestedAt: timestamp("requested_at").notNull().defaultNow(),
+  completedAt: timestamp("completed_at"),
+  cacheKey: varchar("cache_key", { length: 400 }).notNull(),
+  rawResponseJson: text("raw_response_json"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSkipTraceResultSchema = createInsertSchema(skipTraceResults).omit({ id: true, createdAt: true } as any);
+export type SkipTraceResult = typeof skipTraceResults.$inferSelect;
+export type InsertSkipTraceResult = z.infer<typeof insertSkipTraceResultSchema>;
+
+export const leadSourceOptions = pgTable("lead_source_options", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id"),
+  value: varchar("value", { length: 100 }).notNull(),
+  label: varchar("label", { length: 120 }).notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertLeadSourceOptionSchema = createInsertSchema(leadSourceOptions).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type LeadSourceOption = typeof leadSourceOptions.$inferSelect;
+export type InsertLeadSourceOption = z.infer<typeof insertLeadSourceOptionSchema>;
+
+export const campaigns = pgTable("campaigns", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  name: varchar("name", { length: 120 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCampaignSchema = createInsertSchema(campaigns).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type Campaign = typeof campaigns.$inferSelect;
+export type InsertCampaign = z.infer<typeof insertCampaignSchema>;
+
+export const campaignSteps = pgTable("campaign_steps", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  campaignId: integer("campaign_id").notNull(),
+  stepOrder: integer("step_order").notNull(),
+  channel: varchar("channel", { length: 10 }).notNull(),
+  offsetDays: integer("offset_days").notNull().default(0),
+  sendWindowStart: varchar("send_window_start", { length: 5 }),
+  sendWindowEnd: varchar("send_window_end", { length: 5 }),
+  templateText: text("template_text").notNull().default(""),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCampaignStepSchema = createInsertSchema(campaignSteps).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type CampaignStep = typeof campaignSteps.$inferSelect;
+export type InsertCampaignStep = z.infer<typeof insertCampaignStepSchema>;
+
+export const campaignEnrollments = pgTable("campaign_enrollments", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  campaignId: integer("campaign_id").notNull(),
+  leadId: integer("lead_id").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("active"),
+  startedAt: timestamp("started_at").notNull().defaultNow(),
+  nextStepOrder: integer("next_step_order").notNull().default(0),
+  nextRunAt: timestamp("next_run_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCampaignEnrollmentSchema = createInsertSchema(campaignEnrollments).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type CampaignEnrollment = typeof campaignEnrollments.$inferSelect;
+export type InsertCampaignEnrollment = z.infer<typeof insertCampaignEnrollmentSchema>;
+
+export const campaignDeliveries = pgTable("campaign_deliveries", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  enrollmentId: integer("enrollment_id").notNull(),
+  campaignId: integer("campaign_id").notNull(),
+  leadId: integer("lead_id").notNull(),
+  stepId: integer("step_id"),
+  channel: varchar("channel", { length: 10 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull(),
+  providerId: varchar("provider_id", { length: 120 }),
+  error: text("error"),
+  sentAt: timestamp("sent_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCampaignDeliverySchema = createInsertSchema(campaignDeliveries).omit({ id: true, createdAt: true } as any);
+export type CampaignDelivery = typeof campaignDeliveries.$inferSelect;
+export type InsertCampaignDelivery = z.infer<typeof insertCampaignDeliverySchema>;
+
+export const rvmAudioAssets = pgTable("rvm_audio_assets", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  name: varchar("name", { length: 120 }).notNull(),
+  mimeType: varchar("mime_type", { length: 120 }).notNull(),
+  contentBase64: text("content_base64").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertRvmAudioAssetSchema = createInsertSchema(rvmAudioAssets).omit({ id: true, createdAt: true } as any);
+export type RvmAudioAsset = typeof rvmAudioAssets.$inferSelect;
+export type InsertRvmAudioAsset = z.infer<typeof insertRvmAudioAssetSchema>;
+
+export const rvmCampaigns = pgTable("rvm_campaigns", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  name: varchar("name", { length: 120 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("draft"),
+  sendWindowStart: varchar("send_window_start", { length: 5 }),
+  sendWindowEnd: varchar("send_window_end", { length: 5 }),
+  dailyCap: integer("daily_cap").notNull().default(500),
+  audioAssetId: integer("audio_asset_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertRvmCampaignSchema = createInsertSchema(rvmCampaigns).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type RvmCampaign = typeof rvmCampaigns.$inferSelect;
+export type InsertRvmCampaign = z.infer<typeof insertRvmCampaignSchema>;
+
+export const rvmDrops = pgTable("rvm_drops", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  campaignId: integer("campaign_id").notNull(),
+  leadId: integer("lead_id").notNull(),
+  toNumber: varchar("to_number", { length: 32 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("queued"),
+  providerId: varchar("provider_id", { length: 120 }),
+  requestedAt: timestamp("requested_at").notNull().defaultNow(),
+  completedAt: timestamp("completed_at"),
+  error: text("error"),
+});
+
+export const insertRvmDropSchema = createInsertSchema(rvmDrops).omit({ id: true } as any);
+export type RvmDrop = typeof rvmDrops.$inferSelect;
+export type InsertRvmDrop = z.infer<typeof insertRvmDropSchema>;
 
 // CONTACTS TABLE
 export const contacts = pgTable("contacts", {
@@ -198,6 +352,86 @@ export const insertContractDocumentSchema = createInsertSchema(contractDocuments
 export type ContractDocument = typeof contractDocuments.$inferSelect;
 export type InsertContractDocument = z.infer<typeof insertContractDocumentSchema>;
 
+export const contractEnvelopes = pgTable("contract_envelopes", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  documentId: integer("document_id").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("draft"),
+  signerName: varchar("signer_name", { length: 255 }),
+  signerEmail: varchar("signer_email", { length: 255 }),
+  tokenHash: varchar("token_hash", { length: 64 }).notNull(),
+  expiresAt: timestamp("expires_at"),
+  sentAt: timestamp("sent_at"),
+  viewedAt: timestamp("viewed_at"),
+  signedAt: timestamp("signed_at"),
+  declinedAt: timestamp("declined_at"),
+  signatureType: varchar("signature_type", { length: 20 }),
+  signatureText: varchar("signature_text", { length: 255 }),
+  signatureImageBase64: text("signature_image_base64"),
+  auditJson: text("audit_json").notNull().default("[]"),
+  signedPdfBase64: text("signed_pdf_base64"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertContractEnvelopeSchema = createInsertSchema(contractEnvelopes).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type ContractEnvelope = typeof contractEnvelopes.$inferSelect;
+export type InsertContractEnvelope = z.infer<typeof insertContractEnvelopeSchema>;
+
+export const syncIdempotency = pgTable("sync_idempotency", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  idempotencyKey: varchar("idempotency_key", { length: 120 }).notNull(),
+  responseJson: text("response_json").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertSyncIdempotencySchema = createInsertSchema(syncIdempotency).omit({ id: true, createdAt: true } as any);
+export type SyncIdempotency = typeof syncIdempotency.$inferSelect;
+export type InsertSyncIdempotency = z.infer<typeof insertSyncIdempotencySchema>;
+
+export const fieldMediaAssets = pgTable("field_media_assets", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  leadId: integer("lead_id"),
+  kind: varchar("kind", { length: 20 }).notNull(),
+  mimeType: varchar("mime_type", { length: 120 }).notNull(),
+  contentBase64: text("content_base64").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertFieldMediaAssetSchema = createInsertSchema(fieldMediaAssets).omit({ id: true, createdAt: true } as any);
+export type FieldMediaAsset = typeof fieldMediaAssets.$inferSelect;
+export type InsertFieldMediaAsset = z.infer<typeof insertFieldMediaAssetSchema>;
+
+export const compSnapshots = pgTable("comp_snapshots", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  propertyId: integer("property_id").notNull(),
+  providerName: varchar("provider_name", { length: 100 }).notNull(),
+  requestedAt: timestamp("requested_at").notNull().defaultNow(),
+  compsJson: text("comps_json").notNull().default("[]"),
+  rawResponseJson: text("raw_response_json"),
+  arvSuggestion: decimal("arv_suggestion", { precision: 12, scale: 2 }),
+  offerRangeMin: decimal("offer_range_min", { precision: 12, scale: 2 }),
+  offerRangeMax: decimal("offer_range_max", { precision: 12, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCompSnapshotSchema = createInsertSchema(compSnapshots).omit({ id: true, createdAt: true } as any);
+export type CompSnapshot = typeof compSnapshots.$inferSelect;
+export type InsertCompSnapshot = z.infer<typeof insertCompSnapshotSchema>;
+
+export const dealBuyerMatches = pgTable("deal_buyer_matches", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  propertyId: integer("property_id").notNull(),
+  buyerId: integer("buyer_id").notNull(),
+  score: integer("score").notNull(),
+  computedAt: timestamp("computed_at").notNull().defaultNow(),
+});
+
+export const insertDealBuyerMatchSchema = createInsertSchema(dealBuyerMatches).omit({ id: true } as any);
+export type DealBuyerMatch = typeof dealBuyerMatches.$inferSelect;
+export type InsertDealBuyerMatch = z.infer<typeof insertDealBuyerMatchSchema>;
+
 // DOCUMENT VERSIONS TABLE
 export const documentVersions = pgTable("document_versions", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -261,6 +495,19 @@ export const users = pgTable("users", {
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
+
+export const userFeatureFlags = pgTable("user_feature_flags", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  flag: varchar("flag", { length: 80 }).notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertUserFeatureFlagSchema = createInsertSchema(userFeatureFlags).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type UserFeatureFlag = typeof userFeatureFlags.$inferSelect;
+export type InsertUserFeatureFlag = z.infer<typeof insertUserFeatureFlagSchema>;
 
 // TWO FACTOR AUTH TABLE
 export const twoFactorAuth = pgTable("two_factor_auth", {
@@ -415,6 +662,39 @@ export const insertUserNotificationSchema = createInsertSchema(userNotifications
 export type UserNotification = typeof userNotifications.$inferSelect;
 export type InsertUserNotification = z.infer<typeof insertUserNotificationSchema>;
 
+// TASKS TABLE
+export const tasks = pgTable("tasks", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  type: varchar("type", { length: 80 }).default("general"),
+  relatedEntityType: varchar("related_entity_type", { length: 50 }),
+  relatedEntityId: integer("related_entity_id"),
+  dueAt: timestamp("due_at"),
+  completedAt: timestamp("completed_at"),
+  priority: varchar("priority", { length: 20 }).default("medium"),
+  status: varchar("status", { length: 20 }).default("open"),
+  assignedToUserId: integer("assigned_to_user_id"),
+  isRecurring: boolean("is_recurring").notNull().default(false),
+  recurrenceRule: text("recurrence_rule"),
+  createdBy: integer("created_by").notNull(),
+  isPrivate: boolean("is_private").notNull().default(false),
+  reminderSentAt: timestamp("reminder_sent_at"),
+  overdueAlertSentAt: timestamp("overdue_alert_sent_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertTaskSchema = createInsertSchema(tasks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  reminderSentAt: true,
+  overdueAlertSentAt: true,
+} as any);
+export type Task = typeof tasks.$inferSelect;
+export type InsertTask = z.infer<typeof insertTaskSchema>;
+
 // OFFERS TABLE
 export const offers = pgTable("offers", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -515,6 +795,12 @@ export const buyers = pgTable("buyers", {
   preferredAreas: text("preferred_areas").array(),
   minBudget: decimal("min_budget", { precision: 12, scale: 2 }),
   maxBudget: decimal("max_budget", { precision: 12, scale: 2 }),
+  zipCodes: text("zip_codes").array(),
+  minPrice: decimal("min_price", { precision: 12, scale: 2 }),
+  maxPrice: decimal("max_price", { precision: 12, scale: 2 }),
+  minBeds: integer("min_beds"),
+  maxBeds: integer("max_beds"),
+  propertyTypes: text("property_types").array(),
   dealsPerMonth: integer("deals_per_month"),
   proofOfFunds: boolean("proof_of_funds").default(false),
   proofOfFundsVerifiedAt: timestamp("proof_of_funds_verified_at"),
@@ -585,7 +871,10 @@ export const callLogs = pgTable("call_logs", {
   direction: varchar("direction", { length: 20 }).notNull(),
   number: varchar("number", { length: 20 }).notNull(),
   contactId: integer("contact_id"),
+  leadId: integer("lead_id"),
   status: varchar("status", { length: 50 }).notNull(),
+  disposition: varchar("disposition", { length: 50 }),
+  note: text("note"),
   startedAt: timestamp("started_at").defaultNow(),
   endedAt: timestamp("ended_at"),
   durationMs: integer("duration_ms"),
@@ -598,6 +887,55 @@ export const callLogs = pgTable("call_logs", {
 export const insertCallLogSchema = createInsertSchema(callLogs).omit({ id: true, createdAt: true } as any);
 export type CallLog = typeof callLogs.$inferSelect;
 export type InsertCallLog = z.infer<typeof insertCallLogSchema>;
+
+export const callMedia = pgTable("call_media", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  callLogId: integer("call_log_id"),
+  kind: varchar("kind", { length: 20 }).notNull(),
+  e164: varchar("e164", { length: 20 }),
+  storageKey: text("storage_key"),
+  providerUrl: text("provider_url"),
+  providerSid: varchar("provider_sid", { length: 64 }),
+  mimeType: varchar("mime_type", { length: 100 }),
+  durationSeconds: integer("duration_seconds"),
+  transcript: text("transcript"),
+  isRead: boolean("is_read").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCallMediaSchema = createInsertSchema(callMedia).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type CallMedia = typeof callMedia.$inferSelect;
+export type InsertCallMedia = z.infer<typeof insertCallMediaSchema>;
+
+export const numberReputation = pgTable("number_reputation", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  e164: varchar("e164", { length: 20 }).notNull(),
+  label: varchar("label", { length: 20 }).notNull(),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertNumberReputationSchema = createInsertSchema(numberReputation).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type NumberReputation = typeof numberReputation.$inferSelect;
+export type InsertNumberReputation = z.infer<typeof insertNumberReputationSchema>;
+
+export const callNotes = pgTable("call_notes", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  callLogId: integer("call_log_id").notNull(),
+  disposition: varchar("disposition", { length: 50 }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCallNotesSchema = createInsertSchema(callNotes).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type CallNotes = typeof callNotes.$inferSelect;
+export type InsertCallNotes = z.infer<typeof insertCallNotesSchema>;
 
 export const underwritingTemplates = pgTable("underwriting_templates", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
