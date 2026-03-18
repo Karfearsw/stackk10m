@@ -4,6 +4,8 @@ FrameworkPlanner/dist-server
 .DS_Store
 .env
 .vercel
+!.vercel/
+!.vercel/luxe-logo.png
 *.log
 .trae/
 .local/
