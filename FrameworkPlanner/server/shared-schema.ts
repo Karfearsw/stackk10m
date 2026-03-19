@@ -691,7 +691,9 @@ export const insertTaskSchema = createInsertSchema(tasks).omit({
   updatedAt: true,
   reminderSentAt: true,
   overdueAlertSentAt: true,
-} as any);
+} as any).extend({
+  dueAt: z.coerce.date().nullable().optional(),
+});
 export type Task = typeof tasks.$inferSelect;
 export type InsertTask = z.infer<typeof insertTaskSchema>;
 

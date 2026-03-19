@@ -2835,6 +2835,131 @@ export async function registerRoutes(app: Express): Promise<Server> {
     ]);
   });
 
+  app.get("/api/dialer/scripts", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    try {
+      const listIdRaw = typeof req.query.listId === "string" ? req.query.listId : "";
+      const listId = String(listIdRaw || "").trim() || null;
+
+      let where = sql`user_id = ${user.id}`;
+      if (listId) where = sql`${where} AND (list_id IS NULL OR list_id = ${listId})`;
+      else where = sql`${where} AND list_id IS NULL`;
+
+      const result: any = await db.execute(sql`
+        SELECT id, list_id as "listId", name, content, is_default as "isDefault", created_at as "createdAt", updated_at as "updatedAt"
+        FROM dialer_scripts
+        WHERE ${where}
+        ORDER BY is_default DESC, updated_at DESC, id DESC
+      `);
+      res.json({ items: result.rows || [] });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/dialer/scripts", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    try {
+      const name = String(req.body?.name || "").trim();
+      const content = String(req.body?.content || "");
+      const listId = String(req.body?.listId || "").trim() || null;
+      const isDefault = Boolean(req.body?.isDefault);
+
+      if (!name) return res.status(400).json({ message: "Missing name" });
+      if (name.length > 120) return res.status(400).json({ message: "Name too long" });
+      if (content.length > 50_000) return res.status(400).json({ message: "Content too long" });
+
+      const listKey = listId || "";
+      if (isDefault) {
+        await db.execute(sql`
+          UPDATE dialer_scripts
+          SET is_default = false, updated_at = now()
+          WHERE user_id = ${user.id} AND COALESCE(list_id, '') = ${listKey}
+        `);
+      }
+
+      const result: any = await db.execute(sql`
+        INSERT INTO dialer_scripts (user_id, list_id, name, content, is_default, created_at, updated_at)
+        VALUES (${user.id}, ${listId}, ${name}, ${content}, ${isDefault}, now(), now())
+        RETURNING id, list_id as "listId", name, content, is_default as "isDefault", created_at as "createdAt", updated_at as "updatedAt"
+      `);
+      res.status(201).json((result.rows || [])[0] || null);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/dialer/scripts/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+
+      const before: any = await db.execute(sql`
+        SELECT id, user_id as "userId", list_id as "listId", name, content, is_default as "isDefault"
+        FROM dialer_scripts
+        WHERE id = ${id} AND user_id = ${user.id}
+        LIMIT 1
+      `);
+      const existing = (before.rows || [])[0];
+      if (!existing) return res.status(404).json({ message: "Not found" });
+
+      const nameNext = typeof req.body?.name === "string" ? String(req.body.name).trim() : existing.name;
+      const contentNext = typeof req.body?.content === "string" ? String(req.body.content) : existing.content;
+      const listIdNext = typeof req.body?.listId === "string" ? (String(req.body.listId).trim() || null) : existing.listId;
+      const isDefaultNext = typeof req.body?.isDefault === "boolean" ? Boolean(req.body.isDefault) : Boolean(existing.isDefault);
+
+      if (!nameNext) return res.status(400).json({ message: "Missing name" });
+      if (nameNext.length > 120) return res.status(400).json({ message: "Name too long" });
+      if (contentNext.length > 50_000) return res.status(400).json({ message: "Content too long" });
+
+      const listKey = (listIdNext || "");
+      if (isDefaultNext) {
+        await db.execute(sql`
+          UPDATE dialer_scripts
+          SET is_default = false, updated_at = now()
+          WHERE user_id = ${user.id} AND COALESCE(list_id, '') = ${listKey}
+        `);
+      }
+
+      const result: any = await db.execute(sql`
+        UPDATE dialer_scripts
+        SET
+          list_id = ${listIdNext},
+          name = ${nameNext},
+          content = ${contentNext},
+          is_default = ${isDefaultNext},
+          updated_at = now()
+        WHERE id = ${id} AND user_id = ${user.id}
+        RETURNING id, list_id as "listId", name, content, is_default as "isDefault", created_at as "createdAt", updated_at as "updatedAt"
+      `);
+      res.json((result.rows || [])[0] || null);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/dialer/scripts/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+
+      await db.execute(sql`DELETE FROM dialer_scripts WHERE id = ${id} AND user_id = ${user.id}`);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get("/api/dialer/queue", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;

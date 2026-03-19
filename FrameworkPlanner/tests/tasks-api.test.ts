@@ -44,6 +44,19 @@ describe("Tasks API", () => {
     expect(res.body.title).toBe("Test task");
   });
 
+  it("POST /api/tasks coerces dueAt string to Date", async () => {
+    let captured: any | undefined;
+    storage.createTask = (async (input: any) => {
+      captured = input;
+      return { id: 123, ...input };
+    }) as any;
+
+    const res = await request(app).post("/api/tasks").send({ title: "Test task", dueAt: "2026-03-20T10:00:00" });
+    expect(res.status).toBe(201);
+    expect(captured?.dueAt instanceof Date).toBe(true);
+    expect(Number.isNaN(captured?.dueAt?.getTime?.())).toBe(false);
+  });
+
   it("PATCH /api/tasks/:id returns 404 if private task is not visible", async () => {
     storage.getTaskById = (async () => ({ id: 10, isPrivate: true, createdBy: 2, assignedToUserId: 3 })) as any;
     const res = await request(app).patch("/api/tasks/10").send({ title: "Nope" });
@@ -85,4 +98,3 @@ describe("Tasks API", () => {
     expect(res.body.next).toBeNull();
   });
 });
-
