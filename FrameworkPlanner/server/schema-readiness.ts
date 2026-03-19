@@ -123,6 +123,8 @@ export async function getSchemaReadiness(): Promise<SchemaReadiness> {
 
 export function schemaFixInstructions() {
   return {
+    vercelBuildNote:
+      "Vercel builds auto-apply migrations when DB env vars are set (set AUTO_APPLY_MIGRATIONS=false to force-disable).",
     applyMigrations: "npm run migrate",
     applyMigrationsFromRepoRoot: "npm --prefix FrameworkPlanner run migrate",
     drizzlePush: "npm run db:push",

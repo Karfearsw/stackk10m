@@ -2,15 +2,28 @@ import { spawnSync } from "node:child_process";
 import { applyMigrations } from "./apply-migrations.js";
 
 async function run() {
-  const auto = String(process.env.AUTO_APPLY_MIGRATIONS || "").toLowerCase() === "true";
-  if (auto) {
+  const raw = String(process.env.AUTO_APPLY_MIGRATIONS ?? "").trim().toLowerCase();
+  const explicit =
+    raw === "true" ? true :
+    raw === "false" ? false :
+    null;
+
+  const isVercel = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
+  const shouldApply = explicit ?? isVercel;
+
+  if (shouldApply) {
     await applyMigrations();
   } else {
-    console.log("AUTO_APPLY_MIGRATIONS is not true; skipping migrations");
+    console.log("Skipping migrations (set AUTO_APPLY_MIGRATIONS=true to enable, false to force-disable)");
   }
 
-  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
-  const res = spawnSync(npmCmd, ["run", "build"], { stdio: "inherit" });
+  const npmCli = process.env.npm_execpath;
+  if (!npmCli) {
+    throw new Error("npm_execpath is not set; cannot run nested npm build");
+  }
+
+  const res = spawnSync(process.execPath, [npmCli, "run", "build"], { stdio: "inherit" });
+  if (res.error) console.error(res.error);
   process.exitCode = res.status ?? 1;
 }
 
@@ -18,4 +31,3 @@ run().catch((e) => {
   console.error(e);
   process.exitCode = 1;
 });
-

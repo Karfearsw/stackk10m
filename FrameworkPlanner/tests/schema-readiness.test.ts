@@ -58,8 +58,8 @@ describe("schema readiness", () => {
         ]),
       );
       expect(mod.schemaFixInstructions().applyMigrations).toBe("npm run migrate");
+      expect(mod.schemaFixInstructions().vercelBuildNote).toBeTypeOf("string");
     }
     process.env.DATABASE_URL = prev;
   });
 });
-
