@@ -644,20 +644,20 @@ export default function Opportunities() {
           <h1 className="text-3xl font-bold tracking-tight">Opportunities</h1>
           <p className="text-muted-foreground">Browse and manage all opportunities in your pipeline.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <CrmImportExportDialog entityType="opportunity" />
           <div className="relative hidden md:block">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input 
               placeholder="Search opportunities..." 
-              className="w-[200px] pl-9"
+              className="w-[160px] pl-9 lg:w-[200px]"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               data-testid="input-search-opportunities"
             />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[140px]" data-testid="select-filter-status">
+            <SelectTrigger className="w-[120px] lg:w-[140px]" data-testid="select-filter-status">
               <Filter className="mr-2 h-4 w-4" />
               <SelectValue placeholder="Filter" />
             </SelectTrigger>

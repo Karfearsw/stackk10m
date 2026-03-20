@@ -21,9 +21,9 @@ function LayoutContent({ children }: LayoutProps) {
         />
       )}
       
-      <div className="flex flex-1 flex-col overflow-hidden w-full">
+      <div className="flex min-w-0 flex-1 flex-col w-full">
         <Header />
-        <main className="flex-1 scroll-y-container bg-muted/20 p-4 md:p-6">
+        <main className="flex-1 min-h-0 scroll-y-container bg-muted/20 p-4 md:p-6">
           <div className="mx-auto max-w-7xl space-y-6 md:space-y-8">
             {children}
           </div>

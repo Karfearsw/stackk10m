@@ -448,13 +448,13 @@ export default function Leads() {
           <h1 className="text-3xl font-bold tracking-tight">Leads Pipeline</h1>
           <p className="text-muted-foreground">Manage and track your active property leads.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <CrmImportExportDialog entityType="lead" />
           <div className="relative hidden md:block">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Search leads..."
-              className="w-[200px] pl-9"
+              className="w-[160px] pl-9 lg:w-[200px]"
               value={filters.query}
               onChange={(e) => setFilters(prev => ({ ...prev, query: e.target.value }))}
               data-testid="input-leads-search"

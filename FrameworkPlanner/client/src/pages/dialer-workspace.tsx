@@ -296,13 +296,13 @@ function DialerWorkspaceInner() {
 
   return (
     <Layout>
-      <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)_420px]">
+      <div className="grid gap-4 min-w-0 xl:grid-cols-[320px_minmax(0,1fr)_420px]">
         <Card>
           <CardHeader>
             <CardTitle>Queue</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button variant={state.listId === "new" ? "default" : "outline"} onClick={() => setListId("new")}>
                 New
               </Button>
@@ -317,7 +317,7 @@ function DialerWorkspaceInner() {
               </Button>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button
                 variant="secondary"
                 onClick={async () => {
@@ -340,7 +340,7 @@ function DialerWorkspaceInner() {
               </Button>
             </div>
 
-            <ScrollArea className="h-[560px] border rounded-md p-2">
+            <ScrollArea className="h-[min(560px,60vh)] border rounded-md p-2">
               {!state.queue.length ? (
                 <div className="text-sm text-muted-foreground">No queue loaded</div>
               ) : (

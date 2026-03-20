@@ -367,7 +367,7 @@ export default function PhoneWorkspace() {
                         <Search className="w-4 h-4 text-muted-foreground" />
                         <Input placeholder="Search contacts" value={contactQuery} onChange={(e) => setContactQuery(e.target.value)} />
                       </div>
-                      <ScrollArea className="h-64 border rounded-md p-2">
+                      <ScrollArea className="h-[min(16rem,45vh)] border rounded-md p-2">
                         {contactsLoading ? (
                           <div className="text-sm text-muted-foreground">Loading…</div>
                         ) : (
@@ -413,7 +413,7 @@ export default function PhoneWorkspace() {
                     <CardTitle>Call History</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ScrollArea className="h-[28rem] border rounded-md p-2">
+                    <ScrollArea className="h-[min(28rem,60vh)] border rounded-md p-2">
                       {historyLoading ? (
                         <div className="text-sm text-muted-foreground">Loading…</div>
                       ) : (
@@ -460,7 +460,7 @@ export default function PhoneWorkspace() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ScrollArea className="h-[28rem] border rounded-md p-2">
+                    <ScrollArea className="h-[min(28rem,60vh)] border rounded-md p-2">
                       {voicemailLoading ? (
                         <div className="text-sm text-muted-foreground">Loading…</div>
                       ) : (

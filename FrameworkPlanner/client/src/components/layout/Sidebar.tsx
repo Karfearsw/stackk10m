@@ -109,7 +109,7 @@ export function Sidebar() {
         {!isHidden && (
           <button
             onClick={cycleState}
-            className="absolute -right-3 top-20 z-50 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md hover:bg-primary/90 transition-colors"
+            className="absolute -right-3 top-20 z-40 flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-md hover:bg-primary/90 transition-colors"
             data-testid="button-toggle-sidebar"
           >
             {isExpanded && <ChevronLeft className="h-4 w-4" />}

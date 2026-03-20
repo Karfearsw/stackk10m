@@ -110,7 +110,7 @@ export function Header() {
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 w-full items-center border-b bg-background px-4 md:px-6 shadow-sm gap-4">
+    <header className="sticky top-0 z-30 flex h-16 w-full min-w-0 items-center border-b bg-background px-4 md:px-6 shadow-sm gap-4">
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -134,62 +134,65 @@ export function Header() {
         </Tooltip>
       </TooltipProvider>
 
-      <div className="flex flex-1 items-center gap-4">
-        <div className="relative w-full max-w-md">
+      <div className="flex min-w-0 flex-1 items-center gap-4">
+        <div className="relative w-full max-w-md min-w-0">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            type="search"
-            placeholder="Search leads, properties, or contacts..."
-            className="w-full bg-muted/50 pl-9 md:w-[300px] lg:w-[400px] border-none focus-visible:ring-1"
-            value={query}
-            onChange={(e) => {
-              const v = e.target.value;
-              setQuery(v);
-              setOpen(v.trim().length >= 2);
-            }}
-            onFocus={() => setOpen(query.trim().length >= 2)}
-            onBlur={() => setTimeout(() => setOpen(false), 150)}
-          />
-          {open && (
-            <div className="absolute mt-2 w-full bg-background border rounded-md shadow-lg z-50 max-h-80 overflow-auto">
-              <div className="flex items-center justify-between px-3 py-2 text-xs text-muted-foreground">
-                <span>Results</span>
-                {searching && <span>Searching…</span>}
-              </div>
-              {(searchData?.results || []).length === 0 ? (
-                <div className="px-3 py-3 text-sm text-muted-foreground">No matches</div>
-              ) : (
-                (searchData?.results || []).map((item: any) => (
+          <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+              <Input
+                type="search"
+                placeholder="Search leads, properties, or contacts..."
+                className="w-full min-w-0 bg-muted/50 pl-9 border-none focus-visible:ring-1"
+                value={query}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setQuery(v);
+                  setOpen(v.trim().length >= 2);
+                }}
+                onFocus={() => setOpen(query.trim().length >= 2)}
+              />
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0">
+              <div className="bg-background border rounded-md shadow-lg max-h-80 overflow-auto">
+                <div className="flex items-center justify-between px-3 py-2 text-xs text-muted-foreground">
+                  <span>Results</span>
+                  {searching && <span>Searching…</span>}
+                </div>
+                {(searchData?.results || []).length === 0 ? (
+                  <div className="px-3 py-3 text-sm text-muted-foreground">No matches</div>
+                ) : (
+                  (searchData?.results || []).map((item: any) => (
+                    <button
+                      key={`${item.type}-${item.id}`}
+                      className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => onSelect(item)}
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-medium truncate">{item.title}</span>
+                        <span className="text-xs text-muted-foreground shrink-0">{item.type}</span>
+                      </div>
+                      {item.subtitle && (
+                        <div className="text-xs text-muted-foreground truncate">{item.subtitle}</div>
+                      )}
+                    </button>
+                  ))
+                )}
+                {searchData?.counts?.total > (searchData?.results?.length || 0) && (
                   <button
-                    key={`${item.type}-${item.id}`}
-                    className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm"
+                    className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm border-t"
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => onSelect(item)}
+                    onClick={() => {
+                      setOpen(false);
+                      setLocation(`/search?q=${encodeURIComponent(query.trim())}`);
+                    }}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium">{item.title}</span>
-                      <span className="text-xs text-muted-foreground">{item.type}</span>
-                    </div>
-                    {item.subtitle && (
-                      <div className="text-xs text-muted-foreground">{item.subtitle}</div>
-                    )}
+                    View all results ({searchData?.counts?.total})
                   </button>
-                ))
-              )}
-              {searchData?.counts?.total > (searchData?.results?.length || 0) && (
-                <button
-                  className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm border-t"
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    setOpen(false);
-                    setLocation(`/search?q=${encodeURIComponent(query.trim())}`);
-                  }}
-                >
-                  View all results ({searchData?.counts?.total})
-                </button>
-              )}
-            </div>
-          )}
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
         </div>
       </div>
       
