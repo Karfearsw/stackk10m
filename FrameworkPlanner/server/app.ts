@@ -80,6 +80,7 @@ app.set("trust proxy", 1);
 const hasDatabaseUrl = Boolean(databaseUrl() && String(databaseUrl()).trim());
 
 app.use(express.json({
+  limit: "10mb",
   verify: (req, _res, buf) => {
     req.rawBody = buf;
   }

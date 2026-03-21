@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
@@ -22,13 +23,20 @@ type StepDraft = {
 export default function Campaigns() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const [campaignsDisabled, setCampaignsDisabled] = useState(false);
 
   const { data: campaigns = [] } = useQuery<any[]>({
     queryKey: ["/api/campaigns"],
     queryFn: async () => {
-      const res = await fetch("/api/campaigns", { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
+      try {
+        const res = await apiRequest("GET", "/api/campaigns");
+        setCampaignsDisabled(false);
+        return res.json();
+      } catch (e: any) {
+        const msg = String(e?.message || "");
+        if (msg.includes("404:") && msg.includes("Not found")) setCampaignsDisabled(true);
+        return [];
+      }
     },
   });
 
@@ -51,9 +59,12 @@ export default function Campaigns() {
     queryKey: ["/api/campaigns", activeCampaignId, "steps"],
     enabled: !!activeCampaignId,
     queryFn: async () => {
-      const res = await fetch(`/api/campaigns/${activeCampaignId}/steps`, { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
+      try {
+        const res = await apiRequest("GET", `/api/campaigns/${activeCampaignId}/steps`);
+        return res.json();
+      } catch {
+        return [];
+      }
     },
   });
 
@@ -61,9 +72,12 @@ export default function Campaigns() {
     queryKey: ["/api/campaigns", activeCampaignId, "stats"],
     enabled: !!activeCampaignId,
     queryFn: async () => {
-      const res = await fetch(`/api/campaigns/${activeCampaignId}/stats`, { credentials: "include" });
-      if (!res.ok) return null;
-      return res.json();
+      try {
+        const res = await apiRequest("GET", `/api/campaigns/${activeCampaignId}/stats`);
+        return res.json();
+      } catch {
+        return null;
+      }
     },
   });
 
@@ -84,15 +98,8 @@ export default function Campaigns() {
 
   const createCampaignMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch("/api/campaigns", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ name: newName }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data as any).message || "Failed to create campaign");
-      return data;
+      const res = await apiRequest("POST", "/api/campaigns", { name: newName });
+      return res.json();
     },
     onSuccess: async (data: any) => {
       setNewName("");
@@ -100,30 +107,29 @@ export default function Campaigns() {
       setActiveCampaignId(data?.id ?? null);
       toast({ title: "Campaign created" });
     },
-    onError: (e: any) => toast({ title: e?.message || "Failed to create campaign", variant: "destructive" }),
+    onError: (e: any) => {
+      const msg = String(e?.message || "");
+      toast({
+        title: msg.includes("404:") && msg.includes("Not found") ? "Campaigns is not enabled for this account" : (msg || "Failed to create campaign"),
+        variant: "destructive",
+      });
+    },
   });
 
   const saveStepsMutation = useMutation({
     mutationFn: async () => {
       if (!activeCampaignId) return;
-      const res = await fetch(`/api/campaigns/${activeCampaignId}/steps`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          steps: draftSteps.map((s) => ({
-            stepOrder: s.stepOrder,
-            channel: s.channel,
-            offsetDays: s.offsetDays,
-            sendWindowStart: s.sendWindowStart || null,
-            sendWindowEnd: s.sendWindowEnd || null,
-            templateText: s.templateText,
-          })),
-        }),
+      const res = await apiRequest("PUT", `/api/campaigns/${activeCampaignId}/steps`, {
+        steps: draftSteps.map((s) => ({
+          stepOrder: s.stepOrder,
+          channel: s.channel,
+          offsetDays: s.offsetDays,
+          sendWindowStart: s.sendWindowStart || null,
+          sendWindowEnd: s.sendWindowEnd || null,
+          templateText: s.templateText,
+        })),
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data as any).message || "Failed to save steps");
-      return data;
+      return res.json();
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/campaigns", activeCampaignId, "steps"] });
@@ -135,10 +141,8 @@ export default function Campaigns() {
   const deleteCampaignMutation = useMutation({
     mutationFn: async () => {
       if (!activeCampaignId) return;
-      const res = await fetch(`/api/campaigns/${activeCampaignId}`, { method: "DELETE", credentials: "include" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data as any).message || "Failed to delete campaign");
-      return data;
+      const res = await apiRequest("DELETE", `/api/campaigns/${activeCampaignId}`);
+      return res.json();
     },
     onSuccess: async () => {
       setActiveCampaignId(null);
@@ -155,15 +159,8 @@ export default function Campaigns() {
       if (!activeCampaignId) return;
       const leadId = parseInt(enrollLeadId, 10);
       if (!Number.isFinite(leadId)) throw new Error("Enter a valid Lead ID");
-      const res = await fetch(`/api/campaigns/${activeCampaignId}/enroll`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ leadIds: [leadId] }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data as any).message || "Enroll failed");
-      return data;
+      const res = await apiRequest("POST", `/api/campaigns/${activeCampaignId}/enroll`, { leadIds: [leadId] });
+      return res.json();
     },
     onSuccess: () => {
       setEnrollLeadId("");
@@ -187,6 +184,14 @@ export default function Campaigns() {
           <h1 className="text-3xl font-bold tracking-tight">Campaigns</h1>
           <p className="text-muted-foreground">Build drip sequences and enroll leads.</p>
         </div>
+
+        {campaignsDisabled ? (
+          <Card>
+            <CardContent className="pt-6 text-sm text-muted-foreground">
+              Campaigns is not enabled for this account.
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card>
           <CardHeader>

@@ -141,15 +141,18 @@ export default function Timesheet() {
       const hours = calculateHours(data.startTime, data.endTime);
       const res = await fetch(`/api/users/${user?.id}/timesheet`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...(localStorage.getItem("token") ? { Authorization: `Bearer ${localStorage.getItem("token")}` } : {}) },
         body: JSON.stringify({
           ...data,
           hours: hours.toFixed(2),
-          hourlyRate: parseFloat(data.hourlyRate),
+          hourlyRate: String(data.hourlyRate || 0),
         }),
         credentials: "include",
       });
-      if (!res.ok) throw new Error("Failed to create entry");
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || "Failed to create entry");
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -165,8 +168,8 @@ export default function Timesheet() {
         hourlyRate: 50,
       }));
     },
-    onError: () => {
-      toast.error("Failed to add time entry");
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to add time entry");
     },
   });
 
@@ -174,17 +177,21 @@ export default function Timesheet() {
     mutationFn: async (id: number) => {
       const res = await fetch(`/api/timesheet/${id}`, {
         method: "DELETE",
+        headers: { ...(localStorage.getItem("token") ? { Authorization: `Bearer ${localStorage.getItem("token")}` } : {}) },
         credentials: "include",
       });
-      if (!res.ok) throw new Error("Failed to delete");
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || "Failed to delete entry");
+      }
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [timesheetUrl] });
       toast.success("Entry deleted");
     },
-    onError: () => {
-      toast.error("Failed to delete entry");
+    onError: (err: any) => {
+      toast.error(err.message || "Failed to delete entry");
     },
   });
 
@@ -378,7 +385,10 @@ export default function Timesheet() {
                       id="hourlyRate"
                       type="number"
                       value={formData.hourlyRate}
-                      onChange={(e) => setFormData({ ...formData, hourlyRate: parseFloat(e.target.value) })}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        setFormData({ ...formData, hourlyRate: Number.isNaN(val) ? 0 : val });
+                      }}
                       placeholder="50"
                       data-testid="input-hourly-rate"
                     />

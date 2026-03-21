@@ -12,6 +12,7 @@ import { DialerProvider, useDialer } from "@/contexts/DialerContext";
 import { useSignalWire } from "@/hooks/useSignalWire";
 import { EntityActivity } from "@/components/activity/EntityActivity";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
 
 function formatE164(raw: string) {
   const digits = raw.replace(/[^\d+]/g, "");
@@ -104,8 +105,7 @@ function DialerWorkspaceInner() {
   const { data: lead } = useQuery<any>({
     queryKey: activeItem?.leadId ? [`/api/leads/${activeItem.leadId}`] : ["lead-none"],
     queryFn: async () => {
-      const res = await fetch(`/api/leads/${activeItem?.leadId}`, { credentials: "include" });
-      if (!res.ok) throw new Error(await res.text());
+      const res = await apiRequest("GET", `/api/leads/${activeItem?.leadId}`);
       return res.json();
     },
     enabled: Boolean(activeItem?.leadId),
@@ -115,8 +115,7 @@ function DialerWorkspaceInner() {
     queryKey: ["/api/dialer/scripts", state.listId],
     queryFn: async () => {
       const qs = new URLSearchParams({ listId: state.listId });
-      const res = await fetch(`/api/dialer/scripts?${qs.toString()}`, { credentials: "include" });
-      if (!res.ok) throw new Error(await res.text());
+      const res = await apiRequest("GET", `/api/dialer/scripts?${qs.toString()}`);
       return res.json();
     },
     enabled: Boolean(state.listId),
@@ -482,7 +481,20 @@ function DialerWorkspaceInner() {
           </CardHeader>
           <CardContent className="space-y-3">
             {!activeItem ? (
-              <div className="text-sm text-muted-foreground">Select a lead from the queue</div>
+              <div className="space-y-4">
+                <div className="text-sm text-muted-foreground">Select a lead from the queue</div>
+                <div className="grid gap-2 opacity-50 pointer-events-none">
+                  <Label>Script Preview</Label>
+                  <div className="flex gap-2">
+                    <select className="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm" disabled>
+                      <option>Select a lead to view scripts</option>
+                    </select>
+                  </div>
+                  <div className="rounded-md border border-border p-2 text-sm whitespace-pre-wrap min-h-[100px] flex items-center justify-center">
+                    <span className="text-muted-foreground">Load queue and select a lead to see the script</span>
+                  </div>
+                </div>
+              </div>
             ) : (
               <>
                 <div>
@@ -630,33 +642,19 @@ function DialerWorkspaceInner() {
                           setScriptSaving(true);
                           try {
                             if (typeof scriptId === "number") {
-                              const res = await fetch(`/api/dialer/scripts/${scriptId}`, {
-                                method: "PATCH",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({
-                                  name,
-                                  content: String(scriptContent || ""),
-                                  listId: state.listId,
-                                  isDefault: Boolean(scriptIsDefault),
-                                }),
-                                credentials: "include",
-                              });
-                              if (!res.ok) throw new Error(await res.text());
-                              await res.json();
+                              await apiRequest("PATCH", `/api/dialer/scripts/${scriptId}`, {
+                                name,
+                                content: String(scriptContent || ""),
+                                listId: state.listId,
+                                isDefault: Boolean(scriptIsDefault),
+                              }).then((r) => r.json());
                             } else {
-                              const res = await fetch(`/api/dialer/scripts`, {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({
-                                  name,
-                                  content: String(scriptContent || ""),
-                                  listId: state.listId,
-                                  isDefault: Boolean(scriptIsDefault),
-                                }),
-                                credentials: "include",
-                              });
-                              if (!res.ok) throw new Error(await res.text());
-                              const created = await res.json();
+                              const created = await apiRequest("POST", `/api/dialer/scripts`, {
+                                name,
+                                content: String(scriptContent || ""),
+                                listId: state.listId,
+                                isDefault: Boolean(scriptIsDefault),
+                              }).then((r) => r.json());
                               if (created?.id) setScriptId(Number(created.id));
                             }
                             queryClient.invalidateQueries({ queryKey: ["/api/dialer/scripts", state.listId] });
@@ -673,8 +671,11 @@ function DialerWorkspaceInner() {
                           variant="outline"
                           onClick={async () => {
                             if (!confirm("Delete this script?")) return;
-                            const res = await fetch(`/api/dialer/scripts/${scriptId}`, { method: "DELETE", credentials: "include" });
-                            if (!res.ok) return;
+                            try {
+                              await apiRequest("DELETE", `/api/dialer/scripts/${scriptId}`);
+                            } catch {
+                              return;
+                            }
                             setScriptId(null);
                             setScriptName("");
                             setScriptContent("");

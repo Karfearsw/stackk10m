@@ -5,8 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest } from "@/lib/queryClient";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type AudioAsset = { id: number; name: string; mimeType: string; createdAt: string };
 
@@ -17,18 +18,24 @@ export default function RvmPage() {
   const { data: audioAssets = [] } = useQuery<AudioAsset[]>({
     queryKey: ["/api/rvm/audio-assets"],
     queryFn: async () => {
-      const res = await fetch("/api/rvm/audio-assets", { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
+      try {
+        const res = await apiRequest("GET", "/api/rvm/audio-assets");
+        return res.json();
+      } catch {
+        return [];
+      }
     },
   });
 
   const { data: campaigns = [] } = useQuery<any[]>({
     queryKey: ["/api/rvm/campaigns"],
     queryFn: async () => {
-      const res = await fetch("/api/rvm/campaigns", { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
+      try {
+        const res = await apiRequest("GET", "/api/rvm/campaigns");
+        return res.json();
+      } catch {
+        return [];
+      }
     },
   });
 
@@ -41,34 +48,36 @@ export default function RvmPage() {
 
   const activeCampaign = useMemo(() => campaigns.find((c: any) => c.id === activeCampaignId) || null, [campaigns, activeCampaignId]);
 
+  useEffect(() => {
+    if (!activeCampaignId) return;
+    if (!campaigns.length) return;
+    if (!activeCampaign) setActiveCampaignId(null);
+  }, [activeCampaignId, activeCampaign, campaigns.length]);
+
   const { data: drops = [] } = useQuery<any[]>({
     queryKey: ["/api/rvm/campaigns", activeCampaignId, "drops"],
     enabled: !!activeCampaignId,
     queryFn: async () => {
-      const res = await fetch(`/api/rvm/campaigns/${activeCampaignId}/drops`, { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
+      try {
+        const res = await apiRequest("GET", `/api/rvm/campaigns/${activeCampaignId}/drops`);
+        return res.json();
+      } catch {
+        return [];
+      }
     },
   });
 
   const createCampaignMutation = useMutation({
     mutationFn: async () => {
       const cap = parseInt(dailyCap, 10);
-      const res = await fetch("/api/rvm/campaigns", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          name: newCampaignName,
-          sendWindowStart,
-          sendWindowEnd,
-          dailyCap: Number.isFinite(cap) ? cap : 500,
-          audioAssetId: selectedAudioId ? parseInt(selectedAudioId, 10) : null,
-        }),
+      const res = await apiRequest("POST", "/api/rvm/campaigns", {
+        name: newCampaignName,
+        sendWindowStart,
+        sendWindowEnd,
+        dailyCap: Number.isFinite(cap) ? cap : 500,
+        audioAssetId: selectedAudioId ? parseInt(selectedAudioId, 10) : null,
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data as any).message || "Failed to create campaign");
-      return data;
+      return res.json();
     },
     onSuccess: async (data: any) => {
       setNewCampaignName("");
@@ -88,24 +97,24 @@ export default function RvmPage() {
         .map((x) => parseInt(x, 10))
         .filter((n) => Number.isFinite(n) && n > 0);
       if (!ids.length) throw new Error("Enter at least one Lead ID");
-      const res = await fetch(`/api/rvm/campaigns/${activeCampaignId}/launch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          leadIds: ids,
-          audioAssetId: selectedAudioId ? parseInt(selectedAudioId, 10) : null,
-        }),
+      const res = await apiRequest("POST", `/api/rvm/campaigns/${activeCampaignId}/launch`, {
+        leadIds: ids,
+        audioAssetId: selectedAudioId ? parseInt(selectedAudioId, 10) : null,
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data as any).message || "Launch failed");
-      return data;
+      return res.json();
     },
     onSuccess: async (data: any) => {
       await queryClient.invalidateQueries({ queryKey: ["/api/rvm/campaigns", activeCampaignId, "drops"] });
       toast({ title: "RVM launched", description: `Launched ${data.launched || 0}, failed ${data.failed || 0}` });
     },
-    onError: (e: any) => toast({ title: e?.message || "Launch failed", variant: "destructive" }),
+    onError: async (e: any) => {
+      const msg = String(e?.message || "");
+      if (msg.includes("Campaign not found")) {
+        setActiveCampaignId(null);
+        await queryClient.invalidateQueries({ queryKey: ["/api/rvm/campaigns"] });
+      }
+      toast({ title: msg || "Launch failed", variant: "destructive" });
+    },
   });
 
   const uploadAudioMutation = useMutation({
@@ -121,19 +130,12 @@ export default function RvmPage() {
         reader.readAsDataURL(file);
       });
 
-      const res = await fetch("/api/rvm/audio-assets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          name: file.name,
-          mimeType: file.type || "audio/mpeg",
-          contentBase64,
-        }),
+      const res = await apiRequest("POST", "/api/rvm/audio-assets", {
+        name: file.name,
+        mimeType: file.type || "audio/mpeg",
+        contentBase64,
       });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((data as any).message || "Upload failed");
-      return data;
+      return res.json();
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/rvm/audio-assets"] });
@@ -278,4 +280,3 @@ export default function RvmPage() {
     </Layout>
   );
 }
-

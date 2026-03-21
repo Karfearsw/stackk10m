@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { enqueueAction, listActions, removeActions } from "@/lib/offlineQueue";
+import { apiRequest } from "@/lib/queryClient";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -32,9 +33,14 @@ export default function FieldModePage() {
   const { data: leadSourceOptions = [] } = useQuery<any[]>({
     queryKey: ["/api/lead-source-options"],
     queryFn: async () => {
-      const res = await fetch("/api/lead-source-options", { credentials: "include" });
-      if (!res.ok) return [];
-      return res.json();
+      try {
+        const res = await apiRequest("GET", "/api/lead-source-options");
+        return res.json();
+      } catch (e: any) {
+        const msg = String(e?.message || "");
+        toast({ title: msg.includes("404:") ? "Field Mode is not enabled" : (msg || "Failed to load lead sources"), variant: "destructive" });
+        return [];
+      }
     },
   });
 
@@ -78,16 +84,10 @@ export default function FieldModePage() {
         setQueueCount(0);
         return;
       }
-      const res = await fetch("/api/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          actions: items.map((a) => ({ idempotencyKey: a.id, type: a.type, payload: a.payload })),
-        }),
+      const res = await apiRequest("POST", "/api/sync", {
+        actions: items.map((a) => ({ idempotencyKey: a.id, type: a.type, payload: a.payload })),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((json as any).message || "Sync failed");
       const results = Array.isArray((json as any).results) ? (json as any).results : [];
       const okIds = results.filter((r: any) => r && r.ok).map((r: any) => String(r.idempotencyKey));
       if (okIds.length) await removeActions(okIds);
@@ -346,4 +346,3 @@ export default function FieldModePage() {
     </Layout>
   );
 }
-
