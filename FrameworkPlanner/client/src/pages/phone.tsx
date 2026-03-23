@@ -298,7 +298,7 @@ export default function PhoneWorkspace() {
           </CardHeader>
           <CardContent>
             <Tabs value={tab} onValueChange={(v) => setTabAndUrl(v as TabKey)}>
-              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-5">
+              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
                 <TabsTrigger value="dial">Dial</TabsTrigger>
                 <TabsTrigger value="contacts">Contacts</TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>

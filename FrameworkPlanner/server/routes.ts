@@ -5858,6 +5858,8 @@ export async function registerRoutes(
   // BUYERS ENDPOINTS
   app.get("/api/buyers", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
       const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const buyers = await storage.getBuyers(limit, offset);
@@ -5869,6 +5871,8 @@ export async function registerRoutes(
 
   app.get("/api/buyers/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const buyer = await storage.getBuyerById(parseInt(req.params.id));
       if (!buyer) return res.status(404).json({ message: "Buyer not found" });
       res.json(buyer);
@@ -5879,7 +5883,9 @@ export async function registerRoutes(
 
   app.post("/api/buyers", async (req, res) => {
     try {
-      const validated = insertBuyerSchema.parse(req.body);
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const validated = insertBuyerSchema.parse({ ...req.body, userId: user.id });
       const buyer = await storage.createBuyer(validated);
       res.status(201).json(buyer);
     } catch (error: any) {
@@ -5889,7 +5895,12 @@ export async function registerRoutes(
 
   app.patch("/api/buyers/:id", async (req, res) => {
     try {
-      const partial = insertBuyerSchema.partial().parse(req.body);
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const partial = insertBuyerSchema.partial().parse(req.body) as any;
+      if (Object.prototype.hasOwnProperty.call(partial, "userId")) {
+        delete partial.userId;
+      }
       const buyer = await storage.updateBuyer(parseInt(req.params.id), partial);
       res.json(buyer);
     } catch (error: any) {
@@ -5899,6 +5910,8 @@ export async function registerRoutes(
 
   app.delete("/api/buyers/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       await storage.deleteBuyer(parseInt(req.params.id));
       res.json({ message: "Buyer deleted" });
     } catch (error: any) {

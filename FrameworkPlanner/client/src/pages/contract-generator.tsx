@@ -73,7 +73,7 @@ export default function ContractGenerator() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:w-auto">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 lg:w-auto">
             <TabsTrigger value="list" data-testid="tab-contracts">
               <FileText className="w-4 h-4 mr-1 sm:mr-2" />
               Contracts

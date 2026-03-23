@@ -41,7 +41,7 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const mq = window.matchMedia("(min-width: 768px)");
+    const mq = window.matchMedia("(min-width: 1024px)");
     const handle = () => {
       if (mq.matches) setMobileOpen(false);
     };

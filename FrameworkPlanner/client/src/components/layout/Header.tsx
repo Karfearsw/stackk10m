@@ -38,7 +38,7 @@ export function Header() {
   });
 
   const getNextStateLabel = () => {
-    if (typeof window !== "undefined" && !window.matchMedia("(min-width: 768px)").matches) return "Open menu";
+    if (typeof window !== "undefined" && !window.matchMedia("(min-width: 1024px)").matches) return "Open menu";
     if (state === "expanded") return "Collapse to icons";
     if (state === "icon") return "Hide sidebar";
     return "Show sidebar";
@@ -119,7 +119,7 @@ export function Header() {
               variant="ghost" 
               size="icon" 
               onClick={() => {
-                const isDesktop = typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches;
+                const isDesktop = typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches;
                 if (!isDesktop) {
                   toggleMobile();
                   return;
