@@ -466,7 +466,7 @@ export default function Leads() {
                 <Filter className="mr-2 h-4 w-4" /> Filter
               </Button>
             </PopoverTrigger>
-            <PopoverContent align="end" className="w-80">
+            <PopoverContent align="end" className="w-[min(20rem,calc(100vw-2rem))]">
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label>Status</Label>

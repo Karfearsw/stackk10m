@@ -41,7 +41,9 @@ export function useSignalWire() {
       setError(null);
 
       const connectPromise = (async () => {
-        const client: any = await (SignalWire as any).createClient({ token: tokenData.token });
+        const createClient = (SignalWire as any)?.SignalWire?.createClient;
+        if (typeof createClient !== "function") throw new Error("SignalWire createClient unavailable");
+        const client: any = await createClient({ token: tokenData.token });
 
         client.on("signalwire.ready", () => {
           relayRef.current = client;
@@ -89,7 +91,9 @@ export function useSignalWire() {
           try {
             setConnectionState("connecting");
             await new Promise((r) => setTimeout(r, 750));
-            const client: any = await (SignalWire as any).createClient({ token: tokenData.token });
+            const createClient = (SignalWire as any)?.SignalWire?.createClient;
+            if (typeof createClient !== "function") throw new Error("SignalWire createClient unavailable");
+            const client: any = await createClient({ token: tokenData.token });
             client.on("signalwire.ready", () => {
               relayRef.current = client;
               setConnectionState("ready");

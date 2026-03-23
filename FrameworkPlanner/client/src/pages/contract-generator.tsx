@@ -60,10 +60,10 @@ export default function ContractGenerator() {
 
   return (
     <Layout>
-      <div className="p-8 space-y-6">
-        <div className="flex justify-between items-center">
+      <div className="p-4 md:p-8 space-y-6">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
-            <h1 className="text-4xl font-display font-bold text-foreground mb-2" data-testid="page-title">
+            <h1 className="text-2xl md:text-4xl font-display font-bold text-foreground mb-2" data-testid="page-title">
               Document Management
             </h1>
             <p className="text-muted-foreground">
@@ -73,25 +73,25 @@ export default function ContractGenerator() {
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-5 lg:w-auto">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 md:grid-cols-5 lg:w-auto">
             <TabsTrigger value="list" data-testid="tab-contracts">
-              <FileText className="w-4 h-4 mr-2" />
+              <FileText className="w-4 h-4 mr-1 sm:mr-2" />
               Contracts
             </TabsTrigger>
             <TabsTrigger value="create" data-testid="tab-create">
-              <Plus className="w-4 h-4 mr-2" />
+              <Plus className="w-4 h-4 mr-1 sm:mr-2" />
               Create New
             </TabsTrigger>
             <TabsTrigger value="closing" data-testid="tab-closing">
-              <CheckCircle className="w-4 h-4 mr-2" />
+              <CheckCircle className="w-4 h-4 mr-1 sm:mr-2" />
               Closing
             </TabsTrigger>
             <TabsTrigger value="templates" data-testid="tab-templates">
-              <FileSignature className="w-4 h-4 mr-2" />
+              <FileSignature className="w-4 h-4 mr-1 sm:mr-2" />
               Templates
             </TabsTrigger>
             <TabsTrigger value="lois" data-testid="tab-lois">
-              <FileText className="w-4 h-4 mr-2" />
+              <FileText className="w-4 h-4 mr-1 sm:mr-2" />
               LOIs
             </TabsTrigger>
           </TabsList>

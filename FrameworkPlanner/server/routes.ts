@@ -62,8 +62,7 @@ import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
 import { mergeTemplate } from "./services/esign/merge.js";
 import { generateSignedPdfBase64 } from "./services/esign/pdf.js";
-import { getCompProvider } from "./services/comps/provider.js";
-import { computeBuyerMatchScore } from "./services/buyerMatch/scoring.js";
+import { getPropertyPhotoSignedUrl, uploadPropertyPhoto, isPropertyPhotoStorageConfigured } from "./media/propertyPhotos.js";
 
 function authJwtSecret() {
   const secret = process.env.AUTH_JWT_SECRET || process.env.SESSION_SECRET;
@@ -229,6 +228,39 @@ function parseJsonArrayText(v: any): string[] {
   } catch {
     return [];
   }
+}
+
+function resolvePropertyImageSrc(v: unknown): string | null {
+  const s = typeof v === "string" ? v.trim() : "";
+  if (!s) return null;
+  if (s.startsWith("property-photo:")) {
+    const key = s.slice("property-photo:".length);
+    return `/api/property-photos/${encodeURIComponent(key)}`;
+  }
+  return s;
+}
+
+function resolvePropertyImages(images: unknown): string[] {
+  if (!Array.isArray(images)) return [];
+  return images.map(resolvePropertyImageSrc).filter((x): x is string => !!x);
+}
+
+function toNumberOrNull(v: unknown): number | null {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+function haversineMiles(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 3958.7613;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.sin(dLng / 2) * Math.sin(dLng / 2) * Math.cos(lat1) * Math.cos(lat2);
+  return 2 * R * Math.asin(Math.sqrt(h));
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -2386,7 +2418,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
       const allProperties = await storage.getProperties(limit, offset);
-      res.json(allProperties);
+      res.json(
+        (allProperties || []).map((p: any) => ({
+          ...p,
+          images: resolvePropertyImages((p as any).images),
+        })),
+      );
     } catch (error: any) {
       console.error("GET /api/opportunities failed:", error);
       if (isDbConnectivityError(error)) {
@@ -2409,9 +2446,55 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } catch {}
       }
 
-      res.json({ property, lead });
+      res.json({ property: { ...(property as any), images: resolvePropertyImages((property as any).images) }, lead });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/property-photos/:key", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isPropertyPhotoStorageConfigured()) {
+      return res.status(503).json({ code: "photo_storage_not_configured", message: "Photo storage is not configured" });
+    }
+    const key = decodeURIComponent(String(req.params.key || ""));
+    const url = await getPropertyPhotoSignedUrl(key);
+    if (!url) return res.status(404).json({ message: "Not found" });
+    res.redirect(url);
+  });
+
+  app.post("/api/opportunities/:id/photos", upload.array("photos", 20), async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      if (!isPropertyPhotoStorageConfigured()) {
+        return res.status(503).json({ code: "photo_storage_not_configured", message: "Photo storage is not configured" });
+      }
+
+      const files = Array.isArray((req as any).files) ? ((req as any).files as any[]) : [];
+      if (!files.length) return res.status(400).json({ message: "No files uploaded" });
+
+      const existingRaw = Array.isArray((property as any).images) ? (property as any).images.filter(Boolean) : [];
+      const uploaded: string[] = [];
+
+      for (const f of files) {
+        const out = await uploadPropertyPhoto({
+          opportunityId,
+          contentType: String(f.mimetype || "application/octet-stream"),
+          body: f.buffer,
+          originalName: String(f.originalname || "photo"),
+        });
+        uploaded.push(`property-photo:${out.storageKey}`);
+      }
+
+      const updated = await storage.updateProperty(opportunityId, { images: [...existingRaw, ...uploaded] } as any);
+      res.json({ property: { ...(updated as any), images: resolvePropertyImages((updated as any).images) } });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
     }
   });
 
@@ -2595,10 +2678,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "comps"))) return res.status(404).json({ message: "Not found" });
-      const propertyId = parseInt(req.params.id);
-      const rows = await storage.getCompSnapshotsByProperty(propertyId, 20);
-      res.json(rows.map((r: any) => ({ ...r, comps: (() => { try { return JSON.parse(String(r.compsJson || "[]")); } catch { return []; } })() })));
+      const opportunityId = parseInt(req.params.id, 10);
+      const rows = await storage.getCompSnapshotRowsByOpportunity(opportunityId, 500);
+      if (!rows.length) return res.json({ avgArv: null, avgRent: null, saleComps: [], rentalComps: [] });
+
+      const ids = Array.from(new Set(rows.map((r: any) => Number(r.compPropertyId)).filter(Number.isFinite)));
+      const compsById = new Map<number, any>();
+      if (ids.length) {
+        const idSql = sql.join(ids.map((id) => sql`${id}`), sql`, `);
+        const out: any = await db.execute(sql`
+          SELECT id, address, city, state, zip_code, sqft, beds, baths, year_built, property_type, sold_price, sold_date, rent_per_month, rented_date, latitude, longitude
+          FROM properties
+          WHERE id IN (${idSql})
+        `);
+        for (const r of (out as any).rows || []) compsById.set(Number(r.id), r);
+      }
+
+      const sale: any[] = [];
+      const rental: any[] = [];
+      for (const r of rows) {
+        const comp = compsById.get(Number((r as any).compPropertyId)) || null;
+        const base = {
+          id: (r as any).id,
+          compPropertyId: Number((r as any).compPropertyId),
+          distanceMiles: toNumberOrNull((r as any).distanceMiles),
+          soldPrice: toNumberOrNull((r as any).soldPrice),
+          soldDate: (r as any).soldDate ?? null,
+          rentPerMonth: toNumberOrNull((r as any).rentPerMonth),
+          isRentalComp: !!(r as any).isRentalComp,
+          comp,
+        };
+        if (base.isRentalComp) rental.push(base);
+        else sale.push(base);
+      }
+
+      const avg = (vals: Array<number | null>) => {
+        const xs = vals.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+        if (!xs.length) return null;
+        return xs.reduce((a, b) => a + b, 0) / xs.length;
+      };
+
+      const avgArv = avg(sale.map((x) => x.soldPrice));
+      const avgRent = avg(rental.map((x) => x.rentPerMonth));
+
+      res.json({ avgArv, avgRent, saleComps: sale, rentalComps: rental });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -2608,106 +2731,205 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "comps"))) return res.status(404).json({ message: "Not found" });
-      const propertyId = parseInt(req.params.id);
-      const property = await storage.getPropertyById(propertyId);
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
       if (!property) return res.status(404).json({ message: "Opportunity not found" });
 
-      const provider = getCompProvider();
-      const { comps, raw } = await provider.getComps({
-        address: String((property as any).address || ""),
-        city: String((property as any).city || ""),
-        state: String((property as any).state || ""),
-        zipCode: String((property as any).zipCode || ""),
-      });
+      const dealSqft = typeof (property as any).sqft === "number" ? (property as any).sqft : (property as any).sqft ? Number((property as any).sqft) : null;
+      const dealType = String((property as any).propertyType || "").trim();
+      const dealLat = toNumberOrNull((property as any).latitude);
+      const dealLng = toNumberOrNull((property as any).longitude);
+      if (!dealSqft || !Number.isFinite(dealSqft)) return res.status(400).json({ message: "Opportunity is missing square footage" });
+      if (!dealType) return res.status(400).json({ message: "Opportunity is missing property type" });
+      if (dealLat === null || dealLng === null) return res.status(400).json({ message: "Opportunity is missing latitude/longitude" });
 
-      const arv = computeArvFromComps(comps as any);
-      const arvSuggestion = typeof arv === "number" && Number.isFinite(arv) ? arv : null;
-      const offerRangeMin = arvSuggestion ? Math.round(arvSuggestion * 0.65) : null;
-      const offerRangeMax = arvSuggestion ? Math.round(arvSuggestion * 0.75) : null;
+      const saleMinSqft = Math.floor(dealSqft * 0.85);
+      const saleMaxSqft = Math.ceil(dealSqft * 1.15);
+      const rentMinSqft = Math.floor(dealSqft * 0.8);
+      const rentMaxSqft = Math.ceil(dealSqft * 1.2);
 
-      const snap = await storage.createCompSnapshot({
-        propertyId,
-        providerName: provider.name,
-        requestedAt: new Date(),
-        compsJson: JSON.stringify(comps),
-        rawResponseJson: JSON.stringify(raw ?? null),
-        arvSuggestion: arvSuggestion ? String(arvSuggestion) : null,
-        offerRangeMin: offerRangeMin ? String(offerRangeMin) : null,
-        offerRangeMax: offerRangeMax ? String(offerRangeMax) : null,
-      } as any);
+      const saleOut: any = await db.execute(sql`
+        SELECT id, latitude, longitude, sqft, sold_price, sold_date
+        FROM properties
+        WHERE id <> ${opportunityId}
+          AND property_type = ${dealType}
+          AND sqft IS NOT NULL
+          AND sqft >= ${saleMinSqft} AND sqft <= ${saleMaxSqft}
+          AND sold_price IS NOT NULL
+          AND sold_date IS NOT NULL
+          AND sold_date >= (CURRENT_DATE - INTERVAL '6 months')
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+      `);
+      const rentalOut: any = await db.execute(sql`
+        SELECT id, latitude, longitude, sqft, rent_per_month, rented_date
+        FROM properties
+        WHERE id <> ${opportunityId}
+          AND property_type = ${dealType}
+          AND sqft IS NOT NULL
+          AND sqft >= ${rentMinSqft} AND sqft <= ${rentMaxSqft}
+          AND rent_per_month IS NOT NULL
+          AND rented_date IS NOT NULL
+          AND rented_date >= (CURRENT_DATE - INTERVAL '12 months')
+          AND latitude IS NOT NULL AND longitude IS NOT NULL
+      `);
 
-      res.json({
-        snapshot: { ...snap, comps },
-      });
+      const dealPoint = { lat: dealLat, lng: dealLng };
+
+      const saleRows = ((saleOut as any).rows || [])
+        .map((r: any) => {
+          const d = haversineMiles(dealPoint, { lat: toNumberOrNull(r.latitude) ?? 0, lng: toNumberOrNull(r.longitude) ?? 0 });
+          return { ...r, distanceMiles: d };
+        })
+        .filter((r: any) => Number.isFinite(r.distanceMiles) && r.distanceMiles <= 1)
+        .sort((a: any, b: any) => a.distanceMiles - b.distanceMiles)
+        .slice(0, 25);
+
+      const rentalRows = ((rentalOut as any).rows || [])
+        .map((r: any) => {
+          const d = haversineMiles(dealPoint, { lat: toNumberOrNull(r.latitude) ?? 0, lng: toNumberOrNull(r.longitude) ?? 0 });
+          return { ...r, distanceMiles: d };
+        })
+        .filter((r: any) => Number.isFinite(r.distanceMiles) && r.distanceMiles <= 2)
+        .sort((a: any, b: any) => a.distanceMiles - b.distanceMiles)
+        .slice(0, 25);
+
+      const rowsToPersist: any[] = [
+        ...saleRows.map((r: any) => ({
+          compPropertyId: Number(r.id),
+          distanceMiles: String(Number(r.distanceMiles).toFixed(3)),
+          soldPrice: r.sold_price != null ? String(r.sold_price) : null,
+          soldDate: r.sold_date ?? null,
+          isRentalComp: false,
+          rentPerMonth: null,
+        })),
+        ...rentalRows.map((r: any) => ({
+          compPropertyId: Number(r.id),
+          distanceMiles: String(Number(r.distanceMiles).toFixed(3)),
+          soldPrice: null,
+          soldDate: null,
+          isRentalComp: true,
+          rentPerMonth: r.rent_per_month != null ? String(r.rent_per_month) : null,
+        })),
+      ];
+
+      await storage.replaceCompSnapshotRows(opportunityId, rowsToPersist as any);
+
+      const avg = (vals: Array<number | null>) => {
+        const xs = vals.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+        if (!xs.length) return null;
+        return xs.reduce((a, b) => a + b, 0) / xs.length;
+      };
+
+      const avgArv = avg(saleRows.map((r: any) => toNumberOrNull(r.sold_price)));
+      const avgRent = avg(rentalRows.map((r: any) => toNumberOrNull(r.rent_per_month)));
+
+      res.json({ avgArv, avgRent, saleCount: saleRows.length, rentalCount: rentalRows.length });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
 
-  async function recomputeBuyerMatches(propertyId: number) {
-    const property = await storage.getPropertyById(propertyId);
+  async function recomputeBuyerMatches(opportunityId: number, userId: number) {
+    const property = await storage.getPropertyById(opportunityId);
     if (!property) throw new Error("Opportunity not found");
-    const buyers = await storage.getBuyers(1000, 0);
 
-    const dealZipCode = String((property as any).zipCode || "");
-    const dealCity = String((property as any).city || "");
-    const dealState = String((property as any).state || "");
-    const dealBeds = typeof (property as any).bedrooms === "number" ? (property as any).bedrooms : (property as any).beds ? Number((property as any).beds) : null;
-    const dealBaths = typeof (property as any).bathrooms === "number" ? (property as any).bathrooms : (property as any).baths ? Number((property as any).baths) : null;
-    const dealPrice = (property as any).price ? Number((property as any).price) : null;
-    const sourceLeadId = (property as any).sourceLeadId ? Number((property as any).sourceLeadId) : null;
-    const sourceLead = sourceLeadId ? await storage.getLeadById(sourceLeadId).catch(() => undefined) : undefined;
-    const dealTags = Array.isArray((sourceLead as any)?.tags) ? (sourceLead as any).tags : [];
+    const dealZipCode = String((property as any).zipCode || "").trim();
+    const dealState = String((property as any).state || "").trim();
+    const dealPrice = toNumberOrNull((property as any).price);
+    const dealRepairCost = toNumberOrNull((property as any).repairCost ?? (property as any).repair_cost);
 
-    const matches = (buyers || [])
+    const snapshotRows = await storage.getCompSnapshotRowsByOpportunity(opportunityId, 500);
+    const saleRows = snapshotRows.filter((r: any) => !r.isRentalComp);
+    const avgArvFromSnapshots = (() => {
+      const vals = saleRows.map((r: any) => toNumberOrNull(r.soldPrice)).filter((x): x is number => x !== null);
+      if (!vals.length) return null;
+      return vals.reduce((a, b) => a + b, 0) / vals.length;
+    })();
+    const dealArv = avgArvFromSnapshots ?? toNumberOrNull((property as any).arv);
+
+    const dealSpread =
+      dealArv !== null && dealPrice !== null
+        ? dealArv - dealPrice - (dealRepairCost ?? 0)
+        : null;
+
+    const buyers = await storage.getBuyers(2000, 0);
+    const buyerIds = (buyers || []).map((b: any) => Number(b.id)).filter(Number.isFinite);
+
+    const profilesById = new Map<number, any>();
+    if (buyerIds.length) {
+      const idsSql = sql.join(buyerIds.map((id) => sql`${id}`), sql`, `);
+      const out: any = await db.execute(sql`SELECT * FROM buyer_profiles WHERE id IN (${idsSql})`);
+      for (const r of (out as any).rows || []) profilesById.set(Number(r.id), r);
+    }
+
+    const historyBuyerIds = new Set<number>();
+    if (dealZipCode) {
+      const out: any = await db.execute(sql`
+        SELECT DISTINCT da.buyer_id
+        FROM deal_assignments da
+        INNER JOIN properties p ON p.id = da.property_id
+        WHERE p.zip_code = ${dealZipCode}
+      `);
+      for (const r of (out as any).rows || []) historyBuyerIds.add(Number(r.buyer_id));
+    }
+
+    const scored = (buyers || [])
       .map((b: any) => {
-        const buyerZipCodes = Array.isArray(b.zipCodes) ? b.zipCodes : [];
-        const buyerPreferredAreas = Array.isArray(b.preferredAreas) ? b.preferredAreas : [];
-        const buyerTags = Array.isArray(b.tags) ? b.tags : [];
-        const buyerTypes = Array.isArray(b.propertyTypes) ? b.propertyTypes : Array.isArray(b.preferredPropertyTypes) ? b.preferredPropertyTypes : [];
-        const buyerMinPrice = b.minPrice ? Number(b.minPrice) : b.minBudget ? Number(b.minBudget) : null;
-        const buyerMaxPrice = b.maxPrice ? Number(b.maxPrice) : b.maxBudget ? Number(b.maxBudget) : null;
-        const score = computeBuyerMatchScore({
-          dealZipCode,
-          dealCity,
-          dealState,
-          dealPrice,
-          dealBeds,
-          dealBaths,
-          dealPropertyType: null,
-          buyerZipCodes,
-          buyerPreferredAreas,
-          buyerMinPrice,
-          buyerMaxPrice,
-          buyerMinBeds: b.minBeds ? Number(b.minBeds) : null,
-          buyerMaxBeds: b.maxBeds ? Number(b.maxBeds) : null,
-          buyerPropertyTypes: buyerTypes,
-          buyerTags,
-          dealTags,
-        });
-        return { buyerId: b.id, score };
+        const buyerId = Number(b.id);
+        const profile = profilesById.get(buyerId) || null;
+
+        const targetZips = Array.isArray(profile?.target_zips) ? profile.target_zips.map(String) : Array.isArray(b.zipCodes) ? b.zipCodes.map(String) : [];
+        const targetStates = Array.isArray(profile?.target_states) ? profile.target_states.map(String) : [];
+        const minSpread = toNumberOrNull(profile?.min_spread);
+
+        let score = 0;
+        const reasons: string[] = [];
+
+        if (dealZipCode && targetZips.includes(dealZipCode)) {
+          score += 0.4;
+          reasons.push(`Invests in ${dealZipCode}`);
+        }
+        if (dealState && targetStates.includes(dealState)) {
+          score += 0.2;
+          reasons.push(`Invests in ${dealState}`);
+        }
+        if (dealSpread !== null && minSpread !== null && dealSpread >= minSpread) {
+          score += 0.3;
+          reasons.push("Meets minimum spread");
+        }
+        if (historyBuyerIds.has(buyerId) && dealZipCode) {
+          score += 0.3;
+          reasons.push(`Has bought in ${dealZipCode}`);
+        }
+
+        const scoreInt = Math.max(0, Math.round(score * 1000));
+        return { buyerId, scoreInt, reasons };
       })
-      .filter((m: any) => m.score > 0)
-      .sort((a: any, b: any) => b.score - a.score)
-      .slice(0, 25);
+      .filter((m: any) => m.scoreInt > 0)
+      .sort((a: any, b: any) => b.scoreInt - a.scoreInt)
+      .slice(0, 50);
 
     await storage.replaceDealBuyerMatches(
-      propertyId,
-      matches.map((m: any) => ({ buyerId: m.buyerId, score: m.score, computedAt: new Date() })) as any,
+      opportunityId,
+      scored.map((m: any) => ({ buyerId: m.buyerId, score: m.scoreInt, reasons: m.reasons, computedAt: new Date() })) as any,
     );
 
-    return matches;
+    return scored;
   }
 
   app.get("/api/opportunities/:id/buyer-matches", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "buyer_match"))) return res.status(404).json({ message: "Not found" });
       const propertyId = parseInt(req.params.id);
       const rows = await storage.getDealBuyerMatches(propertyId, 25);
-      res.json(rows);
+      res.json(
+        (rows || []).map((r: any) => ({
+          ...r,
+          matchScore: typeof r.score === "number" ? r.score / 1000 : toNumberOrNull(r.score) !== null ? (toNumberOrNull(r.score) as number) / 1000 : 0,
+          reasons: Array.isArray(r.reasons) ? r.reasons : [],
+        })),
+      );
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -2717,9 +2939,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "buyer_match"))) return res.status(404).json({ message: "Not found" });
       const propertyId = parseInt(req.params.id);
-      const matches = await recomputeBuyerMatches(propertyId);
+      const matches = await recomputeBuyerMatches(propertyId, user.id);
       res.json({ ok: true, count: matches.length });
     } catch (error: any) {
       res.status(400).json({ message: error.message });

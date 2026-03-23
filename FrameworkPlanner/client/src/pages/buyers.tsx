@@ -118,7 +118,7 @@ function BuyerForm({
 }) {
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <Label>Name *</Label>
           <Input
@@ -138,7 +138,7 @@ function BuyerForm({
           />
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <Label>Email</Label>
           <Input
@@ -196,7 +196,7 @@ function BuyerForm({
           placeholder="32801, 33602"
         />
       </div>
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div>
           <Label>Min Budget</Label>
           <Input
@@ -228,7 +228,7 @@ function BuyerForm({
           />
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
           <Label>Min Beds</Label>
           <Input
@@ -800,7 +800,7 @@ export default function Buyers() {
                       )}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
                       <div>
                         <p className="text-xs text-muted-foreground">Budget Range</p>
                         <p className="font-medium text-sm">
@@ -946,7 +946,7 @@ export default function Buyers() {
                 )}
               </div>
 
-              <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                 <div>
                   <div className="text-xs text-muted-foreground">Phone</div>
                   <div className="font-medium">{selectedBuyer.phone || "—"}</div>

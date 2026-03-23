@@ -3,7 +3,7 @@ import { asc, desc, sql } from "drizzle-orm";
 import { 
   leads, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
-  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, dealBuyerMatches
+  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -16,6 +16,7 @@ import {
   type SyncIdempotency, type InsertSyncIdempotency,
   type FieldMediaAsset, type InsertFieldMediaAsset,
   type CompSnapshot, type InsertCompSnapshot,
+  type CompSnapshotRow, type InsertCompSnapshotRow,
   type DealBuyerMatch, type InsertDealBuyerMatch,
   type DocumentVersion, type InsertDocumentVersion,
   type Loi, type InsertLoi,
@@ -158,9 +159,11 @@ export interface IStorage {
   // Comps
   createCompSnapshot(input: InsertCompSnapshot): Promise<CompSnapshot>;
   getCompSnapshotsByProperty(propertyId: number, limit?: number): Promise<CompSnapshot[]>;
+  replaceCompSnapshotRows(opportunityId: number, rows: Omit<InsertCompSnapshotRow, "opportunityId">[]): Promise<void>;
+  getCompSnapshotRowsByOpportunity(opportunityId: number, limit?: number): Promise<CompSnapshotRow[]>;
 
   // Buyer matching
-  replaceDealBuyerMatches(propertyId: number, matches: InsertDealBuyerMatch[]): Promise<void>;
+  replaceDealBuyerMatches(propertyId: number, matches: Omit<InsertDealBuyerMatch, "propertyId">[]): Promise<void>;
   getDealBuyerMatches(propertyId: number, limit?: number): Promise<DealBuyerMatch[]>;
 
   // Document Versions
@@ -801,7 +804,22 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(compSnapshots).where(eq(compSnapshots.propertyId, propertyId)).orderBy(desc(compSnapshots.requestedAt)).limit(limit);
   }
 
-  async replaceDealBuyerMatches(propertyId: number, matches: InsertDealBuyerMatch[]): Promise<void> {
+  async replaceCompSnapshotRows(opportunityId: number, rows: Omit<InsertCompSnapshotRow, "opportunityId">[]): Promise<void> {
+    await db.delete(compSnapshotRows).where(eq(compSnapshotRows.opportunityId, opportunityId));
+    if (!rows.length) return;
+    await db.insert(compSnapshotRows).values(rows.map((r) => ({ ...r, opportunityId })) as any);
+  }
+
+  async getCompSnapshotRowsByOpportunity(opportunityId: number, limit = 200): Promise<CompSnapshotRow[]> {
+    return db
+      .select()
+      .from(compSnapshotRows)
+      .where(eq(compSnapshotRows.opportunityId, opportunityId))
+      .orderBy(desc(compSnapshotRows.createdAt))
+      .limit(limit);
+  }
+
+  async replaceDealBuyerMatches(propertyId: number, matches: Omit<InsertDealBuyerMatch, "propertyId">[]): Promise<void> {
     await db.delete(dealBuyerMatches).where(eq(dealBuyerMatches.propertyId, propertyId));
     if (!matches.length) return;
     await db.insert(dealBuyerMatches).values(matches.map((m) => ({ ...m, propertyId })) as any);

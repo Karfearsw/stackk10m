@@ -40,6 +40,24 @@ export async function apiRequest(
   return res;
 }
 
+export async function apiUpload(
+  method: string,
+  url: string,
+  data: FormData,
+): Promise<Response> {
+  const res = await fetch(url, {
+    method,
+    headers: {
+      ...authHeaders(),
+    },
+    body: data,
+    credentials: "include",
+  });
+
+  await throwIfResNotOk(res);
+  return res;
+}
+
 type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;

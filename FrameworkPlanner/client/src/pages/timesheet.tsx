@@ -250,9 +250,9 @@ export default function Timesheet() {
           </Button>
 
           {isManager && (
-            <div className="ml-auto flex items-center gap-2">
+            <div className="w-full sm:w-auto sm:ml-auto flex items-center gap-2">
               <Select value={selectedUserId} onValueChange={setSelectedUserId}>
-                <SelectTrigger className="w-[240px]" data-testid="select-timesheet-employee">
+                <SelectTrigger className="w-full sm:w-[240px]" data-testid="select-timesheet-employee">
                   <SelectValue placeholder="All employees" />
                 </SelectTrigger>
                 <SelectContent>

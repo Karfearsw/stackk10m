@@ -1,34 +1,33 @@
 import { Sidebar } from "./Sidebar";
 import { Header } from "./Header";
 import { SidebarProvider, useSidebar } from "@/contexts/SidebarContext";
+import { MobileBottomNav } from "./MobileBottomNav";
+import { MobileNavDrawer } from "./MobileNavDrawer";
 
 interface LayoutProps {
   children: React.ReactNode;
 }
 
 function LayoutContent({ children }: LayoutProps) {
-  const { isHidden, isExpanded, setState } = useSidebar();
+  const { mobileOpen, setMobileOpen } = useSidebar();
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
-      <Sidebar />
-      
-      {isExpanded && (
-        <div 
-          className="fixed inset-0 bg-black/50 md:hidden z-30 transition-opacity duration-300"
-          onClick={() => setState("hidden")}
-          data-testid="sidebar-overlay"
-        />
-      )}
-      
+    <div className="relative flex h-dvh min-h-dvh w-full overflow-hidden bg-background">
+      <div className="hidden md:flex">
+        <Sidebar />
+      </div>
+
       <div className="flex min-w-0 flex-1 flex-col w-full">
         <Header />
-        <main className="flex-1 min-h-0 scroll-y-container bg-muted/20 p-4 md:p-6">
-          <div className="mx-auto max-w-7xl space-y-6 md:space-y-8">
+        <main className="flex-1 min-h-0 scroll-y-container bg-muted/20 p-4 pb-[calc(4rem+env(safe-area-inset-bottom))] md:p-6 md:pb-0">
+          <div className="mx-auto w-full max-w-7xl space-y-6 md:space-y-8">
             {children}
           </div>
         </main>
       </div>
+
+      <MobileBottomNav onMore={() => setMobileOpen(true)} />
+      <MobileNavDrawer open={mobileOpen} onOpenChange={setMobileOpen} />
     </div>
   );
 }

@@ -33,6 +33,7 @@ import interiorImage from "@assets/generated_images/interior_of_a_modern_living_
 import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
+import { apiRequest, apiUpload } from "@/lib/queryClient";
 
 export default function PropertyDetail() {
   const [, params] = useRoute("/opportunities/:id");
@@ -44,9 +45,8 @@ export default function PropertyDetail() {
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/opportunities", id],
     queryFn: async () => {
-      const res = await fetch(`/api/opportunities/${id}`);
-      if (!res.ok) throw new Error("Failed to fetch opportunity");
-      return res.json();
+      const res = await apiRequest("GET", `/api/opportunities/${id}`);
+      return await res.json();
     },
     enabled: !!id,
   });
@@ -82,12 +82,12 @@ export default function PropertyDetail() {
     },
   });
 
-  const { data: compSnapshots = [] } = useQuery<any[]>({
+  const { data: internalComps } = useQuery<any>({
     queryKey: ["/api/opportunities", id, "comps-snapshots"],
     enabled: !!id,
     queryFn: async () => {
       const res = await fetch(`/api/opportunities/${id}/comps/snapshots`, { credentials: "include" });
-      if (res.status === 404) return [];
+      if (res.status === 404) return { avgArv: null, avgRent: null, saleComps: [], rentalComps: [] };
       if (!res.ok) throw new Error("Failed to load comps");
       return res.json();
     },
@@ -97,7 +97,6 @@ export default function PropertyDetail() {
     mutationFn: async () => {
       const res = await fetch(`/api/opportunities/${id}/comps/pull`, { method: "POST", credentials: "include" });
       const json = await res.json().catch(() => ({}));
-      if (res.status === 404) throw new Error("Comps are disabled");
       if (!res.ok) throw new Error((json as any).message || "Failed to pull comps");
       return json;
     },
@@ -113,7 +112,6 @@ export default function PropertyDetail() {
     enabled: !!id,
     queryFn: async () => {
       const res = await fetch(`/api/opportunities/${id}/buyer-matches`, { credentials: "include" });
-      if (res.status === 404) return [];
       if (!res.ok) throw new Error("Failed to load buyer matches");
       return res.json();
     },
@@ -123,7 +121,6 @@ export default function PropertyDetail() {
     mutationFn: async () => {
       const res = await fetch(`/api/opportunities/${id}/buyer-matches/recompute`, { method: "POST", credentials: "include" });
       const json = await res.json().catch(() => ({}));
-      if (res.status === 404) throw new Error("Buyer matching is disabled");
       if (!res.ok) throw new Error((json as any).message || "Failed to recompute");
       return json;
     },
@@ -167,6 +164,21 @@ export default function PropertyDetail() {
     for (const b of buyers || []) m.set(Number(b.id), String(b.name || `Buyer ${b.id}`));
     return m;
   }, [buyers]);
+
+  const photoInputRef = React.useRef<HTMLInputElement | null>(null);
+  const uploadPhotosMutation = useMutation({
+    mutationFn: async (files: FileList) => {
+      const fd = new FormData();
+      Array.from(files).forEach((f) => fd.append("photos", f));
+      const res = await apiUpload("POST", `/api/opportunities/${id}/photos`, fd);
+      return await res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id] });
+      toast({ title: "Photos uploaded" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Upload failed", variant: "destructive" }),
+  });
 
   return (
     <Layout>
@@ -244,6 +256,30 @@ export default function PropertyDetail() {
                 </div>
               </div>
             </div>
+            <div className="flex items-center justify-between">
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (!e.target.files || e.target.files.length === 0) return;
+                  uploadPhotosMutation.mutate(e.target.files);
+                  e.currentTarget.value = "";
+                }}
+              />
+              <Button
+                variant="secondary"
+                onClick={() => photoInputRef.current?.click()}
+                disabled={!property?.id || uploadPhotosMutation.isPending}
+              >
+                Upload Photos
+              </Button>
+              <div className="text-sm text-muted-foreground">
+                {Array.isArray(property?.images) && property.images.length ? `${property.images.length} photo(s)` : "No uploaded photos"}
+              </div>
+            </div>
 
             {/* Tabs for Details */}
             <Tabs defaultValue="details" className="w-full">
@@ -271,6 +307,18 @@ export default function PropertyDetail() {
                   className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2"
                 >
                   Deal Room
+                </TabsTrigger>
+                <TabsTrigger
+                  value="comps"
+                  className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2"
+                >
+                  Comps
+                </TabsTrigger>
+                <TabsTrigger
+                  value="buyerMatches"
+                  className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2"
+                >
+                  Buyer Matches
                 </TabsTrigger>
               </TabsList>
               
@@ -410,85 +458,143 @@ export default function PropertyDetail() {
 
               <TabsContent value="dealroom" className="mt-6">
                 <DealRoomSection propertyId={property?.id} userId={user?.id} />
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-lg">Comps Snapshot</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <Button variant="secondary" onClick={() => pullCompsMutation.mutate()} disabled={pullCompsMutation.isPending}>
-                        Pull comps
-                      </Button>
-                      {compSnapshots.length === 0 ? (
-                        <div className="text-sm text-muted-foreground">No snapshots yet.</div>
+              </TabsContent>
+
+              <TabsContent value="comps" className="mt-6 space-y-6">
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <CardTitle className="text-lg">Internal Comps</CardTitle>
+                    <Button variant="secondary" onClick={() => pullCompsMutation.mutate()} disabled={pullCompsMutation.isPending}>
+                      Pull Internal Comps
+                    </Button>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="border rounded-md p-3">
+                        <div className="text-xs text-muted-foreground">ARV (Avg Sold)</div>
+                        <div className="text-xl font-semibold">
+                          {typeof internalComps?.avgArv === "number" ? `$${Math.round(internalComps.avgArv).toLocaleString()}` : "—"}
+                        </div>
+                      </div>
+                      <div className="border rounded-md p-3">
+                        <div className="text-xs text-muted-foreground">Expected Rent (Avg)</div>
+                        <div className="text-xl font-semibold">
+                          {typeof internalComps?.avgRent === "number" ? `$${Math.round(internalComps.avgRent).toLocaleString()}/mo` : "—"}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Sale Comps</div>
+                      {(internalComps?.saleComps || []).length === 0 ? (
+                        <div className="text-sm text-muted-foreground">No sale comps yet.</div>
                       ) : (
-                        <div className="space-y-2 text-sm">
-                          <div className="text-xs text-muted-foreground">
-                            Latest: {compSnapshots[0]?.requestedAt || compSnapshots[0]?.requested_at ? new Date(compSnapshots[0]?.requestedAt || compSnapshots[0]?.requested_at).toLocaleString() : "—"}
+                        <div className="border rounded-md overflow-hidden">
+                          <div className="grid grid-cols-6 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
+                            <div className="col-span-2">Address</div>
+                            <div>Distance</div>
+                            <div>Sold Price</div>
+                            <div>Sold Date</div>
+                            <div>SqFt</div>
                           </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            <div className="border rounded-md p-2">
-                              <div className="text-xs text-muted-foreground">ARV</div>
-                              <div className="font-medium">{compSnapshots[0]?.arvSuggestion ?? compSnapshots[0]?.arv_suggestion ?? "—"}</div>
+                          {(internalComps.saleComps || []).slice(0, 25).map((r: any) => (
+                            <div key={String(r.id)} className="grid grid-cols-6 gap-2 p-2 text-sm border-t">
+                              <div className="col-span-2 truncate">{r.comp?.address || `Property ${r.compPropertyId}`}</div>
+                              <div>{typeof r.distanceMiles === "number" ? r.distanceMiles.toFixed(2) : "—"} mi</div>
+                              <div>{typeof r.soldPrice === "number" ? `$${Math.round(r.soldPrice).toLocaleString()}` : "—"}</div>
+                              <div>{r.soldDate ? new Date(r.soldDate).toLocaleDateString() : "—"}</div>
+                              <div>{r.comp?.sqft ? Number(r.comp.sqft).toLocaleString() : "—"}</div>
                             </div>
-                            <div className="border rounded-md p-2">
-                              <div className="text-xs text-muted-foreground">Offer Min</div>
-                              <div className="font-medium">{compSnapshots[0]?.offerRangeMin ?? compSnapshots[0]?.offer_range_min ?? "—"}</div>
-                            </div>
-                            <div className="border rounded-md p-2">
-                              <div className="text-xs text-muted-foreground">Offer Max</div>
-                              <div className="font-medium">{compSnapshots[0]?.offerRangeMax ?? compSnapshots[0]?.offer_range_max ?? "—"}</div>
-                            </div>
-                          </div>
-                          <div className="border rounded-md p-2">
-                            <div className="text-xs text-muted-foreground mb-2">Top comps</div>
-                            {(compSnapshots[0]?.comps || []).slice(0, 5).map((c: any, idx: number) => (
-                              <div key={idx} className="grid grid-cols-5 gap-2 text-xs">
-                                <div>${Number(c.price || 0).toLocaleString()}</div>
-                                <div>{c.beds}bd</div>
-                                <div>{c.baths}ba</div>
-                                <div>{Number(c.sqft || 0).toLocaleString()}sf</div>
-                                <div>{c.distance}mi</div>
-                              </div>
-                            ))}
-                          </div>
+                          ))}
                         </div>
                       )}
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardHeader>
-                      <CardTitle className="text-lg">Buyer Matches</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <Button variant="secondary" onClick={() => recomputeMatchesMutation.mutate()} disabled={recomputeMatchesMutation.isPending}>
-                        Recompute
-                      </Button>
-                      {buyerMatches.length === 0 ? (
-                        <div className="text-sm text-muted-foreground">No matches yet.</div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <div className="text-sm font-medium">Rental Comps</div>
+                      {(internalComps?.rentalComps || []).length === 0 ? (
+                        <div className="text-sm text-muted-foreground">No rental comps yet.</div>
                       ) : (
-                        <div className="border rounded-md p-2 text-sm space-y-1">
-                          {buyerMatches.slice(0, 10).map((m: any) => (
-                            <div key={String(m.id)} className="flex items-center justify-between">
-                              <div className="truncate">{buyerNameById.get(Number(m.buyerId ?? m.buyer_id)) || `Buyer ${m.buyerId ?? m.buyer_id}`}</div>
-                              <div className="flex items-center gap-2">
-                                <div className="font-medium">{Number(m.score || 0)}</div>
+                        <div className="border rounded-md overflow-hidden">
+                          <div className="grid grid-cols-6 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
+                            <div className="col-span-2">Address</div>
+                            <div>Distance</div>
+                            <div>Rent</div>
+                            <div>Rented Date</div>
+                            <div>SqFt</div>
+                          </div>
+                          {(internalComps.rentalComps || []).slice(0, 25).map((r: any) => (
+                            <div key={String(r.id)} className="grid grid-cols-6 gap-2 p-2 text-sm border-t">
+                              <div className="col-span-2 truncate">{r.comp?.address || `Property ${r.compPropertyId}`}</div>
+                              <div>{typeof r.distanceMiles === "number" ? r.distanceMiles.toFixed(2) : "—"} mi</div>
+                              <div>{typeof r.rentPerMonth === "number" ? `$${Math.round(r.rentPerMonth).toLocaleString()}/mo` : "—"}</div>
+                              <div>{r.comp?.rented_date || r.comp?.rentedDate ? new Date(r.comp.rented_date || r.comp.rentedDate).toLocaleDateString() : "—"}</div>
+                              <div>{r.comp?.sqft ? Number(r.comp.sqft).toLocaleString() : "—"}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+
+              <TabsContent value="buyerMatches" className="mt-6 space-y-6">
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between">
+                    <CardTitle className="text-lg">Buyer Matches</CardTitle>
+                    <Button variant="secondary" onClick={() => recomputeMatchesMutation.mutate()} disabled={recomputeMatchesMutation.isPending}>
+                      Recompute
+                    </Button>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {buyerMatches.length === 0 ? (
+                      <div className="text-sm text-muted-foreground">No matches yet.</div>
+                    ) : (
+                      <div className="border rounded-md overflow-hidden">
+                        <div className="grid grid-cols-12 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
+                          <div className="col-span-5">Buyer</div>
+                          <div className="col-span-2">Score</div>
+                          <div className="col-span-3">Reasons</div>
+                          <div className="col-span-2 text-right">Actions</div>
+                        </div>
+                        {buyerMatches.slice(0, 25).map((m: any) => {
+                          const buyerId = Number(m.buyerId ?? m.buyer_id);
+                          const reasons = Array.isArray(m.reasons) ? m.reasons : [];
+                          const score = typeof m.matchScore === "number" ? m.matchScore : typeof m.score === "number" ? m.score / 1000 : 0;
+                          return (
+                            <div key={String(m.id)} className="grid grid-cols-12 gap-2 p-2 text-sm border-t items-center">
+                              <div className="col-span-5 truncate">{buyerNameById.get(buyerId) || `Buyer ${buyerId}`}</div>
+                              <div className="col-span-2 font-medium">{score.toFixed(2)}</div>
+                              <div className="col-span-3 flex flex-wrap gap-1">
+                                {reasons.slice(0, 3).map((r: string) => (
+                                  <Badge key={r} variant="secondary" className="text-xs">{r}</Badge>
+                                ))}
+                              </div>
+                              <div className="col-span-2 flex justify-end gap-2">
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => assignBuyerMutation.mutate(Number(m.buyerId ?? m.buyer_id))}
+                                  onClick={() => toast({ title: "Notify Buyer is not implemented yet" })}
+                                >
+                                  Notify
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => assignBuyerMutation.mutate(buyerId)}
                                   disabled={assignBuyerMutation.isPending}
                                 >
                                   Assign
                                 </Button>
                               </div>
                             </div>
-                          ))}
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
               </TabsContent>
               
               <TabsContent value="activity">
@@ -642,13 +748,8 @@ function OpportunityEditDialog({ property }: { property?: any }) {
 
   const patchOpportunity = useMutation({
     mutationFn: async (payload: any) => {
-      const res = await fetch(`/api/opportunities/${property.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error("Failed to update opportunity");
-      return res.json();
+      const res = await apiRequest("PATCH", `/api/opportunities/${property.id}`, payload);
+      return await res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/opportunities", property.id] });

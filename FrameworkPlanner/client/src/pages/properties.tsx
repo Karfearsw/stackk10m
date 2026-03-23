@@ -657,7 +657,7 @@ export default function Opportunities() {
             />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger className="w-[120px] lg:w-[140px]" data-testid="select-filter-status">
+            <SelectTrigger className="w-full sm:w-[140px]" data-testid="select-filter-status">
               <Filter className="mr-2 h-4 w-4" />
               <SelectValue placeholder="Filter" />
             </SelectTrigger>

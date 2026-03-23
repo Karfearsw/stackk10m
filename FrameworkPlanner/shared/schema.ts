@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, decimal, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, decimal, timestamp, boolean, date } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -47,6 +47,14 @@ export const properties = pgTable("properties", {
   status: varchar("status", { length: 50 }).default("active"),
   apn: varchar("apn", { length: 100 }),
   yearBuilt: integer("year_built"),
+  propertyType: varchar("property_type", { length: 50 }),
+  condition: varchar("condition", { length: 50 }),
+  latitude: decimal("latitude", { precision: 9, scale: 6 }),
+  longitude: decimal("longitude", { precision: 9, scale: 6 }),
+  soldPrice: decimal("sold_price", { precision: 12, scale: 2 }),
+  soldDate: date("sold_date"),
+  rentPerMonth: decimal("rent_per_month", { precision: 12, scale: 2 }),
+  rentedDate: date("rented_date"),
   lotSize: varchar("lot_size", { length: 50 }),
   occupancy: varchar("occupancy", { length: 50 }),
   images: text("images").array(),

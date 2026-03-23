@@ -1,6 +1,6 @@
 
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, decimal, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, decimal, timestamp, boolean, date, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -51,6 +51,14 @@ export const properties = pgTable("properties", {
   status: varchar("status", { length: 50 }).default("active"),
   apn: varchar("apn", { length: 100 }),
   yearBuilt: integer("year_built"),
+  propertyType: varchar("property_type", { length: 50 }),
+  condition: varchar("condition", { length: 50 }),
+  latitude: decimal("latitude", { precision: 9, scale: 6 }),
+  longitude: decimal("longitude", { precision: 9, scale: 6 }),
+  soldPrice: decimal("sold_price", { precision: 12, scale: 2 }),
+  soldDate: date("sold_date"),
+  rentPerMonth: decimal("rent_per_month", { precision: 12, scale: 2 }),
+  rentedDate: date("rented_date"),
   lotSize: varchar("lot_size", { length: 50 }),
   occupancy: varchar("occupancy", { length: 50 }),
   images: text("images").array(),
@@ -420,17 +428,50 @@ export const insertCompSnapshotSchema = createInsertSchema(compSnapshots).omit({
 export type CompSnapshot = typeof compSnapshots.$inferSelect;
 export type InsertCompSnapshot = z.infer<typeof insertCompSnapshotSchema>;
 
+export const compSnapshotRows = pgTable("comp_snapshot_rows", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  opportunityId: integer("opportunity_id").notNull(),
+  compPropertyId: integer("comp_property_id").notNull(),
+  distanceMiles: decimal("distance_miles", { precision: 8, scale: 3 }),
+  soldPrice: decimal("sold_price", { precision: 12, scale: 2 }),
+  soldDate: date("sold_date"),
+  isRentalComp: boolean("is_rental_comp").notNull().default(false),
+  rentPerMonth: decimal("rent_per_month", { precision: 12, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCompSnapshotRowSchema = createInsertSchema(compSnapshotRows).omit({ id: true, createdAt: true } as any);
+export type CompSnapshotRow = typeof compSnapshotRows.$inferSelect;
+export type InsertCompSnapshotRow = z.infer<typeof insertCompSnapshotRowSchema>;
+
 export const dealBuyerMatches = pgTable("deal_buyer_matches", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   propertyId: integer("property_id").notNull(),
   buyerId: integer("buyer_id").notNull(),
   score: integer("score").notNull(),
+  reasons: jsonb("reasons").notNull().default(sql`'[]'::jsonb`),
   computedAt: timestamp("computed_at").notNull().defaultNow(),
 });
 
 export const insertDealBuyerMatchSchema = createInsertSchema(dealBuyerMatches).omit({ id: true } as any);
 export type DealBuyerMatch = typeof dealBuyerMatches.$inferSelect;
 export type InsertDealBuyerMatch = z.infer<typeof insertDealBuyerMatchSchema>;
+
+export const buyerProfiles = pgTable("buyer_profiles", {
+  id: integer("id").primaryKey(),
+  userId: integer("user_id").notNull(),
+  targetStates: text("target_states").array(),
+  targetZips: text("target_zips").array(),
+  strategies: text("strategies").array(),
+  minSpread: decimal("min_spread", { precision: 12, scale: 2 }),
+  minYield: decimal("min_yield", { precision: 8, scale: 4 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertBuyerProfileSchema = createInsertSchema(buyerProfiles).omit({ createdAt: true, updatedAt: true } as any);
+export type BuyerProfile = typeof buyerProfiles.$inferSelect;
+export type InsertBuyerProfile = z.infer<typeof insertBuyerProfileSchema>;
 
 // DOCUMENT VERSIONS TABLE
 export const documentVersions = pgTable("document_versions", {

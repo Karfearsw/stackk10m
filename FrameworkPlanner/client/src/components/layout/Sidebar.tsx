@@ -29,7 +29,7 @@ import { useSidebar } from "@/contexts/SidebarContext";
 import { useQuery } from "@tanstack/react-query";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
-const navigation = [
+export const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Today", href: "/today", icon: CalendarCheck2 },
   { name: "Tasks", href: "/tasks", icon: CheckSquare },

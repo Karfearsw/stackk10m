@@ -27,7 +27,7 @@ interface NotificationItem {
 }
 
 export function Header() {
-  const { state, setState, cycleState, isHidden } = useSidebar();
+  const { state, setState, cycleState, isHidden, toggleMobile } = useSidebar();
   const { user, logout } = useAuth();
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
@@ -38,6 +38,7 @@ export function Header() {
   });
 
   const getNextStateLabel = () => {
+    if (typeof window !== "undefined" && !window.matchMedia("(min-width: 768px)").matches) return "Open menu";
     if (state === "expanded") return "Collapse to icons";
     if (state === "icon") return "Hide sidebar";
     return "Show sidebar";
@@ -117,7 +118,15 @@ export function Header() {
             <Button 
               variant="ghost" 
               size="icon" 
-              onClick={isHidden ? () => setState("expanded") : cycleState}
+              onClick={() => {
+                const isDesktop = typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches;
+                if (!isDesktop) {
+                  toggleMobile();
+                  return;
+                }
+                if (isHidden) setState("expanded");
+                else cycleState();
+              }}
               className="text-muted-foreground hover:text-foreground shrink-0"
               data-testid="button-hamburger"
             >
