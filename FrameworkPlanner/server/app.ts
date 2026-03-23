@@ -215,13 +215,16 @@ export default async function runApp(
     console.error("Failed to ensure call_logs table:", e);
   }
 
-  const server = await registerRoutes(app);
+  const server = await registerRoutes(app, { mode: "server" });
+  if (!server) throw new Error("registerRoutes returned null in server mode");
+
+  const isServerless = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
 
   // Start background automation worker
   const enableAutomationWorker =
     typeof process.env.ENABLE_AUTOMATION_WORKER === "string"
       ? process.env.ENABLE_AUTOMATION_WORKER.toLowerCase() === "true"
-      : process.env.NODE_ENV !== "test";
+      : !isServerless && process.env.NODE_ENV !== "test";
   if (enableAutomationWorker) {
     startAutomationWorker(60000); // Run every minute
   }
@@ -238,6 +241,7 @@ export default async function runApp(
 
   const taskRemindersEnv = String(process.env.TASK_REMINDERS_ENABLED || "").trim().toLowerCase();
   const enableTaskReminders =
+    !isServerless &&
     process.env.NODE_ENV !== "test" &&
     taskRemindersEnv !== "0" &&
     taskRemindersEnv !== "false" &&

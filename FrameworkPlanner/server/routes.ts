@@ -7,6 +7,7 @@ import { storage } from "./storage.js";
 import { db } from "./db.js";
 import { sql } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
+import { publishTelephonyEvent } from "./telephony/pubsub.js";
 import { getTelephonyMediaSignedUrl, uploadTelephonyMediaFromUrl } from "./telephony/objectStorage.js";
 import {
   createExportJob,
@@ -263,7 +264,10 @@ function haversineMiles(a: { lat: number; lng: number }, b: { lat: number; lng: 
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-export async function registerRoutes(app: Express): Promise<Server> {
+export async function registerRoutes(
+  app: Express,
+  opts?: { mode?: "server" | "serverless" },
+): Promise<Server | null> {
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 },
@@ -3316,7 +3320,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       res.status(201).json(log);
-      emitTelephonyEventToAll({ type: "call_log_created", payload: { id: log.id, status: log.status, number: log.number, direction: log.direction, leadId: log.leadId } });
+      {
+        const evt = { type: "call_log_created", payload: { id: log.id, status: log.status, number: log.number, direction: log.direction, leadId: log.leadId } } as const;
+        emitTelephonyEventToAll(evt);
+        publishTelephonyEvent(evt).catch(() => {});
+      }
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -3401,7 +3409,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       res.json(updated);
-      emitTelephonyEventToAll({ type: "call_log_updated", payload: { id: updated.id, status: updated.status, number: updated.number, direction: updated.direction } });
+      {
+        const evt = { type: "call_log_updated", payload: { id: updated.id, status: updated.status, number: updated.number, direction: updated.direction } } as const;
+        emitTelephonyEventToAll(evt);
+        publishTelephonyEvent(evt).catch(() => {});
+      }
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -3457,7 +3469,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (label !== "spam" && label !== "allow" && label !== "block") return res.status(400).json({ message: "Invalid label" });
       const saved = await storage.upsertNumberReputation({ userId: req.session.userId!, e164, label, reason } as any);
       res.json(saved);
-      emitTelephonyEventToAll({ type: "spam_flag_updated", payload: { e164, label } });
+      {
+        const evt = { type: "spam_flag_updated", payload: { e164, label } } as const;
+        emitTelephonyEventToAll(evt);
+        publishTelephonyEvent(evt).catch(() => {});
+      }
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -3471,7 +3487,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!e164) return res.status(400).json({ message: "Missing e164" });
       await storage.deleteNumberReputation(req.session.userId!, e164);
       res.json({ ok: true });
-      emitTelephonyEventToAll({ type: "spam_flag_updated", payload: { e164, label: null } });
+      {
+        const evt = { type: "spam_flag_updated", payload: { e164, label: null } } as const;
+        emitTelephonyEventToAll(evt);
+        publishTelephonyEvent(evt).catch(() => {});
+      }
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -3717,7 +3737,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const token = await new SignJWT({ sub: String(req.session.userId || ""), exp, iat: now } as any)
         .setProtectedHeader({ alg: "HS256" })
         .sign(new TextEncoder().encode(secret));
-      res.json({ token, expiresAt: new Date(exp * 1000).toISOString() });
+      const wsBaseUrlRaw = String(process.env.TELEPHONY_WS_PUBLIC_BASE_URL || "").trim();
+      res.json({ token, expiresAt: new Date(exp * 1000).toISOString(), wsBaseUrl: wsBaseUrlRaw || null });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -4057,7 +4078,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           isRead: false,
         } as any);
 
-        emitTelephonyEventToAll({ type: "voicemail_updated", payload: { id: media.id, e164: media.e164 } });
+        {
+          const evt = { type: "voicemail_updated", payload: { id: media.id, e164: media.e164 } } as const;
+          emitTelephonyEventToAll(evt);
+          publishTelephonyEvent(evt).catch(() => {});
+        }
 
         await storage.createGlobalActivity({
           userId: inboxUserId,
@@ -4073,7 +4098,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const uploaded = await uploadTelephonyMediaFromUrl({ key, sourceUrl: String(RecordingUrl), contentType: "audio/mpeg" });
               if (uploaded) {
                 await storage.updateCallMedia(media.id, { storageKey: uploaded.key, mimeType: uploaded.contentType } as any);
-                emitTelephonyEventToAll({ type: "recording_ready", payload: { id: media.id, key: uploaded.key } });
+                {
+                  const evt = { type: "recording_ready", payload: { id: media.id, key: uploaded.key } } as const;
+                  emitTelephonyEventToAll(evt);
+                  publishTelephonyEvent(evt).catch(() => {});
+                }
               }
             } catch {}
           })();
@@ -6071,6 +6100,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ message: error.message });
     }
   });
+
+  const mode = opts?.mode ?? "server";
+  if (mode === "serverless") return null;
 
   const httpServer = createServer(app);
   initTelephonyWs(httpServer);

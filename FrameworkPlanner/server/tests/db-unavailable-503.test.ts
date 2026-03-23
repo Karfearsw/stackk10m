@@ -44,7 +44,8 @@ afterEach(() => {
 async function buildTestServer() {
   const { app } = await import("../app.js");
   const { registerRoutes } = await import("../routes.js");
-  return await registerRoutes(app);
+  await registerRoutes(app, { mode: "serverless" });
+  return app;
 }
 
 describe("DB unavailable handling", () => {
@@ -58,7 +59,6 @@ describe("DB unavailable handling", () => {
 
     const server = await buildTestServer();
     const res = await request(server).get("/api/auth/me");
-    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
 
     expect(res.status).toBe(503);
     expect(res.body?.kind).toBe("db_unavailable");
@@ -74,7 +74,6 @@ describe("DB unavailable handling", () => {
 
     const server = await buildTestServer();
     const res = await request(server).get("/api/auth/me");
-    if (server.listening) await new Promise<void>((resolve) => server.close(() => resolve()));
 
     expect(res.status).toBe(503);
     expect(res.body?.kind).toBe("db_unavailable");

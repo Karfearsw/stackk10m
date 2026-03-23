@@ -35,6 +35,8 @@ describe("schema readiness", () => {
         query: vi.fn(async (sql: string) => {
           if (sql.includes("to_regclass('public.tasks')")) return { rows: [{ reg: "tasks" }] };
           if (sql.includes("to_regclass('public.pipeline_configs')")) return { rows: [{ reg: null }] };
+          if (sql.includes("to_regclass('public.dialer_scripts')")) return { rows: [{ reg: null }] };
+          if (sql.includes("to_regclass('public.call_media')")) return { rows: [{ reg: null }] };
           if (sql.includes("table_name = 'leads'") && sql.includes("column_name = 'do_not_call'")) return { rows: [{ ok: 1 }] };
           if (sql.includes("table_name = 'leads'") && sql.includes("column_name = 'do_not_email'")) return { rows: [] };
           if (sql.includes("table_name = 'properties'") && sql.includes("column_name = 'lead_source'")) return { rows: [] };
@@ -52,6 +54,8 @@ describe("schema readiness", () => {
       expect(r.missing).toEqual(
         expect.arrayContaining([
           "table:pipeline_configs",
+          "table:dialer_scripts",
+          "table:call_media",
           "column:leads.do_not_email",
           "column:properties.lead_source",
           "column:properties.lead_source_detail",

@@ -3,8 +3,15 @@ import { useQueryClient } from "@tanstack/react-query";
 
 type TelephonyEvent = { type: string; payload?: any; ts?: number };
 
-function toWsUrl(pathWithQuery: string) {
+const MAX_ATTEMPTS = 20;
+
+function resolveWsUrl(wsBaseUrl: string | null | undefined, pathWithQuery: string) {
   if (typeof window === "undefined") return "";
+  if (wsBaseUrl) {
+    try {
+      return new URL(pathWithQuery, wsBaseUrl).toString();
+    } catch {}
+  }
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}${pathWithQuery}`;
 }
@@ -12,7 +19,7 @@ function toWsUrl(pathWithQuery: string) {
 async function getWsToken() {
   const res = await fetch("/api/telephony/ws-token", { method: "POST" });
   if (!res.ok) throw new Error("WS token unavailable");
-  return res.json() as Promise<{ token: string; expiresAt: string }>;
+  return res.json() as Promise<{ token: string; expiresAt: string; wsBaseUrl?: string | null }>;
 }
 
 export function useTelephonyEvents(opts?: { enabled?: boolean }) {
@@ -44,6 +51,7 @@ export function useTelephonyEvents(opts?: { enabled?: boolean }) {
     const scheduleReconnect = () => {
       if (cancelled) return;
       attemptsRef.current += 1;
+      if (attemptsRef.current > MAX_ATTEMPTS) return;
       const delay = Math.min(10000, 500 + attemptsRef.current * 500);
       if (reconnectRef.current) window.clearTimeout(reconnectRef.current);
       reconnectRef.current = window.setTimeout(() => connect(), delay);
@@ -77,7 +85,7 @@ export function useTelephonyEvents(opts?: { enabled?: boolean }) {
         setConnected(false);
         const tokenData = await getWsToken();
         if (cancelled) return;
-        const ws = new WebSocket(toWsUrl(`/ws/telephony?token=${encodeURIComponent(tokenData.token)}`));
+        const ws = new WebSocket(resolveWsUrl(tokenData.wsBaseUrl, `/ws/telephony?token=${encodeURIComponent(tokenData.token)}`));
         wsRef.current = ws;
 
         ws.onopen = () => {

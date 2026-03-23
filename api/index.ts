@@ -1,5 +1,5 @@
-import { app } from "../server/app.js";
-import { registerRoutes } from "../server/routes.js";
+import { app } from "../FrameworkPlanner/server/app.js";
+import { registerRoutes } from "../FrameworkPlanner/server/routes.js";
 
 // Vercel Serverless Function Entry Point
 // This wrapper ensures routes are registered before handling requests
@@ -9,7 +9,7 @@ let routesRegistered = false;
 export default async function handler(req: any, res: any) {
   if (!routesRegistered) {
     // Ensure routes are registered (await any async setup)
-    await registerRoutes(app);
+    await registerRoutes(app, { mode: "serverless" });
     routesRegistered = true;
   }
   

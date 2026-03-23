@@ -61,6 +61,12 @@ async function checkSchemaOnce(): Promise<SchemaReadiness> {
     const pcRes = await pool.query("select to_regclass('public.pipeline_configs') as reg", []);
     if (!String(pcRes?.rows?.[0]?.reg || "").trim()) missing.push("table:pipeline_configs");
 
+    const dsRes = await pool.query("select to_regclass('public.dialer_scripts') as reg", []);
+    if (!String(dsRes?.rows?.[0]?.reg || "").trim()) missing.push("table:dialer_scripts");
+
+    const cmRes = await pool.query("select to_regclass('public.call_media') as reg", []);
+    if (!String(cmRes?.rows?.[0]?.reg || "").trim()) missing.push("table:call_media");
+
     const dncRes = await pool.query(
       "select 1 as ok from information_schema.columns where table_schema = 'public' and table_name = 'leads' and column_name = 'do_not_call' limit 1",
       [],
