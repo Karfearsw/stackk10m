@@ -109,6 +109,7 @@ if (!sessionSecret) {
   });
 } else {
   app.use("/api", (req, res, next) => {
+    if (req.path.startsWith("/api/auth/")) return next();
     getSchemaReadiness()
       .then((r) => {
         if (r.ok) return next();
