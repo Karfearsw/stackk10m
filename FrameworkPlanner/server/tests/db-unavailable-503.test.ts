@@ -58,7 +58,7 @@ describe("DB unavailable handling", () => {
     process.env.DATABASE_URL = "postgresql://user:pass@example.invalid:5432/db?sslmode=require";
 
     const server = await buildTestServer();
-    const res = await request(server).get("/api/auth/me");
+    const res = await request(server).get("/api/leads");
 
     expect(res.status).toBe(503);
     expect(res.body?.kind).toBe("db_unavailable");
@@ -73,7 +73,7 @@ describe("DB unavailable handling", () => {
     process.env.DATABASE_URL = "base";
 
     const server = await buildTestServer();
-    const res = await request(server).get("/api/auth/me");
+    const res = await request(server).get("/api/leads");
 
     expect(res.status).toBe(503);
     expect(res.body?.kind).toBe("db_unavailable");

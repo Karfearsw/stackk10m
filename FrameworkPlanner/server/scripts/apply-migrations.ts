@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
 
-const frameworkRoot = fileURLToPath(new URL("../../..", import.meta.url));
+const frameworkRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 dotenv.config({ path: join(frameworkRoot, ".env") });
 
@@ -12,6 +12,8 @@ export async function applyMigrations() {
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
     .sort();
+
+  console.log(`Migrations directory: ${dir} (${files.length} .sql files)`);
 
   const { pool } = await import("../db.js");
   for (const f of files) {

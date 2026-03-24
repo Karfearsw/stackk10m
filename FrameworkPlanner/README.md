@@ -47,6 +47,7 @@ DEV_AUTH_BYPASS_ENABLED="true"
    ```bash
    npm run migrate
    ```
+   This applies the checked-in SQL files in `FrameworkPlanner/migrations/`.
 
    Optional (schema sync without SQL migrations):
    ```bash
