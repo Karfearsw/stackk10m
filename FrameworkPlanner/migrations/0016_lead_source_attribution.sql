@@ -14,6 +14,8 @@ CREATE TABLE IF NOT EXISTS lead_source_options (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
+ALTER TABLE lead_source_options ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_lead_source_options_user_value ON lead_source_options (user_id, value);
 
 INSERT INTO lead_source_options (user_id, value, label, is_active, sort_order)
