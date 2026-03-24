@@ -14,6 +14,9 @@ CREATE TABLE IF NOT EXISTS lead_source_options (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
+ALTER TABLE lead_source_options ADD COLUMN IF NOT EXISTS user_id INTEGER;
+ALTER TABLE lead_source_options ALTER COLUMN user_id DROP NOT NULL;
+
 ALTER TABLE lead_source_options ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_lead_source_options_user_value ON lead_source_options (user_id, value);
@@ -27,4 +30,3 @@ VALUES
   (NULL, 'mls', 'MLS', true, 50),
   (NULL, 'referral', 'Referral', true, 60)
 ON CONFLICT DO NOTHING;
-
