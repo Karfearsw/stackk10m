@@ -29,6 +29,8 @@ log(`[Startup] Server initializing... (Commit: 90e785a)`);
 initSentry();
 // Sentry v8+ auto-instruments Express; request handler is no longer required
 
+app.disable("x-powered-by");
+
 if (!(globalThis as any).__stackk_process_handlers_installed) {
   (globalThis as any).__stackk_process_handlers_installed = true;
   process.on("unhandledRejection", (reason: any) => {
@@ -153,6 +155,8 @@ app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
   const requestId = (req.headers["x-request-id"] as string) || crypto.randomUUID();
+  (res.locals as any).requestId = requestId;
+  res.setHeader("x-request-id", requestId);
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
 
   const originalResJson = res.json;
@@ -225,18 +229,18 @@ export default async function runApp(
   const enableAutomationWorker =
     typeof process.env.ENABLE_AUTOMATION_WORKER === "string"
       ? process.env.ENABLE_AUTOMATION_WORKER.toLowerCase() === "true"
-      : !isServerless && process.env.NODE_ENV !== "test";
+      : !isServerless && process.env.NODE_ENV !== "test" && hasDatabaseUrl;
   if (enableAutomationWorker) {
     startAutomationWorker(60000); // Run every minute
   }
 
   const enableCampaignScheduler = String(process.env.FEATURE_CAMPAIGNS || "").trim().toLowerCase() === "true";
-  if (enableCampaignScheduler) {
+  if (enableCampaignScheduler && hasDatabaseUrl) {
     startCampaignScheduler(60000);
   }
 
   const enableRvmWorker = String(process.env.FEATURE_RVM || "").trim().toLowerCase() === "true";
-  if (enableRvmWorker) {
+  if (enableRvmWorker && hasDatabaseUrl) {
     startRvmPoller(60000);
   }
 
@@ -248,7 +252,7 @@ export default async function runApp(
     taskRemindersEnv !== "false" &&
     taskRemindersEnv !== "no" &&
     taskRemindersEnv !== "off";
-  if (enableTaskReminders) {
+  if (enableTaskReminders && hasDatabaseUrl) {
     startTaskReminders(60000);
   }
 
@@ -261,14 +265,36 @@ export default async function runApp(
   if (process.env.SENTRY_DSN) {
     Sentry.setupExpressErrorHandler(app);
   }
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
+    const requestId =
+      (res.locals as any).requestId ||
+      (req.headers["x-request-id"] as string) ||
+      null;
 
-    // Log the error for debugging
-    console.error(err);
+    if (process.env.NODE_ENV === "production") {
+      console.error(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "http_error",
+          requestId,
+          method: req.method,
+          path: req.path,
+          message: String(message),
+          code: err?.code ? String(err.code) : null,
+          status,
+        }),
+      );
+    } else {
+      console.error(err);
+    }
 
-    res.status(status).json({ message });
+    const clientMessage =
+      process.env.NODE_ENV === "production" && status >= 500
+        ? "Internal Server Error"
+        : message;
+    res.status(status).json({ message: clientMessage, requestId });
   });
 
   // importantly run the final setup after setting up all the other routes so

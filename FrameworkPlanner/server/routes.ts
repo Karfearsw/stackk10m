@@ -654,6 +654,23 @@ export async function registerRoutes(
   });
 
   // AUTH ENDPOINTS
+  if (process.env.NODE_ENV !== "production") {
+    app.get("/api/auth/debug", (req, res) => {
+      const authHeader = String(req.headers.authorization || "");
+      const isBearer = authHeader.startsWith("Bearer ");
+      const tokenLen = isBearer ? authHeader.slice("Bearer ".length).trim().length : 0;
+      res.json({
+        nodeEnv: process.env.NODE_ENV || "development",
+        hasSession: Boolean(req.session?.userId),
+        sessionUserId: req.session?.userId ?? null,
+        hasAuthHeader: Boolean(authHeader),
+        isBearer,
+        bearerTokenLength: tokenLen,
+        authJwtSecretConfigured: Boolean(authJwtSecret()),
+      });
+    });
+  }
+
   app.post("/api/auth/login", async (req, res) => {
     try {
       const { email, password } = req.body;
