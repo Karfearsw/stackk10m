@@ -43,10 +43,40 @@ describe("CRM import/export helpers", () => {
   });
 
   it("suggests mapping based on common header synonyms", () => {
-    const suggested = suggestMapping("lead", ["Owner Email", "Street Address", "Zip", "State", "City", "Owner Name"]);
+    const suggested = suggestMapping("lead", ["Owner Email (Primary)", "Street Address", "Zip", "State", "City", "Owner Name"]);
     expect(suggested.address).toBe("Street Address");
-    expect(suggested.ownerEmail).toBe("Owner Email");
+    expect(suggested.ownerEmail).toBe("Owner Email (Primary)");
     expect(suggested.zipCode).toBe("Zip");
+  });
+
+  it("derives city/state/zip from Full Address when mapped", () => {
+    const row = { "Full Address": "123 Main St, Tampa, FL 33602", "Owner Name": "Jane Smith", Source: "Cold Call" };
+    const mapping = {
+      fullAddress: "Full Address",
+      ownerName: "Owner Name",
+      source: "Source",
+    };
+    const r = mapAndValidateRow("lead", row, mapping);
+    expect(r.ok).toBe(true);
+    expect((r as any).data.address).toBe("123 Main St");
+    expect((r as any).data.city).toBe("Tampa");
+    expect((r as any).data.state).toBe("FL");
+    expect((r as any).data.zipCode).toBe("33602");
+  });
+
+  it("returns row-level errors when Full Address cannot be parsed", () => {
+    const row = { "Full Address": "123 Main St Tampa Florida", "Owner Name": "Jane Smith", Source: "Cold Call" };
+    const mapping = {
+      fullAddress: "Full Address",
+      ownerName: "Owner Name",
+      source: "Source",
+    };
+    const r = mapAndValidateRow("lead", row, mapping);
+    expect(r.ok).toBe(false);
+    const messages = (r as any).errors.map((e: any) => `${e.field}:${e.message}`).join("|");
+    expect(messages).toContain("city:Unable to parse from Full Address");
+    expect(messages).toContain("state:Unable to parse from Full Address");
+    expect(messages).toContain("zipCode:Unable to parse from Full Address");
   });
 
   it("validates required fields and formats with row-level errors", () => {

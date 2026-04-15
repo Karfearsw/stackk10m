@@ -8,7 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useQuery } from "@tanstack/react-query";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 
@@ -55,7 +56,11 @@ export function CrmImportExportDialog({
   const fields = (fieldsResp?.fields || []) as FieldDef[];
 
   const requiredFields = useMemo(() => fields.filter((f) => f.required), [fields]);
-  const optionalFields = useMemo(() => fields.filter((f) => !f.required), [fields]);
+  const optionalFields = useMemo(() => {
+    const base = fields.filter((f) => !f.required);
+    if (entityType !== "lead") return base;
+    return base.filter((f) => f.key !== "fullAddress");
+  }, [fields, entityType]);
 
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"import" | "export">("import");
@@ -65,6 +70,9 @@ export function CrmImportExportDialog({
   const [previewError, setPreviewError] = useState<string>("");
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [defaultLeadSource, setDefaultLeadSource] = useState<string>("");
+  const [leadSourceMode, setLeadSourceMode] = useState<"default" | "column">("default");
+  const [newLeadSourceLabel, setNewLeadSourceLabel] = useState("");
+  const [creatingLeadSource, setCreatingLeadSource] = useState(false);
   const [onDuplicate, setOnDuplicate] = useState<"merge" | "overwrite" | "skip">("merge");
   const [dryRun, setDryRun] = useState(false);
   const [importJobId, setImportJobId] = useState<number | null>(null);
@@ -84,6 +92,7 @@ export function CrmImportExportDialog({
   const [exportDownloadUrl, setExportDownloadUrl] = useState<string>("");
   const [exportJob, setExportJob] = useState<any>(null);
   const [exportPolling, setExportPolling] = useState(false);
+  const qc = useQueryClient();
 
   useEffect(() => {
     if (!open) return;
@@ -92,6 +101,9 @@ export function CrmImportExportDialog({
     setFile(null);
     setMapping({});
     setDefaultLeadSource("");
+    setLeadSourceMode("default");
+    setNewLeadSourceLabel("");
+    setCreatingLeadSource(false);
     setOnDuplicate("merge");
     setDryRun(false);
     setImportJobId(null);
@@ -176,12 +188,45 @@ export function CrmImportExportDialog({
     if (v) setDefaultLeadSource(v);
   }, [defaultLeadSource, entityType, leadSourceOptions]);
 
+  useEffect(() => {
+    if (entityType !== "lead") return;
+    if (mapping.source) setLeadSourceMode("column");
+  }, [entityType, mapping.source]);
+
+  const createLeadSourceOption = async () => {
+    if (entityType !== "lead") return;
+    const label = newLeadSourceLabel.trim();
+    if (!label) return;
+    setCreatingLeadSource(true);
+    try {
+      const res = await fetch("/api/lead-source-options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ value: label, label }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as any).message || "Failed to create lead source");
+      setNewLeadSourceLabel("");
+      setDefaultLeadSource(String((data as any).value || label));
+      qc.invalidateQueries({ queryKey: ["/api/lead-source-options"] });
+      toast({ title: "Lead source created" });
+    } catch (e: any) {
+      toast({ title: "Create lead source failed", description: e?.message || "Unknown error", variant: "destructive" });
+    } finally {
+      setCreatingLeadSource(false);
+    }
+  };
+
   const startImport = async () => {
     if (!file) return;
     try {
       const effectiveMapping: Record<string, string> = { ...(mapping || {}) };
-      if (entityType === "lead" && !effectiveMapping.source && defaultLeadSource) {
-        effectiveMapping.source = `static:${defaultLeadSource}`;
+      if (entityType === "lead") {
+        if (leadSourceMode === "default") {
+          delete effectiveMapping.source;
+          if (defaultLeadSource) effectiveMapping.source = `static:${defaultLeadSource}`;
+        }
       }
 
       const fd = new FormData();
@@ -252,8 +297,14 @@ export function CrmImportExportDialog({
 
   const supportsStatusFilter = entityType !== "contact";
   const supportsAssignedToFilter = entityType === "lead" || entityType === "opportunity";
+  const leadAddressKeys = new Set(["address", "city", "state", "zipCode"]);
+  const leadAddressSatisfied =
+    entityType !== "lead" ? true : Boolean(mapping.fullAddress) || (mapping.address && mapping.city && mapping.state && mapping.zipCode);
   const missingRequired = requiredFields.some((f) => {
-    if (entityType === "lead" && f.key === "source") return !mapping.source && !defaultLeadSource;
+    if (entityType === "lead" && leadAddressKeys.has(f.key)) return !leadAddressSatisfied;
+    if (entityType === "lead" && f.key === "source") {
+      return leadSourceMode === "column" ? !mapping.source : !defaultLeadSource;
+    }
     return !mapping[f.key];
   });
 
@@ -319,20 +370,81 @@ export function CrmImportExportDialog({
                   </div>
 
                   {entityType === "lead" ? (
+                    <div className="space-y-3 rounded-md border p-3">
+                      <div className="text-sm font-medium">Source</div>
+                      <RadioGroup value={leadSourceMode} onValueChange={(v) => setLeadSourceMode(v as any)} className="gap-2">
+                        <div className="flex items-center gap-2">
+                          <RadioGroupItem value="default" id="lead-source-mode-default" />
+                          <Label htmlFor="lead-source-mode-default">Default for all rows</Label>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <RadioGroupItem value="column" id="lead-source-mode-column" />
+                          <Label htmlFor="lead-source-mode-column">From CSV column</Label>
+                        </div>
+                      </RadioGroup>
+
+                      {leadSourceMode === "default" ? (
+                        <div className="space-y-2">
+                          <Label>Default Lead Source</Label>
+                          <Select value={defaultLeadSource} onValueChange={setDefaultLeadSource}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Select source" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {(Array.isArray(leadSourceOptions) ? leadSourceOptions : []).map((o: any) => (
+                                <SelectItem key={String(o.value || "")} value={String(o.value || "")}>
+                                  {String(o.label || o.value || "")}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-muted-foreground">Map the Source field in Required Mapping below.</div>
+                      )}
+
+                      <div className="space-y-2">
+                        <Label>Create Lead Source</Label>
+                        <div className="flex items-center gap-2">
+                          <Input
+                            value={newLeadSourceLabel}
+                            onChange={(e) => setNewLeadSourceLabel(e.target.value)}
+                            placeholder="e.g. PPC"
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={createLeadSourceOption}
+                            disabled={!newLeadSourceLabel.trim() || creatingLeadSource}
+                          >
+                            Add
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {entityType === "lead" ? (
                     <div className="space-y-2">
-                      <Label>Default Lead Source</Label>
-                      <Select value={defaultLeadSource} onValueChange={setDefaultLeadSource}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select source" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {(Array.isArray(leadSourceOptions) ? leadSourceOptions : []).map((o: any) => (
-                            <SelectItem key={String(o.value || "")} value={String(o.value || "")}>
-                              {String(o.label || o.value || "")}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Label>Full Address (Optional)</Label>
+                      <div className="grid grid-cols-2 gap-2 items-center min-w-0">
+                        <div className="text-sm min-w-0 truncate">Full Address</div>
+                        <Select value={mapping.fullAddress || ""} onValueChange={(v) => setMapping((p) => ({ ...p, fullAddress: v }))}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="(not mapped)" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {preview.headers.map((h: string) => (
+                              <SelectItem key={h} value={h}>
+                                {h}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {mapping.fullAddress ? (
+                        <div className="text-xs text-muted-foreground">City/State/ZIP can be derived from Full Address when not mapped.</div>
+                      ) : null}
                     </div>
                   ) : null}
 

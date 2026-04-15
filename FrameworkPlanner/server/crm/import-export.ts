@@ -48,6 +48,7 @@ export type FieldDef = {
 };
 
 const leadFields: FieldDef[] = [
+  { key: "fullAddress", label: "Full Address", type: "string" },
   { key: "address", label: "Address", required: true, type: "string" },
   { key: "city", label: "City", required: true, type: "string" },
   { key: "state", label: "State", required: true, type: "string" },
@@ -115,6 +116,7 @@ const buyerFields: FieldDef[] = [
 ];
 
 const leadSynonyms: Record<string, string[]> = {
+  fullAddress: ["full address", "address full", "property address full", "property full address", "mailing address", "property address"],
   address: ["address", "street", "street address", "property address"],
   city: ["city", "town"],
   state: ["state", "st"],
@@ -197,8 +199,10 @@ export function getCrmFieldDefs(entityType: CrmEntityType) {
 }
 
 export function suggestMapping(entityType: CrmEntityType, headers: string[]) {
-  const normalizedToOriginal = new Map<string, string>();
-  for (const h of headers) normalizedToOriginal.set(normalizeHeader(h), h);
+  const normalizedHeaders = headers.map((h) => ({
+    original: h,
+    normalized: normalizeHeader(h),
+  }));
 
   const synonyms =
     entityType === "lead"
@@ -209,14 +213,31 @@ export function suggestMapping(entityType: CrmEntityType, headers: string[]) {
           ? contactSynonyms
           : buyerSynonyms;
   const out: Record<string, string> = {};
+  const usedHeaders = new Set<string>();
+
+  const scoreMatch = (headerNorm: string, candNorm: string) => {
+    if (headerNorm === candNorm) return 100;
+    if (headerNorm.startsWith(candNorm)) return 75;
+    if (candNorm.startsWith(headerNorm)) return 70;
+    if (headerNorm.includes(candNorm)) return 60;
+    if (candNorm.includes(headerNorm)) return 55;
+    return 0;
+  };
 
   for (const [field, candidates] of Object.entries(synonyms)) {
+    let best: { header: string; score: number } | null = null;
     for (const c of candidates) {
-      const hit = normalizedToOriginal.get(normalizeHeader(c));
-      if (hit) {
-        out[field] = hit;
-        break;
+      const candNorm = normalizeHeader(c);
+      for (const h of normalizedHeaders) {
+        if (usedHeaders.has(h.original)) continue;
+        const score = scoreMatch(h.normalized, candNorm);
+        if (score <= 0) continue;
+        if (!best || score > best.score) best = { header: h.original, score };
       }
+    }
+    if (best) {
+      out[field] = best.header;
+      usedHeaders.add(best.header);
     }
   }
 
@@ -364,6 +385,36 @@ function validateZip(v: string | null) {
   return null;
 }
 
+function parseUsFullAddress(input: string) {
+  const s = String(input || "").trim();
+  if (!s) return null;
+
+  const withCommas = s.match(/^(.+?),\s*([^,]+?),\s*([A-Za-z]{2})\s*(\d{5}(?:-\d{4})?)?$/);
+  if (withCommas) {
+    const street = withCommas[1]?.trim() || "";
+    const city = withCommas[2]?.trim() || "";
+    const state = withCommas[3]?.trim().toUpperCase() || "";
+    const zipCode = (withCommas[4] || "").trim() || "";
+    return { street, city, state, zipCode };
+  }
+
+  const withTrailing = s.match(/^(.+?)\s+([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/);
+  if (withTrailing) {
+    const left = withTrailing[1]?.trim() || "";
+    const state = withTrailing[2]?.trim().toUpperCase() || "";
+    const zipCode = withTrailing[3]?.trim() || "";
+    const parts = left.split(",").map((x) => x.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      const street = parts.slice(0, -1).join(", ");
+      const city = parts[parts.length - 1] || "";
+      return { street, city, state, zipCode };
+    }
+    return null;
+  }
+
+  return null;
+}
+
 function computeNormalizedPart(v: string | null) {
   return String(v || "")
     .trim()
@@ -448,6 +499,30 @@ export function mapAndValidateRow(entityType: CrmEntityType, row: Record<string,
       if (!isBlank(v) && dv === null) errors.push({ field: def.key, message: "Must be a date" });
       out[def.key] = dv;
     }
+  }
+
+  if (entityType === "lead") {
+    const candidate =
+      toStringOrNull(out.fullAddress ?? null) ||
+      toStringOrNull(out.address ?? null);
+    const needsDerive = !out.city || !out.state || !out.zipCode;
+    if (candidate && needsDerive) {
+      const parsed = parseUsFullAddress(candidate);
+      if (parsed) {
+        if (!out.city && parsed.city) out.city = parsed.city;
+        if (!out.state && parsed.state) out.state = parsed.state;
+        if (!out.zipCode && parsed.zipCode) out.zipCode = parsed.zipCode;
+        if (!out.address && parsed.street) out.address = parsed.street;
+        if (typeof out.address === "string" && out.address.includes(",") && parsed.street) {
+          out.address = parsed.street;
+        }
+      } else if (toStringOrNull(out.fullAddress ?? null)) {
+        if (!out.city) errors.push({ field: "city", message: "Unable to parse from Full Address" });
+        if (!out.state) errors.push({ field: "state", message: "Unable to parse from Full Address" });
+        if (!out.zipCode) errors.push({ field: "zipCode", message: "Unable to parse from Full Address" });
+      }
+    }
+    delete out.fullAddress;
   }
 
   for (const def of defs) {
