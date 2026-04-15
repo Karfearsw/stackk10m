@@ -29,12 +29,13 @@ export function UnderwritingPanel(props: {
     <Card className="h-full">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-3">
-          <CardTitle className="text-base">Underwriting</CardTitle>
+          <CardTitle className="text-base min-w-0 truncate">Underwriting</CardTitle>
           <Button
             size="sm"
             variant="outline"
             onClick={() => props.onBookmarkSection(props.activeSectionId)}
             disabled={!props.activeSectionId}
+            className="shrink-0"
           >
             <Bookmark className="h-4 w-4 mr-2" />
             Add bookmark
@@ -62,7 +63,7 @@ export function UnderwritingPanel(props: {
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="text-sm font-medium" onClick={() => props.onActiveSectionChange(s.id)}>
+                      <div className="text-sm font-medium truncate" onClick={() => props.onActiveSectionChange(s.id)}>
                         {s.title}
                       </div>
                       <div className="text-xs text-muted-foreground">Click the bookmark icon to save a jump.</div>
@@ -72,6 +73,7 @@ export function UnderwritingPanel(props: {
                       variant="ghost"
                       onClick={() => props.onBookmarkSection(s.id)}
                       aria-label={`Bookmark ${s.title}`}
+                      className="shrink-0"
                     >
                       <Bookmark className="h-4 w-4" />
                     </Button>
@@ -95,4 +97,3 @@ export function UnderwritingPanel(props: {
     </Card>
   );
 }
-

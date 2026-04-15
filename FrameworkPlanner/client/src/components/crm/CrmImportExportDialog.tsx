@@ -271,7 +271,7 @@ export function CrmImportExportDialog({
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-          <TabsList>
+          <TabsList className="flex-wrap">
             <TabsTrigger value="import">Import</TabsTrigger>
             <TabsTrigger value="export">Export</TabsTrigger>
           </TabsList>
@@ -339,8 +339,8 @@ export function CrmImportExportDialog({
                   <div className="space-y-3">
                     <Label>Field Mapping (Required)</Label>
                     {requiredFields.map((f) => (
-                      <div key={f.key} className="grid grid-cols-2 gap-2 items-center">
-                        <div className="text-sm">{f.label}</div>
+                      <div key={f.key} className="grid grid-cols-2 gap-2 items-center min-w-0">
+                        <div className="text-sm min-w-0 truncate">{f.label}</div>
                         <Select
                           value={mapping[f.key] || ""}
                           onValueChange={(v) => setMapping((prev) => ({ ...prev, [f.key]: v }))}
@@ -362,11 +362,11 @@ export function CrmImportExportDialog({
 
                   <div className="space-y-3">
                     <Label>Field Mapping (Optional)</Label>
-                    <ScrollArea className="h-56 border rounded-md p-2">
+                    <ScrollArea className="h-[min(14rem,40dvh)] border rounded-md p-2">
                       <div className="space-y-3">
                         {optionalFields.map((f) => (
-                          <div key={f.key} className="grid grid-cols-2 gap-2 items-center">
-                            <div className="text-sm">{f.label}</div>
+                          <div key={f.key} className="grid grid-cols-2 gap-2 items-center min-w-0">
+                            <div className="text-sm min-w-0 truncate">{f.label}</div>
                             <Select
                               value={mapping[f.key] || ""}
                               onValueChange={(v) => setMapping((prev) => ({ ...prev, [f.key]: v }))}
@@ -391,12 +391,14 @@ export function CrmImportExportDialog({
 
                 <div className="space-y-3">
                   <Label>Preview Rows</Label>
-                  <ScrollArea className="h-56 border rounded-md">
+                  <ScrollArea className="h-[min(14rem,40dvh)] border rounded-md">
                     <Table>
                       <TableHeader>
                         <TableRow>
                           {(preview.headers || []).slice(0, 4).map((h: string) => (
-                            <TableHead key={h}>{h}</TableHead>
+                            <TableHead key={h}>
+                              <div className="max-w-[240px] truncate">{h}</div>
+                            </TableHead>
                           ))}
                         </TableRow>
                       </TableHeader>
@@ -404,7 +406,9 @@ export function CrmImportExportDialog({
                         {(preview.sampleRows || []).map((r: any, idx: number) => (
                           <TableRow key={idx}>
                             {(preview.headers || []).slice(0, 4).map((h: string) => (
-                              <TableCell key={h}>{String(r?.[h] ?? "")}</TableCell>
+                              <TableCell key={h}>
+                                <div className="max-w-[240px] truncate">{String(r?.[h] ?? "")}</div>
+                              </TableCell>
                             ))}
                           </TableRow>
                         ))}
@@ -426,7 +430,7 @@ export function CrmImportExportDialog({
                       ) : null}
 
                       {importErrors.length ? (
-                        <ScrollArea className="h-40 border rounded-md">
+                        <ScrollArea className="h-[min(10rem,30dvh)] border rounded-md">
                           <Table>
                             <TableHeader>
                               <TableRow>
@@ -539,7 +543,7 @@ export function CrmImportExportDialog({
 
               <div className="space-y-3">
                 <Label>Columns</Label>
-                <ScrollArea className="h-64 border rounded-md p-2">
+                <ScrollArea className="h-[min(16rem,45dvh)] border rounded-md p-2">
                   <div className="space-y-2">
                     {exportColumnsDefault.map((c) => (
                       <div key={c} className="flex items-center gap-2">

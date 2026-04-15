@@ -315,7 +315,7 @@ export function ResearchHub(props: {
         <div className="h-full grid grid-cols-1 lg:grid-cols-12 gap-3">
           <div className="lg:col-span-9 min-h-0 flex flex-col">
             <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="flex flex-col min-h-0">
-              <TabsList className="justify-start">
+              <TabsList className="justify-start flex-wrap h-auto">
                 <TabsTrigger value="browser">Browser</TabsTrigger>
                 <TabsTrigger value="zoning">Zoning</TabsTrigger>
                 <TabsTrigger value="resources">Resources</TabsTrigger>
@@ -626,4 +626,3 @@ export function ResearchHub(props: {
     </Card>
   );
 }
-
