@@ -10,7 +10,7 @@
     "dev:client": "node ./node_modules/vite/bin/vite.js dev --port 3000",
     "dev": "cross-env NODE_ENV=development node ./node_modules/tsx/dist/cli.mjs server/index-dev.ts",
     "dev:ws": "cross-env NODE_ENV=development node ./node_modules/tsx/dist/cli.mjs server/index-ws.ts",
-    "build": "node ./node_modules/vite/bin/vite.js build; esbuild server/index-prod.ts --platform=node --packages=external --bundle --format=esm --outfile=dist-server/index.js; esbuild server/index-ws.ts --platform=node --packages=external --bundle --format=esm --outfile=dist-server/ws.js",
+    "build": "node ./node_modules/vite/bin/vite.js build; esbuild server/index-prod.ts --platform=node --packages=external --bundle --format=esm --outfile=dist-server/index.js; esbuild server/index-ws.ts --platform=node --packages=external --bundle --format=esm --outfile=dist-server/ws.js; esbuild server/index-vercel.ts --platform=node --packages=external --bundle --format=esm --outfile=dist-server/vercel.js",
     "migrate": "node ./node_modules/tsx/dist/cli.mjs server/scripts/apply-migrations.ts",
     "vercel-build": "node ./node_modules/tsx/dist/cli.mjs server/scripts/vercel-build.ts",
     "start": "cross-env NODE_ENV=production node dist-server/index.js",
