@@ -5,7 +5,7 @@ import { SignJWT, jwtVerify } from "jose";
 import multer from "multer";
 import { storage } from "./storage.js";
 import { db } from "./db.js";
-import { sql } from "drizzle-orm";
+import { sql, inArray } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
 import { publishTelephonyEvent } from "./telephony/pubsub.js";
 import { getTelephonyMediaSignedUrl, uploadTelephonyMediaFromUrl } from "./telephony/objectStorage.js";
@@ -51,7 +51,8 @@ import {
   insertDealAssignmentSchema,
   insertPlaygroundPropertySessionSchema,
   insertUnderwritingTemplateSchema,
-  insertTaskSchema
+  insertTaskSchema,
+  users,
 } from "./shared-schema.js";
 import { z } from "zod";
 import { computeArvFromComps, computeDealMath, computeRepairTotal, underwritingSchemaV1, underwritingTemplateConfigSchema } from "../shared/underwriting.js";
@@ -5084,38 +5085,61 @@ export async function registerRoutes(
       const leadId = req.query.leadId ? parseInt(req.query.leadId as string) : undefined;
       const playgroundSessionId = req.query.playgroundSessionId ? parseInt(req.query.playgroundSessionId as string) : undefined;
       const logs = await storage.getGlobalActivityLogs(limit);
-      
-      const logsWithUsers = await Promise.all(
-        logs.map(async (log) => {
-          const user = log.userId === 0 ? null : await storage.getUserById(log.userId);
-          let meta: any = null;
-          try { meta = log.metadata ? JSON.parse(log.metadata as any) : null; } catch {}
-          return {
-            ...log,
-            user: log.userId === 0 ? {
-              id: 0,
-              firstName: "System",
-              lastName: null,
-              email: null,
-              profilePicture: null,
-            } : user ? {
-              id: user.id,
-              firstName: user.firstName,
-              lastName: user.lastName,
-              email: user.email,
-              profilePicture: user.profilePicture,
-            } : null,
-            metadataParsed: meta,
-          };
-        })
-      );
-      const filtered = logsWithUsers.filter((log: any) => {
+
+      const parsed = logs.map((log) => {
+        let meta: any = null;
+        try {
+          meta = log.metadata ? JSON.parse(log.metadata as any) : null;
+        } catch {}
+        return { ...log, metadataParsed: meta };
+      });
+
+      const filtered = parsed.filter((log: any) => {
         if (playgroundSessionId && log.metadataParsed?.playgroundSessionId !== playgroundSessionId) return false;
         if (propertyId && log.metadataParsed?.propertyId !== propertyId) return false;
         if (leadId && log.metadataParsed?.leadId !== leadId) return false;
         return true;
       });
-      res.json(filtered);
+
+      const userIds = Array.from(
+        new Set(
+          filtered
+            .map((log: any) => (typeof log.userId === "number" ? log.userId : null))
+            .filter((id: any) => typeof id === "number" && Number.isFinite(id) && id !== 0),
+        ),
+      ) as number[];
+
+      const userRows =
+        userIds.length > 0
+          ? await db
+              .select({
+                id: users.id,
+                firstName: users.firstName,
+                lastName: users.lastName,
+                email: users.email,
+                profilePicture: users.profilePicture,
+              })
+              .from(users)
+              .where(inArray(users.id, userIds))
+          : [];
+
+      const usersById = new Map<number, any>(userRows.map((u: any) => [u.id, u]));
+
+      const out = filtered.map((log: any) => {
+        const user =
+          log.userId === 0
+            ? {
+                id: 0,
+                firstName: "System",
+                lastName: null,
+                email: null,
+                profilePicture: null,
+              }
+            : usersById.get(log.userId) || null;
+        return { ...log, user };
+      });
+
+      res.json(out);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
