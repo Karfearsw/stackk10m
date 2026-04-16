@@ -119,6 +119,23 @@ describe("CRM import/export helpers", () => {
     expect((r2 as any).data.state).toBe("FL");
   });
 
+  it("derives state from ZIP when state is missing", () => {
+    const row = { Address: "671 Metacom Ave Unit 29", City: "Bristol", ZipCode: "02809", "Owner Name": "Jared", Source: "Cold Call" };
+    const mapping = { address: "Address", city: "City", zipCode: "ZipCode", ownerName: "Owner Name", source: "Source" };
+    const r = mapAndValidateRow("lead", row as any, mapping);
+    expect(r.ok).toBe(true);
+    expect((r as any).data.state).toBe("RI");
+  });
+
+  it("repairs ZIP mapped into state when zipCode is missing", () => {
+    const row = { Address: "671 Metacom Ave Unit 29", City: "Bristol", ZipCode: "02809", "Owner Name": "Jared", Source: "Cold Call" };
+    const mapping = { address: "Address", city: "City", state: "ZipCode", ownerName: "Owner Name", source: "Source" };
+    const r = mapAndValidateRow("lead", row as any, mapping);
+    expect(r.ok).toBe(true);
+    expect((r as any).data.zipCode).toBe("02809");
+    expect((r as any).data.state).toBe("RI");
+  });
+
   it("parses buyer arrays and booleans", () => {
     const row = {
       Name: "Bob Buyer",

@@ -511,6 +511,91 @@ function validateZip(v: string | null) {
   return null;
 }
 
+const zip3Ranges: Array<[number, number, string]> = [
+  [6, 7, "PR"],
+  [8, 8, "VI"],
+  [9, 9, "PR"],
+  [10, 27, "MA"],
+  [28, 29, "RI"],
+  [30, 38, "NH"],
+  [39, 49, "ME"],
+  [50, 59, "VT"],
+  [60, 69, "CT"],
+  [70, 89, "NJ"],
+  [90, 99, "AE"],
+  [100, 149, "NY"],
+  [150, 196, "PA"],
+  [197, 199, "DE"],
+  [200, 205, "DC"],
+  [206, 219, "MD"],
+  [220, 246, "VA"],
+  [247, 268, "WV"],
+  [270, 289, "NC"],
+  [290, 299, "SC"],
+  [300, 319, "GA"],
+  [320, 349, "FL"],
+  [350, 369, "AL"],
+  [370, 385, "TN"],
+  [386, 397, "MS"],
+  [400, 427, "KY"],
+  [430, 459, "OH"],
+  [460, 479, "IN"],
+  [480, 499, "MI"],
+  [500, 528, "IA"],
+  [530, 549, "WI"],
+  [550, 567, "MN"],
+  [570, 577, "SD"],
+  [580, 588, "ND"],
+  [590, 599, "MT"],
+  [600, 629, "IL"],
+  [630, 658, "MO"],
+  [660, 679, "KS"],
+  [680, 693, "NE"],
+  [700, 715, "LA"],
+  [716, 729, "AR"],
+  [730, 749, "OK"],
+  [750, 799, "TX"],
+  [800, 816, "CO"],
+  [820, 831, "WY"],
+  [832, 838, "ID"],
+  [840, 847, "UT"],
+  [850, 865, "AZ"],
+  [870, 884, "NM"],
+  [889, 898, "NV"],
+  [900, 961, "CA"],
+  [967, 968, "HI"],
+  [969, 969, "GU"],
+  [970, 979, "OR"],
+  [980, 994, "WA"],
+  [995, 999, "AK"],
+];
+
+function extractZip5(v: string | null) {
+  if (!v) return null;
+  const s = String(v).trim();
+  const m = s.match(/^(\d{5})(?:-\d{4})?$/);
+  return m ? m[1] : null;
+}
+
+function inferUsStateFromZip(v: string | null) {
+  const zip5 = extractZip5(v);
+  if (!zip5) return null;
+  const zip3 = parseInt(zip5.slice(0, 3), 10);
+  if (!Number.isFinite(zip3)) return null;
+
+  let lo = 0;
+  let hi = zip3Ranges.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const [start, end, st] = zip3Ranges[mid]!;
+    if (zip3 < start) hi = mid - 1;
+    else if (zip3 > end) lo = mid + 1;
+    else return st;
+  }
+
+  return null;
+}
+
 function parseUsFullAddress(input: string) {
   const s = String(input || "").trim();
   if (!s) return null;
@@ -652,6 +737,18 @@ export function mapAndValidateRow(entityType: CrmEntityType, row: Record<string,
   }
 
   if (entityType === "lead" || entityType === "opportunity") {
+    const zipLike = (v: unknown) => typeof v === "string" && /^\d{5}(?:-\d{4})?$/.test(v.trim());
+
+    if (!out.zipCode && zipLike(out.state)) {
+      out.zipCode = String(out.state || "").trim();
+      out.state = null;
+    }
+
+    if ((!out.state || (typeof out.state === "string" && !out.state.trim()) || zipLike(out.state)) && out.zipCode) {
+      const inferred = inferUsStateFromZip(toStringOrNull(out.zipCode ?? null));
+      if (inferred) out.state = inferred;
+    }
+
     out.state = normalizeUsState(out.state ?? null);
   }
 

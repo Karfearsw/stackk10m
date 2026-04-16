@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -77,6 +78,7 @@ export function CrmImportExportDialog({
   const [creatingLeadSource, setCreatingLeadSource] = useState(false);
   const [onDuplicate, setOnDuplicate] = useState<"merge" | "overwrite" | "skip">("merge");
   const [dryRun, setDryRun] = useState(false);
+  const [deriveStateFromZip, setDeriveStateFromZip] = useState(true);
   const [importJobId, setImportJobId] = useState<number | null>(null);
   const [importJob, setImportJob] = useState<any>(null);
   const [importErrors, setImportErrors] = useState<any[]>([]);
@@ -161,6 +163,7 @@ export function CrmImportExportDialog({
     setCreatingLeadSource(false);
     setOnDuplicate("merge");
     setDryRun(false);
+    setDeriveStateFromZip(true);
     setImportJobId(null);
     setImportJob(null);
     setImportErrors([]);
@@ -455,10 +458,16 @@ export function CrmImportExportDialog({
   const supportsStatusFilter = entityType !== "contact";
   const supportsAssignedToFilter = entityType === "lead" || entityType === "opportunity";
   const leadAddressKeys = new Set(["address", "city", "state", "zipCode"]);
+  const opportunityAddressKeys = new Set(["address", "city", "state", "zipCode"]);
   const leadAddressSatisfied =
-    entityType !== "lead" ? true : Boolean(mapping.fullAddress) || (mapping.address && mapping.city && mapping.state && mapping.zipCode);
+    entityType !== "lead"
+      ? true
+      : Boolean(mapping.fullAddress) || (mapping.address && mapping.city && mapping.zipCode && (mapping.state || deriveStateFromZip));
+  const opportunityAddressSatisfied =
+    entityType !== "opportunity" ? true : Boolean(mapping.address && mapping.city && mapping.zipCode && (mapping.state || deriveStateFromZip));
   const missingRequired = requiredFields.some((f) => {
     if (entityType === "lead" && leadAddressKeys.has(f.key)) return !leadAddressSatisfied;
+    if (entityType === "opportunity" && opportunityAddressKeys.has(f.key)) return !opportunityAddressSatisfied;
     if (entityType === "lead" && f.key === "source") {
       return leadSourceMode === "column" ? !mapping.source : !defaultLeadSource;
     }
@@ -526,6 +535,18 @@ export function CrmImportExportDialog({
                     <Checkbox checked={dryRun} onCheckedChange={(v) => setDryRun(!!v)} />
                     <Label>Dry run (no writes)</Label>
                   </div>
+
+                  {entityType === "lead" || entityType === "opportunity" ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <Switch checked={deriveStateFromZip} onCheckedChange={setDeriveStateFromZip} />
+                        <Label>Derive State from ZIP (US)</Label>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        If the file doesn’t include a State column, the importer infers it from the 5-digit ZIP code.
+                      </div>
+                    </div>
+                  ) : null}
 
                   {entityType === "lead" ? (
                     <div className="space-y-3 rounded-md border p-3">
