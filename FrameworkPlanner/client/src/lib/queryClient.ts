@@ -1,4 +1,5 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { fetchJson } from "./fetchJson";
 
 function getAuthToken(): string | null {
   try {
@@ -16,6 +17,14 @@ function authHeaders(): Record<string, string> {
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
+    const ct = res.headers.get("content-type") || "";
+    if (ct.includes("application/json")) {
+      try {
+        const json = await res.json();
+        const msg = typeof (json as any)?.message === "string" && (json as any).message.trim() ? (json as any).message : "";
+        throw new Error(`${res.status}: ${msg || JSON.stringify(json)}`);
+      } catch {}
+    }
     const text = (await res.text()) || res.statusText;
     throw new Error(`${res.status}: ${text}`);
   }
@@ -62,19 +71,9 @@ type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
-  ({ on401: unauthorizedBehavior }) =>
+  <T,>(opts: { on401: UnauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
-      headers: authHeaders(),
-      credentials: "include",
-    });
-
-    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
-      return null;
-    }
-
-    await throwIfResNotOk(res);
-    return await res.json();
+    return await fetchJson<T>(queryKey.join("/") as string, undefined, { on401: opts.on401 });
   };
 
 export const queryClient = new QueryClient({
