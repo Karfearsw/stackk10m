@@ -146,7 +146,7 @@ export function CrmImportExportDialog({
       else stallTicks = 0;
       lastProcessed = processed;
 
-      if (!runInFlight && stallTicks >= 5 && (status === "queued" || status === "processing")) {
+      if (!runInFlight && stallTicks >= 3 && (status === "queued" || status === "processing")) {
         runInFlight = true;
         stallTicks = 0;
         try {
@@ -184,7 +184,7 @@ export function CrmImportExportDialog({
       else stallTicks = 0;
       lastStatus = status;
 
-      if (!runInFlight && stallTicks >= 5 && (status === "queued" || status === "processing")) {
+      if (!runInFlight && stallTicks >= 3 && (status === "queued" || status === "processing")) {
         runInFlight = true;
         stallTicks = 0;
         try {

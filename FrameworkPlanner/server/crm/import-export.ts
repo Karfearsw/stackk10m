@@ -763,14 +763,10 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
         : [];
       const validAssignees = new Set(assigneeRows.map((r) => r.id));
 
-      const seenKeys = new Set<string>();
-
       const maxRows = limits.maxRows && limits.maxRows > 0 ? limits.maxRows : null;
       const maxBatches = limits.maxBatches && limits.maxBatches > 0 ? limits.maxBatches : null;
-
       let batchesRun = 0;
       let rowsRun = 0;
-
       for (let i = processedRows; i < parsed.rows.length; i += batchSize) {
         if (maxBatches !== null && batchesRun >= maxBatches) break;
         if (maxRows !== null && rowsRun >= maxRows) break;
@@ -782,6 +778,7 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
 
         const prepared = slice.map((rawRow) => mapAndValidateRow(entityType, rawRow, mapping));
 
+        const seenKeys = new Set<string>();
         const candidates: { rowNumber: number; rawRow: Record<string, unknown>; data: any; key: string }[] = [];
         for (let j = 0; j < prepared.length; j++) {
           const rowNumber = i + j + 2;
