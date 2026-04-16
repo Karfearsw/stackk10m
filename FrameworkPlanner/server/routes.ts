@@ -9,6 +9,7 @@ import { desc, eq, sql, inArray } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
 import { publishTelephonyEvent } from "./telephony/pubsub.js";
 import { getTelephonyMediaSignedUrl, uploadTelephonyMediaFromUrl } from "./telephony/objectStorage.js";
+import { getSchemaReadiness, schemaFixInstructions } from "./schema-readiness.js";
 import {
   createExportJob,
   createImportJob,
@@ -1752,6 +1753,12 @@ export async function registerRoutes(
         sortOrder: r.sortOrder,
       })));
     } catch (error: any) {
+      try {
+        const readiness = await getSchemaReadiness();
+        if (!readiness.ok) {
+          return res.status(503).json({ message: readiness.message, code: readiness.code, missing: readiness.missing, hint: schemaFixInstructions() });
+        }
+      } catch {}
       res.status(500).json({ message: error.message });
     }
   });
@@ -1776,6 +1783,12 @@ export async function registerRoutes(
       } as any);
       res.status(201).json(row);
     } catch (error: any) {
+      try {
+        const readiness = await getSchemaReadiness();
+        if (!readiness.ok) {
+          return res.status(503).json({ message: readiness.message, code: readiness.code, missing: readiness.missing, hint: schemaFixInstructions() });
+        }
+      } catch {}
       res.status(400).json({ message: error.message });
     }
   });

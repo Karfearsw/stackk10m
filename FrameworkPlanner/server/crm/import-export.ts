@@ -29,6 +29,8 @@ export type ImportOptions = {
   onDuplicate: ImportDuplicateMode;
   dryRun?: boolean;
   batchSize?: number;
+  defaultLeadSource?: string;
+  deriveStateFromZip?: boolean;
 };
 
 export type ExportFormat = "csv" | "xlsx";
@@ -500,7 +502,8 @@ function normalizeUsState(v: string | null) {
 function validateState(v: string | null) {
   if (!v) return null;
   const s = v.trim().toUpperCase();
-  if (!/^[A-Z]{2}$/.test(s)) return 'State must be 2 letters (e.g. "FL"). Full names like "Florida" are accepted too.';
+  if (!/^[A-Z]{2}$/.test(s))
+    return 'State must be 2 letters (e.g. "FL"). Full names like "Florida" are accepted, or provide a valid US ZIP so it can be derived.';
   return null;
 }
 
@@ -668,7 +671,12 @@ export function computeBuyerDedupeKey(input: { name: string; company?: string | 
 
 export type ImportRowError = { field?: string; message: string };
 
-export function mapAndValidateRow(entityType: CrmEntityType, row: Record<string, unknown>, mapping: Record<string, string>) {
+export function mapAndValidateRow(
+  entityType: CrmEntityType,
+  row: Record<string, unknown>,
+  mapping: Record<string, string>,
+  ctx?: { defaultLeadSource?: string; deriveStateFromZip?: boolean },
+) {
   const defs = getCrmFieldDefs(entityType);
   const raw: Record<string, unknown> = {};
 
@@ -744,12 +752,19 @@ export function mapAndValidateRow(entityType: CrmEntityType, row: Record<string,
       out.state = null;
     }
 
-    if ((!out.state || (typeof out.state === "string" && !out.state.trim()) || zipLike(out.state)) && out.zipCode) {
+    const deriveFromZip = ctx?.deriveStateFromZip !== false;
+    if (deriveFromZip && (!out.state || (typeof out.state === "string" && !out.state.trim()) || zipLike(out.state)) && out.zipCode) {
       const inferred = inferUsStateFromZip(toStringOrNull(out.zipCode ?? null));
       if (inferred) out.state = inferred;
     }
 
     out.state = normalizeUsState(out.state ?? null);
+  }
+
+  if (entityType === "lead") {
+    const src = toStringOrNull(out.source ?? null);
+    const defaultSrc = toStringOrNull(ctx?.defaultLeadSource ?? null);
+    if ((!src || !src.trim()) && defaultSrc) out.source = defaultSrc.trim();
   }
 
   for (const def of defs) {
@@ -769,9 +784,17 @@ export function mapAndValidateRow(entityType: CrmEntityType, row: Record<string,
   }
 
   if (entityType === "lead" || entityType === "opportunity") {
-    const stateErr = validateState(out.state ?? null);
-    if (stateErr) errors.push({ field: "state", message: stateErr });
+    let stateErr = validateState(out.state ?? null);
     const zipErr = validateZip(out.zipCode ?? null);
+    const deriveFromZip = ctx?.deriveStateFromZip !== false;
+    if (stateErr && deriveFromZip && !zipErr) {
+      const inferred = inferUsStateFromZip(toStringOrNull(out.zipCode ?? null));
+      if (inferred) {
+        out.state = inferred;
+        stateErr = validateState(out.state ?? null);
+      }
+    }
+    if (stateErr) errors.push({ field: "state", message: stateErr });
     if (zipErr) errors.push({ field: "zipCode", message: zipErr });
   }
 
@@ -949,6 +972,8 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
     const options = JSON.parse(String(job.options || "{}")) as ImportOptions;
     const dryRun = !!options.dryRun;
     const onDuplicate = options.onDuplicate || "merge";
+    const defaultLeadSource = toStringOrNull(options.defaultLeadSource ?? null)?.trim() || "Import";
+    const deriveStateFromZip = options.deriveStateFromZip !== false;
 
     const defaultBatchSize = limits.maxRows ? Math.min(limits.maxRows, 200) : 500;
     const batchSize = options.batchSize && options.batchSize > 0 ? Math.min(options.batchSize, 2000) : defaultBatchSize;
@@ -999,7 +1024,12 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
         const slice = parsed.rows.slice(i, i + effectiveBatchSize);
         if (!slice.length) break;
 
-        const prepared = slice.map((rawRow) => mapAndValidateRow(entityType, rawRow, mapping));
+        const prepared = slice.map((rawRow) =>
+          mapAndValidateRow(entityType, rawRow, mapping, {
+            defaultLeadSource: entityType === "lead" ? defaultLeadSource : undefined,
+            deriveStateFromZip: entityType === "lead" || entityType === "opportunity" ? deriveStateFromZip : undefined,
+          }),
+        );
 
         const seenKeys = new Set<string>();
         const candidates: { rowNumber: number; rawRow: Record<string, unknown>; data: any; key: string }[] = [];

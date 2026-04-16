@@ -72,7 +72,7 @@ export function CrmImportExportDialog({
   const [preview, setPreview] = useState<any>(null);
   const [previewError, setPreviewError] = useState<string>("");
   const [mapping, setMapping] = useState<Record<string, string>>({});
-  const [defaultLeadSource, setDefaultLeadSource] = useState<string>("");
+  const [defaultLeadSource, setDefaultLeadSource] = useState<string>("Import");
   const [leadSourceMode, setLeadSourceMode] = useState<"default" | "column">("default");
   const [newLeadSourceLabel, setNewLeadSourceLabel] = useState("");
   const [creatingLeadSource, setCreatingLeadSource] = useState(false);
@@ -157,7 +157,7 @@ export function CrmImportExportDialog({
     setPreviewError("");
     setFile(null);
     setMapping({});
-    setDefaultLeadSource("");
+    setDefaultLeadSource("Import");
     setLeadSourceMode("default");
     setNewLeadSourceLabel("");
     setCreatingLeadSource(false);
@@ -361,7 +361,15 @@ export function CrmImportExportDialog({
       fd.append("entityType", entityType);
       fd.append("file", file);
       fd.append("mapping", JSON.stringify(effectiveMapping));
-      fd.append("options", JSON.stringify({ onDuplicate, dryRun }));
+      fd.append(
+        "options",
+        JSON.stringify({
+          onDuplicate,
+          dryRun,
+          defaultLeadSource: entityType === "lead" && leadSourceMode === "default" ? defaultLeadSource : undefined,
+          deriveStateFromZip: entityType === "lead" || entityType === "opportunity" ? deriveStateFromZip : undefined,
+        }),
+      );
       const res = await fetch("/api/crm/import/jobs", {
         method: "POST",
         body: fd,
@@ -565,18 +573,21 @@ export function CrmImportExportDialog({
                       {leadSourceMode === "default" ? (
                         <div className="space-y-2">
                           <Label>Default Lead Source</Label>
-                          <Select value={defaultLeadSource} onValueChange={setDefaultLeadSource}>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Select source" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {(Array.isArray(leadSourceOptions) ? leadSourceOptions : []).map((o: any) => (
-                                <SelectItem key={String(o.value || "")} value={String(o.value || "")}>
-                                  {String(o.label || o.value || "")}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-center">
+                            <Select value={defaultLeadSource} onValueChange={setDefaultLeadSource}>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select source" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {(Array.isArray(leadSourceOptions) ? leadSourceOptions : []).map((o: any) => (
+                                  <SelectItem key={String(o.value || "")} value={String(o.value || "")}>
+                                    {String(o.label || o.value || "")}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                            <Input value={defaultLeadSource} onChange={(e) => setDefaultLeadSource(e.target.value)} placeholder="Type a source (default: Import)" />
+                          </div>
                         </div>
                       ) : (
                         <div className="text-xs text-muted-foreground">Map the Source field in Required Mapping below.</div>

@@ -119,6 +119,15 @@ describe("CRM import/export helpers", () => {
     expect((r2 as any).data.state).toBe("FL");
   });
 
+  it("auto-fills source and derives state from ZIP when configured", () => {
+    const row = { Address: "671 Metacom Ave Unit 29", City: "Bristol", ZipCode: "02809", "Owner Name": "Jared" };
+    const mapping = { address: "Address", city: "City", zipCode: "ZipCode", ownerName: "Owner Name" };
+    const r = mapAndValidateRow("lead", row as any, mapping, { defaultLeadSource: "Import", deriveStateFromZip: true });
+    expect(r.ok).toBe(true);
+    expect((r as any).data.source).toBe("Import");
+    expect((r as any).data.state).toBe("RI");
+  });
+
   it("derives state from ZIP when state is missing", () => {
     const row = { Address: "671 Metacom Ave Unit 29", City: "Bristol", ZipCode: "02809", "Owner Name": "Jared", Source: "Cold Call" };
     const mapping = { address: "Address", city: "City", zipCode: "ZipCode", ownerName: "Owner Name", source: "Source" };
