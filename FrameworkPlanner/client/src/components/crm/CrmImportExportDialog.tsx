@@ -123,6 +123,9 @@ export function CrmImportExportDialog({
 
   useEffect(() => {
     if (!importJobId || !importPolling) return;
+    let lastProcessed = -1;
+    let stallTicks = 0;
+    let runInFlight = false;
     const t = window.setInterval(async () => {
       const res = await fetch(`/api/crm/import/jobs/${importJobId}`, { credentials: "include" });
       if (!res.ok) return;
@@ -130,20 +133,68 @@ export function CrmImportExportDialog({
       setImportJob(data.job);
       setImportErrors(data.errors || []);
       const status = String(data.job?.status || "");
-      if (status === "completed" || status === "failed") setImportPolling(false);
+      if (status === "completed" || status === "failed") {
+        setImportPolling(false);
+        return;
+      }
+
+      const processed = typeof data.job?.processedRows === "number" ? data.job.processedRows : 0;
+      if (status === "queued") stallTicks += 1;
+      else if (status === "processing" && processed === lastProcessed) stallTicks += 1;
+      else stallTicks = 0;
+      lastProcessed = processed;
+
+      if (!runInFlight && stallTicks >= 5 && (status === "queued" || status === "processing")) {
+        runInFlight = true;
+        stallTicks = 0;
+        try {
+          const runRes = await fetch(`/api/crm/import/jobs/${importJobId}/run`, { method: "POST", credentials: "include" });
+          if (runRes.ok) {
+            const runData = await runRes.json().catch(() => null);
+            if (runData?.job) setImportJob(runData.job);
+            if (Array.isArray(runData?.errors)) setImportErrors(runData.errors);
+          }
+        } finally {
+          runInFlight = false;
+        }
+      }
     }, 1000);
     return () => window.clearInterval(t);
   }, [importJobId, importPolling]);
 
   useEffect(() => {
     if (!exportJobId || !exportPolling) return;
+    let stallTicks = 0;
+    let lastStatus = "";
+    let runInFlight = false;
     const t = window.setInterval(async () => {
       const res = await fetch(`/api/crm/export/jobs/${exportJobId}`, { credentials: "include" });
       if (!res.ok) return;
       const data = await res.json();
       setExportJob(data.job);
       const status = String(data.job?.status || "");
-      if (status === "completed" || status === "failed") setExportPolling(false);
+      if (status === "completed" || status === "failed") {
+        setExportPolling(false);
+        return;
+      }
+
+      if (status === lastStatus && (status === "queued" || status === "processing")) stallTicks += 1;
+      else stallTicks = 0;
+      lastStatus = status;
+
+      if (!runInFlight && stallTicks >= 5 && (status === "queued" || status === "processing")) {
+        runInFlight = true;
+        stallTicks = 0;
+        try {
+          const runRes = await fetch(`/api/crm/export/jobs/${exportJobId}/run`, { method: "POST", credentials: "include" });
+          if (runRes.ok) {
+            const runData = await runRes.json().catch(() => null);
+            if (runData?.job) setExportJob(runData.job);
+          }
+        } finally {
+          runInFlight = false;
+        }
+      }
     }, 1000);
     return () => window.clearInterval(t);
   }, [exportJobId, exportPolling]);
@@ -570,6 +621,22 @@ export function CrmImportExportDialog({
                         <Button
                           variant="outline"
                           size="sm"
+                          onClick={async () => {
+                            if (!importJobId) return;
+                            setImportPolling(true);
+                            const res = await fetch(`/api/crm/import/jobs/${importJobId}/run`, { method: "POST", credentials: "include" });
+                            if (!res.ok) return;
+                            const data = await res.json().catch(() => null);
+                            if (data?.job) setImportJob(data.job);
+                            if (Array.isArray(data?.errors)) setImportErrors(data.errors);
+                          }}
+                          disabled={!importJobId || String(importJob?.status || "") === "completed" || String(importJob?.status || "") === "failed"}
+                        >
+                          Resume Processing
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
                           onClick={() => {
                             if (!importJobId) return;
                             window.open(`/api/crm/import/jobs/${importJobId}/errors.csv`, "_blank");
@@ -678,6 +745,21 @@ export function CrmImportExportDialog({
                 </div>
                 {exportDownloadUrl ? (
                   <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={async () => {
+                        if (!exportJobId) return;
+                        setExportPolling(true);
+                        const res = await fetch(`/api/crm/export/jobs/${exportJobId}/run`, { method: "POST", credentials: "include" });
+                        if (!res.ok) return;
+                        const data = await res.json().catch(() => null);
+                        if (data?.job) setExportJob(data.job);
+                      }}
+                      disabled={!exportJobId || String(exportJob?.status || "") === "completed" || String(exportJob?.status || "") === "failed"}
+                    >
+                      Resume
+                    </Button>
                     <Button
                       size="sm"
                       onClick={() => window.open(exportDownloadUrl, "_blank")}

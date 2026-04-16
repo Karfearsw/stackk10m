@@ -273,6 +273,7 @@ export async function registerRoutes(
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 },
   });
+  const mode = opts?.mode ?? "server";
 
   app.use("/api", async (req, _res, next) => {
     try {
@@ -365,20 +366,41 @@ export async function registerRoutes(
       options,
     });
 
-    setImmediate(() => {
-      processImportJob(job.id).catch((e: any) => {
-        console.error(JSON.stringify({
-          ts: new Date().toISOString(),
-          event: "crm_import",
-          kind: "process_failed",
-          jobId: job.id,
-          message: String(e?.message || e),
-          code: e?.code ? String(e.code) : null,
-        }));
+    if (mode === "server") {
+      setImmediate(() => {
+        processImportJob(job.id).catch((e: any) => {
+          console.error(JSON.stringify({
+            ts: new Date().toISOString(),
+            event: "crm_import",
+            kind: "process_failed",
+            jobId: job.id,
+            message: String(e?.message || e),
+            code: e?.code ? String(e.code) : null,
+          }));
+        });
       });
-    });
+    } else {
+      await processImportJob(job.id, { maxRows: 200, maxBatches: 1 });
+    }
 
     return res.status(201).json({ jobId: job.id });
+  });
+
+  app.post("/api/crm/import/jobs/:id/run", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    const jobId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
+
+    const job = await getImportJob(jobId);
+    if (!job) return res.status(404).json({ message: "Not found" });
+    if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
+
+    await processImportJob(jobId, { maxRows: 500, maxBatches: 1 });
+    const nextJob = await getImportJob(jobId);
+    const errors = await listImportJobErrors(jobId, 50);
+    return res.json({ job: nextJob, errors });
   });
 
   app.get("/api/crm/import/jobs/:id", async (req, res) => {
@@ -443,21 +465,41 @@ export async function registerRoutes(
       columns,
     });
 
-    setImmediate(() => {
-      processExportJob(job.id).catch((e: any) => {
-        console.error(JSON.stringify({
-          ts: new Date().toISOString(),
-          event: "crm_export",
-          kind: "process_failed",
-          jobId: job.id,
-          message: String(e?.message || e),
-          code: e?.code ? String(e.code) : null,
-        }));
+    if (mode === "server") {
+      setImmediate(() => {
+        processExportJob(job.id).catch((e: any) => {
+          console.error(JSON.stringify({
+            ts: new Date().toISOString(),
+            event: "crm_export",
+            kind: "process_failed",
+            jobId: job.id,
+            message: String(e?.message || e),
+            code: e?.code ? String(e.code) : null,
+          }));
+        });
       });
-    });
+    } else {
+      await processExportJob(job.id);
+    }
 
     const downloadUrl = `/api/crm/export/files/${job.id}/download?token=${encodeURIComponent(token)}`;
     return res.status(201).json({ jobId: job.id, downloadUrl });
+  });
+
+  app.post("/api/crm/export/jobs/:id/run", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    const exportId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(exportId)) return res.status(400).json({ message: "Invalid export id" });
+
+    const job = await getExportJob(exportId);
+    if (!job) return res.status(404).json({ message: "Not found" });
+    if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
+
+    await processExportJob(exportId);
+    const nextJob = await getExportJob(exportId);
+    return res.json({ job: nextJob });
   });
 
   app.get("/api/crm/export/jobs/:id", async (req, res) => {
@@ -6155,7 +6197,6 @@ export async function registerRoutes(
     }
   });
 
-  const mode = opts?.mode ?? "server";
   if (mode === "serverless") return null;
 
   const httpServer = createServer(app);

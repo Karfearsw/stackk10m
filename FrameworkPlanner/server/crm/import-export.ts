@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { parse as parseCsv } from "csv-parse/sync";
 import ExcelJS from "exceljs";
 import { z } from "zod";
-import { and, eq, gte, inArray, lte } from "drizzle-orm";
+import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { db } from "../db.js";
 import {
   buyers,
@@ -82,6 +82,8 @@ const opportunityFields: FieldDef[] = [
   { key: "arv", label: "ARV", type: "decimal" },
   { key: "repairCost", label: "Repair Cost", type: "decimal" },
   { key: "assignedTo", label: "Assigned To (User ID)", type: "int" },
+  { key: "leadSource", label: "Lead Source", type: "string" },
+  { key: "leadSourceDetail", label: "Lead Source Detail", type: "string" },
   { key: "notes", label: "Notes", type: "string" },
 ];
 
@@ -150,6 +152,8 @@ const opportunitySynonyms: Record<string, string[]> = {
   arv: ["arv", "after repair value"],
   repairCost: ["repair cost", "repairs", "rehab", "rehab cost"],
   assignedTo: ["assigned to", "assigned", "assignee", "assigned user", "assigned user id"],
+  leadSource: ["lead source", "source"],
+  leadSourceDetail: ["lead source detail", "source detail", "source notes"],
   notes: ["notes", "note", "comments", "comment"],
 };
 
@@ -625,6 +629,31 @@ function hashToken(token: string) {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
+type JobRunLimits = {
+  maxRows?: number;
+  maxBatches?: number;
+};
+
+function toDateMs(v: unknown) {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(String(v));
+  const t = d.getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+async function withAdvisoryLock<T>(ns: number, key: number, fn: () => Promise<T>) {
+  const r: any = await db.execute(sql`SELECT pg_try_advisory_lock(${ns}, ${key}) AS ok`);
+  const ok = Boolean(r?.rows?.[0]?.ok);
+  if (!ok) return null;
+  try {
+    return await fn();
+  } finally {
+    try {
+      await db.execute(sql`SELECT pg_advisory_unlock(${ns}, ${key})`);
+    } catch {}
+  }
+}
+
 export async function ensureAssigneesExist(assignedToIds: number[]) {
   const ids = Array.from(new Set(assignedToIds.filter((n) => Number.isFinite(n))));
   if (!ids.length) return new Set<number>();
@@ -676,235 +705,281 @@ export async function listImportJobErrors(jobId: number, limit = 50) {
     .limit(limit);
 }
 
-export async function processImportJob(jobId: number) {
-  const job = await getImportJob(jobId);
-  if (!job) throw new Error("Import job not found");
-  if (job.status !== "queued") return;
+export async function processImportJob(jobId: number, limits: JobRunLimits = {}) {
+  const out = await withAdvisoryLock(1, jobId, async () => {
+    const job = await getImportJob(jobId);
+    if (!job) throw new Error("Import job not found");
 
-  const entityType = job.entityType as CrmEntityType;
-  const mapping = JSON.parse(String(job.mapping || "{}")) as Record<string, string>;
-  const options = JSON.parse(String(job.options || "{}")) as ImportOptions;
-  const batchSize = options.batchSize && options.batchSize > 0 ? options.batchSize : 500;
-  const dryRun = !!options.dryRun;
-  const onDuplicate = options.onDuplicate || "merge";
+    const updatedAtMs = toDateMs((job as any).updatedAt);
+    const stale = job.status === "processing" && updatedAtMs !== null && Date.now() - updatedAtMs > 90_000;
+    if (job.status !== "queued" && !stale) return job;
 
-  await db
-    .update(crmImportJobs)
-    .set({ status: "processing", startedAt: new Date(), updatedAt: new Date() } as any)
-    .where(eq(crmImportJobs.id, jobId));
+    const entityType = job.entityType as CrmEntityType;
+    const mapping = JSON.parse(String(job.mapping || "{}")) as Record<string, string>;
+    const options = JSON.parse(String(job.options || "{}")) as ImportOptions;
+    const dryRun = !!options.dryRun;
+    const onDuplicate = options.onDuplicate || "merge";
 
-  try {
-    const format = detectFormat(job.originalFilename || undefined, job.fileMimeType || undefined) || "csv";
-    const buffer = Buffer.from(String(job.fileBase64), "base64");
-    const parsed = await parseUpload(buffer, format);
+    const defaultBatchSize = limits.maxRows ? Math.min(limits.maxRows, 200) : 500;
+    const batchSize = options.batchSize && options.batchSize > 0 ? Math.min(options.batchSize, 2000) : defaultBatchSize;
 
-    const assignedIds: number[] = [];
-    for (const r of parsed.rows) {
-      const v = mapping.assignedTo ? toIntOrNull(r[mapping.assignedTo]) : null;
-      if (v) assignedIds.push(v);
-    }
-    const validAssignees = await ensureAssigneesExist(assignedIds);
+    const startedAt = (job as any).startedAt ? new Date((job as any).startedAt) : new Date();
+    await db
+      .update(crmImportJobs)
+      .set({ status: "processing", startedAt, updatedAt: new Date() } as any)
+      .where(eq(crmImportJobs.id, jobId));
 
-    let processedRows = 0;
-    let createdCount = 0;
-    let updatedCount = 0;
-    let skippedCount = 0;
-    let errorCount = 0;
+    try {
+      const format = detectFormat(job.originalFilename || undefined, job.fileMimeType || undefined) || "csv";
+      const buffer = Buffer.from(String(job.fileBase64), "base64");
+      const parsed = await parseUpload(buffer, format);
 
-    const seenKeys = new Set<string>();
+      await db
+        .update(crmImportJobs)
+        .set({ totalRows: parsed.rows.length, updatedAt: new Date() } as any)
+        .where(eq(crmImportJobs.id, jobId));
 
-    for (let i = 0; i < parsed.rows.length; i += batchSize) {
-      const slice = parsed.rows.slice(i, i + batchSize);
+      let processedRows = Math.max(0, Math.min(Number(job.processedRows || 0), parsed.rows.length));
+      let createdCount = Number(job.createdCount || 0);
+      let updatedCount = Number(job.updatedCount || 0);
+      let skippedCount = Number(job.skippedCount || 0);
+      let errorCount = Number(job.errorCount || 0);
 
-      const prepared = slice.map((rawRow) => mapAndValidateRow(entityType, rawRow, mapping));
-
-      const candidates: { index: number; rowNumber: number; rawRow: Record<string, unknown>; data: any; key: string }[] = [];
-      for (let j = 0; j < prepared.length; j++) {
-        const rowNumber = i + j + 2;
-        const prep = prepared[j];
-        const rawRow = slice[j];
-
-        if (!prep.ok) {
-          errorCount += 1;
-          await db.insert(crmImportJobErrors).values({
-            jobId,
-            rowNumber,
-            errors: JSON.stringify(prep.errors),
-            rawRow: JSON.stringify(rawRow),
-          } as any);
-          continue;
-        }
-
-        const assignedTo = (prep.data as any).assignedTo as number | null | undefined;
-        if (assignedTo && !validAssignees.has(assignedTo)) {
-          errorCount += 1;
-          await db.insert(crmImportJobErrors).values({
-            jobId,
-            rowNumber,
-            errors: JSON.stringify([{ field: "assignedTo", message: "Assigned user does not exist" }]),
-            rawRow: JSON.stringify(rawRow),
-          } as any);
-          continue;
-        }
-
-        const key =
-          entityType === "lead"
-            ? computeLeadDedupeKey(prep.data as any)
-            : entityType === "opportunity"
-              ? computeOpportunityDedupeKey(prep.data as any)
-              : entityType === "contact"
-                ? computeContactDedupeKey(prep.data as any)
-                : computeBuyerDedupeKey(prep.data as any);
-
-        if (seenKeys.has(key)) {
-          errorCount += 1;
-          await db.insert(crmImportJobErrors).values({
-            jobId,
-            rowNumber,
-            errors: JSON.stringify([{ message: "Duplicate row within import file" }]),
-            rawRow: JSON.stringify(rawRow),
-          } as any);
-          continue;
-        }
-        seenKeys.add(key);
-
-        candidates.push({ index: j, rowNumber, rawRow, data: prep.data, key });
+      const assignedIds: number[] = [];
+      for (const r of parsed.rows.slice(processedRows)) {
+        const v = mapping.assignedTo ? toIntOrNull(r[mapping.assignedTo]) : null;
+        if (v) assignedIds.push(v);
       }
+      const validAssignees = await ensureAssigneesExist(assignedIds);
 
-      const keys = candidates.map((c) => c.key);
-      const existingByKey = new Map<string, any>();
-
-      if (keys.length) {
-        if (entityType === "lead") {
-          const existing = await db
-            .select()
-            .from(leads)
-            .where(inArray(leads.dedupeKey, keys));
-          for (const e of existing) existingByKey.set(String(e.dedupeKey || ""), e);
-        } else if (entityType === "opportunity") {
-          const existing = await db
-            .select()
-            .from(properties)
-            .where(inArray(properties.dedupeKey, keys));
-          for (const e of existing) existingByKey.set(String(e.dedupeKey || ""), e);
-        } else if (entityType === "contact") {
-          const existing = await db
-            .select()
-            .from(contacts)
-            .where(inArray(contacts.dedupeKey, keys));
-          for (const e of existing) existingByKey.set(String((e as any).dedupeKey || ""), e);
-        } else {
-          const existing = await db
-            .select()
-            .from(buyers)
-            .where(inArray(buyers.dedupeKey, keys));
-          for (const e of existing) existingByKey.set(String((e as any).dedupeKey || ""), e);
+      const seenKeys = new Set<string>();
+      if (processedRows > 0) {
+        const warm = parsed.rows.slice(0, processedRows);
+        for (let i = 0; i < warm.length; i++) {
+          const prep = mapAndValidateRow(entityType, warm[i], mapping);
+          if (!prep.ok) continue;
+          const key =
+            entityType === "lead"
+              ? computeLeadDedupeKey(prep.data as any)
+              : entityType === "opportunity"
+                ? computeOpportunityDedupeKey(prep.data as any)
+                : entityType === "contact"
+                  ? computeContactDedupeKey(prep.data as any)
+                  : computeBuyerDedupeKey(prep.data as any);
+          seenKeys.add(key);
         }
       }
 
-      for (const c of candidates) {
-        const existing = existingByKey.get(c.key);
-        const rowNumber = c.rowNumber;
+      const maxRows = limits.maxRows && limits.maxRows > 0 ? limits.maxRows : null;
+      const maxBatches = limits.maxBatches && limits.maxBatches > 0 ? limits.maxBatches : null;
 
-        if (!existing) {
-          if (!dryRun) {
-            if (entityType === "lead") {
-              await db.insert(leads).values({ ...(c.data as any), dedupeKey: c.key } as any);
-            } else if (entityType === "opportunity") {
-              await db.insert(properties).values({ ...(c.data as any), dedupeKey: c.key } as any);
-            } else if (entityType === "contact") {
-              await db.insert(contacts).values({ ...(c.data as any), dedupeKey: c.key } as any);
-            } else {
-              await db.insert(buyers).values({ ...(c.data as any), dedupeKey: c.key } as any);
+      let batchesRun = 0;
+      let rowsRun = 0;
+
+      for (let i = processedRows; i < parsed.rows.length; i += batchSize) {
+        if (maxBatches !== null && batchesRun >= maxBatches) break;
+        if (maxRows !== null && rowsRun >= maxRows) break;
+
+        const remaining = maxRows !== null ? Math.max(0, maxRows - rowsRun) : null;
+        const effectiveBatchSize = remaining !== null ? Math.min(batchSize, remaining) : batchSize;
+        const slice = parsed.rows.slice(i, i + effectiveBatchSize);
+        if (!slice.length) break;
+
+        const prepared = slice.map((rawRow) => mapAndValidateRow(entityType, rawRow, mapping));
+
+        const candidates: { rowNumber: number; rawRow: Record<string, unknown>; data: any; key: string }[] = [];
+        for (let j = 0; j < prepared.length; j++) {
+          const rowNumber = i + j + 2;
+          const prep = prepared[j];
+          const rawRow = slice[j];
+
+          if (!prep.ok) {
+            errorCount += 1;
+            await db.insert(crmImportJobErrors).values({
+              jobId,
+              rowNumber,
+              errors: JSON.stringify(prep.errors),
+              rawRow: JSON.stringify(rawRow),
+            } as any);
+            continue;
+          }
+
+          const assignedTo = (prep.data as any).assignedTo as number | null | undefined;
+          if (assignedTo && !validAssignees.has(assignedTo)) {
+            errorCount += 1;
+            await db.insert(crmImportJobErrors).values({
+              jobId,
+              rowNumber,
+              errors: JSON.stringify([{ field: "assignedTo", message: "Assigned user does not exist" }]),
+              rawRow: JSON.stringify(rawRow),
+            } as any);
+            continue;
+          }
+
+          const key =
+            entityType === "lead"
+              ? computeLeadDedupeKey(prep.data as any)
+              : entityType === "opportunity"
+                ? computeOpportunityDedupeKey(prep.data as any)
+                : entityType === "contact"
+                  ? computeContactDedupeKey(prep.data as any)
+                  : computeBuyerDedupeKey(prep.data as any);
+
+          if (seenKeys.has(key)) {
+            errorCount += 1;
+            await db.insert(crmImportJobErrors).values({
+              jobId,
+              rowNumber,
+              errors: JSON.stringify([{ message: "Duplicate row within import file" }]),
+              rawRow: JSON.stringify(rawRow),
+            } as any);
+            continue;
+          }
+          seenKeys.add(key);
+
+          candidates.push({ rowNumber, rawRow, data: prep.data, key });
+        }
+
+        const keys = candidates.map((c) => c.key);
+        const existingByKey = new Map<string, any>();
+
+        if (keys.length) {
+          if (entityType === "lead") {
+            const existing = await db.select().from(leads).where(inArray(leads.dedupeKey, keys));
+            for (const e of existing) existingByKey.set(String(e.dedupeKey || ""), e);
+          } else if (entityType === "opportunity") {
+            const existing = await db.select().from(properties).where(inArray(properties.dedupeKey, keys));
+            for (const e of existing) existingByKey.set(String(e.dedupeKey || ""), e);
+          } else if (entityType === "contact") {
+            const existing = await db.select().from(contacts).where(inArray(contacts.dedupeKey, keys));
+            for (const e of existing) existingByKey.set(String((e as any).dedupeKey || ""), e);
+          } else {
+            const existing = await db.select().from(buyers).where(inArray(buyers.dedupeKey, keys));
+            for (const e of existing) existingByKey.set(String((e as any).dedupeKey || ""), e);
+          }
+        }
+
+        for (const c of candidates) {
+          const existing = existingByKey.get(c.key);
+
+          if (!existing) {
+            if (!dryRun) {
+              if (entityType === "lead") {
+                await db.insert(leads).values({ ...(c.data as any), dedupeKey: c.key } as any);
+              } else if (entityType === "opportunity") {
+                await db.insert(properties).values({ ...(c.data as any), dedupeKey: c.key } as any);
+              } else if (entityType === "contact") {
+                await db.insert(contacts).values({ ...(c.data as any), dedupeKey: c.key } as any);
+              } else {
+                await db.insert(buyers).values({ ...(c.data as any), dedupeKey: c.key } as any);
+              }
             }
+            createdCount += 1;
+            continue;
           }
-          createdCount += 1;
-          continue;
-        }
 
-        if (onDuplicate === "skip") {
-          skippedCount += 1;
-          continue;
-        }
+          if (onDuplicate === "skip") {
+            skippedCount += 1;
+            continue;
+          }
 
-        if (dryRun) {
+          if (dryRun) {
+            updatedCount += 1;
+            continue;
+          }
+
+          const patch: any = { dedupeKey: c.key, updatedAt: new Date() };
+          for (const [k, v] of Object.entries(c.data)) {
+            if (k === "createdAt" || k === "updatedAt" || k === "id") continue;
+            const incoming = v as any;
+
+            if (onDuplicate === "overwrite") {
+              patch[k] = incoming ?? null;
+              continue;
+            }
+
+            if (k === "notes") {
+              patch.notes = mergeNotes(existing.notes, incoming);
+              continue;
+            }
+
+            patch[k] = mergeScalar(existing[k], incoming);
+          }
+
+          if (entityType === "lead") {
+            await db.update(leads).set(patch).where(eq(leads.id, existing.id));
+          } else if (entityType === "opportunity") {
+            await db.update(properties).set(patch).where(eq(properties.id, existing.id));
+          } else if (entityType === "contact") {
+            await db.update(contacts).set(patch).where(eq(contacts.id, existing.id));
+          } else {
+            await db.update(buyers).set(patch).where(eq(buyers.id, existing.id));
+          }
           updatedCount += 1;
-          continue;
         }
 
-        const patch: any = { dedupeKey: c.key, updatedAt: new Date() };
+        processedRows += slice.length;
+        rowsRun += slice.length;
+        batchesRun += 1;
 
-        for (const [k, v] of Object.entries(c.data)) {
-          if (k === "createdAt" || k === "updatedAt" || k === "id") continue;
-          const incoming = v as any;
-
-          if (onDuplicate === "overwrite") {
-            patch[k] = incoming ?? null;
-            continue;
-          }
-
-          if (k === "notes") {
-            patch.notes = mergeNotes(existing.notes, incoming);
-            continue;
-          }
-
-          patch[k] = mergeScalar(existing[k], incoming);
-        }
-
-        if (entityType === "lead") {
-          await db.update(leads).set(patch).where(eq(leads.id, existing.id));
-        } else if (entityType === "opportunity") {
-          await db.update(properties).set(patch).where(eq(properties.id, existing.id));
-        } else if (entityType === "contact") {
-          await db.update(contacts).set(patch).where(eq(contacts.id, existing.id));
-        } else {
-          await db.update(buyers).set(patch).where(eq(buyers.id, existing.id));
-        }
-        updatedCount += 1;
+        await db
+          .update(crmImportJobs)
+          .set({
+            totalRows: parsed.rows.length,
+            processedRows,
+            createdCount,
+            updatedCount,
+            skippedCount,
+            errorCount,
+            updatedAt: new Date(),
+          } as any)
+          .where(eq(crmImportJobs.id, jobId));
       }
 
-      processedRows += slice.length;
+      if (processedRows >= parsed.rows.length) {
+        await db
+          .update(crmImportJobs)
+          .set({
+            status: "completed",
+            totalRows: parsed.rows.length,
+            processedRows,
+            createdCount,
+            updatedCount,
+            skippedCount,
+            errorCount,
+            finishedAt: new Date(),
+            updatedAt: new Date(),
+          } as any)
+          .where(eq(crmImportJobs.id, jobId));
+      }
+
+      return await getImportJob(jobId);
+    } catch (err: any) {
+      const msg = String(err?.message || err);
+      try {
+        await db.insert(crmImportJobErrors).values({
+          jobId,
+          rowNumber: 0,
+          errors: JSON.stringify([{ message: msg }]),
+          rawRow: null,
+        } as any);
+      } catch {}
 
       await db
         .update(crmImportJobs)
         .set({
-          totalRows: parsed.rows.length,
-          processedRows,
-          createdCount,
-          updatedCount,
-          skippedCount,
-          errorCount,
+          status: "failed",
+          finishedAt: new Date(),
           updatedAt: new Date(),
         } as any)
         .where(eq(crmImportJobs.id, jobId));
+
+      throw err;
     }
+  });
 
-    await db
-      .update(crmImportJobs)
-      .set({
-        status: "completed",
-        totalRows: parsed.rows.length,
-        processedRows,
-        createdCount,
-        updatedCount,
-        skippedCount,
-        errorCount,
-        finishedAt: new Date(),
-        updatedAt: new Date(),
-      } as any)
-      .where(eq(crmImportJobs.id, jobId));
-  } catch (err: any) {
-    await db
-      .update(crmImportJobs)
-      .set({
-        status: "failed",
-        finishedAt: new Date(),
-        updatedAt: new Date(),
-      } as any)
-      .where(eq(crmImportJobs.id, jobId));
-
-    throw err;
-  }
+  if (!out) return await getImportJob(jobId);
+  return out;
 }
 
 export async function createExportJob(params: {
@@ -944,96 +1019,104 @@ export async function getExportJob(exportId: number) {
 }
 
 export async function processExportJob(exportId: number) {
-  const job = await getExportJob(exportId);
-  if (!job) throw new Error("Export job not found");
-  if (job.status !== "queued") return;
+  const out = await withAdvisoryLock(2, exportId, async () => {
+    const job = await getExportJob(exportId);
+    if (!job) throw new Error("Export job not found");
 
-  await db
-    .update(crmExportFiles)
-    .set({ status: "processing", startedAt: new Date(), updatedAt: new Date() } as any)
-    .where(eq(crmExportFiles.id, exportId));
+    const updatedAtMs = toDateMs((job as any).updatedAt);
+    const stale = job.status === "processing" && updatedAtMs !== null && Date.now() - updatedAtMs > 90_000;
+    if (job.status !== "queued" && !stale) return job;
 
-  try {
-    const entityType = job.entityType as CrmEntityType;
-    const format = job.format as ExportFormat;
-    const filters = JSON.parse(String(job.filters || "{}")) as ExportFilters;
-    const columns = JSON.parse(String(job.columns || "[]")) as string[];
+    const startedAt = (job as any).startedAt ? new Date((job as any).startedAt) : new Date();
+    await db
+      .update(crmExportFiles)
+      .set({ status: "processing", startedAt, updatedAt: new Date() } as any)
+      .where(eq(crmExportFiles.id, exportId));
 
-    const createdFrom = filters.createdFrom ? new Date(filters.createdFrom) : null;
-    const createdTo = filters.createdTo ? new Date(filters.createdTo) : null;
-    const status = filters.status ? String(filters.status) : null;
-    const assignedTo = typeof filters.assignedTo === "number" ? filters.assignedTo : null;
+    try {
+      const entityType = job.entityType as CrmEntityType;
+      const format = job.format as ExportFormat;
+      const filters = JSON.parse(String(job.filters || "{}")) as ExportFilters;
+      const columns = JSON.parse(String(job.columns || "[]")) as string[];
 
-    const table: any =
-      entityType === "lead"
-        ? leads
-        : entityType === "opportunity"
-          ? properties
-          : entityType === "contact"
-            ? contacts
-            : buyers;
+      const createdFrom = filters.createdFrom ? new Date(filters.createdFrom) : null;
+      const createdTo = filters.createdTo ? new Date(filters.createdTo) : null;
+      const status = filters.status ? String(filters.status) : null;
+      const assignedTo = typeof filters.assignedTo === "number" ? filters.assignedTo : null;
 
-    const where: any[] = [];
-    if (createdFrom) where.push(gte(table.createdAt, createdFrom));
-    if (createdTo) where.push(lte(table.createdAt, createdTo));
-    if (status && (entityType === "lead" || entityType === "opportunity" || entityType === "buyer")) where.push(eq(table.status, status));
-    if (assignedTo !== null && (entityType === "lead" || entityType === "opportunity")) where.push(eq(table.assignedTo, assignedTo));
+      const table: any =
+        entityType === "lead"
+          ? leads
+          : entityType === "opportunity"
+            ? properties
+            : entityType === "contact"
+              ? contacts
+              : buyers;
 
-    const rows: any[] = where.length ? await db.select().from(table).where(and(...where)) : await db.select().from(table);
+      const where: any[] = [];
+      if (createdFrom) where.push(gte(table.createdAt, createdFrom));
+      if (createdTo) where.push(lte(table.createdAt, createdTo));
+      if (status && (entityType === "lead" || entityType === "opportunity" || entityType === "buyer")) where.push(eq(table.status, status));
+      if (assignedTo !== null && (entityType === "lead" || entityType === "opportunity")) where.push(eq(table.assignedTo, assignedTo));
 
-    const safeColumns = columns.length ? columns : Object.keys(rows[0] || {}).filter((k) => k !== "dedupeKey");
-    const serializeCell = (value: any) => {
-      if (value === null || value === undefined) return "";
-      if (value instanceof Date) return value.toISOString();
-      if (Array.isArray(value)) return value.join(", ");
-      if (typeof value === "boolean") return value ? "true" : "false";
-      return value;
-    };
-    const records = rows.map((r) => {
-      const out: Record<string, any> = {};
-      for (const c of safeColumns) out[c] = serializeCell((r as any)[c]);
-      return out;
-    });
+      const rows: any[] = where.length ? await db.select().from(table).where(and(...where)) : await db.select().from(table);
 
-    let filename = `${entityType}-export-${new Date().toISOString().slice(0, 10)}.${format}`;
-    let mimeType = format === "csv" ? "text/csv" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    let contentBase64 = "";
+      const safeColumns = columns.length ? columns : Object.keys(rows[0] || {}).filter((k) => k !== "dedupeKey");
+      const serializeCell = (value: any) => {
+        if (value === null || value === undefined) return "";
+        if (value instanceof Date) return value.toISOString();
+        if (Array.isArray(value)) return value.join(", ");
+        if (typeof value === "boolean") return value ? "true" : "false";
+        return value;
+      };
+      const records = rows.map((r) => {
+        const out: Record<string, any> = {};
+        for (const c of safeColumns) out[c] = serializeCell((r as any)[c]);
+        return out;
+      });
 
-    if (format === "csv") {
-      const { stringify } = await import("csv-stringify/sync");
-      const header = safeColumns;
-      const csv = stringify(records, { header: true, columns: header });
-      contentBase64 = Buffer.from(csv, "utf8").toString("base64");
-    } else {
-      const wb = new ExcelJS.Workbook();
-      const ws = wb.addWorksheet("Export");
-      ws.addRow(safeColumns);
-      for (const r of records) {
-        ws.addRow(safeColumns.map((c) => (r as any)[c] ?? ""));
+      const filename = `${entityType}-export-${new Date().toISOString().slice(0, 10)}.${format}`;
+      const mimeType = format === "csv" ? "text/csv" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      let contentBase64 = "";
+
+      if (format === "csv") {
+        const { stringify } = await import("csv-stringify/sync");
+        const csv = stringify(records, { header: true, columns: safeColumns });
+        contentBase64 = Buffer.from(csv, "utf8").toString("base64");
+      } else {
+        const wb = new ExcelJS.Workbook();
+        const ws = wb.addWorksheet("Export");
+        ws.addRow(safeColumns);
+        for (const r of records) ws.addRow(safeColumns.map((c) => (r as any)[c] ?? ""));
+        const b = await wb.xlsx.writeBuffer();
+        const buf = Buffer.isBuffer(b) ? b : Buffer.from(b as any);
+        contentBase64 = buf.toString("base64");
       }
-      const b = await wb.xlsx.writeBuffer();
-      const buf = Buffer.isBuffer(b) ? b : Buffer.from(b as any);
-      contentBase64 = buf.toString("base64");
-    }
 
-    await db
-      .update(crmExportFiles)
-      .set({
-        status: "completed",
-        filename,
-        mimeType,
-        contentBase64,
-        finishedAt: new Date(),
-        updatedAt: new Date(),
-      } as any)
-      .where(eq(crmExportFiles.id, exportId));
-  } catch (err) {
-    await db
-      .update(crmExportFiles)
-      .set({ status: "failed", finishedAt: new Date(), updatedAt: new Date() } as any)
-      .where(eq(crmExportFiles.id, exportId));
-    throw err;
-  }
+      await db
+        .update(crmExportFiles)
+        .set({
+          status: "completed",
+          filename,
+          mimeType,
+          contentBase64,
+          finishedAt: new Date(),
+          updatedAt: new Date(),
+        } as any)
+        .where(eq(crmExportFiles.id, exportId));
+
+      return await getExportJob(exportId);
+    } catch (err) {
+      await db
+        .update(crmExportFiles)
+        .set({ status: "failed", finishedAt: new Date(), updatedAt: new Date() } as any)
+        .where(eq(crmExportFiles.id, exportId));
+      throw err;
+    }
+  });
+
+  if (!out) return await getExportJob(exportId);
+  return out;
 }
 
 export function verifyExportToken(job: { tokenHash: string | null | undefined; expiresAt: Date | string | null | undefined }, token: string) {
