@@ -6,6 +6,9 @@ import { UnderwriteDealPanel } from "@/components/underwriting/UnderwriteDealPan
 import { makeAddressSearchUrl } from "@/utils/playgroundPersistence";
 import { makeEmptyUnderwritingV1, underwritingSchemaV1, type UnderwritingComp, type UnderwritingV1 } from "@shared/underwriting";
 
+type PlaygroundChecklistItem = { id: string; label: string; done: boolean; createdAt: string };
+type PlaygroundChecklistJson = { prefs?: { browserMode?: "iframe" | "external" }; items?: PlaygroundChecklistItem[] };
+
 type SubjectSnapshot = {
   address: string;
   beds?: number | null;
@@ -69,6 +72,36 @@ function coerceNotes(raw: any): PlaygroundResearchNote[] {
   return out;
 }
 
+function coerceTags(raw: any): string[] {
+  if (!Array.isArray(raw)) return [];
+  const out: string[] = [];
+  for (const t of raw) {
+    const v = typeof t === "string" ? t.trim() : "";
+    if (!v) continue;
+    if (!out.includes(v)) out.push(v);
+  }
+  return out;
+}
+
+function coerceChecklist(raw: any): PlaygroundChecklistJson {
+  if (!raw || typeof raw !== "object") return {};
+  const prefsRaw = (raw as any).prefs;
+  const prefsMode = prefsRaw?.browserMode === "external" ? "external" : prefsRaw?.browserMode === "iframe" ? "iframe" : undefined;
+  const itemsRaw = (raw as any).items;
+  const items: PlaygroundChecklistItem[] = [];
+  if (Array.isArray(itemsRaw)) {
+    for (const i of itemsRaw) {
+      const id = typeof i?.id === "string" && i.id ? i.id : "";
+      const label = typeof i?.label === "string" ? i.label : "";
+      const done = Boolean(i?.done);
+      const createdAt = typeof i?.createdAt === "string" && i.createdAt ? i.createdAt : new Date().toISOString();
+      if (!id || !label.trim()) continue;
+      items.push({ id, label: label.trim(), done, createdAt });
+    }
+  }
+  return { prefs: prefsMode ? { browserMode: prefsMode } : undefined, items };
+}
+
 export function UnderwriteDealWorkspace(props: {
   address: string;
   propertyId?: number | null;
@@ -122,6 +155,12 @@ export function UnderwriteDealWorkspace(props: {
   const [underwriting, setUnderwriting] = useState<UnderwritingV1>(() => makeEmptyUnderwritingV1(nowIso()));
   const [quickLinks, setQuickLinks] = useState<PlaygroundQuickLink[]>([]);
   const [notes, setNotes] = useState<PlaygroundResearchNote[]>([]);
+  const [tags, setTags] = useState<string[]>([]);
+  const [checklist, setChecklist] = useState<PlaygroundChecklistItem[]>([]);
+  const [browserMode, setBrowserMode] = useState<"iframe" | "external">("iframe");
+  const [assignedTo, setAssignedTo] = useState<number | null>(null);
+  const [assignmentDueAt, setAssignmentDueAt] = useState<string | null>(null);
+  const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
   const hydratedRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
 
@@ -139,8 +178,16 @@ export function UnderwriteDealWorkspace(props: {
     setUnderwriting(parsed.success ? parsed.data : makeEmptyUnderwritingV1(nowIso()));
     const nextLinks = coerceQuickLinks(safeJsonParse(session?.bookmarksJson, []));
     const nextNotes = coerceNotes(safeJsonParse(session?.notesJson, []));
+    const nextTags = coerceTags(safeJsonParse(session?.tagsJson, []));
+    const checklistJson = coerceChecklist(safeJsonParse(session?.checklistJson, {}));
     setQuickLinks(nextLinks);
     setNotes(nextNotes);
+    setTags(nextTags);
+    setChecklist(checklistJson.items || []);
+    setBrowserMode(checklistJson.prefs?.browserMode || "iframe");
+    setAssignedTo(typeof session?.assignedTo === "number" ? session.assignedTo : null);
+    setAssignmentDueAt(session?.assignmentDueAt ? new Date(session.assignmentDueAt as any).toISOString().slice(0, 10) : null);
+    setAssignmentStatus(typeof session?.assignmentStatus === "string" && session.assignmentStatus.trim() ? session.assignmentStatus : null);
     hydratedRef.current = true;
   }, [session, address]);
 
@@ -173,16 +220,31 @@ export function UnderwriteDealWorkspace(props: {
     saveTimerRef.current = window.setTimeout(() => {
       patchSession.mutate({
         currentUrl,
+        tagsJson: JSON.stringify(tags || []),
         bookmarksJson: JSON.stringify(quickLinks || []),
+        checklistJson: JSON.stringify({ prefs: { browserMode }, items: checklist || [] }),
         notesJson: JSON.stringify(notes || []),
         underwritingJson: JSON.stringify({ ...underwriting, updatedAt: nowIso() }),
+        assignedTo,
+        assignmentDueAt: assignmentDueAt ? new Date(`${assignmentDueAt}T00:00:00.000Z`).toISOString() : null,
+        assignmentStatus,
       });
       saveTimerRef.current = null;
     }, 500);
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     };
-  }, [currentUrl, notes, quickLinks, underwriting, session?.id]);
+  }, [currentUrl, notes, quickLinks, underwriting, tags, checklist, browserMode, assignedTo, assignmentDueAt, assignmentStatus, session?.id]);
+
+  const { data: users } = useQuery<any[]>({
+    queryKey: ["/api/users"],
+    queryFn: async () => {
+      const res = await fetch("/api/users", { credentials: "include" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.message || "Failed to load users");
+      return Array.isArray(json) ? json : [];
+    },
+  });
 
   const selectedTemplate = useMemo(() => {
     const tid = underwriting.templateId ? parseInt(underwriting.templateId, 10) : NaN;
@@ -256,10 +318,23 @@ export function UnderwriteDealWorkspace(props: {
           address={address}
           currentUrl={currentUrl}
           onUrlChange={setCurrentUrl}
+          browserMode={browserMode}
+          onBrowserModeChange={setBrowserMode}
           quickLinks={quickLinks}
           onQuickLinksChange={setQuickLinks}
           notes={notes}
           onNotesChange={setNotes}
+          tags={tags}
+          onTagsChange={setTags}
+          checklist={checklist}
+          onChecklistChange={setChecklist}
+          assignedTo={assignedTo}
+          onAssignedToChange={setAssignedTo}
+          assignmentDueAt={assignmentDueAt}
+          onAssignmentDueAtChange={setAssignmentDueAt}
+          assignmentStatus={assignmentStatus}
+          onAssignmentStatusChange={setAssignmentStatus}
+          users={users || []}
           onSaveComp={(comp) => addComp({ ...comp, url: comp.url || currentUrl })}
         />
       </div>
