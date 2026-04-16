@@ -80,20 +80,43 @@ describe("CRM import/export helpers", () => {
   });
 
   it("validates required fields and formats with row-level errors", () => {
-    const row = { "Street Address": "123 Main St", City: "Tampa", State: "Florida", Zip: "ABC", "Owner Name": "" };
+    const row = { "Street Address": "123 Main St", City: "Tampa", State: "Florida", Zip: "ABC", "Owner Name": "", Source: "" };
     const mapping = {
       address: "Street Address",
       city: "City",
       state: "State",
       zipCode: "Zip",
       ownerName: "Owner Name",
+      source: "Source",
     };
     const r = mapAndValidateRow("lead", row, mapping);
     expect(r.ok).toBe(false);
     const messages = (r as any).errors.map((e: any) => `${e.field}:${e.message}`).join("|");
-    expect(messages).toContain("state:State must be 2 letters");
+    expect(messages).not.toContain("state:State must be 2 letters");
     expect(messages).toContain("zipCode:Zip Code must be 5 digits (or ZIP+4)");
     expect(messages).toContain("ownerName:Required");
+    expect(messages).toContain("source:Required");
+  });
+
+  it("normalizes full state names and common variants", () => {
+    const row = { "Street Address": "123 Main St", City: "Tampa", State: "Florida", Zip: "33602", "Owner Name": "Jane Smith", Source: "Cold Call" };
+    const mapping = {
+      address: "Street Address",
+      city: "City",
+      state: "State",
+      zipCode: "Zip",
+      ownerName: "Owner Name",
+      source: "Source",
+    };
+    const r = mapAndValidateRow("lead", row, mapping);
+    expect(r.ok).toBe(true);
+    expect((r as any).data.state).toBe("FL");
+
+    const row2 = { Address: "123 Main St", City: "Tampa", State: "Fla.", "Zip Code": "33602", "Owner Name": "Jane Smith", Source: "Cold Call" };
+    const mapping2 = { address: "Address", city: "City", state: "State", zipCode: "Zip Code", ownerName: "Owner Name", source: "Source" };
+    const r2 = mapAndValidateRow("lead", row2 as any, mapping2);
+    expect(r2.ok).toBe(true);
+    expect((r2 as any).data.state).toBe("FL");
   });
 
   it("parses buyer arrays and booleans", () => {

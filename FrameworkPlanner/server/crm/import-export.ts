@@ -375,10 +375,132 @@ function toDateOrNull(v: unknown) {
   return Number.isFinite(t) ? d : null;
 }
 
+const usStateNameToCode: Record<string, string> = {
+  alabama: "AL",
+  alaska: "AK",
+  arizona: "AZ",
+  arkansas: "AR",
+  california: "CA",
+  colorado: "CO",
+  connecticut: "CT",
+  delaware: "DE",
+  florida: "FL",
+  georgia: "GA",
+  hawaii: "HI",
+  idaho: "ID",
+  illinois: "IL",
+  indiana: "IN",
+  iowa: "IA",
+  kansas: "KS",
+  kentucky: "KY",
+  louisiana: "LA",
+  maine: "ME",
+  maryland: "MD",
+  massachusetts: "MA",
+  michigan: "MI",
+  minnesota: "MN",
+  mississippi: "MS",
+  missouri: "MO",
+  montana: "MT",
+  nebraska: "NE",
+  nevada: "NV",
+  "new hampshire": "NH",
+  "new jersey": "NJ",
+  "new mexico": "NM",
+  "new york": "NY",
+  "north carolina": "NC",
+  "north dakota": "ND",
+  ohio: "OH",
+  oklahoma: "OK",
+  oregon: "OR",
+  pennsylvania: "PA",
+  "rhode island": "RI",
+  "south carolina": "SC",
+  "south dakota": "SD",
+  tennessee: "TN",
+  texas: "TX",
+  utah: "UT",
+  vermont: "VT",
+  virginia: "VA",
+  washington: "WA",
+  "west virginia": "WV",
+  wisconsin: "WI",
+  wyoming: "WY",
+  "district of columbia": "DC",
+  "washington dc": "DC",
+  "washington d c": "DC",
+  "d c": "DC",
+  "puerto rico": "PR",
+  guam: "GU",
+  "american samoa": "AS",
+  "northern mariana islands": "MP",
+  "u.s. virgin islands": "VI",
+  "us virgin islands": "VI",
+  "virgin islands": "VI",
+};
+
+const usStateVariantToCode: Record<string, string> = {
+  ala: "AL",
+  ariz: "AZ",
+  ark: "AR",
+  calif: "CA",
+  colo: "CO",
+  conn: "CT",
+  del: "DE",
+  fla: "FL",
+  ga: "GA",
+  ill: "IL",
+  ind: "IN",
+  kan: "KS",
+  kans: "KS",
+  ky: "KY",
+  la: "LA",
+  mass: "MA",
+  mich: "MI",
+  minn: "MN",
+  miss: "MS",
+  mo: "MO",
+  mont: "MT",
+  neb: "NE",
+  nev: "NV",
+  okla: "OK",
+  ore: "OR",
+  penn: "PA",
+  pa: "PA",
+  tenn: "TN",
+  tex: "TX",
+  va: "VA",
+  wash: "WA",
+  wv: "WV",
+  wis: "WI",
+};
+
+function normalizeUsState(v: string | null) {
+  if (!v) return null;
+  const raw = String(v).trim();
+  if (!raw) return null;
+
+  const upper = raw.toUpperCase().replace(/\./g, "").trim();
+  if (/^[A-Z]{2}$/.test(upper)) return upper;
+
+  const cleaned = raw
+    .trim()
+    .toLowerCase()
+    .replace(/\./g, "")
+    .replace(/[^a-z\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned) return null;
+  if (usStateNameToCode[cleaned]) return usStateNameToCode[cleaned];
+  if (usStateVariantToCode[cleaned]) return usStateVariantToCode[cleaned];
+  return upper;
+}
+
 function validateState(v: string | null) {
   if (!v) return null;
   const s = v.trim().toUpperCase();
-  if (!/^[A-Z]{2}$/.test(s)) return "State must be 2 letters";
+  if (!/^[A-Z]{2}$/.test(s)) return 'State must be 2 letters (e.g. "FL"). Full names like "Florida" are accepted too.';
   return null;
 }
 
@@ -527,6 +649,10 @@ export function mapAndValidateRow(entityType: CrmEntityType, row: Record<string,
       }
     }
     delete out.fullAddress;
+  }
+
+  if (entityType === "lead" || entityType === "opportunity") {
+    out.state = normalizeUsState(out.state ?? null);
   }
 
   for (const def of defs) {

@@ -142,6 +142,10 @@ if (!sessionSecret) {
       resave: false,
       saveUninitialized: false,
       cookie: {
+        domain:
+          process.env.NODE_ENV === "production"
+            ? String(process.env.COOKIE_DOMAIN || ".oceanluxe.org").trim() || ".oceanluxe.org"
+            : undefined,
         secure: process.env.NODE_ENV === "production",
         httpOnly: true,
         maxAge: 1000 * 60 * 60 * 24 * 7,
@@ -149,6 +153,20 @@ if (!sessionSecret) {
       },
     }),
   );
+
+  if (process.env.DEBUG_ENDPOINTS === "1") {
+    app.get("/api/debug/session", (req: Request, res: Response) => {
+      const cookieHeader = String(req.headers.cookie || "");
+      res.json({
+        host: req.hostname,
+        path: req.path,
+        cookieHeaderPresent: Boolean(cookieHeader),
+        sessionID: (req as any).sessionID || null,
+        hasSession: Boolean((req as any).session),
+        sessionKeys: (req as any).session ? Object.keys((req as any).session) : [],
+      });
+    });
+  }
 }
 
 app.use((req, res, next) => {
