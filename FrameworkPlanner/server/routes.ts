@@ -380,7 +380,7 @@ export async function registerRoutes(
         });
       });
     } else {
-      await processImportJob(job.id, { maxRows: 200, maxBatches: 1 });
+      await processImportJob(job.id, { maxRows: 100, maxBatches: 1, resume: true });
     }
 
     return res.status(201).json({ jobId: job.id });
@@ -397,7 +397,7 @@ export async function registerRoutes(
     if (!job) return res.status(404).json({ message: "Not found" });
     if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
 
-    await processImportJob(jobId, { maxRows: 500, maxBatches: 1 });
+    await processImportJob(jobId, { maxRows: 100, maxBatches: 1, resume: true });
     const nextJob = await getImportJob(jobId);
     const errors = await listImportJobErrors(jobId, 50);
     return res.json({ job: nextJob, errors });
@@ -479,7 +479,7 @@ export async function registerRoutes(
         });
       });
     } else {
-      await processExportJob(job.id);
+      await processExportJob(job.id, { resume: true });
     }
 
     const downloadUrl = `/api/crm/export/files/${job.id}/download?token=${encodeURIComponent(token)}`;
@@ -497,7 +497,7 @@ export async function registerRoutes(
     if (!job) return res.status(404).json({ message: "Not found" });
     if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
 
-    await processExportJob(exportId);
+    await processExportJob(exportId, { resume: true });
     const nextJob = await getExportJob(exportId);
     return res.json({ job: nextJob });
   });

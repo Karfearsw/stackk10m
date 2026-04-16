@@ -9,6 +9,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Progress } from "@/components/ui/progress";
+import { Spinner } from "@/components/ui/spinner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
@@ -585,10 +587,33 @@ export function CrmImportExportDialog({
                         Job #{importJobId} {importJob?.status ? `(${importJob.status})` : ""}
                       </div>
                       {importJob ? (
-                        <div className="text-xs text-muted-foreground">
-                          Processed {importJob.processedRows || 0}/{importJob.totalRows || preview.totalRows || 0} • Created{" "}
-                          {importJob.createdCount || 0} • Updated {importJob.updatedCount || 0} • Skipped {importJob.skippedCount || 0} • Errors{" "}
-                          {importJob.errorCount || 0}
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            {String(importJob.status || "") === "processing" || String(importJob.status || "") === "queued" ? (
+                              <Spinner className="size-4" />
+                            ) : null}
+                            <div className="text-xs text-muted-foreground">
+                              Processed {importJob.processedRows || 0}/{importJob.totalRows || preview.totalRows || 0} • Created{" "}
+                              {importJob.createdCount || 0} • Updated {importJob.updatedCount || 0} • Skipped {importJob.skippedCount || 0} • Errors{" "}
+                              {importJob.errorCount || 0}
+                            </div>
+                          </div>
+                          <Progress
+                            value={
+                              (importJob.totalRows || preview.totalRows)
+                                ? Math.round(((importJob.processedRows || 0) / (importJob.totalRows || preview.totalRows || 1)) * 100)
+                                : 0
+                            }
+                          />
+                        </div>
+                      ) : null}
+
+                      {importErrors.some((e: any) => Number(e.rowNumber) === 0) ? (
+                        <div className="text-sm text-destructive">
+                          {safeJsonParse<any[]>(String(importErrors.find((e: any) => Number(e.rowNumber) === 0)?.errors || "[]"), [])
+                            .map((x) => x.message)
+                            .filter(Boolean)
+                            .join(" | ") || "Import failed"}
                         </div>
                       ) : null}
 
@@ -602,7 +627,7 @@ export function CrmImportExportDialog({
                               </TableRow>
                             </TableHeader>
                             <TableBody>
-                              {importErrors.map((e: any) => {
+                              {importErrors.filter((e: any) => Number(e.rowNumber) !== 0).map((e: any) => {
                                 const parsed = safeJsonParse<any[]>(String(e.errors || "[]"), []);
                                 const msg = parsed.map((x) => `${x.field ? `${x.field}: ` : ""}${x.message}`).join(" | ");
                                 return (
@@ -625,7 +650,11 @@ export function CrmImportExportDialog({
                             if (!importJobId) return;
                             setImportPolling(true);
                             const res = await fetch(`/api/crm/import/jobs/${importJobId}/run`, { method: "POST", credentials: "include" });
-                            if (!res.ok) return;
+                            if (!res.ok) {
+                              const data = await res.json().catch(() => ({}));
+                              toast({ title: "Resume failed", description: (data as any).message || "Resume failed", variant: "destructive" });
+                              return;
+                            }
                             const data = await res.json().catch(() => null);
                             if (data?.job) setImportJob(data.job);
                             if (Array.isArray(data?.errors)) setImportErrors(data.errors);
@@ -752,7 +781,11 @@ export function CrmImportExportDialog({
                         if (!exportJobId) return;
                         setExportPolling(true);
                         const res = await fetch(`/api/crm/export/jobs/${exportJobId}/run`, { method: "POST", credentials: "include" });
-                        if (!res.ok) return;
+                        if (!res.ok) {
+                          const data = await res.json().catch(() => ({}));
+                          toast({ title: "Resume failed", description: (data as any).message || "Resume failed", variant: "destructive" });
+                          return;
+                        }
                         const data = await res.json().catch(() => null);
                         if (data?.job) setExportJob(data.job);
                       }}

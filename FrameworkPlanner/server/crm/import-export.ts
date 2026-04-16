@@ -632,6 +632,7 @@ function hashToken(token: string) {
 type JobRunLimits = {
   maxRows?: number;
   maxBatches?: number;
+  resume?: boolean;
 };
 
 function toDateMs(v: unknown) {
@@ -641,17 +642,19 @@ function toDateMs(v: unknown) {
   return Number.isFinite(t) ? t : null;
 }
 
-async function withAdvisoryLock<T>(ns: number, key: number, fn: () => Promise<T>) {
-  const r: any = await db.execute(sql`SELECT pg_try_advisory_lock(${ns}, ${key}) AS ok`);
-  const ok = Boolean(r?.rows?.[0]?.ok);
-  if (!ok) return null;
-  try {
-    return await fn();
-  } finally {
+async function withAdvisoryLock<T>(ns: number, key: number, fn: (tx: typeof db) => Promise<T>) {
+  return await db.transaction(async (tx) => {
+    const r: any = await tx.execute(sql`SELECT pg_try_advisory_lock(${ns}, ${key}) AS ok`);
+    const ok = Boolean(r?.rows?.[0]?.ok);
+    if (!ok) return null;
     try {
-      await db.execute(sql`SELECT pg_advisory_unlock(${ns}, ${key})`);
-    } catch {}
-  }
+      return await fn(tx as any);
+    } finally {
+      try {
+        await tx.execute(sql`SELECT pg_advisory_unlock(${ns}, ${key})`);
+      } catch {}
+    }
+  });
 }
 
 export async function ensureAssigneesExist(assignedToIds: number[]) {
@@ -706,13 +709,17 @@ export async function listImportJobErrors(jobId: number, limit = 50) {
 }
 
 export async function processImportJob(jobId: number, limits: JobRunLimits = {}) {
-  const out = await withAdvisoryLock(1, jobId, async () => {
-    const job = await getImportJob(jobId);
+  const out = await withAdvisoryLock(1, jobId, async (tx) => {
+    const jobRows = await tx.select().from(crmImportJobs).where(eq(crmImportJobs.id, jobId)).limit(1);
+    const job = jobRows[0];
     if (!job) throw new Error("Import job not found");
 
     const updatedAtMs = toDateMs((job as any).updatedAt);
-    const stale = job.status === "processing" && updatedAtMs !== null && Date.now() - updatedAtMs > 90_000;
-    if (job.status !== "queued" && !stale) return job;
+    const activeWindowMs = limits.resume ? 5_000 : 90_000;
+    const runnable =
+      job.status === "queued" ||
+      (job.status === "processing" && (updatedAtMs === null || Date.now() - updatedAtMs > activeWindowMs));
+    if (!runnable) return job;
 
     const entityType = job.entityType as CrmEntityType;
     const mapping = JSON.parse(String(job.mapping || "{}")) as Record<string, string>;
@@ -724,7 +731,7 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
     const batchSize = options.batchSize && options.batchSize > 0 ? Math.min(options.batchSize, 2000) : defaultBatchSize;
 
     const startedAt = (job as any).startedAt ? new Date((job as any).startedAt) : new Date();
-    await db
+    await tx
       .update(crmImportJobs)
       .set({ status: "processing", startedAt, updatedAt: new Date() } as any)
       .where(eq(crmImportJobs.id, jobId));
@@ -734,7 +741,7 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
       const buffer = Buffer.from(String(job.fileBase64), "base64");
       const parsed = await parseUpload(buffer, format);
 
-      await db
+      await tx
         .update(crmImportJobs)
         .set({ totalRows: parsed.rows.length, updatedAt: new Date() } as any)
         .where(eq(crmImportJobs.id, jobId));
@@ -750,25 +757,13 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
         const v = mapping.assignedTo ? toIntOrNull(r[mapping.assignedTo]) : null;
         if (v) assignedIds.push(v);
       }
-      const validAssignees = await ensureAssigneesExist(assignedIds);
+      const uniqueAssigneeIds = Array.from(new Set(assignedIds.filter((n) => Number.isFinite(n))));
+      const assigneeRows = uniqueAssigneeIds.length
+        ? await tx.select({ id: users.id }).from(users).where(inArray(users.id, uniqueAssigneeIds))
+        : [];
+      const validAssignees = new Set(assigneeRows.map((r) => r.id));
 
       const seenKeys = new Set<string>();
-      if (processedRows > 0) {
-        const warm = parsed.rows.slice(0, processedRows);
-        for (let i = 0; i < warm.length; i++) {
-          const prep = mapAndValidateRow(entityType, warm[i], mapping);
-          if (!prep.ok) continue;
-          const key =
-            entityType === "lead"
-              ? computeLeadDedupeKey(prep.data as any)
-              : entityType === "opportunity"
-                ? computeOpportunityDedupeKey(prep.data as any)
-                : entityType === "contact"
-                  ? computeContactDedupeKey(prep.data as any)
-                  : computeBuyerDedupeKey(prep.data as any);
-          seenKeys.add(key);
-        }
-      }
 
       const maxRows = limits.maxRows && limits.maxRows > 0 ? limits.maxRows : null;
       const maxBatches = limits.maxBatches && limits.maxBatches > 0 ? limits.maxBatches : null;
@@ -795,7 +790,7 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
 
           if (!prep.ok) {
             errorCount += 1;
-            await db.insert(crmImportJobErrors).values({
+            await tx.insert(crmImportJobErrors).values({
               jobId,
               rowNumber,
               errors: JSON.stringify(prep.errors),
@@ -807,7 +802,7 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
           const assignedTo = (prep.data as any).assignedTo as number | null | undefined;
           if (assignedTo && !validAssignees.has(assignedTo)) {
             errorCount += 1;
-            await db.insert(crmImportJobErrors).values({
+            await tx.insert(crmImportJobErrors).values({
               jobId,
               rowNumber,
               errors: JSON.stringify([{ field: "assignedTo", message: "Assigned user does not exist" }]),
@@ -827,7 +822,7 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
 
           if (seenKeys.has(key)) {
             errorCount += 1;
-            await db.insert(crmImportJobErrors).values({
+            await tx.insert(crmImportJobErrors).values({
               jobId,
               rowNumber,
               errors: JSON.stringify([{ message: "Duplicate row within import file" }]),
@@ -845,16 +840,16 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
 
         if (keys.length) {
           if (entityType === "lead") {
-            const existing = await db.select().from(leads).where(inArray(leads.dedupeKey, keys));
+            const existing = await tx.select().from(leads).where(inArray(leads.dedupeKey, keys));
             for (const e of existing) existingByKey.set(String(e.dedupeKey || ""), e);
           } else if (entityType === "opportunity") {
-            const existing = await db.select().from(properties).where(inArray(properties.dedupeKey, keys));
+            const existing = await tx.select().from(properties).where(inArray(properties.dedupeKey, keys));
             for (const e of existing) existingByKey.set(String(e.dedupeKey || ""), e);
           } else if (entityType === "contact") {
-            const existing = await db.select().from(contacts).where(inArray(contacts.dedupeKey, keys));
+            const existing = await tx.select().from(contacts).where(inArray(contacts.dedupeKey, keys));
             for (const e of existing) existingByKey.set(String((e as any).dedupeKey || ""), e);
           } else {
-            const existing = await db.select().from(buyers).where(inArray(buyers.dedupeKey, keys));
+            const existing = await tx.select().from(buyers).where(inArray(buyers.dedupeKey, keys));
             for (const e of existing) existingByKey.set(String((e as any).dedupeKey || ""), e);
           }
         }
@@ -865,13 +860,13 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
           if (!existing) {
             if (!dryRun) {
               if (entityType === "lead") {
-                await db.insert(leads).values({ ...(c.data as any), dedupeKey: c.key } as any);
+                await tx.insert(leads).values({ ...(c.data as any), dedupeKey: c.key } as any);
               } else if (entityType === "opportunity") {
-                await db.insert(properties).values({ ...(c.data as any), dedupeKey: c.key } as any);
+                await tx.insert(properties).values({ ...(c.data as any), dedupeKey: c.key } as any);
               } else if (entityType === "contact") {
-                await db.insert(contacts).values({ ...(c.data as any), dedupeKey: c.key } as any);
+                await tx.insert(contacts).values({ ...(c.data as any), dedupeKey: c.key } as any);
               } else {
-                await db.insert(buyers).values({ ...(c.data as any), dedupeKey: c.key } as any);
+                await tx.insert(buyers).values({ ...(c.data as any), dedupeKey: c.key } as any);
               }
             }
             createdCount += 1;
@@ -907,13 +902,13 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
           }
 
           if (entityType === "lead") {
-            await db.update(leads).set(patch).where(eq(leads.id, existing.id));
+            await tx.update(leads).set(patch).where(eq(leads.id, existing.id));
           } else if (entityType === "opportunity") {
-            await db.update(properties).set(patch).where(eq(properties.id, existing.id));
+            await tx.update(properties).set(patch).where(eq(properties.id, existing.id));
           } else if (entityType === "contact") {
-            await db.update(contacts).set(patch).where(eq(contacts.id, existing.id));
+            await tx.update(contacts).set(patch).where(eq(contacts.id, existing.id));
           } else {
-            await db.update(buyers).set(patch).where(eq(buyers.id, existing.id));
+            await tx.update(buyers).set(patch).where(eq(buyers.id, existing.id));
           }
           updatedCount += 1;
         }
@@ -922,7 +917,7 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
         rowsRun += slice.length;
         batchesRun += 1;
 
-        await db
+        await tx
           .update(crmImportJobs)
           .set({
             totalRows: parsed.rows.length,
@@ -937,7 +932,7 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
       }
 
       if (processedRows >= parsed.rows.length) {
-        await db
+        await tx
           .update(crmImportJobs)
           .set({
             status: "completed",
@@ -953,11 +948,12 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
           .where(eq(crmImportJobs.id, jobId));
       }
 
-      return await getImportJob(jobId);
+      const endRows = await tx.select().from(crmImportJobs).where(eq(crmImportJobs.id, jobId)).limit(1);
+      return endRows[0];
     } catch (err: any) {
       const msg = String(err?.message || err);
       try {
-        await db.insert(crmImportJobErrors).values({
+        await tx.insert(crmImportJobErrors).values({
           jobId,
           rowNumber: 0,
           errors: JSON.stringify([{ message: msg }]),
@@ -965,7 +961,7 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
         } as any);
       } catch {}
 
-      await db
+      await tx
         .update(crmImportJobs)
         .set({
           status: "failed",
@@ -974,7 +970,9 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
         } as any)
         .where(eq(crmImportJobs.id, jobId));
 
-      throw err;
+      console.error(JSON.stringify({ ts: new Date().toISOString(), event: "crm_import", kind: "job_failed", jobId, message: msg }));
+      const endRows = await tx.select().from(crmImportJobs).where(eq(crmImportJobs.id, jobId)).limit(1);
+      return endRows[0];
     }
   });
 
@@ -1018,17 +1016,21 @@ export async function getExportJob(exportId: number) {
   return rows[0];
 }
 
-export async function processExportJob(exportId: number) {
-  const out = await withAdvisoryLock(2, exportId, async () => {
-    const job = await getExportJob(exportId);
+export async function processExportJob(exportId: number, limits: JobRunLimits = {}) {
+  const out = await withAdvisoryLock(2, exportId, async (tx) => {
+    const jobRows = await tx.select().from(crmExportFiles).where(eq(crmExportFiles.id, exportId)).limit(1);
+    const job = jobRows[0];
     if (!job) throw new Error("Export job not found");
 
     const updatedAtMs = toDateMs((job as any).updatedAt);
-    const stale = job.status === "processing" && updatedAtMs !== null && Date.now() - updatedAtMs > 90_000;
-    if (job.status !== "queued" && !stale) return job;
+    const activeWindowMs = limits.resume ? 5_000 : 90_000;
+    const runnable =
+      job.status === "queued" ||
+      (job.status === "processing" && (updatedAtMs === null || Date.now() - updatedAtMs > activeWindowMs));
+    if (!runnable) return job;
 
     const startedAt = (job as any).startedAt ? new Date((job as any).startedAt) : new Date();
-    await db
+    await tx
       .update(crmExportFiles)
       .set({ status: "processing", startedAt, updatedAt: new Date() } as any)
       .where(eq(crmExportFiles.id, exportId));
@@ -1059,7 +1061,7 @@ export async function processExportJob(exportId: number) {
       if (status && (entityType === "lead" || entityType === "opportunity" || entityType === "buyer")) where.push(eq(table.status, status));
       if (assignedTo !== null && (entityType === "lead" || entityType === "opportunity")) where.push(eq(table.assignedTo, assignedTo));
 
-      const rows: any[] = where.length ? await db.select().from(table).where(and(...where)) : await db.select().from(table);
+      const rows: any[] = where.length ? await tx.select().from(table).where(and(...where)) : await tx.select().from(table);
 
       const safeColumns = columns.length ? columns : Object.keys(rows[0] || {}).filter((k) => k !== "dedupeKey");
       const serializeCell = (value: any) => {
@@ -1093,7 +1095,7 @@ export async function processExportJob(exportId: number) {
         contentBase64 = buf.toString("base64");
       }
 
-      await db
+      await tx
         .update(crmExportFiles)
         .set({
           status: "completed",
@@ -1105,13 +1107,17 @@ export async function processExportJob(exportId: number) {
         } as any)
         .where(eq(crmExportFiles.id, exportId));
 
-      return await getExportJob(exportId);
-    } catch (err) {
-      await db
+      const endRows = await tx.select().from(crmExportFiles).where(eq(crmExportFiles.id, exportId)).limit(1);
+      return endRows[0];
+    } catch (err: any) {
+      const msg = String(err?.message || err);
+      await tx
         .update(crmExportFiles)
         .set({ status: "failed", finishedAt: new Date(), updatedAt: new Date() } as any)
         .where(eq(crmExportFiles.id, exportId));
-      throw err;
+      console.error(JSON.stringify({ ts: new Date().toISOString(), event: "crm_export", kind: "job_failed", jobId: exportId, message: msg }));
+      const endRows = await tx.select().from(crmExportFiles).where(eq(crmExportFiles.id, exportId)).limit(1);
+      return endRows[0];
     }
   });
 
