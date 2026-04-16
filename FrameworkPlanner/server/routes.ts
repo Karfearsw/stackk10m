@@ -5,7 +5,7 @@ import { SignJWT, jwtVerify } from "jose";
 import multer from "multer";
 import { storage } from "./storage.js";
 import { db } from "./db.js";
-import { sql, inArray } from "drizzle-orm";
+import { desc, eq, sql, inArray } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
 import { publishTelephonyEvent } from "./telephony/pubsub.js";
 import { getTelephonyMediaSignedUrl, uploadTelephonyMediaFromUrl } from "./telephony/objectStorage.js";
@@ -22,6 +22,7 @@ import {
   parseUpload,
   processExportJob,
   processImportJob,
+  renewExportToken,
   suggestMapping,
   verifyExportToken,
 } from "./crm/import-export.js";
@@ -52,6 +53,8 @@ import {
   insertPlaygroundPropertySessionSchema,
   insertUnderwritingTemplateSchema,
   insertTaskSchema,
+  crmExportFiles,
+  crmImportJobs,
   users,
 } from "./shared-schema.js";
 import { z } from "zod";
@@ -403,6 +406,19 @@ export async function registerRoutes(
     return res.json({ job: nextJob, errors });
   });
 
+  app.get("/api/crm/import/jobs", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    const rows = await db
+      .select()
+      .from(crmImportJobs)
+      .where(eq(crmImportJobs.createdBy, user.id))
+      .orderBy(desc(crmImportJobs.updatedAt))
+      .limit(20);
+    return res.json({ jobs: rows });
+  });
+
   app.get("/api/crm/import/jobs/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -502,6 +518,19 @@ export async function registerRoutes(
     return res.json({ job: nextJob });
   });
 
+  app.get("/api/crm/export/jobs", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    const rows = await db
+      .select()
+      .from(crmExportFiles)
+      .where(eq(crmExportFiles.createdBy, user.id))
+      .orderBy(desc(crmExportFiles.updatedAt))
+      .limit(20);
+    return res.json({ jobs: rows });
+  });
+
   app.get("/api/crm/export/jobs/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -514,6 +543,23 @@ export async function registerRoutes(
     if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
 
     return res.json({ job });
+  });
+
+  app.post("/api/crm/export/jobs/:id/renew-download", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+
+    const exportId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(exportId)) return res.status(400).json({ message: "Invalid export id" });
+
+    const job = await getExportJob(exportId);
+    if (!job) return res.status(404).json({ message: "Not found" });
+    if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
+    if (job.status !== "completed") return res.status(409).json({ message: "Export not ready" });
+
+    const { token } = await renewExportToken(exportId);
+    const downloadUrl = `/api/crm/export/files/${exportId}/download?token=${encodeURIComponent(token)}`;
+    return res.json({ downloadUrl });
   });
 
   app.get("/api/crm/export/files/:id/download", async (req, res) => {

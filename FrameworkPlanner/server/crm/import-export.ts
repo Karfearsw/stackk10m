@@ -1008,6 +1008,20 @@ export async function createExportJob(params: {
   return { job: result[0], token };
 }
 
+export async function renewExportToken(exportId: number, expiresInMinutes = 60) {
+  const token = crypto.randomBytes(32).toString("base64url");
+  const tokenHash = hashToken(token);
+  const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
+
+  const updated = await db
+    .update(crmExportFiles)
+    .set({ tokenHash, expiresAt, updatedAt: new Date() } as any)
+    .where(eq(crmExportFiles.id, exportId))
+    .returning();
+
+  return { job: updated[0], token };
+}
+
 export async function getExportJob(exportId: number) {
   const rows = await db.select().from(crmExportFiles).where(eq(crmExportFiles.id, exportId)).limit(1);
   return rows[0];

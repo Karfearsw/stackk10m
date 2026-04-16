@@ -65,7 +65,7 @@ export function CrmImportExportDialog({
   }, [fields, entityType]);
 
   const [open, setOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"import" | "export">("import");
+  const [activeTab, setActiveTab] = useState<"import" | "export" | "jobs">("import");
 
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<any>(null);
@@ -96,6 +96,59 @@ export function CrmImportExportDialog({
   const [exportPolling, setExportPolling] = useState(false);
   const qc = useQueryClient();
 
+  const importJobStorageKey = `crm:lastImportJobId:${entityType}`;
+  const exportJobStorageKey = `crm:lastExportJobId:${entityType}`;
+
+  const loadImportJob = async (jobId: number) => {
+    const res = await fetch(`/api/crm/import/jobs/${jobId}`, { credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any).message || "Failed to load job");
+    setImportJob(data.job);
+    setImportErrors(data.errors || []);
+    const status = String(data.job?.status || "");
+    if (status !== "completed" && status !== "failed") setImportPolling(true);
+  };
+
+  const loadExportJob = async (jobId: number) => {
+    const res = await fetch(`/api/crm/export/jobs/${jobId}`, { credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any).message || "Failed to load job");
+    setExportJob(data.job);
+    const status = String(data.job?.status || "");
+    if (status !== "completed" && status !== "failed") setExportPolling(true);
+  };
+
+  const { data: recentImportJobsResp } = useQuery({
+    queryKey: ["/api/crm/import/jobs", "recent", entityType],
+    queryFn: async () => {
+      const res = await fetch("/api/crm/import/jobs", { credentials: "include" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as any).message || "Failed to load import jobs");
+      return data;
+    },
+    enabled: !!user && open,
+    refetchInterval: open ? 5000 : false,
+  });
+
+  const { data: recentExportJobsResp } = useQuery({
+    queryKey: ["/api/crm/export/jobs", "recent", entityType],
+    queryFn: async () => {
+      const res = await fetch("/api/crm/export/jobs", { credentials: "include" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as any).message || "Failed to load export jobs");
+      return data;
+    },
+    enabled: !!user && open,
+    refetchInterval: open ? 5000 : false,
+  });
+
+  const recentImportJobs = Array.isArray(recentImportJobsResp?.jobs)
+    ? recentImportJobsResp.jobs.filter((j: any) => String(j.entityType || "") === entityType)
+    : [];
+  const recentExportJobs = Array.isArray(recentExportJobsResp?.jobs)
+    ? recentExportJobsResp.jobs.filter((j: any) => String(j.entityType || "") === entityType)
+    : [];
+
   useEffect(() => {
     if (!open) return;
     setPreview(null);
@@ -121,6 +174,25 @@ export function CrmImportExportDialog({
     setExportDownloadUrl("");
     setExportJob(null);
     setExportPolling(false);
+
+    const restore = async () => {
+      try {
+        const importId = parseInt(String(localStorage.getItem(importJobStorageKey) || ""), 10);
+        if (Number.isFinite(importId) && importId > 0) {
+          setImportJobId(importId);
+          await loadImportJob(importId);
+        }
+      } catch {}
+
+      try {
+        const exportId = parseInt(String(localStorage.getItem(exportJobStorageKey) || ""), 10);
+        if (Number.isFinite(exportId) && exportId > 0) {
+          setExportJobId(exportId);
+          await loadExportJob(exportId);
+        }
+      } catch {}
+    };
+    restore();
   }, [open, exportColumnsDefault]);
 
   useEffect(() => {
@@ -294,9 +366,13 @@ export function CrmImportExportDialog({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data as any).message || "Import failed");
-      setImportJobId((data as any).jobId);
+      const jobId = Number((data as any).jobId);
+      setImportJobId(jobId);
+      try {
+        if (Number.isFinite(jobId) && jobId > 0) localStorage.setItem(importJobStorageKey, String(jobId));
+      } catch {}
       setImportPolling(true);
-      toast({ title: "Import started", description: `Job #${(data as any).jobId}` });
+      toast({ title: "Import started", description: `Job #${jobId}` });
     } catch (e: any) {
       toast({ title: "Import failed", description: e.message || "Import failed", variant: "destructive" });
     }
@@ -328,12 +404,40 @@ export function CrmImportExportDialog({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((data as any).message || "Export failed");
-      setExportJobId((data as any).jobId);
+      const jobId = Number((data as any).jobId);
+      setExportJobId(jobId);
       setExportDownloadUrl((data as any).downloadUrl || "");
+      try {
+        if (Number.isFinite(jobId) && jobId > 0) localStorage.setItem(exportJobStorageKey, String(jobId));
+      } catch {}
       setExportPolling(true);
-      toast({ title: "Export started", description: `Job #${(data as any).jobId}` });
+      toast({ title: "Export started", description: `Job #${jobId}` });
     } catch (e: any) {
       toast({ title: "Export failed", description: e.message || "Export failed", variant: "destructive" });
+    }
+  };
+
+  const renewDownloadUrl = async (jobId: number) => {
+    const res = await fetch(`/api/crm/export/jobs/${jobId}/renew-download`, { method: "POST", credentials: "include" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as any).message || "Failed to generate link");
+    if ((data as any).downloadUrl) setExportDownloadUrl(String((data as any).downloadUrl));
+    return String((data as any).downloadUrl || "");
+  };
+
+  const copyDebugInfo = async () => {
+    try {
+      const payload = {
+        ts: new Date().toISOString(),
+        entityType,
+        importJob,
+        exportJob,
+        importErrors: importErrors.slice(0, 100),
+      };
+      await navigator.clipboard.writeText(JSON.stringify(payload));
+      toast({ title: "Copied debug info" });
+    } catch (e: any) {
+      toast({ title: "Copy failed", description: e?.message || "Copy failed", variant: "destructive" });
     }
   };
 
@@ -378,6 +482,7 @@ export function CrmImportExportDialog({
           <TabsList className="flex-wrap">
             <TabsTrigger value="import">Import</TabsTrigger>
             <TabsTrigger value="export">Export</TabsTrigger>
+            <TabsTrigger value="jobs">Jobs</TabsTrigger>
           </TabsList>
 
           <TabsContent value="import" className="space-y-4">
@@ -592,6 +697,9 @@ export function CrmImportExportDialog({
                             {String(importJob.status || "") === "processing" || String(importJob.status || "") === "queued" ? (
                               <Spinner className="size-4" />
                             ) : null}
+                            {String(importJob.status || "") === "processing" || String(importJob.status || "") === "queued" ? (
+                              <div className="text-xs text-muted-foreground animate-pulse">Processing…</div>
+                            ) : null}
                             <div className="text-xs text-muted-foreground">
                               Processed {importJob.processedRows || 0}/{importJob.totalRows || preview.totalRows || 0} • Created{" "}
                               {importJob.createdCount || 0} • Updated {importJob.updatedCount || 0} • Skipped {importJob.skippedCount || 0} • Errors{" "}
@@ -673,6 +781,9 @@ export function CrmImportExportDialog({
                           disabled={!importJobId}
                         >
                           Download Error CSV
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => copyDebugInfo()}>
+                          Copy Debug
                         </Button>
                       </div>
                     </div>
@@ -772,43 +883,232 @@ export function CrmImportExportDialog({
                 <div className="text-sm">
                   Job #{exportJobId} {exportJob?.status ? `(${exportJob.status})` : ""}
                 </div>
-                {exportDownloadUrl ? (
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={async () => {
-                        if (!exportJobId) return;
-                        setExportPolling(true);
-                        const res = await fetch(`/api/crm/export/jobs/${exportJobId}/run`, { method: "POST", credentials: "include" });
-                        if (!res.ok) {
-                          const data = await res.json().catch(() => ({}));
-                          toast({ title: "Resume failed", description: (data as any).message || "Resume failed", variant: "destructive" });
-                          return;
-                        }
-                        const data = await res.json().catch(() => null);
-                        if (data?.job) setExportJob(data.job);
-                      }}
-                      disabled={!exportJobId || String(exportJob?.status || "") === "completed" || String(exportJob?.status || "") === "failed"}
-                    >
-                      Resume
-                    </Button>
-                    <Button
-                      size="sm"
-                      onClick={() => window.open(exportDownloadUrl, "_blank")}
-                      disabled={String(exportJob?.status || "") !== "completed"}
-                    >
-                      Download
-                    </Button>
-                    <div className="text-xs text-muted-foreground">Secure link expires automatically.</div>
-                  </div>
-                ) : null}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      if (!exportJobId) return;
+                      setExportPolling(true);
+                      const res = await fetch(`/api/crm/export/jobs/${exportJobId}/run`, { method: "POST", credentials: "include" });
+                      if (!res.ok) {
+                        const data = await res.json().catch(() => ({}));
+                        toast({ title: "Resume failed", description: (data as any).message || "Resume failed", variant: "destructive" });
+                        return;
+                      }
+                      const data = await res.json().catch(() => null);
+                      if (data?.job) setExportJob(data.job);
+                    }}
+                    disabled={!exportJobId || String(exportJob?.status || "") === "completed" || String(exportJob?.status || "") === "failed"}
+                  >
+                    Resume
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      if (!exportJobId) return;
+                      try {
+                        await renewDownloadUrl(exportJobId);
+                        toast({ title: "Download link generated" });
+                      } catch (e: any) {
+                        toast({ title: "Generate link failed", description: e?.message || "Failed", variant: "destructive" });
+                      }
+                    }}
+                    disabled={!exportJobId || String(exportJob?.status || "") !== "completed"}
+                  >
+                    Generate Link
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() => window.open(exportDownloadUrl, "_blank")}
+                    disabled={String(exportJob?.status || "") !== "completed" || !exportDownloadUrl}
+                  >
+                    Download
+                  </Button>
+                  <div className="text-xs text-muted-foreground">Secure link expires automatically.</div>
+                </div>
               </div>
             ) : null}
 
             <DialogFooter>
               <Button onClick={() => startExport()} disabled={exportPolling}>
                 Generate Export
+              </Button>
+            </DialogFooter>
+          </TabsContent>
+
+          <TabsContent value="jobs" className="space-y-4">
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Recent Import Jobs</div>
+              <ScrollArea className="h-[min(14rem,45dvh)] border rounded-md">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>ID</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Progress</TableHead>
+                      <TableHead>Updated</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {recentImportJobs.length ? (
+                      recentImportJobs.map((j: any) => (
+                        <TableRow key={j.id}>
+                          <TableCell>{j.id}</TableCell>
+                          <TableCell>{String(j.status || "")}</TableCell>
+                          <TableCell>
+                            {Number(j.processedRows || 0)}/{Number(j.totalRows || 0)} • C {Number(j.createdCount || 0)} • U {Number(j.updatedCount || 0)} • S{" "}
+                            {Number(j.skippedCount || 0)} • E {Number(j.errorCount || 0)}
+                          </TableCell>
+                          <TableCell>{j.updatedAt ? new Date(j.updatedAt).toLocaleString() : ""}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                  setImportJobId(Number(j.id));
+                                  try {
+                                    localStorage.setItem(importJobStorageKey, String(j.id));
+                                  } catch {}
+                                  await loadImportJob(Number(j.id));
+                                  setActiveTab("import");
+                                }}
+                              >
+                                View
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                  const jobId = Number(j.id);
+                                  const res = await fetch(`/api/crm/import/jobs/${jobId}/run`, { method: "POST", credentials: "include" });
+                                  if (!res.ok) {
+                                    const data = await res.json().catch(() => ({}));
+                                    toast({ title: "Resume failed", description: (data as any).message || "Resume failed", variant: "destructive" });
+                                    return;
+                                  }
+                                  const data = await res.json().catch(() => null);
+                                  if (data?.job && jobId === importJobId) setImportJob(data.job);
+                                  if (Array.isArray(data?.errors) && jobId === importJobId) setImportErrors(data.errors);
+                                }}
+                                disabled={String(j.status || "") === "completed" || String(j.status || "") === "failed"}
+                              >
+                                Resume
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => window.open(`/api/crm/import/jobs/${j.id}/errors.csv`, "_blank")}
+                              >
+                                Errors CSV
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={5}>No import jobs yet.</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </ScrollArea>
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Recent Export Jobs</div>
+              <ScrollArea className="h-[min(14rem,45dvh)] border rounded-md">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>ID</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Format</TableHead>
+                      <TableHead>File</TableHead>
+                      <TableHead>Updated</TableHead>
+                      <TableHead>Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {recentExportJobs.length ? (
+                      recentExportJobs.map((j: any) => (
+                        <TableRow key={j.id}>
+                          <TableCell>{j.id}</TableCell>
+                          <TableCell>{String(j.status || "")}</TableCell>
+                          <TableCell>{String(j.format || "")}</TableCell>
+                          <TableCell>{String(j.filename || "")}</TableCell>
+                          <TableCell>{j.updatedAt ? new Date(j.updatedAt).toLocaleString() : ""}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                  setExportJobId(Number(j.id));
+                                  setExportDownloadUrl("");
+                                  try {
+                                    localStorage.setItem(exportJobStorageKey, String(j.id));
+                                  } catch {}
+                                  await loadExportJob(Number(j.id));
+                                  setActiveTab("export");
+                                }}
+                              >
+                                View
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                  const jobId = Number(j.id);
+                                  const res = await fetch(`/api/crm/export/jobs/${jobId}/run`, { method: "POST", credentials: "include" });
+                                  if (!res.ok) {
+                                    const data = await res.json().catch(() => ({}));
+                                    toast({ title: "Resume failed", description: (data as any).message || "Resume failed", variant: "destructive" });
+                                    return;
+                                  }
+                                  const data = await res.json().catch(() => null);
+                                  if (data?.job && jobId === exportJobId) setExportJob(data.job);
+                                }}
+                                disabled={String(j.status || "") === "completed" || String(j.status || "") === "failed"}
+                              >
+                                Resume
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={async () => {
+                                  try {
+                                    const url = await renewDownloadUrl(Number(j.id));
+                                    if (url) window.open(url, "_blank");
+                                  } catch (e: any) {
+                                    toast({ title: "Generate link failed", description: e?.message || "Failed", variant: "destructive" });
+                                  }
+                                }}
+                                disabled={String(j.status || "") !== "completed"}
+                              >
+                                Download
+                              </Button>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell colSpan={6}>No export jobs yet.</TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </ScrollArea>
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => copyDebugInfo()}>
+                Copy Debug Info
               </Button>
             </DialogFooter>
           </TabsContent>
