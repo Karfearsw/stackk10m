@@ -212,6 +212,10 @@ export function CrmImportExportDialog({
       const status = String(data.job?.status || "");
       if (status === "completed" || status === "failed") {
         setImportPolling(false);
+        if (status === "completed") {
+          qc.invalidateQueries({ queryKey: ["leads"] });
+          qc.invalidateQueries({ queryKey: ["/api/activity"] });
+        }
         return;
       }
 

@@ -128,6 +128,42 @@ describe("CRM import/export helpers", () => {
     expect((r as any).data.state).toBe("RI");
   });
 
+  it("parses estimated value currency and k/m suffixes", () => {
+    const mapping = { address: "Address", city: "City", zipCode: "ZipCode", ownerName: "Owner Name", source: "Source", state: "State", estimatedValue: "Estimated" };
+
+    const r1 = mapAndValidateRow(
+      "lead",
+      { Address: "123 Main St", City: "Tampa", State: "FL", ZipCode: "33602", "Owner Name": "Jane", Source: "Import", Estimated: "$250,000" } as any,
+      mapping,
+    );
+    expect(r1.ok).toBe(true);
+    expect((r1 as any).data.estimatedValue).toBe("250000.00");
+
+    const r2 = mapAndValidateRow(
+      "lead",
+      { Address: "123 Main St", City: "Tampa", State: "FL", ZipCode: "33602", "Owner Name": "Jane", Source: "Import", Estimated: "250k" } as any,
+      mapping,
+    );
+    expect(r2.ok).toBe(true);
+    expect((r2 as any).data.estimatedValue).toBe("250000.00");
+
+    const r3 = mapAndValidateRow(
+      "lead",
+      { Address: "123 Main St", City: "Tampa", State: "FL", ZipCode: "33602", "Owner Name": "Jane", Source: "Import", Estimated: "1.2m" } as any,
+      mapping,
+    );
+    expect(r3.ok).toBe(true);
+    expect((r3 as any).data.estimatedValue).toBe("1200000.00");
+
+    const r4 = mapAndValidateRow(
+      "lead",
+      { Address: "123 Main St", City: "Tampa", State: "FL", ZipCode: "33602", "Owner Name": "Jane", Source: "Import", Estimated: "N/A" } as any,
+      mapping,
+    );
+    expect(r4.ok).toBe(true);
+    expect((r4 as any).data.estimatedValue).toBe(null);
+  });
+
   it("derives state from ZIP when state is missing", () => {
     const row = { Address: "671 Metacom Ave Unit 29", City: "Bristol", ZipCode: "02809", "Owner Name": "Jared", Source: "Cold Call" };
     const mapping = { address: "Address", city: "City", zipCode: "ZipCode", ownerName: "Owner Name", source: "Source" };

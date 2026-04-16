@@ -339,9 +339,31 @@ function toIntOrNull(v: unknown) {
 function toDecimalOrNull(v: unknown) {
   const s = toStringOrNull(v);
   if (!s) return null;
-  const n = Number.parseFloat(s.replace(/,/g, ""));
+  const raw = s.trim();
+  const upper = raw.toUpperCase();
+  if (upper === "N/A" || upper === "NA" || upper === "NULL" || upper === "NONE") return null;
+
+  let sign = 1;
+  let cleaned = raw.trim();
+  if (cleaned.startsWith("(") && cleaned.endsWith(")")) {
+    sign = -1;
+    cleaned = cleaned.slice(1, -1);
+  }
+
+  cleaned = cleaned
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/USD/gi, "")
+    .replace(/[$,]/g, "");
+
+  const suffix = cleaned.slice(-1).toLowerCase();
+  const multiplier = suffix === "k" ? 1_000 : suffix === "m" ? 1_000_000 : 1;
+  if (multiplier !== 1) cleaned = cleaned.slice(0, -1);
+
+  if (!cleaned) return null;
+  const n = Number.parseFloat(cleaned);
   if (!Number.isFinite(n)) return null;
-  return n.toFixed(2);
+  return (sign * n * multiplier).toFixed(2);
 }
 
 function toBoolOrNull(v: unknown) {
@@ -705,7 +727,9 @@ export function mapAndValidateRow(
       out[def.key] = iv;
     } else if (def.type === "decimal") {
       const dv = toDecimalOrNull(v);
-      if (!isBlank(v) && dv === null) errors.push({ field: def.key, message: "Must be a number" });
+      const rawNum = typeof v === "string" ? v.trim().toUpperCase() : "";
+      const blankishNum = rawNum === "N/A" || rawNum === "NA" || rawNum === "NULL" || rawNum === "NONE";
+      if (!isBlank(v) && !blankishNum && dv === null) errors.push({ field: def.key, message: "Must be a number" });
       out[def.key] = dv;
     } else if (def.type === "bool") {
       const bv = toBoolOrNull(v);
