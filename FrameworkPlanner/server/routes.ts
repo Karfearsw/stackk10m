@@ -1044,7 +1044,7 @@ export async function registerRoutes(
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
-      const items = await storage.listRecentPlaygroundPropertySessions(limit);
+      const items = await storage.listRecentPlaygroundPropertySessions(userId, limit);
       res.json(items);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -1063,7 +1063,7 @@ export async function registerRoutes(
       const leadId = typeof leadIdRaw === "number" ? leadIdRaw : typeof leadIdRaw === "string" ? parseInt(leadIdRaw, 10) : NaN;
       const propertyId = typeof propertyIdRaw === "number" ? propertyIdRaw : typeof propertyIdRaw === "string" ? parseInt(propertyIdRaw, 10) : NaN;
 
-      const existing = await storage.getPlaygroundPropertySessionByAddressKey(addressKey);
+      const existing = await storage.getPlaygroundPropertySessionByAddressKey(userId, addressKey);
       const throttleMs = 10 * 60 * 1000;
       const prevOpenedAt = existing?.lastOpenedAt ? new Date(existing.lastOpenedAt as any) : null;
       const shouldLogOpen = !existing || !prevOpenedAt || Date.now() - prevOpenedAt.getTime() > throttleMs;

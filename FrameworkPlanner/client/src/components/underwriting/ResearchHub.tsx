@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
@@ -28,6 +31,8 @@ export type PlaygroundResearchNote = {
   createdAt: string;
   updatedAt: string;
 };
+
+type PlaygroundChecklistItem = { id: string; label: string; done: boolean; createdAt: string };
 
 function nowIso() {
   return new Date().toISOString();
@@ -115,17 +120,30 @@ export function ResearchHub(props: {
   address: string;
   currentUrl: string;
   onUrlChange: (url: string) => void;
+  browserMode: "iframe" | "external";
+  onBrowserModeChange: (mode: "iframe" | "external") => void;
   quickLinks: PlaygroundQuickLink[];
   onQuickLinksChange: (next: PlaygroundQuickLink[] | ((prev: PlaygroundQuickLink[]) => PlaygroundQuickLink[])) => void;
   notes: PlaygroundResearchNote[];
   onNotesChange: (next: PlaygroundResearchNote[] | ((prev: PlaygroundResearchNote[]) => PlaygroundResearchNote[])) => void;
+  tags: string[];
+  onTagsChange: (next: string[] | ((prev: string[]) => string[])) => void;
+  checklist: PlaygroundChecklistItem[];
+  onChecklistChange: (next: PlaygroundChecklistItem[] | ((prev: PlaygroundChecklistItem[]) => PlaygroundChecklistItem[])) => void;
+  assignedTo: number | null;
+  onAssignedToChange: (userId: number | null) => void;
+  assignmentDueAt: string | null;
+  onAssignmentDueAtChange: (date: string | null) => void;
+  assignmentStatus: string | null;
+  onAssignmentStatusChange: (status: string | null) => void;
+  users: any[];
   onSaveComp?: (comp: { address?: string; url?: string; soldPrice?: number | null; beds?: number | null; baths?: number | null; sqft?: number | null }) => void;
 }) {
   const { toast } = useToast();
   const address = String(props.address || "").trim();
   const sources = useMemo(() => makeAddressSources(address), [address]);
 
-  const [tab, setTab] = useState<"browser" | "zoning" | "resources" | "suppliers" | "notes">("browser");
+  const [tab, setTab] = useState<"browser" | "zoning" | "resources" | "suppliers" | "session" | "notes">("browser");
 
   const [urlInput, setUrlInput] = useState(props.currentUrl);
   const [srcUrl, setSrcUrl] = useState(props.currentUrl);
@@ -138,16 +156,16 @@ export function ResearchHub(props: {
   useEffect(() => {
     setUrlInput(props.currentUrl);
     setSrcUrl(props.currentUrl);
-    setStatus(props.currentUrl.trim() ? "loading" : "idle");
-  }, [props.currentUrl]);
+    setStatus(props.currentUrl.trim() ? (props.browserMode === "external" ? "loaded" : "loading") : "idle");
+  }, [props.currentUrl, props.browserMode]);
 
   useEffect(() => {
     if (!srcUrl.trim()) {
       setStatus("idle");
       return;
     }
-    setStatus("loading");
-  }, [srcUrl, reloadNonce]);
+    if (props.browserMode !== "external") setStatus("loading");
+  }, [srcUrl, reloadNonce, props.browserMode]);
 
   useEffect(() => {
     if (status !== "loading") return;
@@ -168,9 +186,12 @@ export function ResearchHub(props: {
       return;
     }
     setValidationError("");
-    setStatus("loading");
+    setStatus(props.browserMode === "external" ? "loaded" : "loading");
     setSrcUrl(result.url);
     props.onUrlChange(result.url);
+    if (props.browserMode === "external") {
+      window.open(result.url, "_blank", "noopener,noreferrer");
+    }
   };
 
   const reload = () => {
@@ -205,6 +226,8 @@ export function ResearchHub(props: {
 
   const [newLinkName, setNewLinkName] = useState("");
   const [newLinkUrl, setNewLinkUrl] = useState("");
+  const [newTag, setNewTag] = useState("");
+  const [newChecklistLabel, setNewChecklistLabel] = useState("");
 
   const [noteFilter, setNoteFilter] = useState<"all" | PlaygroundNoteType>("all");
   const [selectedNoteId, setSelectedNoteId] = useState<string>("");
@@ -320,11 +343,21 @@ export function ResearchHub(props: {
                 <TabsTrigger value="zoning">Zoning</TabsTrigger>
                 <TabsTrigger value="resources">Resources</TabsTrigger>
                 <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
+                <TabsTrigger value="session">Session</TabsTrigger>
                 <TabsTrigger value="notes">Notes</TabsTrigger>
               </TabsList>
 
               <TabsContent value="browser" className="mt-3 flex flex-col min-h-0 gap-3">
                 <div className="flex flex-wrap items-center gap-2">
+                  <Select value={props.browserMode} onValueChange={(v) => props.onBrowserModeChange(v === "external" ? "external" : "iframe")}>
+                    <SelectTrigger className="w-[170px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="iframe">In-app (iframe)</SelectItem>
+                      <SelectItem value="external">External first</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <div className="flex-1 min-w-[240px] relative">
                     <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -346,7 +379,7 @@ export function ResearchHub(props: {
                     <ExternalLink className="h-4 w-4 mr-2" />
                     Open in New Tab
                   </Button>
-                  <Button variant="outline" size="icon" onClick={reload} aria-label="Reload" disabled={!srcUrl.trim()}>
+                  <Button variant="outline" size="icon" onClick={reload} aria-label="Reload" disabled={!srcUrl.trim() || props.browserMode === "external"}>
                     <RefreshCw className="h-4 w-4" />
                   </Button>
                   <Button variant="outline" size="icon" onClick={copyUrl} aria-label="Copy URL" disabled={!srcUrl.trim()}>
@@ -354,13 +387,19 @@ export function ResearchHub(props: {
                   </Button>
                 </div>
 
-                <div className="rounded-md border bg-amber-50 text-amber-950 px-4 py-3 text-sm">
-                  <div className="font-medium">Most sites block embedded viewing</div>
-                  <div className="text-amber-900/80">
-                    For security reasons, sites like Zillow, Redfin, and county GIS portals don’t allow embedding. Use the “Open in New Tab” button above
-                    to view them directly.
+                {props.browserMode === "iframe" ? (
+                  <div className="rounded-md border bg-amber-50 text-amber-950 px-4 py-3 text-sm">
+                    <div className="font-medium">Most sites block embedded viewing</div>
+                    <div className="text-amber-900/80">
+                      For security reasons, sites like Zillow, Redfin, and county GIS portals don’t allow embedding. Use the “Open in New Tab” button above to view
+                      them directly.
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="rounded-md border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                    External first is enabled. Links and searches open in a new tab while the Playground tracks your current URL for notes and comps.
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                   <Button variant="outline" className="justify-start" onClick={() => navigate(sources.zillow)}>
@@ -383,36 +422,56 @@ export function ResearchHub(props: {
                   </Button>
                 </div>
 
-                <div className="relative flex-1 min-h-0 w-full overflow-hidden rounded-md border bg-background">
-                  {!srcUrl.trim() ? (
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="text-sm text-muted-foreground">Enter a search or URL to start.</div>
-                    </div>
-                  ) : null}
-                  {status === "loading" || status === "maybe_blocked" ? (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/70">
-                      <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
-                        <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                        <div>{status === "maybe_blocked" ? "Still loading. This site may block embedding." : "Loading page…"}</div>
-                        {status === "maybe_blocked" ? (
-                          <Button variant="outline" size="sm" onClick={openExternal}>
-                            Open in new tab
-                          </Button>
-                        ) : null}
+                {props.browserMode === "iframe" ? (
+                  <div className="relative flex-1 min-h-0 w-full overflow-hidden rounded-md border bg-background">
+                    {!srcUrl.trim() ? (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className="text-sm text-muted-foreground">Enter a search or URL to start.</div>
                       </div>
+                    ) : null}
+                    {status === "loading" || status === "maybe_blocked" ? (
+                      <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/70">
+                        <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
+                          <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                          <div>{status === "maybe_blocked" ? "Still loading. This site may block embedding." : "Loading page…"}</div>
+                          {status === "maybe_blocked" ? (
+                            <Button variant="outline" size="sm" onClick={openExternal}>
+                              Open in new tab
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                    ) : null}
+                    {srcUrl.trim() ? (
+                      <iframe
+                        key={iframeKey}
+                        title="Playground browser"
+                        src={srcUrl}
+                        className="h-full w-full"
+                        referrerPolicy="no-referrer"
+                        onLoad={() => setStatus("loaded")}
+                      />
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="flex-1 min-h-0 w-full overflow-hidden rounded-md border bg-background flex items-center justify-center">
+                    <div className="text-sm text-muted-foreground text-center px-4">
+                      {srcUrl.trim() ? (
+                        <>
+                          <div className="font-medium text-foreground truncate max-w-[560px]">{srcUrl}</div>
+                          <div className="mt-2">
+                            <Button variant="outline" size="sm" onClick={openExternal}>
+                              <ExternalLink className="h-4 w-4 mr-2" />
+                              Open again
+                            </Button>
+                          </div>
+                        </>
+                      ) : (
+                        "Enter a search or URL to start."
+                      )}
                     </div>
-                  ) : null}
-                  {srcUrl.trim() ? (
-                    <iframe
-                      key={iframeKey}
-                      title="Playground browser"
-                      src={srcUrl}
-                      className="h-full w-full"
-                      referrerPolicy="no-referrer"
-                      onLoad={() => setStatus("loaded")}
-                    />
-                  ) : null}
-                </div>
+                  </div>
+                )}
               </TabsContent>
 
               <TabsContent value="zoning" className="mt-3 space-y-3">
@@ -434,6 +493,159 @@ export function ResearchHub(props: {
 
               <TabsContent value="suppliers" className="mt-3 space-y-3">
                 <ResourceList title="Suppliers" subtitle="Starter list (config-driven)" items={suppliersLists.national} />
+              </TabsContent>
+
+              <TabsContent value="session" className="mt-3 space-y-3">
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Tags</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0 space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      {props.tags.length ? (
+                        props.tags.map((t) => (
+                          <Button key={t} variant="outline" size="sm" onClick={() => props.onTagsChange((prev) => prev.filter((x) => x !== t))}>
+                            {t}
+                            <span className="ml-2 text-muted-foreground">×</span>
+                          </Button>
+                        ))
+                      ) : (
+                        <div className="text-sm text-muted-foreground">No tags yet</div>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={newTag}
+                        onChange={(e) => setNewTag(e.target.value)}
+                        placeholder="Add a tag (e.g. zoning_risk)"
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          const v = newTag.trim();
+                          if (!v) return;
+                          props.onTagsChange((prev) => (prev.includes(v) ? prev : [v, ...prev]));
+                          setNewTag("");
+                        }}
+                      />
+                      <Button
+                        onClick={() => {
+                          const v = newTag.trim();
+                          if (!v) return;
+                          props.onTagsChange((prev) => (prev.includes(v) ? prev : [v, ...prev]));
+                          setNewTag("");
+                        }}
+                        disabled={!newTag.trim()}
+                      >
+                        Add
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Checklist</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Input
+                        value={newChecklistLabel}
+                        onChange={(e) => setNewChecklistLabel(e.target.value)}
+                        placeholder="New checklist item"
+                        onKeyDown={(e) => {
+                          if (e.key !== "Enter") return;
+                          const label = newChecklistLabel.trim();
+                          if (!label) return;
+                          props.onChecklistChange((prev) => [{ id: makeId(), label, done: false, createdAt: nowIso() }, ...prev]);
+                          setNewChecklistLabel("");
+                        }}
+                      />
+                      <Button
+                        onClick={() => {
+                          const label = newChecklistLabel.trim();
+                          if (!label) return;
+                          props.onChecklistChange((prev) => [{ id: makeId(), label, done: false, createdAt: nowIso() }, ...prev]);
+                          setNewChecklistLabel("");
+                        }}
+                        disabled={!newChecklistLabel.trim()}
+                      >
+                        Add
+                      </Button>
+                    </div>
+
+                    <ScrollArea className="h-[220px] pr-3">
+                      <div className="space-y-2">
+                        {props.checklist.length ? (
+                          props.checklist.map((i) => (
+                            <div key={i.id} className="flex items-center gap-2 rounded-md border bg-background px-3 py-2">
+                              <Checkbox
+                                checked={i.done}
+                                onCheckedChange={(v) =>
+                                  props.onChecklistChange((prev) => prev.map((x) => (x.id === i.id ? { ...x, done: !!v } : x)))
+                                }
+                              />
+                              <div className={`flex-1 min-w-0 text-sm ${i.done ? "line-through text-muted-foreground" : ""}`}>{i.label}</div>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                aria-label="Delete"
+                                onClick={() => props.onChecklistChange((prev) => prev.filter((x) => x.id !== i.id))}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="text-sm text-muted-foreground py-6 text-center">No checklist items yet</div>
+                        )}
+                      </div>
+                    </ScrollArea>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base">Assignment</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0 space-y-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="space-y-1">
+                        <Label>Assigned to</Label>
+                        <Select value={props.assignedTo ? String(props.assignedTo) : "__none__"} onValueChange={(v) => props.onAssignedToChange(v === "__none__" ? null : parseInt(v, 10))}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">Unassigned</SelectItem>
+                            {(Array.isArray(props.users) ? props.users : []).map((u: any) => (
+                              <SelectItem key={String(u.id)} value={String(u.id)}>
+                                {String([u.firstName, u.lastName].filter(Boolean).join(" ") || u.email || `User ${u.id}`)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Due date</Label>
+                        <Input type="date" value={props.assignmentDueAt || ""} onChange={(e) => props.onAssignmentDueAtChange(e.target.value || null)} />
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Status</Label>
+                        <Select value={props.assignmentStatus || "__none__"} onValueChange={(v) => props.onAssignmentStatusChange(v === "__none__" ? null : v)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="__none__">None</SelectItem>
+                            <SelectItem value="Not started">Not started</SelectItem>
+                            <SelectItem value="In progress">In progress</SelectItem>
+                            <SelectItem value="Blocked">Blocked</SelectItem>
+                            <SelectItem value="Done">Done</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
               </TabsContent>
 
               <TabsContent value="notes" className="mt-3 flex-1 min-h-0">

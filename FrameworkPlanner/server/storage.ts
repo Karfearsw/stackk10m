@@ -291,11 +291,11 @@ export interface IStorage {
   createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog>;
 
   getPlaygroundPropertySessionById(id: number): Promise<PlaygroundPropertySession | undefined>;
-  getPlaygroundPropertySessionByAddressKey(addressKey: string): Promise<PlaygroundPropertySession | undefined>;
+  getPlaygroundPropertySessionByAddressKey(userId: number, addressKey: string): Promise<PlaygroundPropertySession | undefined>;
   createPlaygroundPropertySession(input: InsertPlaygroundPropertySession): Promise<PlaygroundPropertySession>;
   updatePlaygroundPropertySession(id: number, patch: Partial<InsertPlaygroundPropertySession>): Promise<PlaygroundPropertySession>;
   deletePlaygroundPropertySession(id: number): Promise<void>;
-  listRecentPlaygroundPropertySessions(limit?: number): Promise<PlaygroundPropertySession[]>;
+  listRecentPlaygroundPropertySessions(userId: number, limit?: number): Promise<PlaygroundPropertySession[]>;
 
   // Pipeline Configs
   getPipelineConfig(userId: number, entityType: string): Promise<PipelineConfig | undefined>;
@@ -1263,8 +1263,12 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
-  async getPlaygroundPropertySessionByAddressKey(addressKey: string): Promise<PlaygroundPropertySession | undefined> {
-    const result = await db.select().from(playgroundPropertySessions).where(eq(playgroundPropertySessions.addressKey, addressKey)).limit(1);
+  async getPlaygroundPropertySessionByAddressKey(userId: number, addressKey: string): Promise<PlaygroundPropertySession | undefined> {
+    const result = await db
+      .select()
+      .from(playgroundPropertySessions)
+      .where(and(eq(playgroundPropertySessions.createdBy, userId), eq(playgroundPropertySessions.addressKey, addressKey)))
+      .limit(1);
     return result[0];
   }
 
@@ -1286,8 +1290,13 @@ export class DatabaseStorage implements IStorage {
     await db.delete(playgroundPropertySessions).where(eq(playgroundPropertySessions.id, id));
   }
 
-  async listRecentPlaygroundPropertySessions(limit: number = 20): Promise<PlaygroundPropertySession[]> {
-    return db.select().from(playgroundPropertySessions).orderBy(desc(playgroundPropertySessions.lastOpenedAt)).limit(limit);
+  async listRecentPlaygroundPropertySessions(userId: number, limit: number = 20): Promise<PlaygroundPropertySession[]> {
+    return db
+      .select()
+      .from(playgroundPropertySessions)
+      .where(eq(playgroundPropertySessions.createdBy, userId))
+      .orderBy(desc(playgroundPropertySessions.lastOpenedAt))
+      .limit(limit);
   }
 
   async getPipelineConfig(userId: number, entityType: string): Promise<PipelineConfig | undefined> {
