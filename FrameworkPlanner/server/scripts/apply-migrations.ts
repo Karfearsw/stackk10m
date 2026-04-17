@@ -119,7 +119,21 @@ export async function applyMigrations() {
   console.log(`Migrations directory: ${dir} (${files.length} .sql files)`);
 
   const { pool } = await import("../db.js");
+  const vercelEnv = String(process.env.VERCEL_ENV || "").trim().toLowerCase();
+  const tracked = vercelEnv === "production";
+  if (tracked) {
+    await pool.query(
+      "CREATE TABLE IF NOT EXISTS applied_migrations (filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())",
+    );
+  }
   for (const f of files) {
+    if (tracked) {
+      const already = await pool.query("select 1 as ok from applied_migrations where filename = $1 limit 1", [f]);
+      if (already?.rows?.length) {
+        console.log(`Skipping already applied migration: ${f}`);
+        continue;
+      }
+    }
     const p = join(dir, f);
     const sql = readFileSync(p, "utf8");
     console.log(`Applying migration: ${f}`);
@@ -155,6 +169,9 @@ export async function applyMigrations() {
         }
       }
       await pool.query("COMMIT");
+      if (tracked) {
+        await pool.query("insert into applied_migrations(filename) values($1) on conflict (filename) do nothing", [f]);
+      }
       console.log(`Applied: ${f}`);
     } catch (e: any) {
       try {

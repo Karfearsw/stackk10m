@@ -12,7 +12,25 @@ async function run() {
   const shouldApply = explicit ?? isVercel;
 
   if (shouldApply) {
-    await applyMigrations();
+    try {
+      await applyMigrations();
+    } catch (e: any) {
+      const msg = String(e?.message || e || "");
+      if (/exceeded the data transfer quota/i.test(msg)) {
+        console.error(
+          [
+            "",
+            "Database is rejecting queries because the transfer quota has been exceeded.",
+            "Fix: upgrade/increase Neon transfer quota (primary), or wait for quota reset if applicable.",
+            "Optional: set AUTO_APPLY_MIGRATIONS=false to bypass migrations during build (not recommended for production).",
+            "",
+          ].join("\n"),
+        );
+        process.exitCode = 1;
+        return;
+      }
+      throw e;
+    }
   } else {
     console.log("Skipping migrations (set AUTO_APPLY_MIGRATIONS=true to enable, false to force-disable)");
   }
