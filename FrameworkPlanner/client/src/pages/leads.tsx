@@ -40,7 +40,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Filter, Plus, Search, Building2, MoreHorizontal, Pencil, Trash2, Lightbulb } from "lucide-react";
 import { useLocation } from "wouter";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { PipelineBoard } from "@/components/pipeline/PipelineBoard";
@@ -88,6 +88,7 @@ export default function Leads() {
   const [isLeadSheetOpen, setIsLeadSheetOpen] = useState(false);
   const [highlightLeadId, setHighlightLeadId] = useState<number | null>(null);
   const [didApplyQueryLead, setDidApplyQueryLead] = useState(false);
+  const [forcedLead, setForcedLead] = useState<any | null>(null);
   const [noteLead, setNoteLead] = useState<any>(null);
   const [noteText, setNoteText] = useState("");
   const [isNoteDialogOpen, setIsNoteDialogOpen] = useState(false);
@@ -119,11 +120,20 @@ export default function Leads() {
     status: "new"
   });
 
-  const { data: leadsResp, isLoading } = useQuery<any>({
+  const pageSize = 200;
+  const {
+    data: leadsPages,
+    isLoading,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery<any>({
     queryKey: leadsQueryKey,
-    queryFn: async () => {
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
       const p = new URLSearchParams();
-      p.set("limit", "500");
+      p.set("limit", String(pageSize));
+      p.set("offset", String(pageParam || 0));
       if (appliedFilters.query.trim()) p.set("q", appliedFilters.query.trim());
       if (appliedFilters.status && appliedFilters.status !== "all") p.set("status", appliedFilters.status);
       if (appliedFilters.owner.trim()) p.set("owner", appliedFilters.owner.trim());
@@ -132,9 +142,37 @@ export default function Leads() {
       const res = await apiRequest("GET", `/api/leads?${p.toString()}`);
       return await res.json();
     },
+    getNextPageParam: (lastPage, allPages) => {
+      const total = Number(lastPage?.total || 0);
+      const loaded = allPages.reduce((acc, p) => acc + (Array.isArray(p?.items) ? p.items.length : 0), 0);
+      if (!total) return undefined;
+      if (loaded >= total) return undefined;
+      return loaded;
+    },
   });
-  const leads = useMemo(() => (Array.isArray(leadsResp?.items) ? leadsResp.items : []), [leadsResp?.items]);
-  const leadsTotal = useMemo(() => Number(leadsResp?.total ?? leads.length ?? 0), [leads.length, leadsResp?.total]);
+
+  const leadsFlat = useMemo(() => {
+    const pages = leadsPages?.pages || [];
+    const out: any[] = [];
+    for (const p of pages) {
+      const items = Array.isArray(p?.items) ? p.items : [];
+      out.push(...items);
+    }
+    return out;
+  }, [leadsPages?.pages]);
+
+  const leads = useMemo(() => {
+    if (!forcedLead) return leadsFlat;
+    const forcedId = Number(forcedLead?.id || 0);
+    if (!forcedId) return leadsFlat;
+    if (leadsFlat.some((l: any) => Number(l?.id || 0) === forcedId)) return leadsFlat;
+    return [forcedLead, ...leadsFlat];
+  }, [forcedLead, leadsFlat]);
+
+  const leadsTotal = useMemo(() => {
+    const firstTotal = Number(leadsPages?.pages?.[0]?.total || 0);
+    return firstTotal || leads.length || 0;
+  }, [leads.length, leadsPages?.pages]);
 
   const { data: leadPipelineConfig } = useQuery({
     queryKey: ["/api/pipeline-config", "lead"],
@@ -151,6 +189,30 @@ export default function Leads() {
     }
     return statusOptions;
   }, [leadPipelineConfig]);
+
+  const missingPipelineStatuses = useMemo(() => {
+    const shown = new Set((pipelineColumns || []).map((c: any) => String(c.value || "")));
+    const missing = new Set<string>();
+    for (const l of leads) {
+      const s = String(l?.status || "").trim();
+      if (!s) continue;
+      if (!shown.has(s)) missing.add(s);
+    }
+    return Array.from(missing);
+  }, [leads, pipelineColumns]);
+
+  const pipelineColumnsWithMissing = useMemo(() => {
+    if (!missingPipelineStatuses.length) return pipelineColumns;
+    const append = missingPipelineStatuses.map((s) => ({
+      value: s,
+      label: s
+        .split("_")
+        .filter(Boolean)
+        .map((p) => p.slice(0, 1).toUpperCase() + p.slice(1))
+        .join(" "),
+    }));
+    return [...pipelineColumns, ...append];
+  }, [missingPipelineStatuses, pipelineColumns]);
 
   const { data: leadSourceOptions = [] } = useQuery<any[]>({
     queryKey: ["/api/lead-source-options"],
@@ -410,17 +472,34 @@ export default function Leads() {
     if (didApplyQueryLead) return;
     if (!leadIdFromQuery) return;
     if (isLoading) return;
+    const apply = () => {
+      setFilters({ query: "", status: "all", owner: "", createdFrom: "", createdTo: "" });
+      setSelectedLeadId(leadIdFromQuery);
+      setHighlightLeadId(leadIdFromQuery);
+      setIsLeadSheetOpen(true);
+      setDidApplyQueryLead(true);
+      setTimeout(() => {
+        const el = document.querySelector(`[data-testid="row-lead-${leadIdFromQuery}"]`);
+        if (el) (el as HTMLElement).scrollIntoView({ block: "center" });
+      }, 0);
+    };
+
     const found = (leads || []).some((l: any) => l.id === leadIdFromQuery);
-    if (!found) return;
-    setFilters({ query: "", status: "all", owner: "", createdFrom: "", createdTo: "" });
-    setSelectedLeadId(leadIdFromQuery);
-    setHighlightLeadId(leadIdFromQuery);
-    setIsLeadSheetOpen(true);
-    setDidApplyQueryLead(true);
-    setTimeout(() => {
-      const el = document.querySelector(`[data-testid="row-lead-${leadIdFromQuery}"]`);
-      if (el) (el as HTMLElement).scrollIntoView({ block: "center" });
-    }, 0);
+    if (found) {
+      apply();
+      return;
+    }
+
+    (async () => {
+      try {
+        const res = await apiRequest("GET", `/api/leads/${leadIdFromQuery}`);
+        const lead = await res.json();
+        setForcedLead(lead);
+        apply();
+      } catch (e: any) {
+        toast({ title: e?.message || "Lead not found", variant: "destructive" });
+      }
+    })();
   }, [didApplyQueryLead, isLoading, leadIdFromQuery, leads]);
 
   const openLead = (id: number) => {
@@ -447,6 +526,11 @@ export default function Leads() {
         <div className="space-y-1">
           <h1 className="text-3xl font-bold tracking-tight">Leads Pipeline</h1>
           <p className="text-muted-foreground">Manage and track your active property leads.</p>
+          {leadsTotal ? (
+            <div className="text-xs text-muted-foreground">
+              Showing {Math.min(leads.length, leadsTotal).toLocaleString()} of {leadsTotal.toLocaleString()}
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <CrmImportExportDialog entityType="lead" />
@@ -476,7 +560,7 @@ export default function Leads() {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All</SelectItem>
-                      {pipelineColumns.map((option) => (
+                      {pipelineColumnsWithMissing.map((option) => (
                         <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                       ))}
                     </SelectContent>
@@ -525,6 +609,34 @@ export default function Leads() {
               </div>
             </PopoverContent>
           </Popover>
+
+          {hasNextPage ? (
+            <>
+              <Button variant="outline" size="sm" onClick={() => fetchNextPage()} disabled={isFetchingNextPage} data-testid="button-leads-load-more">
+                {isFetchingNextPage ? "Loading…" : "Load more"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  let guard = 0;
+                  while (guard < 50) {
+                    guard += 1;
+                    const res = await fetchNextPage();
+                    const pages = (res as any)?.data?.pages || [];
+                    const last = pages[pages.length - 1];
+                    const total = Number(last?.total || 0);
+                    const loaded = pages.reduce((acc: number, p: any) => acc + (Array.isArray(p?.items) ? p.items.length : 0), 0);
+                    if (!total || loaded >= total) break;
+                  }
+                }}
+                disabled={isFetchingNextPage}
+                data-testid="button-leads-load-all"
+              >
+                Load all
+              </Button>
+            </>
+          ) : null}
           
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
@@ -601,7 +713,7 @@ export default function Leads() {
                       <SelectValue placeholder="Select status" />
                     </SelectTrigger>
                     <SelectContent>
-                      {pipelineColumns.map((option) => (
+                      {pipelineColumnsWithMissing.map((option) => (
                         <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                       ))}
                     </SelectContent>
@@ -617,6 +729,11 @@ export default function Leads() {
           </Dialog>
         </div>
       </div>
+      {missingPipelineStatuses.length ? (
+        <div className="mt-3 rounded-md border bg-amber-50 text-amber-950 px-4 py-3 text-sm">
+          Some leads are in statuses not shown in your pipeline config: {missingPipelineStatuses.join(", ")}
+        </div>
+      ) : null}
 
       <Tabs defaultValue="list" className="mt-6">
         <TabsList>
@@ -650,7 +767,7 @@ export default function Leads() {
                     <TableCell>{lead.ownerName}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className={getStatusBadgeColor(lead.status)}>
-                        {pipelineColumns.find((s) => s.value === lead.status)?.label || lead.status}
+                        {pipelineColumnsWithMissing.find((s) => s.value === lead.status)?.label || lead.status}
                       </Badge>
                     </TableCell>
                     <TableCell>{lead.relasScore || "—"}</TableCell>
@@ -753,7 +870,7 @@ export default function Leads() {
 
         <TabsContent value="pipeline" className="mt-4">
           <PipelineBoard
-            columns={pipelineColumns}
+            columns={pipelineColumnsWithMissing}
             items={filteredLeads}
             getId={(lead: any) => lead.id}
             getStatus={(lead: any) => lead.status}
@@ -761,7 +878,7 @@ export default function Leads() {
             renderItem={(lead: any) => (
               <LeadPipelineCard
                 lead={lead}
-                columns={pipelineColumns}
+                columns={pipelineColumnsWithMissing}
                 onUpdateStatus={(leadId, status) => updateMutation.mutate({ id: leadId, data: { status } })}
                 onAddNote={(l) => {
                   setNoteLead(l);
@@ -800,7 +917,7 @@ export default function Leads() {
             <div className="mt-6 space-y-4">
               <div className="flex items-center justify-between">
                 <Badge variant="outline" className={getStatusBadgeColor(selectedLead.status)}>
-                  {pipelineColumns.find((s) => s.value === selectedLead.status)?.label || selectedLead.status}
+                  {pipelineColumnsWithMissing.find((s) => s.value === selectedLead.status)?.label || selectedLead.status}
                 </Badge>
                 <div className="text-sm text-muted-foreground">Score: {selectedLead.relasScore || "—"}</div>
               </div>
@@ -1016,7 +1133,7 @@ export default function Leads() {
                     <SelectValue placeholder="Select status" />
                   </SelectTrigger>
                   <SelectContent>
-                    {pipelineColumns.map((option) => (
+                    {pipelineColumnsWithMissing.map((option) => (
                       <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
                     ))}
                   </SelectContent>
