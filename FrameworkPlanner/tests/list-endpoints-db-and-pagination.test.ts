@@ -69,7 +69,7 @@ describe("List endpoints DB and pagination handling", () => {
 
     const res = await request(app).get("/api/leads?limit=abc&offset=-10");
     expect(res.status).toBe(200);
-    expect(received).toEqual({ limit: undefined, offset: 0 });
+    expect(received).toEqual({ limit: 50, offset: 0 });
     expect(Array.isArray(res.body?.items)).toBe(true);
     expect(typeof res.body?.total).toBe("number");
   });

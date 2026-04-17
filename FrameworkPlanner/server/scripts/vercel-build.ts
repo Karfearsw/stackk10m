@@ -1,28 +1,38 @@
 import { spawnSync } from "node:child_process";
 import { applyMigrations } from "./apply-migrations.js";
 
-async function run() {
-  const raw = String(process.env.AUTO_APPLY_MIGRATIONS ?? "").trim().toLowerCase();
-  const explicit =
-    raw === "true" ? true :
-    raw === "false" ? false :
-    null;
+function parseBoolEnv(name: string): boolean | null {
+  const raw = String(process.env[name] ?? "").trim().toLowerCase();
+  if (raw === "true" || raw === "1" || raw === "yes" || raw === "on") return true;
+  if (raw === "false" || raw === "0" || raw === "no" || raw === "off") return false;
+  return null;
+}
 
-  const isVercel = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
-  const shouldApply = explicit ?? isVercel;
+function isQuotaExceededError(e: any): boolean {
+  const code = String(e?.code || "");
+  const msg = String(e?.message || e || "");
+  return code === "XX000" || /exceeded the .*quota/i.test(msg);
+}
+
+async function run() {
+  const explicit = parseBoolEnv("AUTO_APPLY_MIGRATIONS");
+  const skip = parseBoolEnv("SKIP_DB_MIGRATIONS") === true;
+  const vercelEnv = String(process.env.VERCEL_ENV || "").trim().toLowerCase();
+
+  const shouldApply = skip ? false : explicit !== null ? explicit : vercelEnv === "production";
 
   if (shouldApply) {
     try {
       await applyMigrations();
     } catch (e: any) {
-      const msg = String(e?.message || e || "");
-      if (/exceeded the data transfer quota/i.test(msg)) {
+      if (isQuotaExceededError(e)) {
         console.error(
           [
             "",
-            "Database is rejecting queries because the transfer quota has been exceeded.",
-            "Fix: upgrade/increase Neon transfer quota (primary), or wait for quota reset if applicable.",
+            "Database is rejecting queries because a Neon quota has been exceeded.",
+            "Fix: reduce usage / wait for quota reset / upgrade Neon plan.",
             "Optional: set AUTO_APPLY_MIGRATIONS=false to bypass migrations during build (not recommended for production).",
+            "Escape hatch: set SKIP_DB_MIGRATIONS=true for frontend-only deploys.",
             "",
           ].join("\n"),
         );
@@ -32,7 +42,15 @@ async function run() {
       throw e;
     }
   } else {
-    console.log("Skipping migrations (set AUTO_APPLY_MIGRATIONS=true to enable, false to force-disable)");
+    console.log(
+      [
+        "Skipping migrations.",
+        "Controls:",
+        "- AUTO_APPLY_MIGRATIONS=true|false (explicit override)",
+        "- SKIP_DB_MIGRATIONS=true (always skip)",
+        "- Default: runs only for VERCEL_ENV=production",
+      ].join(" "),
+    );
   }
 
   const npmCli = process.env.npm_execpath;

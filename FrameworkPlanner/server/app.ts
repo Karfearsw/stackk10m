@@ -78,6 +78,47 @@ if (process.env.NODE_ENV === 'production' && !process.env.EMPLOYEE_ACCESS_CODE) 
 // Use PostgreSQL-backed session store for production-ready persistence
 const PgSession = connectPgSimple(session);
 
+export function installErrorHandling(target: Express) {
+  if (process.env.SENTRY_DSN) {
+    Sentry.setupExpressErrorHandler(target);
+  }
+  target.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+    const rawMessage = String(err?.message || "Internal Server Error");
+    const quotaExceeded = /exceeded the .*quota/i.test(rawMessage) || String(err?.code || "") === "XX000";
+    const status = quotaExceeded ? 503 : err.status || err.statusCode || 500;
+    const message = quotaExceeded ? "Database is over quota" : rawMessage;
+    const requestId =
+      (res.locals as any).requestId ||
+      (req.headers["x-request-id"] as string) ||
+      null;
+
+    if (process.env.NODE_ENV === "production") {
+      console.error(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "http_error",
+          requestId,
+          method: req.method,
+          path: req.path,
+          message: String(message),
+          code: err?.code ? String(err.code) : null,
+          status,
+        }),
+      );
+    } else {
+      console.error(err);
+    }
+
+    const clientMessage =
+      process.env.NODE_ENV === "production" && status >= 500 && !quotaExceeded
+        ? "Internal Server Error"
+        : message;
+    const payload: any = { message: clientMessage, requestId };
+    if (quotaExceeded) payload.code = "DB_QUOTA_EXCEEDED";
+    res.status(status).json(payload);
+  });
+}
+
 app.set("trust proxy", 1);
 
 const hasDatabaseUrl = Boolean(databaseUrl() && String(databaseUrl()).trim());
@@ -282,44 +323,7 @@ export default async function runApp(
     res.send(text);
   });
 
-  if (process.env.SENTRY_DSN) {
-    Sentry.setupExpressErrorHandler(app);
-  }
-  app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
-    const rawMessage = String(err?.message || "Internal Server Error");
-    const quotaExceeded = /exceeded the data transfer quota/i.test(rawMessage);
-    const status = quotaExceeded ? 503 : err.status || err.statusCode || 500;
-    const message = quotaExceeded ? "Database is over quota" : rawMessage;
-    const requestId =
-      (res.locals as any).requestId ||
-      (req.headers["x-request-id"] as string) ||
-      null;
-
-    if (process.env.NODE_ENV === "production") {
-      console.error(
-        JSON.stringify({
-          ts: new Date().toISOString(),
-          event: "http_error",
-          requestId,
-          method: req.method,
-          path: req.path,
-          message: String(message),
-          code: err?.code ? String(err.code) : null,
-          status,
-        }),
-      );
-    } else {
-      console.error(err);
-    }
-
-    const clientMessage =
-      process.env.NODE_ENV === "production" && status >= 500 && !quotaExceeded
-        ? "Internal Server Error"
-        : message;
-    const payload: any = { message: clientMessage, requestId };
-    if (quotaExceeded) payload.code = "DB_QUOTA_EXCEEDED";
-    res.status(status).json(payload);
-  });
+  installErrorHandling(app);
 
   // importantly run the final setup after setting up all the other routes so
   // the catch-all route doesn't interfere with the other routes
