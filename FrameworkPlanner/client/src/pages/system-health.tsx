@@ -14,6 +14,15 @@ export default function SystemHealthPage() {
     },
   });
 
+  const { data: version } = useQuery<any>({
+    queryKey: ["/api/version"],
+    queryFn: async () => {
+      const res = await fetch("/api/version", { credentials: "include" });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+  });
+
   const copyJson = async () => {
     try {
       await navigator.clipboard.writeText(JSON.stringify(data, null, 2));
@@ -44,6 +53,17 @@ export default function SystemHealthPage() {
 
       {data && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><Server className="w-5 h-5" /> Version</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <div className="flex justify-between"><span>App</span><span className="font-medium">v{String(version?.version || "0.0.0")}</span></div>
+              <div className="flex justify-between"><span>Commit</span><span className="text-muted-foreground">{version?.commitSha ? String(version.commitSha).slice(0, 7) : "unknown"}</span></div>
+              <div className="flex justify-between"><span>Build</span><span className="text-muted-foreground">{version?.buildId ? String(version.buildId) : "unknown"}</span></div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Server className="w-5 h-5" /> Environment</CardTitle>
