@@ -62,6 +62,10 @@ export function Sidebar() {
     enabled: !!user?.id,
   });
 
+  const { data: versionInfo } = useQuery<any>({
+    queryKey: ["/api/version"],
+  });
+
   const { data: goals = [] } = useQuery<any[]>({
     queryKey: [`/api/users/${user?.id}/goals`],
     enabled: !!user?.id,
@@ -313,6 +317,13 @@ export function Sidebar() {
               <LogOut className="h-5 w-5" />
               Sign Out
             </button>
+          ) : null}
+
+          {showLabels ? (
+            <div className="mt-3 text-[11px] text-sidebar-foreground/50 truncate">
+              v{String(versionInfo?.version || "0.0.0")}
+              {versionInfo?.commitSha ? ` (${String(versionInfo.commitSha).slice(0, 7)})` : ""}
+            </div>
           ) : null}
         </div>
       </div>

@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import multer from "multer";
+import { createRequire } from "node:module";
 import { storage } from "./storage.js";
 import { db } from "./db.js";
 import { desc, eq, sql, inArray } from "drizzle-orm";
@@ -66,6 +67,15 @@ import { sendResendEmail } from "./services/messaging/resend.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
 import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
+
+const require = createRequire(import.meta.url);
+const packageJson: any = (() => {
+  try {
+    return require("../package.json");
+  } catch {
+    return {};
+  }
+})();
 import { mergeTemplate } from "./services/esign/merge.js";
 import { generateSignedPdfBase64 } from "./services/esign/pdf.js";
 import { getPropertyPhotoSignedUrl, uploadPropertyPhoto, isPropertyPhotoStorageConfigured } from "./media/propertyPhotos.js";
@@ -653,6 +663,20 @@ export async function registerRoutes(
       console.error("Health check failed:", error);
       res.status(500).json({ status: "error", db: "disconnected", message: error.message });
     }
+  });
+
+  app.get("/api/version", async (_req, res) => {
+    const version = String(process.env.APP_VERSION || packageJson?.version || "0.0.0");
+    const commitSha =
+      String(
+        process.env.VERCEL_GIT_COMMIT_SHA ||
+          process.env.COMMIT_SHA ||
+          process.env.GITHUB_SHA ||
+          process.env.RENDER_GIT_COMMIT ||
+          "",
+      ) || null;
+    const buildId = String(process.env.VERCEL_BUILD_ID || process.env.BUILD_ID || "") || null;
+    res.json({ version, commitSha, buildId, nodeEnv: process.env.NODE_ENV || null });
   });
 
   app.get("/api/address/suggest", async (req, res) => {
