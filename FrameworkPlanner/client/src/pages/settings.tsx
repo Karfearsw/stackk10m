@@ -26,6 +26,10 @@ function SettingsContent() {
     new: "",
     confirm: "",
   });
+  const [createTeamName, setCreateTeamName] = useState("");
+  const [joinInviteCode, setJoinInviteCode] = useState("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("member");
 
   const [location, setLocation] = useLocation();
 
@@ -57,10 +61,29 @@ function SettingsContent() {
     queryKey: [`/api/users/${user!.id}/notification-preferences`],
   });
 
-  // Fetch team members
-  const { data: teamMembers = [], isLoading: teamLoading } = useQuery<any[]>({
-    queryKey: [`/api/users`],
+  const { data: myTeams = [], isLoading: myTeamsLoading } = useQuery<any[]>({
+    queryKey: ["/api/teams/my"],
+    enabled: !!user?.id,
   });
+
+  const { data: activeTeamResp, isLoading: activeTeamLoading } = useQuery<any>({
+    queryKey: ["/api/teams/active"],
+    enabled: !!user?.id,
+  });
+
+  const activeTeamId = typeof activeTeamResp?.teamId === "number" ? activeTeamResp.teamId : null;
+
+  const { data: teamMembers = [], isLoading: teamMembersLoading } = useQuery<any[]>({
+    queryKey: ["/api/teams", activeTeamId, "members"],
+    enabled: !!activeTeamId,
+  });
+
+  const { data: teamActivity = [], isLoading: teamActivityLoading } = useQuery<any[]>({
+    queryKey: ["/api/teams", activeTeamId, "activity"],
+    enabled: !!activeTeamId,
+  });
+
+  const teamLoading = myTeamsLoading || activeTeamLoading || teamMembersLoading || teamActivityLoading;
 
   // Fetch goals
   const { data: goals = [], isLoading: goalsLoading } = useQuery<any[]>({
@@ -257,6 +280,147 @@ function SettingsContent() {
     },
     onError: (error: any) => {
       toast.error(error.message || 'Failed to update password');
+    },
+  });
+
+  const myMembership = (teamMembers || []).find((m: any) => Number(m?.user?.id || m?.userId || 0) === Number(user?.id || 0));
+  const myTeamRole = String(myMembership?.role || "").toLowerCase();
+  const canManageTeam = Boolean(user?.isSuperAdmin) || myTeamRole === "owner" || myTeamRole === "admin";
+
+  const setActiveTeamMutation = useMutation({
+    mutationFn: async (teamId: number) => {
+      const res = await fetch(`/api/teams/active`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ teamId }),
+      });
+      if (!res.ok) throw new Error("Failed to set active team");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/teams/active"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teams/my"] });
+      toast.success("Active team updated");
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || "Failed to update active team");
+    },
+  });
+
+  const createTeamMutation = useMutation({
+    mutationFn: async (data: { name: string; description?: string }) => {
+      const res = await fetch(`/api/teams`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.message || "Failed to create team");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      setCreateTeamName("");
+      queryClient.invalidateQueries({ queryKey: ["/api/teams/my"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teams/active"] });
+      toast.success("Team created");
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || "Failed to create team");
+    },
+  });
+
+  const joinTeamMutation = useMutation({
+    mutationFn: async (inviteCode: string) => {
+      const res = await fetch(`/api/teams/join`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ inviteCode }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.message || "Failed to join team");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      setJoinInviteCode("");
+      queryClient.invalidateQueries({ queryKey: ["/api/teams/my"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/teams/active"] });
+      toast.success("Joined team");
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || "Failed to join team");
+    },
+  });
+
+  const inviteMemberMutation = useMutation({
+    mutationFn: async (data: { teamId: number; email: string; role: string }) => {
+      const res = await fetch(`/api/teams/${data.teamId}/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: data.email, role: data.role }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.message || "Failed to invite member");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      setInviteEmail("");
+      setInviteRole("member");
+      if (activeTeamId) queryClient.invalidateQueries({ queryKey: ["/api/teams", activeTeamId, "members"] });
+      toast.success("Member invited");
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || "Failed to invite member");
+    },
+  });
+
+  const updateMemberMutation = useMutation({
+    mutationFn: async (data: { id: number; patch: any }) => {
+      const res = await fetch(`/api/team-members/${data.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(data.patch),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.message || "Failed to update member");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      if (activeTeamId) queryClient.invalidateQueries({ queryKey: ["/api/teams", activeTeamId, "members"] });
+      toast.success("Member updated");
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || "Failed to update member");
+    },
+  });
+
+  const removeMemberMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/team-members/${id}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.message || "Failed to remove member");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      if (activeTeamId) queryClient.invalidateQueries({ queryKey: ["/api/teams", activeTeamId, "members"] });
+      toast.success("Member removed");
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || "Failed to remove member");
     },
   });
 
@@ -763,38 +927,171 @@ function SettingsContent() {
             <>
               <Card>
                 <CardHeader>
+                  <CardTitle>Teams</CardTitle>
+                  <CardDescription>Join teams, switch active team, and manage membership.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Active team</Label>
+                      <Select
+                        value={activeTeamId ? String(activeTeamId) : ""}
+                        onValueChange={(v) => {
+                          const id = parseInt(v, 10);
+                          if (Number.isFinite(id)) setActiveTeamMutation.mutate(id);
+                        }}
+                      >
+                        <SelectTrigger data-testid="select-active-team">
+                          <SelectValue placeholder="Select a team" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {myTeams.map((t: any) => (
+                            <SelectItem key={t.id} value={String(t.id)}>
+                              {t.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {activeTeamResp?.team?.inviteCode ? (
+                        <div className="text-xs text-muted-foreground break-words">
+                          Invite code: <span className="font-medium">{String(activeTeamResp.team.inviteCode)}</span>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="joinInviteCode">Join by invite code</Label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          id="joinInviteCode"
+                          value={joinInviteCode}
+                          onChange={(e) => setJoinInviteCode(e.target.value)}
+                          placeholder="e.g. a1b2c3d4e5f6"
+                          data-testid="input-join-invite-code"
+                        />
+                        <Button
+                          variant="outline"
+                          onClick={() => joinTeamMutation.mutate(joinInviteCode.trim())}
+                          disabled={!joinInviteCode.trim() || joinTeamMutation.isPending}
+                          data-testid="button-join-team"
+                        >
+                          Join
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="createTeamName">Create team</Label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          id="createTeamName"
+                          value={createTeamName}
+                          onChange={(e) => setCreateTeamName(e.target.value)}
+                          placeholder="Team name"
+                          data-testid="input-create-team-name"
+                        />
+                        <Button
+                          onClick={() => createTeamMutation.mutate({ name: createTeamName.trim() })}
+                          disabled={!createTeamName.trim() || createTeamMutation.isPending}
+                          data-testid="button-create-team"
+                        >
+                          Create
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="inviteEmail">Invite member (active team)</Label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          id="inviteEmail"
+                          value={inviteEmail}
+                          onChange={(e) => setInviteEmail(e.target.value)}
+                          placeholder="member@company.com"
+                          data-testid="input-invite-email"
+                        />
+                        <Select value={inviteRole} onValueChange={setInviteRole}>
+                          <SelectTrigger className="w-[140px]" data-testid="select-invite-role">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="viewer">Viewer</SelectItem>
+                            <SelectItem value="member">Member</SelectItem>
+                            <SelectItem value="admin">Admin</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            if (!activeTeamId) return;
+                            inviteMemberMutation.mutate({ teamId: activeTeamId, email: inviteEmail.trim(), role: inviteRole });
+                          }}
+                          disabled={!activeTeamId || !inviteEmail.trim() || inviteMemberMutation.isPending || !canManageTeam}
+                          data-testid="button-invite-member"
+                        >
+                          Invite
+                        </Button>
+                      </div>
+                      {!canManageTeam ? (
+                        <div className="text-xs text-muted-foreground">Only team admins can invite members.</div>
+                      ) : null}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
                   <CardTitle>Team Members</CardTitle>
                   <CardDescription>Manage your team and their permissions.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {teamMembers.filter((m: any) => m.isActive !== false).length === 0 ? (
+                  {teamMembers.length === 0 ? (
                     <div className="text-center py-8 text-muted-foreground">
                       <Users className="w-12 h-12 mx-auto mb-3 opacity-50" />
                       <p>No team members yet</p>
                       <p className="text-sm mt-1">Start by inviting your first team member</p>
                     </div>
                   ) : (
-                    teamMembers
-                      .filter((m: any) => m.isActive !== false)
-                      .map((member: any, index: number) => (
-                        <div key={member.id} className="flex items-center justify-between border rounded p-3" data-testid={`team-member-${index}`}>
+                    teamMembers.map((member: any, index: number) => {
+                      const u = member?.user || {};
+                      const name = u.firstName || u.lastName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.email;
+                      const isSelf = Number(u.id || 0) === Number(user?.id || 0);
+                      return (
+                        <div key={member.id} className="flex items-center justify-between border rounded p-3 gap-3" data-testid={`team-member-${index}`}>
                           <div className="min-w-0">
-                            <p className="font-medium truncate">
-                              {member.firstName || member.lastName ? `${member.firstName || ""} ${member.lastName || ""}`.trim() : member.email}
-                            </p>
-                            <p className="text-sm text-muted-foreground truncate">
-                              {member.role || "Member"} • Active
-                            </p>
+                            <p className="font-medium truncate">{name}</p>
+                            <p className="text-sm text-muted-foreground truncate">{u.email}</p>
                           </div>
-                          <Button variant="ghost" size="sm" disabled data-testid={`button-remove-member-${index}`}>
-                            Remove
-                          </Button>
+                          <div className="flex items-center gap-2">
+                            <Select
+                              value={String(member.role || "member")}
+                              onValueChange={(value) => updateMemberMutation.mutate({ id: member.id, patch: { role: value } })}
+                              disabled={!canManageTeam || isSelf}
+                            >
+                              <SelectTrigger className="w-[130px]" data-testid={`select-member-role-${index}`}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="viewer">Viewer</SelectItem>
+                                <SelectItem value="member">Member</SelectItem>
+                                <SelectItem value="admin">Admin</SelectItem>
+                                <SelectItem value="owner">Owner</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => removeMemberMutation.mutate(member.id)}
+                              disabled={!canManageTeam || isSelf || removeMemberMutation.isPending}
+                              data-testid={`button-remove-member-${index}`}
+                            >
+                              Remove
+                            </Button>
+                          </div>
                         </div>
-                      ))
+                      );
+                    })
                   )}
-                  <Button className="w-full bg-primary hover:bg-primary/90 text-white mt-4" data-testid="button-add-team-member">
-                    Add Team Member
-                  </Button>
                 </CardContent>
               </Card>
 
@@ -804,9 +1101,20 @@ function SettingsContent() {
                   <CardDescription>Recent team activity and changes.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-3">
-                    <p className="text-sm text-muted-foreground">No recent activity</p>
-                  </div>
+                  {teamActivity.length ? (
+                    <div className="space-y-3">
+                      {teamActivity.slice(0, 20).map((a: any) => (
+                        <div key={a.id} className="border rounded p-3">
+                          <div className="text-sm font-medium">{String(a.action || "")}</div>
+                          <div className="text-sm text-muted-foreground break-words">{String(a.description || "")}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <p className="text-sm text-muted-foreground">No recent activity</p>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </>

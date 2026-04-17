@@ -113,10 +113,19 @@ export default function TasksPage() {
     enabled: !!user,
   });
 
-  const { data: users = [] } = useQuery<User[]>({
-    queryKey: ["/api/users"],
+  const { data: activeTeamResp } = useQuery<any>({
+    queryKey: ["/api/teams/active"],
     enabled: !!user,
   });
+
+  const activeTeamId = typeof activeTeamResp?.teamId === "number" ? activeTeamResp.teamId : null;
+
+  const { data: teamMembers = [] } = useQuery<any[]>({
+    queryKey: ["/api/teams", activeTeamId, "members"],
+    enabled: !!activeTeamId,
+  });
+
+  const users = useMemo(() => (Array.isArray(teamMembers) ? teamMembers.map((m: any) => m?.user).filter(Boolean) : []), [teamMembers]);
 
   const tasks = useMemo(() => {
     const items = list?.items || [];

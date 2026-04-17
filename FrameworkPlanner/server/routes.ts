@@ -143,6 +143,68 @@ async function requireAuth(req: any, res: any) {
   return user;
 }
 
+function teamRoleRank(role: unknown) {
+  const r = String(role || "").trim().toLowerCase();
+  if (r === "owner") return 4;
+  if (r === "admin") return 3;
+  if (r === "member") return 2;
+  if (r === "viewer") return 1;
+  return 0;
+}
+
+async function requireTeamMembership(req: any, res: any, input: { teamId: number; minRole?: "viewer" | "member" | "admin" | "owner" }) {
+  const user = await requireAuth(req, res);
+  if (!user) return null;
+  if (user.isSuperAdmin) return { user, membership: { role: "owner" } as any };
+  const membership = await storage.getTeamMemberByTeamAndUser(input.teamId, user.id);
+  if (!membership || String(membership.status || "").toLowerCase() !== "active") {
+    res.status(403).json({ message: "Forbidden" });
+    return null;
+  }
+  const min = input.minRole ? teamRoleRank(input.minRole) : 1;
+  if (teamRoleRank(membership.role) < min) {
+    res.status(403).json({ message: "Forbidden" });
+    return null;
+  }
+  return { user, membership };
+}
+
+async function getOrInitActiveTeamId(req: any, userId: number): Promise<number | null> {
+  try {
+    const active = typeof req.session?.activeTeamId === "number" ? req.session.activeTeamId : null;
+    if (active) {
+      const m = await storage.getTeamMemberByTeamAndUser(active, userId);
+      if (m && String(m.status || "").toLowerCase() === "active") return active;
+    }
+    const teams = await storage.getTeamsForUser(userId);
+    const first = teams?.[0]?.id ? Number(teams[0].id) : null;
+    if (first) req.session.activeTeamId = first;
+    return first;
+  } catch {
+    return null;
+  }
+}
+
+function makeInviteCode() {
+  return crypto.randomBytes(6).toString("hex");
+}
+
+async function requireAssigneeInActiveTeam(req: any, res: any, user: any, assigneeUserId: number) {
+  const teamId = await getOrInitActiveTeamId(req, user.id);
+  if (!teamId) {
+    if (assigneeUserId === user.id) return true;
+    res.status(400).json({ message: "No active team selected" });
+    return false;
+  }
+  if (user.isSuperAdmin) return true;
+  const m = await storage.getTeamMemberByTeamAndUser(teamId, assigneeUserId);
+  if (!m || String(m.status || "").toLowerCase() !== "active") {
+    res.status(400).json({ message: "Assignee is not in your active team" });
+    return false;
+  }
+  return true;
+}
+
 function parseEnvBool(v: unknown): boolean | null {
   if (v === undefined || v === null) return null;
   const s = String(v).trim().toLowerCase();
@@ -789,6 +851,11 @@ export async function registerRoutes(
             if (user) {
                 req.session.userId = user.id;
                 req.session.email = user.email;
+                {
+                  const at = await getOrInitActiveTeamId(req, user.id);
+                  if (at) req.session.activeTeamId = at;
+                  else delete req.session.activeTeamId;
+                }
                 const { passwordHash, ...userWithoutPassword } = user;
                 const token = await issueAuthToken({ sub: String(user.id), email: user.email });
                 void writeAuthAuditLog({
@@ -844,6 +911,11 @@ export async function registerRoutes(
 
       req.session.userId = user.id;
       req.session.email = user.email;
+      {
+        const at = await getOrInitActiveTeamId(req, user.id);
+        if (at) req.session.activeTeamId = at;
+        else delete req.session.activeTeamId;
+      }
 
       const { passwordHash, ...userWithoutPassword } = user;
       const token = await issueAuthToken({ sub: String(user.id), email: user.email });
@@ -932,6 +1004,11 @@ export async function registerRoutes(
 
       req.session.userId = user.id;
       req.session.email = user.email;
+      {
+        const at = await getOrInitActiveTeamId(req, user.id);
+        if (at) req.session.activeTeamId = at;
+        else delete req.session.activeTeamId;
+      }
 
       const { passwordHash, ...userWithoutPassword } = user;
       const token = await issueAuthToken({ sub: String(user.id), email: user.email });
@@ -965,7 +1042,7 @@ export async function registerRoutes(
 
   app.post("/api/auth/signup", async (req, res) => {
     try {
-      const { firstName, lastName, email, password, role = "employee", isSuperAdmin = false, isActive = true, employeeCode } = req.body;
+      const { firstName, lastName, email, password, role = "employee", isSuperAdmin = false, isActive = true, employeeCode, teamInviteCode } = req.body;
       
       if (!firstName || !lastName || !email || !password) {
         return res.status(400).json({ message: "All fields are required" });
@@ -998,6 +1075,26 @@ export async function registerRoutes(
 
       req.session.userId = newUser.id;
       req.session.email = newUser.email;
+
+      const invite = typeof teamInviteCode === "string" ? teamInviteCode.trim() : "";
+      if (invite) {
+        const team = await storage.getTeamByInviteCode(invite);
+        if (!team) return res.status(400).json({ message: "Invalid team invite code" });
+        await storage.createTeamMember({
+          teamId: team.id,
+          userId: newUser.id,
+          role: "member",
+          permissions: null as any,
+          invitedBy: null as any,
+          joinedAt: new Date(),
+          status: "active",
+        } as any);
+        req.session.activeTeamId = team.id;
+      } else {
+        const at = await getOrInitActiveTeamId(req, newUser.id);
+        if (at) req.session.activeTeamId = at;
+        else delete req.session.activeTeamId;
+      }
 
       const { passwordHash: _, ...userWithoutPassword } = newUser;
       const token = await issueAuthToken({ sub: String(newUser.id), email: newUser.email });
@@ -1160,11 +1257,21 @@ export async function registerRoutes(
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const user = await storage.getUserById(userId);
+      if (!user) return res.status(401).json({ message: "Unauthorized" });
       const id = parseInt(req.params.id);
       const leadIdRaw = req.body?.leadId;
       const propertyIdRaw = req.body?.propertyId;
       const leadId = typeof leadIdRaw === "number" ? leadIdRaw : typeof leadIdRaw === "string" ? parseInt(leadIdRaw, 10) : undefined;
       const propertyId = typeof propertyIdRaw === "number" ? propertyIdRaw : typeof propertyIdRaw === "string" ? parseInt(propertyIdRaw, 10) : undefined;
+
+      const assignedToRaw = req.body?.assignedTo;
+      const assignedTo =
+        typeof assignedToRaw === "number" ? assignedToRaw : typeof assignedToRaw === "string" ? parseInt(assignedToRaw, 10) : undefined;
+      if (typeof assignedTo === "number" && Number.isFinite(assignedTo)) {
+        const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
+        if (!ok) return;
+      }
 
       const underwritingJson =
         typeof req.body?.underwritingJson === "string"
@@ -1183,7 +1290,7 @@ export async function registerRoutes(
         underwritingJson,
         leadId: typeof leadId === "number" && Number.isFinite(leadId) ? leadId : undefined,
         propertyId: typeof propertyId === "number" && Number.isFinite(propertyId) ? propertyId : undefined,
-        assignedTo: req.body?.assignedTo,
+        assignedTo,
         assignmentDueAt: req.body?.assignmentDueAt === null ? null : req.body?.assignmentDueAt ? new Date(req.body.assignmentDueAt) : undefined,
         assignmentStatus: req.body?.assignmentStatus,
         updatedBy: userId,
@@ -1505,6 +1612,8 @@ export async function registerRoutes(
       const q = typeof req.query?.q === "string" ? req.query.q : "";
       const status = typeof req.query?.status === "string" ? req.query.status : "";
       const owner = typeof req.query?.owner === "string" ? req.query.owner : "";
+      const assignedToRaw = typeof req.query?.assignedTo === "string" ? req.query.assignedTo : "";
+      const assignedTo = assignedToRaw ? parseInt(assignedToRaw, 10) : undefined;
 
       let createdFrom: Date | undefined = undefined;
       let createdTo: Date | undefined = undefined;
@@ -1519,7 +1628,7 @@ export async function registerRoutes(
         if (!Number.isNaN(d.getTime())) createdTo = d;
       }
 
-      const { items, total } = await storage.listLeads({ q, status, owner, createdFrom, createdTo, limit, offset });
+      const { items, total } = await storage.listLeads({ q, status, owner, assignedTo, createdFrom, createdTo, limit, offset });
       const leadIds = items.map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n) && n > 0);
       const propertyLinks = await storage.getPropertiesBySourceLeadIds(leadIds);
       const bySourceLeadId = new Map<number, number>();
@@ -2351,6 +2460,14 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Lead source is required" });
       }
 
+      const assignedTo = (validated as any).assignedTo;
+      if (typeof assignedTo === "number") {
+        const user = await requireAuth(req, res);
+        if (!user) return;
+        const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
+        if (!ok) return;
+      }
+
       const dedupeKey = computeLeadDedupeKey(validated as any);
 
       try {
@@ -2395,6 +2512,14 @@ export async function registerRoutes(
     try {
       const partial = insertLeadSchema.partial().parse(req.body) as Partial<InsertLead>;
       const id = parseInt(req.params.id);
+
+      const assignedTo = (partial as any).assignedTo;
+      if (typeof assignedTo === "number") {
+        const user = await requireAuth(req, res);
+        if (!user) return;
+        const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
+        if (!ok) return;
+      }
       const before = await storage.getLeadById(id);
       if (before) {
         const merged: any = { ...before, ...(partial as any) };
@@ -2540,7 +2665,9 @@ export async function registerRoutes(
   app.get("/api/opportunities", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
-      const allProperties = await storage.getProperties(limit, offset);
+      const assignedToRaw = typeof req.query?.assignedTo === "string" ? req.query.assignedTo : "";
+      const assignedTo = assignedToRaw ? parseInt(assignedToRaw, 10) : undefined;
+      const allProperties = await storage.getProperties(limit, offset, assignedTo);
       res.json(
         (allProperties || []).map((p: any) => ({
           ...p,
@@ -3075,6 +3202,14 @@ export async function registerRoutes(
       const validated = insertPropertySchema.parse(req.body);
       const dedupeKey = computeOpportunityDedupeKey(validated as any);
 
+      const assignedTo = (validated as any).assignedTo;
+      if (typeof assignedTo === "number") {
+        const user = await requireAuth(req, res);
+        if (!user) return;
+        const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
+        if (!ok) return;
+      }
+
       try {
         const dupRows: any = await db.execute(sql`
           SELECT id FROM properties
@@ -3108,6 +3243,14 @@ export async function registerRoutes(
     try {
       const partial = insertPropertySchema.partial().parse(req.body);
       const id = parseInt(req.params.id);
+
+      const assignedTo = (partial as any).assignedTo;
+      if (typeof assignedTo === "number") {
+        const user = await requireAuth(req, res);
+        if (!user) return;
+        const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
+        if (!ok) return;
+      }
       const before = await storage.getPropertyById(id);
       if (before) {
         const merged: any = { ...(before as any), ...(partial as any) };
@@ -5269,10 +5412,87 @@ export async function registerRoutes(
     }
   });
 
-  // TEAMS ENDPOINTS
+  app.get("/api/teams/my", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const teams = await storage.getTeamsForUser(user.id);
+      res.json(teams);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/teams/active", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const teamId = await getOrInitActiveTeamId(req, user.id);
+      if (!teamId) return res.json({ teamId: null, team: null });
+      const team = await storage.getTeamById(teamId);
+      return res.json({ teamId, team: team || null });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.put("/api/teams/active", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const teamId = typeof req.body?.teamId === "number" ? req.body.teamId : parseInt(String(req.body?.teamId || ""), 10);
+      if (!Number.isFinite(teamId) || teamId <= 0) return res.status(400).json({ message: "Invalid teamId" });
+      if (!user.isSuperAdmin) {
+        const m = await storage.getTeamMemberByTeamAndUser(teamId, user.id);
+        if (!m || String(m.status || "").toLowerCase() !== "active") return res.status(403).json({ message: "Forbidden" });
+      }
+      req.session.activeTeamId = teamId;
+      const team = await storage.getTeamById(teamId);
+      return res.json({ teamId, team: team || null });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/teams/join", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const inviteCode = String(req.body?.inviteCode || "").trim();
+      if (!inviteCode) return res.status(400).json({ message: "Missing inviteCode" });
+      const team = await storage.getTeamByInviteCode(inviteCode);
+      if (!team) return res.status(404).json({ message: "Team not found" });
+      const existing = await storage.getTeamMemberByTeamAndUser(team.id, user.id);
+      if (!existing) {
+        await storage.createTeamMember({
+          teamId: team.id,
+          userId: user.id,
+          role: "member",
+          permissions: null as any,
+          invitedBy: null as any,
+          joinedAt: new Date(),
+          status: "active",
+        } as any);
+        await storage.createTeamActivityLog({
+          teamId: team.id,
+          userId: user.id,
+          action: "team_joined",
+          description: `${user.email} joined`,
+          metadata: null as any,
+        } as any);
+      }
+      if (!req.session.activeTeamId) req.session.activeTeamId = team.id;
+      res.json({ team });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get("/api/teams", async (req, res) => {
     try {
-      const teams = await storage.getTeams();
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const teams = await storage.getTeamsForUser(user.id);
       res.json(teams);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -5281,7 +5501,10 @@ export async function registerRoutes(
 
   app.get("/api/teams/:id", async (req, res) => {
     try {
-      const team = await storage.getTeamById(parseInt(req.params.id));
+      const teamId = parseInt(req.params.id);
+      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "viewer" });
+      if (!ctx) return;
+      const team = await storage.getTeamById(teamId);
       if (!team) return res.status(404).json({ message: "Team not found" });
       res.json(team);
     } catch (error: any) {
@@ -5291,8 +5514,28 @@ export async function registerRoutes(
 
   app.post("/api/teams", async (req, res) => {
     try {
-      const validated = insertTeamSchema.parse(req.body);
-      const team = await storage.createTeam(validated);
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const name = String(req.body?.name || "").trim();
+      if (!name) return res.status(400).json({ message: "Missing team name" });
+      const inviteCode = makeInviteCode();
+      const team = await storage.createTeam({
+        name,
+        description: typeof req.body?.description === "string" ? req.body.description : null,
+        ownerId: user.id,
+        inviteCode,
+        isActive: true,
+      } as any);
+      await storage.createTeamMember({
+        teamId: team.id,
+        userId: user.id,
+        role: "owner",
+        permissions: null as any,
+        invitedBy: user.id,
+        joinedAt: new Date(),
+        status: "active",
+      } as any);
+      req.session.activeTeamId = team.id;
       res.status(201).json(team);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -5301,8 +5544,14 @@ export async function registerRoutes(
 
   app.patch("/api/teams/:id", async (req, res) => {
     try {
+      const teamId = parseInt(req.params.id);
+      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
+      if (!ctx) return;
       const partial = insertTeamSchema.partial().parse(req.body);
-      const team = await storage.updateTeam(parseInt(req.params.id), partial);
+      const patch: any = { ...partial };
+      delete patch.ownerId;
+      delete patch.inviteCode;
+      const team = await storage.updateTeam(teamId, patch);
       res.json(team);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -5311,26 +5560,69 @@ export async function registerRoutes(
 
   app.delete("/api/teams/:id", async (req, res) => {
     try {
-      await storage.deleteTeam(parseInt(req.params.id));
+      const teamId = parseInt(req.params.id);
+      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
+      if (!ctx) return;
+      await storage.deleteTeam(teamId);
       res.json({ message: "Team deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
 
-  // TEAM MEMBERS ENDPOINTS
   app.get("/api/teams/:teamId/members", async (req, res) => {
     try {
-      const members = await storage.getTeamMembers(parseInt(req.params.teamId));
+      const teamId = parseInt(req.params.teamId);
+      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "viewer" });
+      if (!ctx) return;
+      const members = await storage.getTeamMembersWithUsers(teamId);
       res.json(members);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
 
+  app.post("/api/teams/:teamId/invite", async (req, res) => {
+    try {
+      const teamId = parseInt(req.params.teamId);
+      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
+      if (!ctx) return;
+      const email = String(req.body?.email || "").trim().toLowerCase();
+      if (!email) return res.status(400).json({ message: "Missing email" });
+      const role = String(req.body?.role || "member").trim().toLowerCase();
+      if (teamRoleRank(role) < 1) return res.status(400).json({ message: "Invalid role" });
+      const user = await storage.getUserByEmail(email);
+      if (!user) return res.status(404).json({ message: "User not found" });
+      const existing = await storage.getTeamMemberByTeamAndUser(teamId, user.id);
+      if (existing) return res.json(existing);
+      const member = await storage.createTeamMember({
+        teamId,
+        userId: user.id,
+        role,
+        permissions: null as any,
+        invitedBy: ctx.user.id,
+        joinedAt: new Date(),
+        status: "active",
+      } as any);
+      await storage.createTeamActivityLog({
+        teamId,
+        userId: ctx.user.id,
+        action: "member_invited",
+        description: `${email} invited`,
+        metadata: JSON.stringify({ invitedUserId: user.id, role }),
+      } as any);
+      res.status(201).json(member);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
   app.post("/api/teams/:teamId/members", async (req, res) => {
     try {
-      const validated = insertTeamMemberSchema.parse({ ...req.body, teamId: parseInt(req.params.teamId) });
+      const teamId = parseInt(req.params.teamId);
+      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
+      if (!ctx) return;
+      const validated = insertTeamMemberSchema.parse({ ...req.body, teamId });
       const member = await storage.createTeamMember(validated);
       res.status(201).json(member);
     } catch (error: any) {
@@ -5340,6 +5632,13 @@ export async function registerRoutes(
 
   app.patch("/api/team-members/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const existing = await storage.getTeamMemberById(parseInt(req.params.id));
+      if (!existing) return res.status(404).json({ message: "Not found" });
+      const teamId = Number(existing.teamId);
+      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
+      if (!ctx) return;
       const partial = insertTeamMemberSchema.partial().parse(req.body);
       const member = await storage.updateTeamMember(parseInt(req.params.id), partial);
       res.json(member);
@@ -5350,6 +5649,11 @@ export async function registerRoutes(
 
   app.delete("/api/team-members/:id", async (req, res) => {
     try {
+      const existing = await storage.getTeamMemberById(parseInt(req.params.id));
+      if (!existing) return res.status(404).json({ message: "Not found" });
+      const teamId = Number(existing.teamId);
+      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
+      if (!ctx) return;
       await storage.deleteTeamMember(parseInt(req.params.id));
       res.json({ message: "Team member removed" });
     } catch (error: any) {
@@ -5357,11 +5661,13 @@ export async function registerRoutes(
     }
   });
 
-  // TEAM ACTIVITY LOGS ENDPOINTS
   app.get("/api/teams/:teamId/activity", async (req, res) => {
     try {
+      const teamId = parseInt(req.params.teamId);
+      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "viewer" });
+      if (!ctx) return;
       const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-      const logs = await storage.getTeamActivityLogs(parseInt(req.params.teamId), limit);
+      const logs = await storage.getTeamActivityLogs(teamId, limit);
       res.json(logs);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -5370,8 +5676,11 @@ export async function registerRoutes(
 
   app.post("/api/teams/:teamId/activity", async (req, res) => {
     try {
-      const validated = insertTeamActivityLogSchema.parse({ ...req.body, teamId: parseInt(req.params.teamId) });
-      const log = await storage.createTeamActivityLog(validated);
+      const teamId = parseInt(req.params.teamId);
+      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
+      if (!ctx) return;
+      const validated = insertTeamActivityLogSchema.parse({ ...req.body, teamId });
+      const log = await storage.createTeamActivityLog({ ...validated, userId: ctx.user.id } as any);
       res.status(201).json(log);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -5504,6 +5813,11 @@ export async function registerRoutes(
       });
 
       const q = schema.parse(req.query || {});
+
+      if (typeof q.assignedToUserId === "number") {
+        const ok = await requireAssigneeInActiveTeam(req, res, user, q.assignedToUserId);
+        if (!ok) return;
+      }
       const out = await storage.listTasks(
         { userId: user.id, isManager: isManagerUser(user) },
         {
@@ -5538,6 +5852,9 @@ export async function registerRoutes(
       const assignedToUserId =
         typeof validated.assignedToUserId === "number" ? validated.assignedToUserId : user.id;
 
+      const ok = await requireAssigneeInActiveTeam(req, res, user, assignedToUserId);
+      if (!ok) return;
+
       const task = await createTask({
         ...validated,
         assignedToUserId,
@@ -5562,6 +5879,11 @@ export async function registerRoutes(
 
       const patchSchema = insertTaskSchema.partial().omit({ createdBy: true } as any);
       const patch: any = patchSchema.parse(req.body || {});
+
+      if (typeof patch.assignedToUserId === "number") {
+        const ok = await requireAssigneeInActiveTeam(req, res, user, patch.assignedToUserId);
+        if (!ok) return;
+      }
       const updated = await storage.updateTask(id, patch);
       res.json(updated);
     } catch (error: any) {

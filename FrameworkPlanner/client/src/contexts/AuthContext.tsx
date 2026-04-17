@@ -26,6 +26,7 @@ interface AuthContextType {
     email: string;
     password: string;
     employeeCode: string;
+    teamInviteCode?: string;
   }) => Promise<void>;
   logout: () => Promise<void>;
   isAuthenticated: boolean;
@@ -143,7 +144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLocation('/');
   };
 
-  const signup: AuthContextType['signup'] = async ({ firstName, lastName, email, password, employeeCode }) => {
+  const signup: AuthContextType['signup'] = async ({ firstName, lastName, email, password, employeeCode, teamInviteCode }) => {
     const res = await fetch('/api/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -153,6 +154,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         email,
         password,
         employeeCode,
+        teamInviteCode,
         role: 'employee',
         isSuperAdmin: false,
         isActive: true,

@@ -96,11 +96,13 @@ function PropertyImageCarousel({ images }: { images: string[] }) {
 function PropertyForm({ 
   property, 
   statusOptions,
+  users,
   onClose, 
   onSubmit 
 }: { 
   property?: Property; 
   statusOptions: Array<{ value: string; label: string }>;
+  users: Array<any>;
   onClose: () => void; 
   onSubmit: (data: any) => void;
 }) {
@@ -120,6 +122,7 @@ function PropertyForm({
     occupancy: property?.occupancy || "unknown",
     arv: property?.arv?.toString() || "",
     repairCost: property?.repairCost?.toString() || "",
+    assignedTo: property?.assignedTo ? String(property.assignedTo) : "",
     images: property?.images || [] as string[],
   });
   const [addressSearch, setAddressSearch] = useState("");
@@ -190,6 +193,7 @@ function PropertyForm({
       occupancy: formData.occupancy || null,
       arv: formData.arv || null,
       repairCost: formData.repairCost || null,
+      assignedTo: formData.assignedTo ? parseInt(formData.assignedTo, 10) : null,
       images: formData.images,
     });
   };
@@ -331,6 +335,23 @@ function PropertyForm({
               {statusOptions.map((opt) => (
                 <SelectItem key={opt.value} value={opt.value}>
                   {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="assignedTo">Assigned To</Label>
+          <Select value={formData.assignedTo} onValueChange={(value) => setFormData({ ...formData, assignedTo: value })}>
+            <SelectTrigger data-testid="select-property-assigned-to">
+              <SelectValue placeholder="Unassigned" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="">Unassigned</SelectItem>
+              {users.map((u: any) => (
+                <SelectItem key={u.id} value={String(u.id)}>
+                  {u.firstName || u.lastName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.email}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -487,6 +508,20 @@ export default function Opportunities() {
       return res.json();
     }
   });
+
+  const { data: activeTeamResp } = useQuery<any>({
+    queryKey: ["/api/teams/active"],
+    enabled: !!user,
+  });
+
+  const activeTeamId = typeof activeTeamResp?.teamId === "number" ? activeTeamResp.teamId : null;
+
+  const { data: teamMembers = [] } = useQuery<any[]>({
+    queryKey: ["/api/teams", activeTeamId, "members"],
+    enabled: !!activeTeamId,
+  });
+
+  const teamUsers = useMemo(() => (Array.isArray(teamMembers) ? teamMembers.map((m: any) => m?.user).filter(Boolean) : []), [teamMembers]);
 
   const { data: opportunityPipelineConfig } = useQuery({
     queryKey: ["/api/pipeline-config", "opportunity"],
@@ -686,6 +721,7 @@ export default function Opportunities() {
               <PropertyForm
                 property={editingProperty || undefined}
                 statusOptions={pipelineColumns}
+                users={teamUsers}
                 onClose={() => {
                   setIsDialogOpen(false);
                   setEditingProperty(null);

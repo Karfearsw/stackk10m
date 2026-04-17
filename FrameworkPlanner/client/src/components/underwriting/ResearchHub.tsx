@@ -335,8 +335,8 @@ export function ResearchHub(props: {
       </CardHeader>
 
       <CardContent className="pt-0 h-[calc(100%-4.25rem)]">
-        <div className="h-full grid grid-cols-1 lg:grid-cols-12 gap-3">
-          <div className="lg:col-span-9 min-h-0 flex flex-col">
+        <div className="h-full grid grid-cols-1 xl:grid-cols-12 gap-3 overflow-hidden">
+          <div className="xl:col-span-9 min-h-0 min-w-0 flex flex-col">
             <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="flex flex-col min-h-0">
               <TabsList className="justify-start flex-wrap h-auto">
                 <TabsTrigger value="browser">Browser</TabsTrigger>
@@ -767,7 +767,7 @@ export function ResearchHub(props: {
             </Tabs>
           </div>
 
-          <div className="lg:col-span-3 min-h-0">
+          <div className="xl:col-span-3 min-h-0 min-w-0">
             <Card className="h-full">
               <CardHeader className="pb-3">
                 <CardTitle className="text-base">Quick Links</CardTitle>

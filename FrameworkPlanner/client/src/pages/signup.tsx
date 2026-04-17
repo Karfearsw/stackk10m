@@ -17,6 +17,7 @@ export default function Signup() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [employeeCode, setEmployeeCode] = useState('');
+  const [teamInviteCode, setTeamInviteCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
   const VALID_EMPLOYEE_CODE = "3911";
@@ -47,7 +48,7 @@ export default function Signup() {
         return;
       }
 
-      await signup({ firstName, lastName, email, password, employeeCode });
+      await signup({ firstName, lastName, email, password, employeeCode, teamInviteCode: teamInviteCode.trim() || undefined });
       toast.success('Account created! Redirecting...');
       setTimeout(() => setLocation('/'), 500);
     } catch (error: any) {
@@ -133,6 +134,19 @@ export default function Signup() {
               <p className="text-xs text-muted-foreground">
                 Ask your manager for the employee access code
               </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="teamInviteCode">Team Invite Code (optional)</Label>
+              <Input
+                id="teamInviteCode"
+                type="text"
+                placeholder="Enter invite code to join a team"
+                value={teamInviteCode}
+                onChange={(e) => setTeamInviteCode(e.target.value)}
+                disabled={isLoading}
+                data-testid="input-signup-team-invite-code"
+              />
             </div>
 
             <div className="space-y-2">

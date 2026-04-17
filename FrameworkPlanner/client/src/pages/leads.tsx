@@ -117,7 +117,8 @@ export default function Leads() {
     ownerEmail: "",
     estimatedValue: "",
     source: "",
-    status: "new"
+    status: "new",
+    assignedTo: ""
   });
 
   const pageSize = 200;
@@ -226,6 +227,19 @@ export default function Leads() {
     },
   });
 
+  const { data: activeTeamResp } = useQuery<any>({
+    queryKey: ["/api/teams/active"],
+  });
+
+  const activeTeamId = typeof activeTeamResp?.teamId === "number" ? activeTeamResp.teamId : null;
+
+  const { data: teamMembers = [] } = useQuery<any[]>({
+    queryKey: ["/api/teams", activeTeamId, "members"],
+    enabled: !!activeTeamId,
+  });
+
+  const teamUsers = useMemo(() => (Array.isArray(teamMembers) ? teamMembers.map((m: any) => m?.user).filter(Boolean) : []), [teamMembers]);
+
   const leadSourceOptionValues = useMemo(() => {
     return new Set((leadSourceOptions || []).map((o: any) => String(o?.value || "")));
   }, [leadSourceOptions]);
@@ -238,6 +252,7 @@ export default function Leads() {
     setEditingLead({
       ...lead,
       estimatedValue: lead?.estimatedValue || "",
+      assignedTo: lead?.assignedTo ? String(lead.assignedTo) : "",
       source: shouldUseCustom ? CUSTOM_SOURCE_VALUE : rawSource,
     });
   };
@@ -259,7 +274,7 @@ export default function Leads() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
-      setNewLead({ address: "", city: "", state: "FL", zipCode: "", ownerName: "", ownerPhone: "", ownerEmail: "", estimatedValue: "", source: "", status: "new" });
+      setNewLead({ address: "", city: "", state: "FL", zipCode: "", ownerName: "", ownerPhone: "", ownerEmail: "", estimatedValue: "", source: "", status: "new", assignedTo: "" });
       setNewLeadOtherSource("");
       setIsAddDialogOpen(false);
       toast({
@@ -384,7 +399,8 @@ export default function Leads() {
       return;
     }
 
-    createMutation.mutate({ ...newLead, source });
+    const assignedTo = newLead.assignedTo ? parseInt(String(newLead.assignedTo), 10) : null;
+    createMutation.mutate({ ...newLead, source, assignedTo: Number.isFinite(assignedTo as any) ? assignedTo : null });
   };
 
   const handleUpdateLead = async () => {
@@ -400,7 +416,11 @@ export default function Leads() {
 
       updateMutation.mutate({
         id: editingLead.id,
-        data: { ...editingLead, source: source || null },
+        data: {
+          ...editingLead,
+          assignedTo: editingLead.assignedTo ? parseInt(String(editingLead.assignedTo), 10) : null,
+          source: source || null,
+        },
       });
     }
   };
@@ -715,6 +735,22 @@ export default function Leads() {
                     <SelectContent>
                       {pipelineColumnsWithMissing.map((option) => (
                         <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="assignedTo" className="text-right">Assigned To</Label>
+                  <Select value={newLead.assignedTo} onValueChange={(value) => setNewLead({ ...newLead, assignedTo: value })}>
+                    <SelectTrigger className="col-span-3" data-testid="select-lead-assigned-to">
+                      <SelectValue placeholder="Unassigned" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">Unassigned</SelectItem>
+                      {teamUsers.map((u: any) => (
+                        <SelectItem key={u.id} value={String(u.id)}>
+                          {u.firstName || u.lastName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.email}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1135,6 +1171,22 @@ export default function Leads() {
                   <SelectContent>
                     {pipelineColumnsWithMissing.map((option) => (
                       <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="edit-assignedTo" className="text-right">Assigned To</Label>
+                <Select value={String(editingLead.assignedTo || "")} onValueChange={(value) => setEditingLead({ ...editingLead, assignedTo: value })}>
+                  <SelectTrigger className="col-span-3" data-testid="select-edit-assigned-to">
+                    <SelectValue placeholder="Unassigned" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Unassigned</SelectItem>
+                    {teamUsers.map((u: any) => (
+                      <SelectItem key={u.id} value={String(u.id)}>
+                        {u.firstName || u.lastName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.email}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

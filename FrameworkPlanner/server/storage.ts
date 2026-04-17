@@ -104,7 +104,7 @@ export interface IStorage {
   getRvmCampaignDrops(campaignId: number, limit?: number): Promise<RvmDrop[]>;
 
   // Properties
-  getProperties(limit?: number, offset?: number): Promise<Property[]>;
+  getProperties(limit?: number, offset?: number, assignedTo?: number): Promise<Property[]>;
   getPropertyById(id: number): Promise<Property | undefined>;
   getPropertyBySourceLeadId(sourceLeadId: number): Promise<Property | undefined>;
   getPropertiesBySourceLeadIds(sourceLeadIds: number[]): Promise<Array<{ id: number; sourceLeadId: number }>>;
@@ -204,12 +204,16 @@ export interface IStorage {
   getTeams(): Promise<Team[]>;
   getTeamById(id: number): Promise<Team | undefined>;
   getTeamsByOwnerId(ownerId: number): Promise<Team[]>;
+  getTeamsForUser(userId: number): Promise<Team[]>;
+  getTeamByInviteCode(inviteCode: string): Promise<Team | undefined>;
   createTeam(team: InsertTeam): Promise<Team>;
   updateTeam(id: number, team: Partial<InsertTeam>): Promise<Team>;
   deleteTeam(id: number): Promise<void>;
 
   // Team Members
   getTeamMembers(teamId: number): Promise<TeamMember[]>;
+  getTeamMembersWithUsers(teamId: number): Promise<any[]>;
+  getTeamMemberByTeamAndUser(teamId: number, userId: number): Promise<TeamMember | undefined>;
   getTeamMemberById(id: number): Promise<TeamMember | undefined>;
   createTeamMember(member: InsertTeamMember): Promise<TeamMember>;
   updateTeamMember(id: number, member: Partial<InsertTeamMember>): Promise<TeamMember>;
@@ -346,6 +350,7 @@ export class DatabaseStorage implements IStorage {
     q?: string;
     status?: string;
     owner?: string;
+    assignedTo?: number;
     createdFrom?: Date;
     createdTo?: Date;
     limit?: number;
@@ -363,6 +368,10 @@ export class DatabaseStorage implements IStorage {
     if (owner) {
       const needle = `%${owner}%`;
       whereParts.push(sql`lower(${leads.ownerName}) LIKE ${needle}`);
+    }
+
+    if (typeof input.assignedTo === "number" && Number.isFinite(input.assignedTo)) {
+      whereParts.push(eq(leads.assignedTo, input.assignedTo));
     }
 
     const qRaw = String(input.q || "").trim().toLowerCase();
@@ -598,8 +607,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Properties
-  async getProperties(limit?: number, offset: number = 0): Promise<Property[]> {
+  async getProperties(limit?: number, offset: number = 0, assignedTo?: number): Promise<Property[]> {
     let q: any = db.select().from(properties);
+    if (typeof assignedTo === "number" && Number.isFinite(assignedTo)) q = q.where(eq(properties.assignedTo, assignedTo));
     if (typeof limit === "number") q = q.limit(limit).offset(offset);
     return q as unknown as Promise<Property[]>;
   }
@@ -982,6 +992,22 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(teams).where(eq(teams.ownerId, ownerId));
   }
 
+  async getTeamsForUser(userId: number): Promise<Team[]> {
+    const rows = await db
+      .select({ team: teams })
+      .from(teamMembers)
+      .innerJoin(teams, eq(teamMembers.teamId, teams.id))
+      .where(eq(teamMembers.userId, userId));
+    return rows.map((r) => r.team);
+  }
+
+  async getTeamByInviteCode(inviteCode: string): Promise<Team | undefined> {
+    const code = String(inviteCode || "").trim();
+    if (!code) return undefined;
+    const result = await db.select().from(teams).where(eq(teams.inviteCode, code)).limit(1);
+    return result[0];
+  }
+
   async createTeam(team: InsertTeam): Promise<Team> {
     const result = await db.insert(teams).values(team as any).returning();
     return result[0];
@@ -999,6 +1025,27 @@ export class DatabaseStorage implements IStorage {
   // Team Members
   async getTeamMembers(teamId: number): Promise<TeamMember[]> {
     return db.select().from(teamMembers).where(eq(teamMembers.teamId, teamId));
+  }
+
+  async getTeamMembersWithUsers(teamId: number): Promise<any[]> {
+    const rows = await db
+      .select({
+        membership: teamMembers,
+        user: users,
+      })
+      .from(teamMembers)
+      .innerJoin(users, eq(teamMembers.userId, users.id))
+      .where(eq(teamMembers.teamId, teamId));
+    return rows.map((r) => ({ ...r.membership, user: r.user }));
+  }
+
+  async getTeamMemberByTeamAndUser(teamId: number, userId: number): Promise<TeamMember | undefined> {
+    const result = await db
+      .select()
+      .from(teamMembers)
+      .where(and(eq(teamMembers.teamId, teamId), eq(teamMembers.userId, userId)))
+      .limit(1);
+    return result[0];
   }
 
   async getTeamMemberById(id: number): Promise<TeamMember | undefined> {

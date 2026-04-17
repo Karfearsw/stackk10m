@@ -236,15 +236,18 @@ export function UnderwriteDealWorkspace(props: {
     };
   }, [currentUrl, notes, quickLinks, underwriting, tags, checklist, browserMode, assignedTo, assignmentDueAt, assignmentStatus, session?.id]);
 
-  const { data: users } = useQuery<any[]>({
-    queryKey: ["/api/users"],
-    queryFn: async () => {
-      const res = await fetch("/api/users", { credentials: "include" });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.message || "Failed to load users");
-      return Array.isArray(json) ? json : [];
-    },
+  const { data: activeTeamResp } = useQuery<any>({
+    queryKey: ["/api/teams/active"],
   });
+
+  const activeTeamId = typeof activeTeamResp?.teamId === "number" ? activeTeamResp.teamId : null;
+
+  const { data: teamMembers = [] } = useQuery<any[]>({
+    queryKey: ["/api/teams", activeTeamId, "members"],
+    enabled: !!activeTeamId,
+  });
+
+  const users = useMemo(() => (Array.isArray(teamMembers) ? teamMembers.map((m: any) => m?.user).filter(Boolean) : []), [teamMembers]);
 
   const selectedTemplate = useMemo(() => {
     const tid = underwriting.templateId ? parseInt(underwriting.templateId, 10) : NaN;
@@ -312,8 +315,8 @@ export function UnderwriteDealWorkspace(props: {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-[70vh]">
-      <div className="lg:col-span-7 min-h-[70vh]">
+    <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 min-h-[70vh] overflow-hidden">
+      <div className="xl:col-span-7 min-h-[70vh] min-w-0">
         <ResearchHub
           address={address}
           currentUrl={currentUrl}
@@ -338,7 +341,7 @@ export function UnderwriteDealWorkspace(props: {
           onSaveComp={(comp) => addComp({ ...comp, url: comp.url || currentUrl })}
         />
       </div>
-      <div className="lg:col-span-5 min-h-[70vh]">
+      <div className="xl:col-span-5 min-h-[70vh] min-w-0">
         <UnderwriteDealPanel
           subject={subject}
           underwriting={underwriting}

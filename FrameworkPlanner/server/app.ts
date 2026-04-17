@@ -55,6 +55,7 @@ declare module 'express-session' {
   interface SessionData {
     userId?: number;
     email?: string;
+    activeTeamId?: number;
   }
 }
 
