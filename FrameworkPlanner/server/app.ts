@@ -131,7 +131,8 @@ if (!sessionSecret) {
     ? new PgSession({
         pool,
         tableName: "session",
-        createTableIfMissing: true,
+        createTableIfMissing: false,
+        disableTouch: true,
       })
     : undefined;
 
@@ -285,8 +286,10 @@ export default async function runApp(
     Sentry.setupExpressErrorHandler(app);
   }
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+    const rawMessage = String(err?.message || "Internal Server Error");
+    const quotaExceeded = /exceeded the data transfer quota/i.test(rawMessage);
+    const status = quotaExceeded ? 503 : err.status || err.statusCode || 500;
+    const message = quotaExceeded ? "Database is over quota" : rawMessage;
     const requestId =
       (res.locals as any).requestId ||
       (req.headers["x-request-id"] as string) ||
@@ -310,10 +313,12 @@ export default async function runApp(
     }
 
     const clientMessage =
-      process.env.NODE_ENV === "production" && status >= 500
+      process.env.NODE_ENV === "production" && status >= 500 && !quotaExceeded
         ? "Internal Server Error"
         : message;
-    res.status(status).json({ message: clientMessage, requestId });
+    const payload: any = { message: clientMessage, requestId };
+    if (quotaExceeded) payload.code = "DB_QUOTA_EXCEEDED";
+    res.status(status).json(payload);
   });
 
   // importantly run the final setup after setting up all the other routes so

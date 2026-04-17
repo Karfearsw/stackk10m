@@ -399,7 +399,8 @@ export default function Leads() {
       return;
     }
 
-    const assignedTo = newLead.assignedTo ? parseInt(String(newLead.assignedTo), 10) : null;
+    const assignedTo =
+      newLead.assignedTo && newLead.assignedTo !== "__unassigned__" ? parseInt(String(newLead.assignedTo), 10) : null;
     createMutation.mutate({ ...newLead, source, assignedTo: Number.isFinite(assignedTo as any) ? assignedTo : null });
   };
 
@@ -418,7 +419,10 @@ export default function Leads() {
         id: editingLead.id,
         data: {
           ...editingLead,
-          assignedTo: editingLead.assignedTo ? parseInt(String(editingLead.assignedTo), 10) : null,
+          assignedTo:
+            editingLead.assignedTo && editingLead.assignedTo !== "__unassigned__"
+              ? parseInt(String(editingLead.assignedTo), 10)
+              : null,
           source: source || null,
         },
       });
@@ -746,7 +750,7 @@ export default function Leads() {
                       <SelectValue placeholder="Unassigned" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Unassigned</SelectItem>
+                      <SelectItem value="__unassigned__">Unassigned</SelectItem>
                       {teamUsers.map((u: any) => (
                         <SelectItem key={u.id} value={String(u.id)}>
                           {u.firstName || u.lastName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.email}
@@ -1182,7 +1186,7 @@ export default function Leads() {
                     <SelectValue placeholder="Unassigned" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Unassigned</SelectItem>
+                    <SelectItem value="__unassigned__">Unassigned</SelectItem>
                     {teamUsers.map((u: any) => (
                       <SelectItem key={u.id} value={String(u.id)}>
                         {u.firstName || u.lastName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.email}

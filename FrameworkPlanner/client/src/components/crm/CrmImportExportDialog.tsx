@@ -43,7 +43,11 @@ export function CrmImportExportDialog({
   const { user } = useAuth();
   const { toast } = useToast();
 
-  const { data: fieldsResp } = useQuery({
+  const {
+    data: fieldsResp,
+    isLoading: fieldsLoading,
+    error: fieldsError,
+  } = useQuery({
     queryKey: ["/api/crm/fields", entityType],
     queryFn: async () => {
       const res = await fetch(`/api/crm/fields?entityType=${encodeURIComponent(entityType)}`, { credentials: "include" });
@@ -477,14 +481,55 @@ export function CrmImportExportDialog({
       : Boolean(mapping.fullAddress) || (mapping.address && mapping.city && mapping.zipCode && (mapping.state || deriveStateFromZip));
   const opportunityAddressSatisfied =
     entityType !== "opportunity" ? true : Boolean(mapping.address && mapping.city && mapping.zipCode && (mapping.state || deriveStateFromZip));
-  const missingRequired = requiredFields.some((f) => {
-    if (entityType === "lead" && leadAddressKeys.has(f.key)) return !leadAddressSatisfied;
-    if (entityType === "opportunity" && opportunityAddressKeys.has(f.key)) return !opportunityAddressSatisfied;
-    if (entityType === "lead" && f.key === "source") {
-      return leadSourceMode === "column" ? !mapping.source : !defaultLeadSource;
+  const requirements = useMemo(() => {
+    const missing: string[] = [];
+    if (fieldsError) missing.push(String((fieldsError as any)?.message || "Failed to load CRM fields"));
+    if (!file) missing.push("Upload a file");
+    if (!preview) missing.push("Preview the file (upload will auto-preview)");
+
+    if (entityType === "lead") {
+      if (leadSourceMode === "column") {
+        if (!mapping.source) missing.push("Map Lead Source column");
+      } else {
+        if (!defaultLeadSource) missing.push("Select a default Lead Source");
+      }
+      if (!leadAddressSatisfied) {
+        missing.push(
+          mapping.fullAddress
+            ? "Address mapping is incomplete"
+            : `Map Address fields: Full Address OR Address + City + ZIP${deriveStateFromZip ? "" : " + State"}`,
+        );
+      }
     }
-    return !mapping[f.key];
-  });
+
+    if (entityType === "opportunity" && !opportunityAddressSatisfied) {
+      missing.push(`Map Address fields: Address + City + ZIP${deriveStateFromZip ? "" : " + State"}`);
+    }
+
+    for (const f of requiredFields) {
+      if (entityType === "lead" && leadAddressKeys.has(f.key)) continue;
+      if (entityType === "opportunity" && opportunityAddressKeys.has(f.key)) continue;
+      if (entityType === "lead" && f.key === "source") continue;
+      if (!mapping[f.key]) missing.push(`Map: ${f.label}`);
+    }
+
+    const uniq = Array.from(new Set(missing));
+    return { missing: uniq, canStart: uniq.length === 0 };
+  }, [
+    fieldsError,
+    file,
+    preview,
+    entityType,
+    leadSourceMode,
+    mapping,
+    defaultLeadSource,
+    leadAddressSatisfied,
+    opportunityAddressSatisfied,
+    requiredFields,
+    deriveStateFromZip,
+  ]);
+
+  const missingRequired = !requirements.canStart;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -507,6 +552,11 @@ export function CrmImportExportDialog({
           </TabsList>
 
           <TabsContent value="import" className="space-y-4">
+            {fieldsLoading ? <div className="text-sm text-muted-foreground">Loading import fields…</div> : null}
+            {fieldsError ? (
+              <div className="text-sm text-destructive">{String((fieldsError as any)?.message || "Failed to load fields")}</div>
+            ) : null}
+
             <div className="space-y-2">
               <Label>Upload CSV/XLSX</Label>
               <Input
@@ -829,6 +879,16 @@ export function CrmImportExportDialog({
             ) : null}
 
             <DialogFooter>
+              {requirements.missing.length ? (
+                <div className="w-full border rounded-md p-3 text-sm">
+                  <div className="font-medium">Requirements</div>
+                  <ul className="mt-2 list-disc pl-5 space-y-1">
+                    {requirements.missing.map((m) => (
+                      <li key={m}>{m}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               <Button
                 onClick={() => startImport()}
                 disabled={!preview || !file || missingRequired || importPolling}

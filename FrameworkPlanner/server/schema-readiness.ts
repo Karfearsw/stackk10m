@@ -119,11 +119,12 @@ async function checkSchemaOnce(): Promise<SchemaReadiness> {
 }
 
 export async function getSchemaReadiness(): Promise<SchemaReadiness> {
-  const ttlMs = 30_000;
+  const ttlOkMs = 300_000;
+  const ttlFailMs = 180_000;
   const now = Date.now();
   if (cached && cached.expiresAt > now) return cached.value;
   const value = await checkSchemaOnce();
-  cached = { value, expiresAt: now + ttlMs };
+  cached = { value, expiresAt: now + (value.ok ? ttlOkMs : ttlFailMs) };
   return value;
 }
 

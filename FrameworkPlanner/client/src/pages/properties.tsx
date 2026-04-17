@@ -193,7 +193,8 @@ function PropertyForm({
       occupancy: formData.occupancy || null,
       arv: formData.arv || null,
       repairCost: formData.repairCost || null,
-      assignedTo: formData.assignedTo ? parseInt(formData.assignedTo, 10) : null,
+      assignedTo:
+        formData.assignedTo && formData.assignedTo !== "__unassigned__" ? parseInt(formData.assignedTo, 10) : null,
       images: formData.images,
     });
   };
@@ -348,7 +349,7 @@ function PropertyForm({
               <SelectValue placeholder="Unassigned" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Unassigned</SelectItem>
+              <SelectItem value="__unassigned__">Unassigned</SelectItem>
               {users.map((u: any) => (
                 <SelectItem key={u.id} value={String(u.id)}>
                   {u.firstName || u.lastName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.email}
