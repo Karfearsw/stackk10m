@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import bcrypt from "bcryptjs";
 import { SignJWT } from "jose";
 import { storage } from "./storage.js";
-import { db } from "./db.js";
+import { db, isDbQuotaError } from "./db.js";
 import { sql } from "drizzle-orm";
 import { 
   insertLeadSchema, 
@@ -37,6 +37,7 @@ function isDbConnectivityError(error: any): boolean {
   if (code === "08006" || code === "08001" || code === "08004") return true;
   if (code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "SELF_SIGNED_CERT_IN_CHAIN") return true;
   if (code === "ERR_TLS_CERT_ALTNAME_INVALID" || code === "CERT_HAS_EXPIRED") return true;
+    if (isDbQuotaError(error)) return true;
   const nested = error?.errors;
   if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
   const message = String(error?.message || "");
