@@ -45,11 +45,14 @@ let cachedDbUrlResolution: DatabaseUrlResolution | null = null;
 export function databaseUrlResolution(): DatabaseUrlResolution {
   if (cachedDbUrlResolution) return cachedDbUrlResolution;
 
+  // IMPORTANT: Prioritize pooled connections first to minimize Neon data transfer quota usage.
+  // POSTGRES_URL is the Neon pooler URL (via pgbouncer) - use this first.
+  // POSTGRES_URL_NON_POOLING is for migrations only - avoid for runtime queries.
   const candidates: Array<{ name: string; value: string | undefined }> = [
-    { name: "DATABASE_URL", value: process.env.DATABASE_URL },
-    { name: "POSTGRES_URL_NON_POOLING", value: process.env.POSTGRES_URL_NON_POOLING },
-    { name: "POSTGRES_PRISMA_URL", value: process.env.POSTGRES_PRISMA_URL },
     { name: "POSTGRES_URL", value: process.env.POSTGRES_URL },
+    { name: "DATABASE_URL", value: process.env.DATABASE_URL },
+    { name: "POSTGRES_PRISMA_URL", value: process.env.POSTGRES_PRISMA_URL },
+    { name: "POSTGRES_URL_NON_POOLING", value: process.env.POSTGRES_URL_NON_POOLING },
   ];
 
   const issues: DatabaseUrlIssue[] = [];
@@ -57,21 +60,17 @@ export function databaseUrlResolution(): DatabaseUrlResolution {
   for (const c of candidates) {
     const raw = String(c.value ?? "").trim();
     if (!raw) continue;
-
     if (!isValidPostgresUrl(raw)) {
       issues.push({ name: c.name, reason: "invalid_url" });
       continue;
     }
-
     const sanitized = sanitizeDatabaseUrl(raw);
     if (!sanitized) {
       issues.push({ name: c.name, reason: "invalid_url" });
       continue;
     }
-
     const resolved: DatabaseUrlResolution = { url: sanitized, source: c.name, issues };
     cachedDbUrlResolution = resolved;
-
     const redacted = redactDbUrlForLogs(sanitized);
     console.log(
       JSON.stringify({
@@ -84,7 +83,6 @@ export function databaseUrlResolution(): DatabaseUrlResolution {
         rejected: issues.length ? issues : undefined,
       }),
     );
-
     return resolved;
   }
 
@@ -125,12 +123,22 @@ export function pgSslOptions() {
   return { rejectUnauthorized };
 }
 
-// Use connection string from environment
+export function isDbQuotaError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { code?: string; message?: string };
+  return (
+    e.code === "XX000" &&
+    typeof e.message === "string" &&
+    e.message.includes("data transfer quota")
+  );
+}
+
+// Serverless-optimized pool: max=1 reduces connection overhead on Neon free tier
 export const pool = new Pool({
   connectionString: databaseUrl(),
   ssl: pgSslOptions(),
-  max: 3,
-  idleTimeoutMillis: 10000,
+  max: 1,
+  idleTimeoutMillis: 5000,
   connectionTimeoutMillis: 5000,
 });
 
@@ -139,12 +147,7 @@ pool.on('error', (err) => {
   console.error('Unexpected error on idle client', err);
 });
 
-// Test connection on startup (optional, but good for debugging logs)
-pool.connect().then(client => {
-  console.log('Database connected successfully');
-  client.release();
-}).catch(err => {
-  console.error('Database connection failed during startup:', err);
-});
+// NOTE: Removed startup pool.connect() test - it consumed Neon data transfer quota
+// on every cold start (every serverless function invocation).
 
 export const db = drizzle(pool);
