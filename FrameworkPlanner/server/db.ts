@@ -47,10 +47,10 @@ export function databaseUrlResolution(): DatabaseUrlResolution {
   if (cachedDbUrlResolution) return cachedDbUrlResolution;
 
   const candidates: Array<{ name: string; value: string | undefined }> = [
-    { name: "DATABASE_URL", value: process.env.DATABASE_URL },
-    { name: "POSTGRES_URL_NON_POOLING", value: process.env.POSTGRES_URL_NON_POOLING },
+        { name: "POSTGRES_URL", value: process.env.POSTGRES_URL },
+        { name: "DATABASE_URL", value: process.env.DATABASE_URL },
     { name: "POSTGRES_PRISMA_URL", value: process.env.POSTGRES_PRISMA_URL },
-    { name: "POSTGRES_URL", value: process.env.POSTGRES_URL },
+        { name: "POSTGRES_URL_NON_POOLING", value: process.env.POSTGRES_URL_NON_POOLING },
   ];
 
   const issues: DatabaseUrlIssue[] = [];
