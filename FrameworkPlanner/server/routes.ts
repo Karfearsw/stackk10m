@@ -75,6 +75,7 @@ function authJwtSecret() {
 function isDbConnectivityError(error: any): boolean {
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
+  if (code === "28P01" || code === "28000") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "08006" || code === "08001" || code === "08004") return true;
   if (code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "SELF_SIGNED_CERT_IN_CHAIN") return true;
@@ -82,6 +83,7 @@ function isDbConnectivityError(error: any): boolean {
   const nested = error?.errors;
   if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
   const message = String(error?.message || "");
+  if (message.toLowerCase().includes("password authentication failed")) return true;
   return message.includes("DATABASE_URL");
 }
 
