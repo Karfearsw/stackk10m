@@ -13,8 +13,17 @@ const shouldRun =
   Boolean(process.env.TEST_EMPLOYEE_CODE) &&
   Boolean(process.env.TEST_PASSWORD);
 
+function sessionCookieFrom(res: Response): string {
+  const h: any = res.headers as any;
+  const raw =
+    typeof h?.getSetCookie === "function"
+      ? String((h.getSetCookie() as string[])[0] || "")
+      : String(res.headers.get("set-cookie") || "");
+  return raw ? raw.split(";")[0] : "";
+}
+
 (shouldRun ? describe : describe.skip)("/api/auth end-to-end smoke", () => {
-  it("signup -> token -> /api/auth/me succeeds", async () => {
+  it("signup -> session -> /api/auth/me succeeds", async () => {
     const email = `smoke-${Date.now()}@example.com`;
     const employeeCode = requiredEnv("TEST_EMPLOYEE_CODE");
     const password = requiredEnv("TEST_PASSWORD");
@@ -33,17 +42,18 @@ const shouldRun =
     expect([200, 201]).toContain(signupRes.status);
     const signupJson = await signupRes.json();
     expect(signupJson?.user?.email).toBe(email);
-    expect(typeof signupJson?.token).toBe("string");
+    const cookie = sessionCookieFrom(signupRes);
+    expect(cookie).not.toBe("");
 
     const meRes = await fetch(`${baseUrl()}/api/auth/me`, {
-      headers: { Authorization: `Bearer ${signupJson.token}` },
+      headers: { cookie },
     });
     expect(meRes.status).toBe(200);
     const meJson = await meRes.json();
     expect(meJson?.email).toBe(email);
   });
 
-  it("login -> token -> /api/auth/me succeeds", async () => {
+  it("login -> session -> /api/auth/me succeeds", async () => {
     const email = `smoke-login-${Date.now()}@example.com`;
     const employeeCode = requiredEnv("TEST_EMPLOYEE_CODE");
     const password = requiredEnv("TEST_PASSWORD");
@@ -69,14 +79,14 @@ const shouldRun =
     expect(loginRes.status).toBe(200);
     const loginJson = await loginRes.json();
     expect(loginJson?.user?.email).toBe(email);
-    expect(typeof loginJson?.token).toBe("string");
+    const cookie = sessionCookieFrom(loginRes);
+    expect(cookie).not.toBe("");
 
     const meRes = await fetch(`${baseUrl()}/api/auth/me`, {
-      headers: { Authorization: `Bearer ${loginJson.token}` },
+      headers: { cookie },
     });
     expect(meRes.status).toBe(200);
     const meJson = await meRes.json();
     expect(meJson?.email).toBe(email);
   });
 });
-

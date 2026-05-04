@@ -34,15 +34,16 @@ const shouldRun = Boolean(baseURL) && Boolean(employeeCode) && Boolean(password)
       data: { email, employeeCode },
     });
     expect(bypassRes.status()).toBe(200);
-    const bypassJson = await bypassRes.json();
-    const token = String(bypassJson?.token || "");
-    expect(token).not.toBe("");
-
-    const authHeaders = { Authorization: `Bearer ${token}` };
+    const setCookie = String(bypassRes.headers()["set-cookie"] || "");
+    const cookiePair = setCookie ? setCookie.split(";")[0] : "";
+    expect(cookiePair).not.toBe("");
+    const eq = cookiePair.indexOf("=");
+    const cookieName = eq >= 0 ? cookiePair.slice(0, eq) : "";
+    const cookieValue = eq >= 0 ? cookiePair.slice(eq + 1) : "";
+    await page.context().addCookies([{ name: cookieName, value: cookieValue, url: baseURL }]);
 
     const leadAddress = `123 E2E St ${suffix}`;
     const leadRes = await api.post("/api/leads", {
-      headers: authHeaders,
       data: {
         address: leadAddress,
         city: "Orlando",
@@ -59,7 +60,6 @@ const shouldRun = Boolean(baseURL) && Boolean(employeeCode) && Boolean(password)
 
     const taskTitle = `E2E task ${suffix}`;
     const taskRes = await api.post("/api/tasks", {
-      headers: authHeaders,
       data: {
         title: taskTitle,
         dueAt: new Date().toISOString(),
@@ -76,15 +76,10 @@ const shouldRun = Boolean(baseURL) && Boolean(employeeCode) && Boolean(password)
       if (msg.type() === "error") consoleErrors.push(msg.text());
     });
 
-    await page.addInitScript((t) => {
-      try {
-        localStorage.setItem("authToken", String(t));
-      } catch {}
-    }, token);
-
     await page.goto("/leads", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "Leads Pipeline" })).toBeVisible();
     await expect(page.getByText(leadAddress)).toBeVisible();
+
 
     await page.getByTestId("button-leads-filter").click();
     await page.getByTestId("button-filter-clear").click();
@@ -107,4 +102,3 @@ const shouldRun = Boolean(baseURL) && Boolean(employeeCode) && Boolean(password)
     expect(consoleErrors).toEqual([]);
   });
 });
-

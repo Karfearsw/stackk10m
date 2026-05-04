@@ -42,7 +42,20 @@ if (!(globalThis as any).__stackk_process_handlers_installed) {
 }
 
 app.use(helmet({
-  contentSecurityPolicy: false, // Disabled for simplicity with Vite dev server scripts
+  contentSecurityPolicy: process.env.NODE_ENV === "production" ? {
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      fontSrc: ["'self'", "data:"],
+      connectSrc: ["'self'", "https:"],
+      mediaSrc: ["'self'", "https:", "data:", "blob:"],
+    },
+  } : false,
 }));
 
 declare module 'http' {
@@ -149,6 +162,59 @@ if (!sessionSecret) {
       },
     }),
   );
+
+  app.use("/api", (req, res, next) => {
+    const method = String(req.method || "").toUpperCase();
+    if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
+
+    const path = String(req.path || "");
+    if (path.startsWith("/telephony/") && (path.includes("/webhook") || path.startsWith("/telephony/voice/") || path.startsWith("/telephony/sms/"))) {
+      return next();
+    }
+
+    const cookie = String(req.headers.cookie || "").trim();
+    if (!cookie) return next();
+
+    const allowedFromEnv = String(process.env.ALLOWED_ORIGINS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const host = String(req.headers.host || "").trim();
+    const allowed: string[] = [];
+    if (host) {
+      allowed.push(`https://${host}`);
+      allowed.push(`http://${host}`);
+    }
+    if (process.env.NODE_ENV !== "production") {
+      allowed.push("http://localhost:3000");
+      allowed.push("http://127.0.0.1:3000");
+    }
+    for (const o of allowedFromEnv) allowed.push(o);
+
+    const origin = String(req.headers.origin || "").trim();
+    if (origin) {
+      if (!allowed.includes(origin)) return res.status(403).json({ code: "csrf_origin_forbidden", message: "Forbidden" });
+      return next();
+    }
+
+    const referer = String(req.headers.referer || "").trim();
+    if (referer) {
+      try {
+        const u = new URL(referer);
+        const refOrigin = `${u.protocol}//${u.host}`;
+        if (!allowed.includes(refOrigin)) return res.status(403).json({ code: "csrf_origin_forbidden", message: "Forbidden" });
+        return next();
+      } catch {
+        return res.status(403).json({ code: "csrf_origin_forbidden", message: "Forbidden" });
+      }
+    }
+
+    const secFetchSite = String(req.headers["sec-fetch-site"] || "").trim().toLowerCase();
+    if (secFetchSite === "same-origin" || secFetchSite === "same-site") return next();
+
+    return res.status(403).json({ code: "csrf_origin_forbidden", message: "Forbidden" });
+  });
 }
 
 app.use((req, res, next) => {

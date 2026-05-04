@@ -15,6 +15,15 @@ const shouldRun =
   Boolean(process.env.TEST_DEV_BYPASS_ENABLED);
 
 (shouldRun ? describe : describe.skip)("/api/playground/sessions", () => {
+  function sessionCookieFrom(res: Response): string {
+    const h: any = res.headers as any;
+    const raw =
+      typeof h?.getSetCookie === "function"
+        ? String((h.getSetCookie() as string[])[0] || "")
+        : String(res.headers.get("set-cookie") || "");
+    return raw ? raw.split(";")[0] : "";
+  }
+
   it("opens, patches, reads, and sends a session to a lead", async () => {
     const email = `smoke-playground-${Date.now()}@example.com`;
     const employeeCode = requiredEnv("TEST_EMPLOYEE_CODE");
@@ -40,11 +49,12 @@ const shouldRun =
     });
     expect(bypassRes.status).toBe(200);
     const bypassJson = await bypassRes.json();
-    const token = bypassJson.token as string;
-    expect(typeof token).toBe("string");
+    expect(bypassJson?.user?.email).toBe(email);
+    const cookie = sessionCookieFrom(bypassRes);
+    expect(cookie).not.toBe("");
 
     const meRes = await fetch(`${baseUrl()}/api/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { cookie },
     });
     expect(meRes.status).toBe(200);
     const me = await meRes.json();
@@ -52,7 +62,7 @@ const shouldRun =
 
     const openRes = await fetch(`${baseUrl()}/api/playground/sessions/open`, {
       method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "content-type": "application/json", cookie },
       body: JSON.stringify({ address: `123 Smoke St ${Date.now()}` }),
     });
     expect(openRes.status).toBe(200);
@@ -62,27 +72,27 @@ const shouldRun =
     const uw = { arv: 250000, repairEstimate: 30000, mao: 150000, offerMin: 140000, offerMax: 155000, exitStrategy: "Wholesale" };
     const patchRes = await fetch(`${baseUrl()}/api/playground/sessions/${opened.id}`, {
       method: "PATCH",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "content-type": "application/json", cookie },
       body: JSON.stringify({ underwritingJson: JSON.stringify(uw) }),
     });
     expect(patchRes.status).toBe(200);
 
     const assignRes = await fetch(`${baseUrl()}/api/playground/sessions/${opened.id}`, {
       method: "PATCH",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "content-type": "application/json", cookie },
       body: JSON.stringify({ assignedTo: me.id, assignmentStatus: "In progress" }),
     });
     expect(assignRes.status).toBe(200);
 
     const getRes = await fetch(`${baseUrl()}/api/playground/sessions/${opened.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { cookie },
     });
     expect(getRes.status).toBe(200);
     const got = await getRes.json();
     expect(typeof got?.underwritingJson).toBe("string");
 
     const activityRes = await fetch(`${baseUrl()}/api/activity?limit=10&playgroundSessionId=${opened.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { cookie },
     });
     expect(activityRes.status).toBe(200);
     const activity = await activityRes.json();
@@ -90,7 +100,7 @@ const shouldRun =
 
     const leadRes = await fetch(`${baseUrl()}/api/leads`, {
       method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "content-type": "application/json", cookie },
       body: JSON.stringify({
         address: "123 Lead St",
         city: "Orlando",
@@ -109,7 +119,7 @@ const shouldRun =
 
     const sendRes = await fetch(`${baseUrl()}/api/playground/sessions/${opened.id}/send`, {
       method: "POST",
-      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+      headers: { "content-type": "application/json", cookie },
       body: JSON.stringify({ targetType: "lead", targetId: lead.id }),
     });
     expect(sendRes.status).toBe(200);
@@ -117,7 +127,7 @@ const shouldRun =
     expect(sent?.leadId).toBe(lead.id);
 
     const leadGetRes = await fetch(`${baseUrl()}/api/leads/${lead.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { cookie },
     });
     expect(leadGetRes.status).toBe(200);
     const leadGot = await leadGetRes.json();

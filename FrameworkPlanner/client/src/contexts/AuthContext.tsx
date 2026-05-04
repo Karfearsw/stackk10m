@@ -38,28 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [, setLocation] = useLocation();
 
-  const setToken = (token: string | null) => {
-    try {
-      if (!token) {
-        localStorage.removeItem('authToken');
-        localStorage.removeItem('token');
-      } else {
-        localStorage.setItem('authToken', token);
-        localStorage.setItem('token', token);
-      }
-    } catch {}
-  };
-
-  const getToken = () => {
-    try {
-      return localStorage.getItem('authToken') || localStorage.getItem('token');
-    } catch {
-      return null;
-    }
-  };
-
   const postTimeclock = async (path: string) => {
-    const token = getToken();
     const payload = {
       clientNow: new Date().toISOString(),
       tzOffsetMinutes: new Date().getTimezoneOffset(),
@@ -68,7 +47,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(payload),
       credentials: 'include',
@@ -81,10 +59,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const checkAuth = async () => {
     try {
-      const token = getToken();
       const res = await fetch('/api/auth/me', {
         credentials: 'include',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
       if (res.ok) {
         const userData = await res.json();
@@ -112,8 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(error.message || 'Login failed');
     }
 
-    const { user: userData, token } = await res.json();
-    if (token) setToken(token);
+    const { user: userData } = await res.json();
     setUser(userData);
     try {
       await postTimeclock('/api/timeclock/auto-start');
@@ -134,8 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error((error as any).message || 'Dev bypass failed');
     }
 
-    const { user: userData, token } = await res.json();
-    if (token) setToken(token);
+    const { user: userData } = await res.json();
     setUser(userData);
     try {
       await postTimeclock('/api/timeclock/auto-start');
@@ -165,8 +139,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error(error.message || 'Signup failed');
     }
 
-    const { user: userData, token } = await res.json();
-    if (token) setToken(token);
+    const { user: userData } = await res.json();
     setUser(userData);
     try {
       await postTimeclock('/api/timeclock/auto-start');
@@ -184,7 +157,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         credentials: 'include',
       });
     } catch {}
-    setToken(null);
     setUser(null);
     setLocation('/login');
   };

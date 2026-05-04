@@ -111,17 +111,6 @@ function parseLimitOffset(query: any): { limit?: number; offset: number } {
   return { limit, offset };
 }
 
-async function issueAuthToken(payload: { sub: string; email?: string }) {
-  const secret = authJwtSecret();
-  if (!secret) return null;
-  return await new SignJWT({ email: payload.email })
-    .setProtectedHeader({ alg: "HS256" })
-    .setSubject(payload.sub)
-    .setIssuedAt()
-    .setExpirationTime("7d")
-    .sign(secret);
-}
-
 function isManagerUser(user: any) {
   const role = String(user?.role || "").toLowerCase();
   return !!user?.isSuperAdmin || role === "admin" || role === "manager" || role === "owner";
@@ -274,28 +263,6 @@ export async function registerRoutes(
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 },
-  });
-
-  app.use("/api", async (req, _res, next) => {
-    try {
-      if (req.session?.userId) return next();
-      const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith("Bearer ")) return next();
-
-      const secret = authJwtSecret();
-      if (!secret) return next();
-
-      const token = authHeader.slice("Bearer ".length);
-      const { payload } = await jwtVerify(token, secret);
-      const sub = payload.sub ? parseInt(String(payload.sub), 10) : NaN;
-      if (!Number.isFinite(sub)) return next();
-
-      req.session.userId = sub;
-      if (typeof payload.email === "string") req.session.email = payload.email;
-      next();
-    } catch {
-      next();
-    }
   });
 
   app.get("/api/crm/fields", async (req, res) => {
@@ -674,8 +641,31 @@ export async function registerRoutes(
     });
   }
 
+  const authRateBuckets = new Map<string, { count: number; resetAt: number }>();
+  function checkAuthRateLimit(req: any, res: any): boolean {
+    const windowMs = 60_000;
+    const max = 20;
+    const ip = String(req.ip || "").trim() || "unknown";
+    const key = `${ip}:${String(req.path || "")}`;
+    const now = Date.now();
+    const existing = authRateBuckets.get(key);
+    if (!existing || now >= existing.resetAt) {
+      authRateBuckets.set(key, { count: 1, resetAt: now + windowMs });
+      return true;
+    }
+    existing.count += 1;
+    if (existing.count > max) {
+      const retryAfterSeconds = Math.max(1, Math.ceil((existing.resetAt - now) / 1000));
+      res.setHeader("Retry-After", String(retryAfterSeconds));
+      res.status(429).json({ code: "rate_limited", message: "Too many requests" });
+      return false;
+    }
+    return true;
+  }
+
   app.post("/api/auth/login", async (req, res) => {
     try {
+      if (!checkAuthRateLimit(req, res)) return;
       const { email, password } = req.body;
       
       if (!email || !password) {
@@ -703,7 +693,6 @@ export async function registerRoutes(
                 req.session.userId = user.id;
                 req.session.email = user.email;
                 const { passwordHash, ...userWithoutPassword } = user;
-                const token = await issueAuthToken({ sub: String(user.id), email: user.email });
                 void writeAuthAuditLog({
                   action: "admin_bypass",
                   outcome: "granted",
@@ -713,7 +702,7 @@ export async function registerRoutes(
                   userAgent: String(req.headers["user-agent"] || ""),
                   metadata: { path: req.path },
                 });
-                return res.json({ user: userWithoutPassword, token });
+                return res.json({ user: userWithoutPassword });
             } else {
                 console.error(`[Auth] Admin user ${email} matches env but not found in DB`);
                 void writeAuthAuditLog({
@@ -759,8 +748,7 @@ export async function registerRoutes(
       req.session.email = user.email;
 
       const { passwordHash, ...userWithoutPassword } = user;
-      const token = await issueAuthToken({ sub: String(user.id), email: user.email });
-      res.json({ user: userWithoutPassword, token });
+      res.json({ user: userWithoutPassword });
     } catch (error: any) {
       console.error("[Auth] Login error:", error);
       if (isDbConnectivityError(error)) {
@@ -772,6 +760,7 @@ export async function registerRoutes(
 
   app.post("/api/auth/dev-bypass", async (req, res) => {
     try {
+      if (!checkAuthRateLimit(req, res)) return;
       if (!isDevEmployeeBypassEnabled()) {
         return res.status(404).json({ message: "Not found" });
       }
@@ -847,7 +836,6 @@ export async function registerRoutes(
       req.session.email = user.email;
 
       const { passwordHash, ...userWithoutPassword } = user;
-      const token = await issueAuthToken({ sub: String(user.id), email: user.email });
       console.log(`[Auth] Dev bypass granted ip=${req.ip} userId=${user.id} email=${user.email}`);
       void writeAuthAuditLog({
         action: "dev_employee_bypass",
@@ -858,7 +846,7 @@ export async function registerRoutes(
         userAgent: String(req.headers["user-agent"] || ""),
         metadata: { path: req.path },
       });
-      return res.json({ user: userWithoutPassword, token, bypass: true });
+      return res.json({ user: userWithoutPassword, bypass: true });
     } catch (error: any) {
       console.error("[Auth] Dev bypass error:", error);
       void writeAuthAuditLog({
@@ -878,6 +866,7 @@ export async function registerRoutes(
 
   app.post("/api/auth/signup", async (req, res) => {
     try {
+      if (!checkAuthRateLimit(req, res)) return;
       const { firstName, lastName, email, password, role = "employee", isSuperAdmin = false, isActive = true, employeeCode } = req.body;
       
       if (!firstName || !lastName || !email || !password) {
@@ -913,8 +902,7 @@ export async function registerRoutes(
       req.session.email = newUser.email;
 
       const { passwordHash: _, ...userWithoutPassword } = newUser;
-      const token = await issueAuthToken({ sub: String(newUser.id), email: newUser.email });
-      res.status(201).json({ user: userWithoutPassword, token });
+      res.status(201).json({ user: userWithoutPassword });
     } catch (error: any) {
       console.error("[Auth] Signup error:", error);
       if (isDbConnectivityError(error)) {
@@ -2504,11 +2492,19 @@ export async function registerRoutes(
 
       const existingRaw = Array.isArray((property as any).images) ? (property as any).images.filter(Boolean) : [];
       const uploaded: string[] = [];
+      const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
       for (const f of files) {
+        const contentType = String(f.mimetype || "").trim().toLowerCase();
+        if (!allowedTypes.has(contentType)) {
+          return res.status(400).json({ message: "Unsupported file type" });
+        }
+        if (!f.buffer || !Buffer.isBuffer(f.buffer) || f.buffer.length <= 0) {
+          return res.status(400).json({ message: "Invalid upload" });
+        }
         const out = await uploadPropertyPhoto({
           opportunityId,
-          contentType: String(f.mimetype || "application/octet-stream"),
+          contentType,
           body: f.buffer,
           originalName: String(f.originalname || "photo"),
         });
@@ -3831,18 +3827,27 @@ export async function registerRoutes(
     return row?.id ? Number(row.id) : null;
   }
 
+  function requireTelephonyWebhookToken(req: any, res: any): boolean {
+    const expected = String(process.env.TELEPHONY_WEBHOOK_TOKEN || "").trim();
+    if (!expected) {
+      if (process.env.NODE_ENV === "production") {
+        res.status(503).send("Webhook is not configured");
+        return false;
+      }
+      return true;
+    }
+    const provided = String(req.query?.token || req.headers["x-webhook-token"] || "").trim();
+    if (!provided || provided !== expected) {
+      res.status(401).send("Unauthorized");
+      return false;
+    }
+    return true;
+  }
+
   // Inbound SMS webhook with cXML auto-reply
   app.post("/api/telephony/sms/webhook", async (req, res) => {
     try {
-      // Verify SignalWire signature if configured
-      const signature = req.headers["x-signalwire-signature"] as string;
-      const url = req.protocol + "://" + req.get("host") + req.originalUrl;
-      
-      if (signature && process.env.SIGNALWIRE_API_TOKEN) {
-        // Simple signature verification (can be enhanced with crypto)
-        // For now, we'll accept the webhook
-      }
-      
+      if (!requireTelephonyWebhookToken(req, res)) return;
       const { To, From, Body } = req.body;
       
       // Send cXML response for auto-reply
@@ -3904,6 +3909,7 @@ export async function registerRoutes(
   // Inbound voice webhook with cXML IVR
   app.post("/api/telephony/voice/webhook", async (req, res) => {
     try {
+      if (!requireTelephonyWebhookToken(req, res)) return;
       const { To, From, CallSid } = req.body;
       
       setImmediate(() => {
@@ -3971,6 +3977,7 @@ export async function registerRoutes(
   // Voice gather webhook for speech recognition
   app.post("/api/telephony/voice/gather", async (req, res) => {
     try {
+      if (!requireTelephonyWebhookToken(req, res)) return;
       const { To, From, CallSid, SpeechResult, Confidence } = req.body;
       
       console.log(`[Voice Gather] From: ${From}, Speech: ${SpeechResult}, Confidence: ${Confidence}`);
@@ -4025,6 +4032,7 @@ export async function registerRoutes(
   // Voice recording webhook
   app.post("/api/telephony/voice/recording", async (req, res) => {
     try {
+      if (!requireTelephonyWebhookToken(req, res)) return;
       const { To, From, CallSid, RecordingUrl, RecordingSid, RecordingDuration } = req.body;
       
       if (process.env.NODE_ENV !== "production") {
