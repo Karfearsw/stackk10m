@@ -83,8 +83,16 @@ if (!sessionSecret) {
   console.error('SESSION_SECRET must be set');
 }
 
-if (process.env.NODE_ENV === 'production' && !process.env.EMPLOYEE_ACCESS_CODE) {
-  console.error('EMPLOYEE_ACCESS_CODE environment variable is required in production');
+if (process.env.NODE_ENV === "production") {
+  const legacyEmployeeCode = String(process.env.EMPLOYEE_ACCESS_CODE || "").trim();
+  const adminCode = String(process.env.ADMIN_ROLE_CODE || "").trim();
+  const teamLeaderCode = String(process.env.TEAM_LEADER_ROLE_CODE || "").trim();
+  const agentCode = String(process.env.AGENT_ROLE_CODE || "").trim();
+  const vaCode = String(process.env.VA_ROLE_CODE || "").trim();
+  const hasRoleCodes = Boolean(adminCode && teamLeaderCode && agentCode && vaCode);
+  if (!legacyEmployeeCode && !hasRoleCodes) {
+    console.error("Signup codes are not configured. Set EMPLOYEE_ACCESS_CODE (legacy) or all *_ROLE_CODE env vars.");
+  }
 }
 
 // Use PostgreSQL-backed session store for production-ready persistence

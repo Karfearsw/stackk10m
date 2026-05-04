@@ -22,7 +22,9 @@ Source: [ci.yml](file:///workspace/FrameworkPlanner/.github/workflows/ci.yml)
 Core:
 - `DATABASE_URL` (or one of `POSTGRES_URL_NON_POOLING`, `POSTGRES_PRISMA_URL`, `POSTGRES_URL`) — required for DB access ([schema-readiness.ts](file:///workspace/FrameworkPlanner/server/schema-readiness.ts#L41-L55))
 - `SESSION_SECRET` — required for auth/session in production ([server/app.ts](file:///workspace/FrameworkPlanner/server/app.ts#L61-L71))
-- `EMPLOYEE_ACCESS_CODE` — required in production ([server/app.ts](file:///workspace/FrameworkPlanner/server/app.ts#L73-L76))
+- Signup access controls:
+  - `ORG_EMAIL_DOMAIN` (default `oceanluxe.org`)
+  - `ADMIN_ROLE_CODE`, `TEAM_LEADER_ROLE_CODE`, `AGENT_ROLE_CODE`, `VA_ROLE_CODE` (preferred), or legacy `EMPLOYEE_ACCESS_CODE`
 
 Deployment toggles:
 - `AUTO_APPLY_MIGRATIONS` (`true` / `false`) — controls migration auto-run on Vercel builds ([vercel-build.ts](file:///workspace/FrameworkPlanner/server/scripts/vercel-build.ts#L4-L18))
@@ -73,4 +75,3 @@ Recommendation:
   1) Vite/Rollup toolchain
   2) Express ecosystem advisories
   3) Drizzle ORM upgrade with integration tests
-

@@ -26,7 +26,11 @@ A comprehensive real estate wholesaler CRM built with React, Express, and Postgr
    ```env
    DATABASE_URL="postgresql://..."
    SESSION_SECRET="your-secret"
-   EMPLOYEE_ACCESS_CODE="your-employee-code"
+   ORG_EMAIL_DOMAIN="oceanluxe.org"
+   ADMIN_ROLE_CODE="..."
+   TEAM_LEADER_ROLE_CODE="..."
+   AGENT_ROLE_CODE="..."
+   VA_ROLE_CODE="..."
    NODE_ENV="development"
    ```
 
