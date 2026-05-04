@@ -18,6 +18,7 @@ describe('Opportunity Endpoints', () => {
     })
 
     // Mock storage methods
+    storage.getUserById = async (_id: number) => ({ id: 1, role: 'admin', isSuperAdmin: true, isActive: true } as any)
     storage.getProperties = async () => []
     storage.getPropertyById = async (id: number) => ({ id, address: '123 Test St', city: 'Test City', state: 'TS', zipCode: '12345', status: 'active', sourceLeadId: 99 } as any)
     storage.getLeadById = async (id: number) => ({ id, ownerName: 'Jane Smith', ownerPhone: '(813) 555-0123', ownerEmail: 'jane@example.com', relasScore: 92 } as any)
@@ -77,7 +78,7 @@ describe('Opportunity Endpoints', () => {
 
   it('PATCH /api/leads/:id with notes logs added_note', async () => {
     // mock getLeadById/updateLead to simulate notes change
-    storage.getLeadById = async (id: number) => ({ id, address: '123 Test St', notes: '' } as any)
+    storage.getLeadById = async (id: number) => ({ id, address: '123 Test St', notes: '', assignedTo: 1 } as any)
     const createGlobalActivity = vi.fn(async () => ({}))
     storage.createGlobalActivity = createGlobalActivity as any
     storage.updateLead = async (_id: number, patch: any) => ({ id: 99, address: '123 Test St', notes: patch.notes } as any)

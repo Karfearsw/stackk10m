@@ -65,6 +65,7 @@ export interface IStorage {
     owner?: string;
     createdFrom?: Date;
     createdTo?: Date;
+    allowedAssignedToUserIds?: number[];
     limit?: number;
     offset?: number;
   }): Promise<{ items: Lead[]; total: number }>;
@@ -203,7 +204,11 @@ export interface IStorage {
   // Teams
   getTeams(): Promise<Team[]>;
   getTeamById(id: number): Promise<Team | undefined>;
+  getTeamByJoinCode(joinCode: string): Promise<Team | undefined>;
   getTeamsByOwnerId(ownerId: number): Promise<Team[]>;
+  getTeamsForUser(userId: number): Promise<Team[]>;
+  getUserTeamIds(userId: number): Promise<number[]>;
+  getTeamMemberUserIds(teamId: number): Promise<number[]>;
   createTeam(team: InsertTeam): Promise<Team>;
   updateTeam(id: number, team: Partial<InsertTeam>): Promise<Team>;
   deleteTeam(id: number): Promise<void>;
@@ -348,11 +353,17 @@ export class DatabaseStorage implements IStorage {
     owner?: string;
     createdFrom?: Date;
     createdTo?: Date;
+    allowedAssignedToUserIds?: number[];
     limit?: number;
     offset?: number;
   }): Promise<{ items: Lead[]; total: number }> {
     const limit = typeof input.limit === "number" ? input.limit : 200;
     const offset = typeof input.offset === "number" ? input.offset : 0;
+
+    if (Array.isArray(input.allowedAssignedToUserIds)) {
+      const ids = input.allowedAssignedToUserIds.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      if (!ids.length) return { items: [], total: 0 };
+    }
 
     const whereParts: any[] = [];
 
@@ -382,6 +393,11 @@ export class DatabaseStorage implements IStorage {
 
     if (input.createdFrom) whereParts.push(gte(leads.createdAt, input.createdFrom));
     if (input.createdTo) whereParts.push(lte(leads.createdAt, input.createdTo));
+
+    if (Array.isArray(input.allowedAssignedToUserIds)) {
+      const ids = input.allowedAssignedToUserIds.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      whereParts.push(inArray(leads.assignedTo, ids));
+    }
 
     const whereClause = whereParts.length ? and(...whereParts) : undefined;
 
@@ -978,8 +994,31 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+  async getTeamByJoinCode(joinCode: string): Promise<Team | undefined> {
+    const code = String(joinCode || "").trim();
+    if (!code) return undefined;
+    const result = await db.select().from(teams).where(eq(teams.joinCode, code)).limit(1);
+    return result[0];
+  }
+
   async getTeamsByOwnerId(ownerId: number): Promise<Team[]> {
     return db.select().from(teams).where(eq(teams.ownerId, ownerId));
+  }
+
+  async getUserTeamIds(userId: number): Promise<number[]> {
+    const rows = await db.select({ teamId: teamMembers.teamId }).from(teamMembers).where(eq(teamMembers.userId, userId));
+    return rows.map((r) => Number(r.teamId)).filter((n) => Number.isFinite(n) && n > 0);
+  }
+
+  async getTeamsForUser(userId: number): Promise<Team[]> {
+    const teamIds = await this.getUserTeamIds(userId);
+    if (!teamIds.length) return [];
+    return db.select().from(teams).where(inArray(teams.id, teamIds));
+  }
+
+  async getTeamMemberUserIds(teamId: number): Promise<number[]> {
+    const rows = await db.select({ userId: teamMembers.userId }).from(teamMembers).where(eq(teamMembers.teamId, teamId));
+    return rows.map((r) => Number(r.userId)).filter((n) => Number.isFinite(n) && n > 0);
   }
 
   async createTeam(team: InsertTeam): Promise<Team> {

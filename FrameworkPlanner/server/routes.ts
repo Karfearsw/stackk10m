@@ -113,7 +113,7 @@ function parseLimitOffset(query: any): { limit?: number; offset: number } {
 
 function isManagerUser(user: any) {
   const role = String(user?.role || "").toLowerCase();
-  return !!user?.isSuperAdmin || role === "admin" || role === "manager" || role === "owner";
+  return !!user?.isSuperAdmin || role === "admin" || role === "manager" || role === "owner" || role === "team_leader";
 }
 
 async function requireAuth(req: any, res: any) {
@@ -128,6 +128,37 @@ async function requireAuth(req: any, res: any) {
     return null;
   }
   return user;
+}
+
+function isAdminUser(user: any) {
+  const role = String(user?.role || "").trim().toLowerCase();
+  return !!user?.isSuperAdmin || role === "admin";
+}
+
+async function allowedLeadAssigneeUserIds(userId: number): Promise<number[]> {
+  const out = new Set<number>();
+  out.add(Number(userId));
+  const teamIds = await storage.getUserTeamIds(userId);
+  for (const tid of teamIds) {
+    const ids = await storage.getTeamMemberUserIds(tid);
+    for (const id of ids) out.add(Number(id));
+  }
+  return Array.from(out).filter((n) => Number.isFinite(n) && n > 0);
+}
+
+async function canAccessTeam(user: any, teamId: number): Promise<boolean> {
+  if (isAdminUser(user)) return true;
+  const ids = await storage.getUserTeamIds(user.id);
+  return ids.includes(teamId);
+}
+
+async function isTeamLeaderForTeam(user: any, teamId: number): Promise<boolean> {
+  if (isAdminUser(user)) return true;
+  const members = await storage.getTeamMembers(teamId);
+  const m = members.find((x: any) => Number(x.userId) === Number(user.id));
+  if (!m) return false;
+  const r = String((m as any).role || "").trim().toLowerCase();
+  return r === "team_leader" || r === "owner";
 }
 
 function parseEnvBool(v: unknown): boolean | null {
@@ -867,36 +898,91 @@ export async function registerRoutes(
   app.post("/api/auth/signup", async (req, res) => {
     try {
       if (!checkAuthRateLimit(req, res)) return;
-      const { firstName, lastName, email, password, role = "employee", isSuperAdmin = false, isActive = true, employeeCode } = req.body;
+      const { firstName, lastName, email, password } = req.body;
       
       if (!firstName || !lastName || !email || !password) {
         return res.status(400).json({ message: "All fields are required" });
       }
 
-      const accessCode = process.env.EMPLOYEE_ACCESS_CODE;
-      if (!accessCode || !String(accessCode).trim()) {
-        return res.status(503).json({ message: "Employee access code is not configured" });
+      const orgDomain = String(process.env.ORG_EMAIL_DOMAIN || "oceanluxe.org").trim().toLowerCase();
+      const normalizedEmail = String(email || "").trim().toLowerCase();
+      if (!normalizedEmail.endsWith(`@${orgDomain}`)) {
+        return res.status(403).json({ message: "Email domain is not allowed" });
       }
-      if (!employeeCode || employeeCode !== accessCode) {
-        return res.status(403).json({ message: "Invalid employee code" });
+
+      const roleCode = String(req.body?.roleCode || req.body?.employeeCode || "").trim();
+      const teamCode = String(req.body?.teamCode || "").trim();
+
+      const adminCode = String(process.env.ADMIN_ROLE_CODE || "").trim();
+      const teamLeaderCode = String(process.env.TEAM_LEADER_ROLE_CODE || "").trim();
+      const agentCode = String(process.env.AGENT_ROLE_CODE || "").trim();
+      const vaCode = String(process.env.VA_ROLE_CODE || "").trim();
+      const legacyEmployeeCode = String(process.env.EMPLOYEE_ACCESS_CODE || "").trim();
+
+      const codesConfigured =
+        Boolean(adminCode) && Boolean(teamLeaderCode) && Boolean(agentCode) && Boolean(vaCode);
+      if (!codesConfigured && !legacyEmployeeCode) {
+        return res.status(503).json({ message: "Signup codes are not configured" });
       }
+
+      let role: string | null = null;
+      let isSuperAdmin = false;
+
+      if (adminCode && roleCode === adminCode) {
+        role = "admin";
+        isSuperAdmin = true;
+      } else if (teamLeaderCode && roleCode === teamLeaderCode) {
+        role = "team_leader";
+      } else if (agentCode && roleCode === agentCode) {
+        role = "agent";
+      } else if (vaCode && roleCode === vaCode) {
+        role = "va";
+      } else if (legacyEmployeeCode && roleCode === legacyEmployeeCode) {
+        role = "agent";
+      }
+
+      if (!role) return res.status(403).json({ message: "Invalid access code" });
 
       const existingUser = await storage.getUserByEmail(email);
       if (existingUser) {
         return res.status(409).json({ message: "Email already in use" });
       }
 
+      let team: any | undefined;
+      if (role !== "admin") {
+        if (!teamCode) return res.status(400).json({ message: "Team code is required" });
+        team = await storage.getTeamByJoinCode(teamCode);
+        if (!team) return res.status(403).json({ message: "Invalid team code" });
+      }
+
       const passwordHash = await bcrypt.hash(password, 12);
 
       const newUser = await storage.createUser({
-        email,
+        email: normalizedEmail,
         passwordHash,
         firstName,
         lastName,
         role,
         isSuperAdmin,
-        isActive,
+        isActive: true,
       });
+
+      if (team) {
+        const permissions =
+          role === "team_leader"
+            ? ["team.manage_members", "leads.view_team", "leads.assign_team"]
+            : role === "va"
+              ? ["leads.view_team", "leads.update_limited"]
+              : ["leads.view_team", "leads.update"];
+        await storage.createTeamMember({
+          teamId: team.id,
+          userId: newUser.id,
+          role,
+          permissions,
+          status: "active",
+          joinedAt: new Date(),
+        } as any);
+      }
 
       req.session.userId = newUser.id;
       req.session.email = newUser.email;
@@ -1402,6 +1488,8 @@ export async function registerRoutes(
   // LEADS ENDPOINTS
   app.get("/api/leads", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const { limit, offset } = parseLimitOffset(req.query);
       const q = typeof req.query?.q === "string" ? req.query.q : "";
       const status = typeof req.query?.status === "string" ? req.query.status : "";
@@ -1420,7 +1508,8 @@ export async function registerRoutes(
         if (!Number.isNaN(d.getTime())) createdTo = d;
       }
 
-      const { items, total } = await storage.listLeads({ q, status, owner, createdFrom, createdTo, limit, offset });
+      const allowedAssignedToUserIds = isAdminUser(user) ? undefined : await allowedLeadAssigneeUserIds(user.id);
+      const { items, total } = await storage.listLeads({ q, status, owner, createdFrom, createdTo, limit, offset, allowedAssignedToUserIds });
       const leadIds = items.map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n) && n > 0);
       const propertyLinks = await storage.getPropertiesBySourceLeadIds(leadIds);
       const bySourceLeadId = new Map<number, number>();
@@ -1445,8 +1534,15 @@ export async function registerRoutes(
 
   app.get("/api/leads/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const lead = await storage.getLeadById(parseInt(req.params.id));
       if (!lead) return res.status(404).json({ message: "Lead not found" });
+      if (!isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((lead as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) return res.status(404).json({ message: "Lead not found" });
+      }
       res.json(lead);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -2234,10 +2330,23 @@ export async function registerRoutes(
 
   app.post("/api/leads", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const validated = insertLeadSchema.parse(req.body) as InsertLead;
       const source = String((validated as any).source || "").trim();
       if (!source || source === "__custom__") {
         return res.status(400).json({ message: "Lead source is required" });
+      }
+
+      if (!isAdminUser(user) && (validated as any).assignedTo == null) {
+        (validated as any).assignedTo = user.id;
+      }
+      if (!isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((validated as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) {
+          return res.status(403).json({ message: "Forbidden" });
+        }
       }
 
       const dedupeKey = computeLeadDedupeKey(validated as any);
@@ -2282,9 +2391,26 @@ export async function registerRoutes(
 
   app.patch("/api/leads/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const partial = insertLeadSchema.partial().parse(req.body) as Partial<InsertLead>;
       const id = parseInt(req.params.id);
       const before = await storage.getLeadById(id);
+      if (!before) return res.status(404).json({ message: "Lead not found" });
+      if (!isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((before as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) return res.status(404).json({ message: "Lead not found" });
+      }
+
+      if (!isAdminUser(user) && typeof (partial as any).assignedTo !== "undefined") {
+        const role = String(user.role || "").trim().toLowerCase();
+        if (role !== "team_leader") return res.status(403).json({ message: "Forbidden" });
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const nextAssignedTo = Number((partial as any).assignedTo);
+        if (!Number.isFinite(nextAssignedTo) || !allowed.includes(nextAssignedTo)) return res.status(403).json({ message: "Forbidden" });
+      }
+
       if (before) {
         const merged: any = { ...before, ...(partial as any) };
         if (merged.address && merged.city && merged.state && merged.zipCode && merged.ownerName) {
@@ -2338,6 +2464,9 @@ export async function registerRoutes(
 
   app.delete("/api/leads/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
       const lead = await storage.getLeadById(parseInt(req.params.id));
       await storage.deleteLead(parseInt(req.params.id));
       
@@ -2359,11 +2488,18 @@ export async function registerRoutes(
   // Convert lead to property (lead must be under_contract status)
   app.post("/api/leads/:id/convert-to-property", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const leadId = parseInt(req.params.id);
       const lead = await storage.getLeadById(leadId);
       
       if (!lead) {
         return res.status(404).json({ message: "Lead not found" });
+      }
+      if (!isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((lead as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) return res.status(404).json({ message: "Lead not found" });
       }
       
       // Normalize status check (case-insensitive, trim whitespace)
@@ -5181,8 +5317,19 @@ export async function registerRoutes(
   // TEAMS ENDPOINTS
   app.get("/api/teams", async (req, res) => {
     try {
-      const teams = await storage.getTeams();
-      res.json(teams);
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (isAdminUser(user)) {
+        const teams = await storage.getTeams();
+        return res.json(teams);
+      }
+      const [memberTeams, ownerTeams] = await Promise.all([
+        storage.getTeamsForUser(user.id),
+        storage.getTeamsByOwnerId(user.id),
+      ]);
+      const byId = new Map<number, any>();
+      for (const t of [...memberTeams, ...ownerTeams]) byId.set(Number((t as any).id), t);
+      res.json(Array.from(byId.values()));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -5190,8 +5337,15 @@ export async function registerRoutes(
 
   app.get("/api/teams/:id", async (req, res) => {
     try {
-      const team = await storage.getTeamById(parseInt(req.params.id));
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const teamId = parseInt(req.params.id);
+      const team = await storage.getTeamById(teamId);
       if (!team) return res.status(404).json({ message: "Team not found" });
+      if (!isAdminUser(user)) {
+        const ok = await canAccessTeam(user, teamId);
+        if (!ok) return res.status(404).json({ message: "Team not found" });
+      }
       res.json(team);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -5200,6 +5354,9 @@ export async function registerRoutes(
 
   app.post("/api/teams", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
       const validated = insertTeamSchema.parse(req.body);
       const team = await storage.createTeam(validated);
       res.status(201).json(team);
@@ -5210,6 +5367,9 @@ export async function registerRoutes(
 
   app.patch("/api/teams/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
       const partial = insertTeamSchema.partial().parse(req.body);
       const team = await storage.updateTeam(parseInt(req.params.id), partial);
       res.json(team);
@@ -5220,6 +5380,9 @@ export async function registerRoutes(
 
   app.delete("/api/teams/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
       await storage.deleteTeam(parseInt(req.params.id));
       res.json({ message: "Team deleted" });
     } catch (error: any) {
@@ -5230,7 +5393,12 @@ export async function registerRoutes(
   // TEAM MEMBERS ENDPOINTS
   app.get("/api/teams/:teamId/members", async (req, res) => {
     try {
-      const members = await storage.getTeamMembers(parseInt(req.params.teamId));
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const teamId = parseInt(req.params.teamId);
+      const ok = await canAccessTeam(user, teamId);
+      if (!ok) return res.status(404).json({ message: "Team not found" });
+      const members = await storage.getTeamMembers(teamId);
       res.json(members);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -5239,7 +5407,12 @@ export async function registerRoutes(
 
   app.post("/api/teams/:teamId/members", async (req, res) => {
     try {
-      const validated = insertTeamMemberSchema.parse({ ...req.body, teamId: parseInt(req.params.teamId) });
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const teamId = parseInt(req.params.teamId);
+      const ok = await isTeamLeaderForTeam(user, teamId);
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
+      const validated = insertTeamMemberSchema.parse({ ...req.body, teamId });
       const member = await storage.createTeamMember(validated);
       res.status(201).json(member);
     } catch (error: any) {
@@ -5249,6 +5422,12 @@ export async function registerRoutes(
 
   app.patch("/api/team-members/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const existing = await storage.getTeamMemberById(parseInt(req.params.id));
+      if (!existing) return res.status(404).json({ message: "Team member not found" });
+      const ok = await isTeamLeaderForTeam(user, Number((existing as any).teamId));
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
       const partial = insertTeamMemberSchema.partial().parse(req.body);
       const member = await storage.updateTeamMember(parseInt(req.params.id), partial);
       res.json(member);
@@ -5259,6 +5438,12 @@ export async function registerRoutes(
 
   app.delete("/api/team-members/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const existing = await storage.getTeamMemberById(parseInt(req.params.id));
+      if (!existing) return res.status(404).json({ message: "Team member not found" });
+      const ok = await isTeamLeaderForTeam(user, Number((existing as any).teamId));
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
       await storage.deleteTeamMember(parseInt(req.params.id));
       res.json({ message: "Team member removed" });
     } catch (error: any) {
@@ -5269,8 +5454,13 @@ export async function registerRoutes(
   // TEAM ACTIVITY LOGS ENDPOINTS
   app.get("/api/teams/:teamId/activity", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const teamId = parseInt(req.params.teamId);
+      const ok = await canAccessTeam(user, teamId);
+      if (!ok) return res.status(404).json({ message: "Team not found" });
       const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
-      const logs = await storage.getTeamActivityLogs(parseInt(req.params.teamId), limit);
+      const logs = await storage.getTeamActivityLogs(teamId, limit);
       res.json(logs);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -5279,7 +5469,12 @@ export async function registerRoutes(
 
   app.post("/api/teams/:teamId/activity", async (req, res) => {
     try {
-      const validated = insertTeamActivityLogSchema.parse({ ...req.body, teamId: parseInt(req.params.teamId) });
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const teamId = parseInt(req.params.teamId);
+      const ok = await canAccessTeam(user, teamId);
+      if (!ok) return res.status(404).json({ message: "Team not found" });
+      const validated = insertTeamActivityLogSchema.parse({ ...req.body, teamId });
       const log = await storage.createTeamActivityLog(validated);
       res.status(201).json(log);
     } catch (error: any) {

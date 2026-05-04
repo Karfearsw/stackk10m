@@ -19,6 +19,11 @@ describe('List Endpoints Pagination', () => {
     app = express();
     app.use(express.json());
     app.use(session({ secret: 'test', resave: false, saveUninitialized: false }));
+    app.use((req, _res, next) => {
+      (req.session as any).userId = 1;
+      next();
+    });
+    storage.getUserById = async (_id: number) => ({ id: 1, role: "admin", isSuperAdmin: true, isActive: true } as any);
     await registerRoutes(app);
   });
 

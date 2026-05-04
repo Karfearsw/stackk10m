@@ -16,23 +16,15 @@ export default function Signup() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [employeeCode, setEmployeeCode] = useState('');
+  const [teamCode, setTeamCode] = useState('');
+  const [roleCode, setRoleCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-
-  const VALID_EMPLOYEE_CODE = "3911";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
-      // Validate employee code
-      if (employeeCode !== VALID_EMPLOYEE_CODE) {
-        toast.error('Invalid employee code. Contact your manager for access.');
-        setIsLoading(false);
-        return;
-      }
-
       // Validate passwords match
       if (password !== confirmPassword) {
         toast.error('Passwords do not match');
@@ -47,7 +39,7 @@ export default function Signup() {
         return;
       }
 
-      await signup({ firstName, lastName, email, password, employeeCode });
+      await signup({ firstName, lastName, email, password, roleCode, teamCode });
       toast.success('Account created! Redirecting...');
       setTimeout(() => setLocation('/'), 500);
     } catch (error: any) {
@@ -109,7 +101,7 @@ export default function Signup() {
               <Input
                 id="email"
                 type="email"
-                placeholder="your@email.com"
+                placeholder="name@oceanluxe.org"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
@@ -119,19 +111,36 @@ export default function Signup() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="employeeCode">Employee Code</Label>
+              <Label htmlFor="teamCode">Team Code</Label>
               <Input
-                id="employeeCode"
+                id="teamCode"
                 type="password"
-                placeholder="Enter your employee code"
-                value={employeeCode}
-                onChange={(e) => setEmployeeCode(e.target.value)}
+                placeholder="Enter your team join code"
+                value={teamCode}
+                onChange={(e) => setTeamCode(e.target.value)}
                 required
                 disabled={isLoading}
-                data-testid="input-signup-employee-code"
+                data-testid="input-signup-team-code"
               />
               <p className="text-xs text-muted-foreground">
-                Ask your manager for the employee access code
+                Ask your manager for the team join code
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="roleCode">Role Code</Label>
+              <Input
+                id="roleCode"
+                type="password"
+                placeholder="Enter your role access code"
+                value={roleCode}
+                onChange={(e) => setRoleCode(e.target.value)}
+                required
+                disabled={isLoading}
+                data-testid="input-signup-role-code"
+              />
+              <p className="text-xs text-muted-foreground">
+                Ask your manager for the role access code (admin / team leader / agent / VA)
               </p>
             </div>
 
