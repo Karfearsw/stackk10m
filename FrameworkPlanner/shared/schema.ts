@@ -310,12 +310,15 @@ export const teams = pgTable("teams", {
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
   ownerId: integer("owner_id").notNull(),
+  joinCode: varchar("join_code", { length: 64 }).notNull(),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertTeamSchema = createInsertSchema(teams).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export const insertTeamSchema = createInsertSchema(teams)
+  .omit({ id: true, createdAt: true, updatedAt: true } as any)
+  .extend({ joinCode: z.string().optional() } as any);
 export type Team = typeof teams.$inferSelect;
 export type InsertTeam = z.infer<typeof insertTeamSchema>;
 

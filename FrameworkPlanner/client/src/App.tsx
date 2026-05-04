@@ -35,6 +35,7 @@ const FieldModePage = React.lazy(() => import("@/pages/field"));
 const PhoneWorkspace = React.lazy(() => import("@/pages/phone"));
 const DialerWorkspace = React.lazy(() => import("@/pages/dialer-workspace"));
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
+const TeamsPage = React.lazy(() => import("@/pages/teams"));
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -160,6 +161,9 @@ function Router() {
       </Route>
       <Route path="/contacts">
         {() => <ProtectedRoute component={Contacts} />}
+      </Route>
+      <Route path="/teams">
+        {() => <ProtectedRoute component={TeamsPage} />}
       </Route>
       <Route path="/history">
         {() => <Redirect to="/phone?tab=history" />}

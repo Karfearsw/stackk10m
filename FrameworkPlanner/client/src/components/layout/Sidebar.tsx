@@ -35,6 +35,7 @@ export const navigation = [
   { name: "Tasks", href: "/tasks", icon: CheckSquare },
   { name: "Calendar", href: "/calendar", icon: CalendarDays },
   { name: "Leads Pipeline", href: "/leads", icon: Users },
+  { name: "Teams", href: "/teams", icon: Users },
   { name: "Campaigns", href: "/campaigns", icon: Send },
   { name: "RVM", href: "/rvm", icon: Voicemail },
   { name: "Field Mode", href: "/field", icon: MapPin },

@@ -5357,8 +5357,22 @@ export async function registerRoutes(
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const validated = insertTeamSchema.parse(req.body);
-      const team = await storage.createTeam(validated);
+      const body = z
+        .object({
+          name: z.string().min(1),
+          description: z.string().optional().nullable(),
+          joinCode: z.string().optional().nullable(),
+          isActive: z.boolean().optional().nullable(),
+        })
+        .parse(req.body);
+      const joinCode = String(body.joinCode || "").trim() || crypto.randomBytes(6).toString("hex");
+      const team = await storage.createTeam({
+        name: body.name,
+        description: body.description ?? null,
+        ownerId: user.id,
+        joinCode,
+        isActive: typeof body.isActive === "boolean" ? body.isActive : true,
+      } as any);
       res.status(201).json(team);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -5370,8 +5384,20 @@ export async function registerRoutes(
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const partial = insertTeamSchema.partial().parse(req.body);
-      const team = await storage.updateTeam(parseInt(req.params.id), partial);
+      const partial = z
+        .object({
+          name: z.string().min(1).optional(),
+          description: z.string().optional().nullable(),
+          joinCode: z.string().optional().nullable(),
+          isActive: z.boolean().optional().nullable(),
+        })
+        .parse(req.body);
+      const clean: any = {};
+      if (typeof partial.name === "string") clean.name = partial.name;
+      if (typeof partial.description !== "undefined") clean.description = partial.description ?? null;
+      if (typeof partial.isActive === "boolean") clean.isActive = partial.isActive;
+      if (typeof partial.joinCode === "string") clean.joinCode = String(partial.joinCode || "").trim();
+      const team = await storage.updateTeam(parseInt(req.params.id), clean);
       res.json(team);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
