@@ -6,6 +6,7 @@
 - Build script:
   - normal: `npm run build` ([package.json](file:///workspace/FrameworkPlanner/package.json#L9-L26))
   - Vercel: `npm run vercel-build` runs optional migrations then build ([server/scripts/vercel-build.ts](file:///workspace/FrameworkPlanner/server/scripts/vercel-build.ts))
+- GitHub push automation script uses PAT env auth (`GITHUB_TOKEN`, optional `GITHUB_PAT`) rather than Replit connector tokens.
 
 ## CI
 

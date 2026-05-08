@@ -100,6 +100,18 @@ If you encounter `500 INTERNAL_SERVER_ERROR` on signup/login:
 - Ensure `SESSION_SECRET` and `EMPLOYEE_ACCESS_CODE` are set.
 - Check Vercel Function logs for startup errors.
 
+## GitHub Push Script (PAT)
+
+If you use `scripts/push-to-github.ts`, authenticate with a standard GitHub token:
+
+```bash
+GITHUB_TOKEN=your_pat_here node --import tsx scripts/push-to-github.ts
+```
+
+- `GITHUB_TOKEN` is the primary env var (`GITHUB_PAT` is also accepted as a fallback).
+- For private repos, ensure the token has `repo` scope.
+- Never commit tokens to git or save them in tracked files; provide them via shell env or your secret manager.
+
 ## CI/CD
 
 GitHub Actions are configured in `.github/workflows/ci.yml` to run type checks, builds, and tests on every push/PR.
