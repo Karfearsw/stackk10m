@@ -43,6 +43,7 @@ import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 import { PipelineBoard } from "@/components/pipeline/PipelineBoard";
 import { LeadPipelineCard } from "@/components/pipeline/LeadPipelineCard";
 import { EntityActivity } from "@/components/activity/EntityActivity";
@@ -66,6 +67,7 @@ export default function Leads() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<any>(null);
   const [newLeadOtherSource, setNewLeadOtherSource] = useState("");
@@ -135,6 +137,28 @@ export default function Leads() {
   });
   const leads = useMemo(() => (Array.isArray(leadsResp?.items) ? leadsResp.items : []), [leadsResp?.items]);
   const leadsTotal = useMemo(() => Number(leadsResp?.total ?? leads.length ?? 0), [leads.length, leadsResp?.total]);
+
+  const canAssignLeads = useMemo(() => {
+    const role = String((user as any)?.role || "").toLowerCase();
+    return Boolean((user as any)?.isSuperAdmin) || role === "admin" || role === "team_leader";
+  }, [user]);
+
+  const { data: usersList = [] } = useQuery<any[]>({
+    queryKey: ["/api/users", "scoped"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/users?limit=500");
+      return await res.json();
+    },
+  });
+
+  const usersById = useMemo(() => {
+    const m = new Map<number, any>();
+    for (const u of usersList || []) {
+      const id = Number((u as any)?.id);
+      if (Number.isFinite(id) && id > 0) m.set(id, u);
+    }
+    return m;
+  }, [usersList]);
 
   const { data: leadPipelineConfig } = useQuery({
     queryKey: ["/api/pipeline-config", "lead"],
@@ -763,6 +787,10 @@ export default function Leads() {
                 lead={lead}
                 columns={pipelineColumns}
                 onUpdateStatus={(leadId, status) => updateMutation.mutate({ id: leadId, data: { status } })}
+                users={usersList}
+                usersById={usersById}
+                canAssign={canAssignLeads}
+                onAssign={(leadId, assignedTo) => updateMutation.mutate({ id: leadId, data: { assignedTo } })}
                 onAddNote={(l) => {
                   setNoteLead(l);
                   setNoteText("");

@@ -48,6 +48,7 @@ const REPO_NAME = 'OTPSTACKK';
 
 const IGNORE_PATTERNS = [
   'node_modules',
+  '.trae',
   '.git',
   'dist',
   '.replit',

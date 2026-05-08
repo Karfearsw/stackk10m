@@ -16,12 +16,17 @@ type LeadLike = {
   estimatedValue?: string | number | null;
   status?: string | null;
   notes?: string | null;
+  assignedTo?: number | null;
 };
 
 export function LeadPipelineCard({
   lead,
   columns,
   onUpdateStatus,
+  users,
+  usersById,
+  canAssign,
+  onAssign,
   onAddNote,
   onOpenActivity,
   onCall,
@@ -31,6 +36,10 @@ export function LeadPipelineCard({
   lead: LeadLike;
   columns: PipelineColumn[];
   onUpdateStatus: (leadId: number, status: string) => void;
+  users: Array<{ id: number; firstName?: string | null; lastName?: string | null; email?: string | null }>;
+  usersById: Map<number, any>;
+  canAssign: boolean;
+  onAssign: (leadId: number, assignedTo: number | null) => void;
   onAddNote: (lead: LeadLike) => void;
   onOpenActivity: (lead: LeadLike) => void;
   onCall: (lead: LeadLike) => void;
@@ -43,6 +52,13 @@ export function LeadPipelineCard({
   const addressLine = [lead.address, lead.city, lead.state, lead.zipCode].filter(Boolean).join(", ");
   const notePreview = String(lead.notes || "").trim().split("\n").filter(Boolean).slice(-1)[0] || "";
   const playgroundAddress = addressLine || String(lead.address || "").trim();
+  const assignedTo = typeof lead.assignedTo === "number" ? lead.assignedTo : null;
+  const assignedUser = assignedTo ? usersById.get(assignedTo) : null;
+  const assignedLabel = assignedUser
+    ? String(`${assignedUser?.firstName || ""} ${assignedUser?.lastName || ""}`).trim() || String(assignedUser?.email || `User ${assignedTo}`)
+    : assignedTo
+      ? `User ${assignedTo}`
+      : "Unassigned";
 
   return (
     <Card>
@@ -69,6 +85,34 @@ export function LeadPipelineCard({
         </div>
 
         <div className="flex items-center justify-between gap-2">
+          {canAssign ? (
+            <div className="w-[200px]">
+              <Select
+                value={assignedTo ? String(assignedTo) : "unassigned"}
+                onValueChange={(value) => onAssign(lead.id, value === "unassigned" ? null : parseInt(value, 10))}
+              >
+                <SelectTrigger className="h-8">
+                  <SelectValue placeholder="Assign" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unassigned">Unassigned</SelectItem>
+                  {users.map((u) => (
+                    <SelectItem key={u.id} value={String(u.id)}>
+                      {String(`${u.firstName || ""} ${u.lastName || ""}`).trim() || u.email || `User ${u.id}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <div className="text-xs text-muted-foreground truncate">Assigned: {assignedLabel}</div>
+          )}
+          <div className="text-xs text-muted-foreground whitespace-nowrap">
+            {lead.estimatedValue ? `$${lead.estimatedValue}` : ""}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-2">
           <div className="text-xs">
             <div className="truncate">{lead.ownerName || "—"}</div>
             <div className="flex gap-2 text-muted-foreground">
@@ -85,9 +129,6 @@ export function LeadPipelineCard({
                 </a>
               ) : null}
             </div>
-          </div>
-          <div className="text-xs text-muted-foreground whitespace-nowrap">
-            {lead.estimatedValue ? `$${lead.estimatedValue}` : ""}
           </div>
         </div>
 

@@ -4,6 +4,7 @@ import express from "express";
 import session from "express-session";
 import { registerRoutes } from "../server/routes";
 import { db } from "../server/db";
+import { storage } from "../server/storage";
 
 describe("Search result paths", () => {
   let app: express.Express;
@@ -38,6 +39,7 @@ describe("Search result paths", () => {
       req.session.userId = 1;
       next();
     });
+    storage.getUserById = (async (_id: number) => ({ id: 1, role: "admin", isSuperAdmin: true, isActive: true } as any)) as any;
     await registerRoutes(app);
   });
 
@@ -53,4 +55,3 @@ describe("Search result paths", () => {
     expect(lead?.path).toContain("leadId=123");
   });
 });
-

@@ -180,6 +180,7 @@ export interface IStorage {
 
   // Users
   getUsers(limit?: number, offset?: number): Promise<User[]>;
+  getUsersByIds(userIds: number[], limit?: number, offset?: number): Promise<User[]>;
   getUserById(id: number): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
@@ -886,6 +887,16 @@ export class DatabaseStorage implements IStorage {
   // Users
   async getUsers(limit?: number, offset: number = 0): Promise<User[]> {
     let q: any = db.select().from(users);
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q as unknown as Promise<User[]>;
+  }
+
+  async getUsersByIds(userIds: number[], limit?: number, offset: number = 0): Promise<User[]> {
+    const ids = Array.isArray(userIds)
+      ? userIds.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0)
+      : [];
+    if (!ids.length) return [];
+    let q: any = db.select().from(users).where(inArray(users.id, ids));
     if (typeof limit === "number") q = q.limit(limit).offset(offset);
     return q as unknown as Promise<User[]>;
   }

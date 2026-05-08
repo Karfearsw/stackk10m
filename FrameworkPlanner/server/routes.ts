@@ -506,6 +506,8 @@ export async function registerRoutes(
 
   app.get("/api/address/suggest", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const qRaw = (req.query.q as string) || "";
       const q = qRaw.trim();
       if (q.length < 2) return res.json({ q: qRaw, provider: null, suggestions: [] });
@@ -574,6 +576,8 @@ export async function registerRoutes(
   app.get("/api/search", async (req, res) => {
     const startedAt = Date.now();
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const qRaw = (req.query.q as string) || "";
       const q = qRaw.trim();
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
@@ -646,7 +650,7 @@ export async function registerRoutes(
       const total = leadCount + propertyCount + contactCount;
 
       const elapsedMs = Date.now() - startedAt;
-      console.log(`[search] q="${qRaw}" results=${results.length}/${total} leads=${leadCount} properties=${propertyCount} contacts=${contactCount} in ${elapsedMs}ms`);
+      console.log(`[search] len=${q.length} results=${results.length}/${total} leads=${leadCount} properties=${propertyCount} contacts=${contactCount} in ${elapsedMs}ms`);
       res.json({ q: qRaw, results, counts: { leads: leadCount, properties: propertyCount, contacts: contactCount, total } });
     } catch (error: any) {
       console.error('[search] error', error);
@@ -1132,8 +1136,8 @@ export async function registerRoutes(
 
   app.get("/api/playground/sessions/:id", async (req, res) => {
     try {
-      const userId = req.session.userId;
-      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const id = parseInt(req.params.id);
       const session = await storage.getPlaygroundPropertySessionById(id);
       if (!session) return res.status(404).json({ message: "Not found" });
@@ -1145,8 +1149,9 @@ export async function registerRoutes(
 
   app.patch("/api/playground/sessions/:id", async (req, res) => {
     try {
-      const userId = req.session.userId;
-      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const userId = user.id;
       const id = parseInt(req.params.id);
       const leadIdRaw = req.body?.leadId;
       const propertyIdRaw = req.body?.propertyId;
@@ -1177,6 +1182,16 @@ export async function registerRoutes(
       };
 
       Object.keys(patch).forEach((k) => patch[k] === undefined && delete patch[k]);
+
+      if (typeof patch.assignedTo !== "undefined" && patch.assignedTo !== null) {
+        const nextAssignedTo = Number(patch.assignedTo);
+        if (!Number.isFinite(nextAssignedTo)) return res.status(400).json({ message: "Invalid assignedTo" });
+        if (!isAdminUser(user)) {
+          const allowed = await allowedLeadAssigneeUserIds(user.id);
+          if (!allowed.includes(nextAssignedTo)) return res.status(403).json({ message: "Forbidden" });
+        }
+        patch.assignedTo = nextAssignedTo;
+      }
       const updated = await storage.updatePlaygroundPropertySession(id, patch);
 
       const fields = Object.keys(patch).filter((f) => f !== "updatedBy");
@@ -2564,6 +2579,8 @@ export async function registerRoutes(
   // OPPORTUNITIES ENDPOINTS (New Terminology)
   app.get("/api/opportunities", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const { limit, offset } = parseLimitOffset(req.query);
       const allProperties = await storage.getProperties(limit, offset);
       res.json(
@@ -2583,6 +2600,8 @@ export async function registerRoutes(
 
   app.get("/api/opportunities/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const id = parseInt(req.params.id);
       const property = await storage.getPropertyById(id);
       if (!property) return res.status(404).json({ message: "Opportunity not found" });
@@ -2592,6 +2611,12 @@ export async function registerRoutes(
         try {
           lead = await storage.getLeadById(property.sourceLeadId);
         } catch {}
+      }
+
+      if (lead && !isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((lead as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) return res.status(404).json({ message: "Opportunity not found" });
       }
 
       res.json({ property: { ...(property as any), images: resolvePropertyImages((property as any).images) }, lead });
@@ -3743,8 +3768,11 @@ export async function registerRoutes(
   });
 
   // SYSTEM HEALTH (Aggregated diagnostics)
-  app.get("/api/system/health", async (_req, res) => {
+  app.get("/api/system/health", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
       // DB connectivity
       let dbStatus = "disconnected";
       try {
@@ -3769,15 +3797,16 @@ export async function registerRoutes(
       }
 
       // Env vars presence
-      const required = [
-        "DATABASE_URL",
-        "SESSION_SECRET",
-        "EMPLOYEE_ACCESS_CODE",
-        "SIGNALWIRE_SPACE_URL",
-        "SIGNALWIRE_PROJECT_ID",
-        "SIGNALWIRE_API_TOKEN",
-      ];
-      const missing = required.filter((k) => !process.env[k] || String(process.env[k]).trim() === "");
+      const requiredCore = ["DATABASE_URL", "SESSION_SECRET"];
+      const missingCore = requiredCore.filter((k) => !process.env[k] || String(process.env[k]).trim() === "");
+
+      const roleKeys = ["ADMIN_ROLE_CODE", "TEAM_LEADER_ROLE_CODE", "AGENT_ROLE_CODE", "VA_ROLE_CODE"];
+      const legacyKey = "EMPLOYEE_ACCESS_CODE";
+      const hasRoleCodes = roleKeys.every((k) => String(process.env[k] || "").trim());
+      const hasLegacy = String(process.env[legacyKey] || "").trim().length > 0;
+      const missingSignup = hasRoleCodes || hasLegacy ? [] : [...roleKeys, legacyKey];
+
+      const missing = [...missingCore, ...missingSignup];
 
       // Sessions store check (ensure table exists)
       let sessionsOk = true;
@@ -5009,10 +5038,23 @@ export async function registerRoutes(
   // USERS ENDPOINTS
   app.get("/api/users", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
       const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
       const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
-      const users = await storage.getUsers(limit, offset);
-      res.json(users);
+      if (isAdminUser(me)) {
+        const users = await storage.getUsers(limit, offset);
+        return res.json(users.map((u: any) => {
+          const { passwordHash, ...rest } = u as any;
+          return rest;
+        }));
+      }
+      const allowedIds = await allowedLeadAssigneeUserIds(me.id);
+      const users = await storage.getUsersByIds(allowedIds, limit, offset);
+      res.json(users.map((u: any) => {
+        const { passwordHash, ...rest } = u as any;
+        return rest;
+      }));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -5020,9 +5062,17 @@ export async function registerRoutes(
 
   app.get("/api/users/:id", async (req, res) => {
     try {
-      const user = await storage.getUserById(parseInt(req.params.id));
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const id = parseInt(req.params.id);
+      if (!isAdminUser(me)) {
+        const allowedIds = await allowedLeadAssigneeUserIds(me.id);
+        if (!allowedIds.includes(id)) return res.status(404).json({ message: "User not found" });
+      }
+      const user = await storage.getUserById(id);
       if (!user) return res.status(404).json({ message: "User not found" });
-      res.json(user);
+      const { passwordHash, ...rest } = user as any;
+      res.json(rest);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -5030,9 +5080,13 @@ export async function registerRoutes(
 
   app.post("/api/users", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      if (!isAdminUser(me)) return res.status(403).json({ message: "Forbidden" });
       const validated = insertUserSchema.parse(req.body);
       const user = await storage.createUser(validated);
-      res.status(201).json(user);
+      const { passwordHash, ...rest } = user as any;
+      res.status(201).json(rest);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -5040,20 +5094,19 @@ export async function registerRoutes(
 
   // Change password
   app.patch("/api/users/:id/password", async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Not authenticated" });
-    }
+    const me = await requireAuth(req, res);
+    if (!me) return;
 
     const userId = parseInt(req.params.id);
-    if (req.session.userId !== userId) {
+    if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
     try {
       const { currentPassword, newPassword } = req.body;
 
-      if (!currentPassword || !newPassword) {
-        return res.status(400).json({ message: "Current and new password are required" });
+      if (!newPassword) {
+        return res.status(400).json({ message: "New password is required" });
       }
 
       if (newPassword.length < 8) {
@@ -5065,9 +5118,14 @@ export async function registerRoutes(
         return res.status(404).json({ message: "User not found" });
       }
 
-      const isValid = await bcrypt.compare(currentPassword, user.passwordHash);
-      if (!isValid) {
-        return res.status(401).json({ message: "Current password is incorrect" });
+      if (!isAdminUser(me)) {
+        if (!currentPassword) {
+          return res.status(400).json({ message: "Current password is required" });
+        }
+        const isValid = await bcrypt.compare(currentPassword, user.passwordHash);
+        if (!isValid) {
+          return res.status(401).json({ message: "Current password is incorrect" });
+        }
       }
 
       const newPasswordHash = await bcrypt.hash(newPassword, 12);
@@ -5082,9 +5140,16 @@ export async function registerRoutes(
 
   app.patch("/api/users/:id", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.id);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       const partial = insertUserSchema.partial().parse(req.body);
-      const user = await storage.updateUser(parseInt(req.params.id), partial);
-      res.json(user);
+      const user = await storage.updateUser(userId, partial);
+      const { passwordHash, ...rest } = user as any;
+      res.json(rest);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -5093,6 +5158,12 @@ export async function registerRoutes(
   // TWO FACTOR AUTH ENDPOINTS
   app.get("/api/users/:userId/2fa", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       const auth = await storage.getTwoFactorAuthByUserId(parseInt(req.params.userId));
       res.json(auth || { isEnabled: false });
     } catch (error: any) {
@@ -5102,6 +5173,12 @@ export async function registerRoutes(
 
   app.post("/api/users/:userId/2fa", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       const validated = insertTwoFactorAuthSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
       const auth = await storage.createTwoFactorAuth(validated);
       res.status(201).json(auth);
@@ -5112,6 +5189,12 @@ export async function registerRoutes(
 
   app.patch("/api/users/:userId/2fa", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       const partial = insertTwoFactorAuthSchema.partial().parse(req.body);
       const auth = await storage.updateTwoFactorAuth(parseInt(req.params.userId), partial);
       res.json(auth);
@@ -5122,6 +5205,12 @@ export async function registerRoutes(
 
   app.delete("/api/users/:userId/2fa", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       await storage.deleteTwoFactorAuth(parseInt(req.params.userId));
       res.json({ message: "2FA disabled" });
     } catch (error: any) {
@@ -5132,6 +5221,12 @@ export async function registerRoutes(
   // BACKUP CODES ENDPOINTS
   app.get("/api/users/:userId/backup-codes", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       const codes = await storage.getBackupCodesByUserId(parseInt(req.params.userId));
       res.json(codes);
     } catch (error: any) {
@@ -5141,6 +5236,12 @@ export async function registerRoutes(
 
   app.post("/api/users/:userId/backup-codes", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       const validated = insertBackupCodeSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
       const code = await storage.createBackupCode(validated);
       res.status(201).json(code);
@@ -5511,6 +5612,10 @@ export async function registerRoutes(
   // NOTIFICATION PREFERENCES ENDPOINTS
   app.get("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
       const prefs = await storage.getNotificationPreferencesByUserId(parseInt(req.params.userId));
       res.json(prefs || {});
     } catch (error: any) {
@@ -5520,6 +5625,10 @@ export async function registerRoutes(
 
   app.post("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
       const validated = insertNotificationPreferenceSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
       const prefs = await storage.createNotificationPreferences(validated);
       res.status(201).json(prefs);
@@ -5530,6 +5639,10 @@ export async function registerRoutes(
 
   app.patch("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
       const partial = insertNotificationPreferenceSchema.partial().parse(req.body);
       const prefs = await storage.updateNotificationPreferences(parseInt(req.params.userId), partial);
       res.json(prefs);
@@ -5541,6 +5654,10 @@ export async function registerRoutes(
   // USER NOTIFICATIONS ENDPOINTS (actual notification messages)
   app.get("/api/users/:userId/notifications", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
       const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
       const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const notifications = await storage.getUserNotifications(parseInt(req.params.userId), limit, offset);
@@ -5552,6 +5669,10 @@ export async function registerRoutes(
 
   app.post("/api/users/:userId/notifications", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
       const validated = insertUserNotificationSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
       const notification = await storage.createUserNotification(validated);
       res.status(201).json(notification);
@@ -5562,7 +5683,15 @@ export async function registerRoutes(
 
   app.patch("/api/notifications/:id/read", async (req, res) => {
     try {
-      const notification = await storage.markNotificationAsRead(parseInt(req.params.id));
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const id = parseInt(req.params.id);
+      const existing = await storage.getUserNotificationById(id);
+      if (!existing) return res.status(404).json({ message: "Notification not found" });
+      if (!isAdminUser(me) && Number(me.id) !== Number((existing as any).userId)) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      const notification = await storage.markNotificationAsRead(id);
       res.json(notification);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -5571,7 +5700,15 @@ export async function registerRoutes(
 
   app.delete("/api/notifications/:id", async (req, res) => {
     try {
-      await storage.deleteUserNotification(parseInt(req.params.id));
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const id = parseInt(req.params.id);
+      const existing = await storage.getUserNotificationById(id);
+      if (!existing) return res.status(404).json({ message: "Notification not found" });
+      if (!isAdminUser(me) && Number(me.id) !== Number((existing as any).userId)) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      await storage.deleteUserNotification(id);
       res.json({ message: "Notification deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -5580,6 +5717,10 @@ export async function registerRoutes(
 
   app.delete("/api/users/:userId/notifications", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
       await storage.deleteAllUserNotifications(parseInt(req.params.userId));
       res.json({ message: "All notifications deleted" });
     } catch (error: any) {
@@ -5589,6 +5730,10 @@ export async function registerRoutes(
 
   app.patch("/api/users/:userId/notifications/read-all", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
       await storage.markAllNotificationsAsRead(parseInt(req.params.userId));
       res.json({ message: "All notifications marked as read" });
     } catch (error: any) {
@@ -5668,6 +5813,11 @@ export async function registerRoutes(
       const assignedToUserId =
         typeof validated.assignedToUserId === "number" ? validated.assignedToUserId : user.id;
 
+      if (!isManagerUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        if (!allowed.includes(Number(assignedToUserId))) return res.status(403).json({ message: "Forbidden" });
+      }
+
       const task = await createTask({
         ...validated,
         assignedToUserId,
@@ -5692,6 +5842,11 @@ export async function registerRoutes(
 
       const patchSchema = insertTaskSchema.partial().omit({ createdBy: true } as any);
       const patch: any = patchSchema.parse(req.body || {});
+
+      if (!isManagerUser(user) && typeof patch.assignedToUserId !== "undefined") {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        if (!allowed.includes(Number(patch.assignedToUserId))) return res.status(403).json({ message: "Forbidden" });
+      }
       const updated = await storage.updateTask(id, patch);
       res.json(updated);
     } catch (error: any) {
