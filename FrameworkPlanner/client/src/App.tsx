@@ -38,6 +38,12 @@ const FieldModePage = React.lazy(() => import("@/pages/field"));
 const PhoneWorkspace = React.lazy(() => import("@/pages/phone"));
 const DialerWorkspace = React.lazy(() => import("@/pages/dialer-workspace"));
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
+const TeamsPage = React.lazy(() => import("@/pages/teams"));
+const XpLandingPage = React.lazy(() => import("@/pages/xp/index"));
+const XpExperiencePage = React.lazy(() => import("@/pages/xp/experience"));
+const XpAdminPage = React.lazy(() => import("@/pages/xp/admin"));
+const XpCheckoutSuccessPage = React.lazy(() => import("@/pages/xp/checkout-success"));
+const XpCheckoutCancelPage = React.lazy(() => import("@/pages/xp/checkout-cancel"));
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -77,8 +83,35 @@ function Router() {
         <Route path="/signup">
           {isAuthenticated ? <Redirect to="/login" /> : <Signup />}
         </Route>
-        <Route path="/forgot-password" component={ForgotPassword} />
-        <Route path="/reset-password" component={ResetPassword} />
+        <Route path="/forgot-password">
+          {isAuthenticated ? <Redirect to="/dashboard" /> : <ForgotPassword />}
+        </Route>
+        <Route path="/reset-password">
+          {isAuthenticated ? <Redirect to="/dashboard" /> : <ResetPassword />}
+        </Route>
+        <Route path="/xp/admin">
+          {() => <ProtectedRoute component={XpAdminPage} />}
+        </Route>
+        <Route path="/xp/checkout/success">
+          <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-border" /></div>}>
+            <XpCheckoutSuccessPage />
+          </Suspense>
+        </Route>
+        <Route path="/xp/checkout/cancel">
+          <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-border" /></div>}>
+            <XpCheckoutCancelPage />
+          </Suspense>
+        </Route>
+        <Route path="/xp/:slug">
+          <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-border" /></div>}>
+            <XpExperiencePage />
+          </Suspense>
+        </Route>
+        <Route path="/xp">
+          <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-border" /></div>}>
+            <XpLandingPage />
+          </Suspense>
+        </Route>
         <Route path="/dashboard">
           {() => <ProtectedRoute component={Dashboard} />}
         </Route>
@@ -165,6 +198,9 @@ function Router() {
         </Route>
         <Route path="/system-health">
           {() => <ProtectedRoute component={SystemHealthPage} />}
+        </Route>
+        <Route path="/teams">
+          {() => <ProtectedRoute component={TeamsPage} />}
         </Route>
         <Route component={NotFound} />
       </Switch>

@@ -3,7 +3,7 @@ import { asc, desc, sql } from "drizzle-orm";
 import { 
   leads, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
-  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches
+  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -52,7 +52,12 @@ import {
   type CampaignDelivery, type InsertCampaignDelivery,
   type RvmAudioAsset, type InsertRvmAudioAsset,
   type RvmCampaign, type InsertRvmCampaign,
-  type RvmDrop, type InsertRvmDrop
+  type RvmDrop, type InsertRvmDrop,
+  type XpExperience, type InsertXpExperience,
+  type XpTimeSlot, type InsertXpTimeSlot,
+  type XpBlackout, type InsertXpBlackout,
+  type XpBooking, type InsertXpBooking,
+  type XpStripeEvent, type InsertXpStripeEvent
 } from "./shared-schema.js";
 import { eq, and, gte, lte, isNull, inArray, or, ne, isNotNull } from "drizzle-orm";
 
@@ -331,6 +336,35 @@ export interface IStorage {
   createDealAssignment(assignment: InsertDealAssignment): Promise<DealAssignment>;
   updateDealAssignment(id: number, assignment: Partial<InsertDealAssignment>): Promise<DealAssignment>;
   deleteDealAssignment(id: number): Promise<void>;
+
+  listXpExperiences(input?: { activeOnly?: boolean }): Promise<XpExperience[]>;
+  getXpExperienceBySlug(slug: string): Promise<XpExperience | undefined>;
+  getXpExperienceById(id: number): Promise<XpExperience | undefined>;
+  createXpExperience(input: InsertXpExperience): Promise<XpExperience>;
+  updateXpExperience(id: number, patch: Partial<InsertXpExperience>): Promise<XpExperience>;
+  deactivateXpExperience(id: number): Promise<XpExperience>;
+
+  listXpTimeSlots(experienceId: number, input?: { from?: Date; to?: Date; activeOnly?: boolean }): Promise<XpTimeSlot[]>;
+  getXpTimeSlotById(id: number): Promise<XpTimeSlot | undefined>;
+  createXpTimeSlot(input: InsertXpTimeSlot): Promise<XpTimeSlot>;
+  deleteXpTimeSlot(id: number): Promise<void>;
+
+  listXpBlackouts(experienceId: number, input?: { from?: Date; to?: Date }): Promise<XpBlackout[]>;
+  createXpBlackout(input: InsertXpBlackout): Promise<XpBlackout>;
+  deleteXpBlackout(id: number): Promise<void>;
+
+  listXpBookings(input?: { experienceId?: number; status?: string; from?: Date; to?: Date; limit?: number; offset?: number }): Promise<{ items: XpBooking[]; total: number }>;
+  getXpBookingById(id: number): Promise<XpBooking | undefined>;
+  createXpBookingPending(input: InsertXpBooking): Promise<XpBooking>;
+  getXpBookingByStripeSessionId(sessionId: string): Promise<XpBooking | undefined>;
+  confirmXpBookingByStripeSessionId(input: { sessionId: string; paymentIntentId?: string | null; stripeCustomerId?: string | null }): Promise<XpBooking | undefined>;
+  cancelXpBooking(id: number): Promise<XpBooking | undefined>;
+
+  hasStripeEvent(eventId: string): Promise<boolean>;
+  recordStripeEvent(input: InsertXpStripeEvent): Promise<XpStripeEvent>;
+
+  countXpActiveBookingsOverlapping(input: { experienceId: number; kind: string; startAt: Date; endAt: Date }): Promise<number>;
+  hasXpBlackoutOverlap(input: { experienceId: number; startAt: Date; endAt: Date }): Promise<boolean>;
 
   // Call Logs
   getCallLogs(limit?: number, offset?: number, status?: string, contactId?: number): Promise<CallLog[]>;
@@ -1647,6 +1681,186 @@ export class DatabaseStorage implements IStorage {
       .where(eq(callMedia.id, id))
       .returning();
     return result[0];
+  }
+
+  async listXpExperiences(input?: { activeOnly?: boolean }): Promise<XpExperience[]> {
+    const activeOnly = !!input?.activeOnly;
+    let q: any = db.select().from(xpExperiences);
+    if (activeOnly) q = q.where(eq(xpExperiences.active, true));
+    q = q.orderBy(asc(xpExperiences.title));
+    return q as unknown as Promise<XpExperience[]>;
+  }
+
+  async getXpExperienceBySlug(slug: string): Promise<XpExperience | undefined> {
+    const s = String(slug || "").trim();
+    if (!s) return undefined;
+    const result = await db.select().from(xpExperiences).where(eq(xpExperiences.slug, s)).limit(1);
+    return result[0];
+  }
+
+  async getXpExperienceById(id: number): Promise<XpExperience | undefined> {
+    const result = await db.select().from(xpExperiences).where(eq(xpExperiences.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createXpExperience(input: InsertXpExperience): Promise<XpExperience> {
+    const now = new Date();
+    const result = await db.insert(xpExperiences).values({ ...(input as any), createdAt: now, updatedAt: now } as any).returning();
+    return result[0];
+  }
+
+  async updateXpExperience(id: number, patch: Partial<InsertXpExperience>): Promise<XpExperience> {
+    const result = await db.update(xpExperiences).set({ ...(patch as any), updatedAt: new Date() } as any).where(eq(xpExperiences.id, id)).returning();
+    return result[0];
+  }
+
+  async deactivateXpExperience(id: number): Promise<XpExperience> {
+    const result = await db.update(xpExperiences).set({ active: false, updatedAt: new Date() } as any).where(eq(xpExperiences.id, id)).returning();
+    return result[0];
+  }
+
+  async listXpTimeSlots(experienceId: number, input?: { from?: Date; to?: Date; activeOnly?: boolean }): Promise<XpTimeSlot[]> {
+    const whereParts: any[] = [eq(xpTimeSlots.experienceId, experienceId)];
+    const activeOnly = input?.activeOnly !== false;
+    if (activeOnly) whereParts.push(eq(xpTimeSlots.active, true));
+    if (input?.from) whereParts.push(gte(xpTimeSlots.startAt, input.from));
+    if (input?.to) whereParts.push(lte(xpTimeSlots.startAt, input.to));
+    let q: any = db.select().from(xpTimeSlots).where(and(...whereParts)).orderBy(asc(xpTimeSlots.startAt));
+    return q as unknown as Promise<XpTimeSlot[]>;
+  }
+
+  async getXpTimeSlotById(id: number): Promise<XpTimeSlot | undefined> {
+    const result = await db.select().from(xpTimeSlots).where(eq(xpTimeSlots.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createXpTimeSlot(input: InsertXpTimeSlot): Promise<XpTimeSlot> {
+    const now = new Date();
+    const result = await db.insert(xpTimeSlots).values({ ...(input as any), createdAt: now, updatedAt: now } as any).returning();
+    return result[0];
+  }
+
+  async deleteXpTimeSlot(id: number): Promise<void> {
+    await db.delete(xpTimeSlots).where(eq(xpTimeSlots.id, id));
+  }
+
+  async listXpBlackouts(experienceId: number, input?: { from?: Date; to?: Date }): Promise<XpBlackout[]> {
+    const whereParts: any[] = [eq(xpBlackouts.experienceId, experienceId)];
+    if (input?.from && input?.to) {
+      whereParts.push(sql`${xpBlackouts.startAt} < ${input.to} AND ${xpBlackouts.endAt} > ${input.from}`);
+    } else if (input?.from) {
+      whereParts.push(sql`${xpBlackouts.endAt} > ${input.from}`);
+    } else if (input?.to) {
+      whereParts.push(sql`${xpBlackouts.startAt} < ${input.to}`);
+    }
+    const q: any = db.select().from(xpBlackouts).where(and(...whereParts)).orderBy(asc(xpBlackouts.startAt));
+    return q as unknown as Promise<XpBlackout[]>;
+  }
+
+  async createXpBlackout(input: InsertXpBlackout): Promise<XpBlackout> {
+    const now = new Date();
+    const result = await db.insert(xpBlackouts).values({ ...(input as any), createdAt: now, updatedAt: now } as any).returning();
+    return result[0];
+  }
+
+  async deleteXpBlackout(id: number): Promise<void> {
+    await db.delete(xpBlackouts).where(eq(xpBlackouts.id, id));
+  }
+
+  async listXpBookings(input?: { experienceId?: number; status?: string; from?: Date; to?: Date; limit?: number; offset?: number }): Promise<{ items: XpBooking[]; total: number }> {
+    const limit = typeof input?.limit === "number" ? input.limit : 50;
+    const offset = typeof input?.offset === "number" ? input.offset : 0;
+
+    const whereParts: any[] = [];
+    if (typeof input?.experienceId === "number") whereParts.push(eq(xpBookings.experienceId, input.experienceId));
+    if (input?.status) whereParts.push(eq(xpBookings.status, input.status));
+    if (input?.from && input?.to) whereParts.push(sql`${xpBookings.startAt} < ${input.to} AND ${xpBookings.endAt} > ${input.from}`);
+    if (whereParts.length) {
+      const where = and(...whereParts);
+      const items = (await db.select().from(xpBookings).where(where).orderBy(desc(xpBookings.createdAt)).limit(limit).offset(offset)) as any;
+      const totalRes: any = await db.select({ c: sql`count(*)` }).from(xpBookings).where(where);
+      const total = Number(totalRes?.[0]?.c || 0);
+      return { items, total };
+    }
+    const items = (await db.select().from(xpBookings).orderBy(desc(xpBookings.createdAt)).limit(limit).offset(offset)) as any;
+    const totalRes: any = await db.select({ c: sql`count(*)` }).from(xpBookings);
+    const total = Number(totalRes?.[0]?.c || 0);
+    return { items, total };
+  }
+
+  async getXpBookingById(id: number): Promise<XpBooking | undefined> {
+    const result = await db.select().from(xpBookings).where(eq(xpBookings.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createXpBookingPending(input: InsertXpBooking): Promise<XpBooking> {
+    const now = new Date();
+    const result = await db.insert(xpBookings).values({ ...(input as any), createdAt: now, updatedAt: now } as any).returning();
+    return result[0];
+  }
+
+  async getXpBookingByStripeSessionId(sessionId: string): Promise<XpBooking | undefined> {
+    const s = String(sessionId || "").trim();
+    if (!s) return undefined;
+    const result = await db.select().from(xpBookings).where(eq(xpBookings.stripeCheckoutSessionId, s)).limit(1);
+    return result[0];
+  }
+
+  async confirmXpBookingByStripeSessionId(input: { sessionId: string; paymentIntentId?: string | null; stripeCustomerId?: string | null }): Promise<XpBooking | undefined> {
+    const s = String(input.sessionId || "").trim();
+    if (!s) return undefined;
+    const result = await db
+      .update(xpBookings)
+      .set({
+        status: "confirmed",
+        stripePaymentIntentId: input.paymentIntentId ?? null,
+        stripeCustomerId: input.stripeCustomerId ?? null,
+        updatedAt: new Date(),
+      } as any)
+      .where(eq(xpBookings.stripeCheckoutSessionId, s))
+      .returning();
+    return result[0];
+  }
+
+  async cancelXpBooking(id: number): Promise<XpBooking | undefined> {
+    const result = await db.update(xpBookings).set({ status: "cancelled", updatedAt: new Date() } as any).where(eq(xpBookings.id, id)).returning();
+    return result[0];
+  }
+
+  async hasStripeEvent(eventId: string): Promise<boolean> {
+    const e = String(eventId || "").trim();
+    if (!e) return false;
+    const result = await db.select().from(xpStripeEvents).where(eq(xpStripeEvents.eventId, e)).limit(1);
+    return !!result[0];
+  }
+
+  async recordStripeEvent(input: InsertXpStripeEvent): Promise<XpStripeEvent> {
+    const result = await db.insert(xpStripeEvents).values(input as any).returning();
+    return result[0];
+  }
+
+  async countXpActiveBookingsOverlapping(input: { experienceId: number; kind: string; startAt: Date; endAt: Date }): Promise<number> {
+    const rows: any = await db.execute(sql`
+      SELECT COUNT(*)::int AS c
+      FROM xp_bookings
+      WHERE experience_id = ${input.experienceId}
+        AND kind = ${input.kind}
+        AND status IN ('pending_payment', 'confirmed')
+        AND start_at < ${input.endAt}
+        AND end_at > ${input.startAt}
+    `);
+    return Number((rows as any).rows?.[0]?.c || 0);
+  }
+
+  async hasXpBlackoutOverlap(input: { experienceId: number; startAt: Date; endAt: Date }): Promise<boolean> {
+    const rows: any = await db.execute(sql`
+      SELECT COUNT(*)::int AS c
+      FROM xp_blackouts
+      WHERE experience_id = ${input.experienceId}
+        AND start_at < ${input.endAt}
+        AND end_at > ${input.startAt}
+    `);
+    return Number((rows as any).rows?.[0]?.c || 0) > 0;
   }
 
   async getTelephonyAnalyticsSummary(userId: number, startDate: Date): Promise<{ total: number; answered: number; missed: number; failed: number; talkSeconds: number }> {
