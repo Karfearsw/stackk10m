@@ -36,6 +36,11 @@ const PhoneWorkspace = React.lazy(() => import("@/pages/phone"));
 const DialerWorkspace = React.lazy(() => import("@/pages/dialer-workspace"));
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
 const TeamsPage = React.lazy(() => import("@/pages/teams"));
+const XpLandingPage = React.lazy(() => import("@/pages/xp/index"));
+const XpExperiencePage = React.lazy(() => import("@/pages/xp/experience"));
+const XpAdminPage = React.lazy(() => import("@/pages/xp/admin"));
+const XpCheckoutSuccessPage = React.lazy(() => import("@/pages/xp/checkout-success"));
+const XpCheckoutCancelPage = React.lazy(() => import("@/pages/xp/checkout-cancel"));
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -83,6 +88,29 @@ function Router() {
       </Route>
       <Route path="/signup">
         {isAuthenticated ? <Redirect to="/" /> : <Signup />}
+      </Route>
+      <Route path="/xp/admin">
+        {() => <ProtectedRoute component={XpAdminPage} />}
+      </Route>
+      <Route path="/xp/checkout/success">
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+          <XpCheckoutSuccessPage />
+        </Suspense>
+      </Route>
+      <Route path="/xp/checkout/cancel">
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+          <XpCheckoutCancelPage />
+        </Suspense>
+      </Route>
+      <Route path="/xp/:slug">
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+          <XpExperiencePage />
+        </Suspense>
+      </Route>
+      <Route path="/xp">
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+          <XpLandingPage />
+        </Suspense>
       </Route>
       <Route path="/">
         {() => <ProtectedRoute component={Dashboard} />}

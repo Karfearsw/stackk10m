@@ -629,6 +629,90 @@ export const insertTeamActivityLogSchema = createInsertSchema(teamActivityLogs).
 export type TeamActivityLog = typeof teamActivityLogs.$inferSelect;
 export type InsertTeamActivityLog = z.infer<typeof insertTeamActivityLogSchema>;
 
+export const xpExperiences = pgTable("xp_experiences", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  slug: varchar("slug", { length: 80 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  mode: varchar("mode", { length: 20 }).notNull().default("time_slot"),
+  currency: varchar("currency", { length: 10 }).notNull().default("USD"),
+  priceTotal: decimal("price_total", { precision: 12, scale: 2 }),
+  depositAmount: decimal("deposit_amount", { precision: 12, scale: 2 }).notNull(),
+  capacity: integer("capacity").notNull().default(1),
+  active: boolean("active").notNull().default(true),
+  images: text("images").array(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXpExperienceSchema = createInsertSchema(xpExperiences).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type XpExperience = typeof xpExperiences.$inferSelect;
+export type InsertXpExperience = z.infer<typeof insertXpExperienceSchema>;
+
+export const xpTimeSlots = pgTable("xp_time_slots", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  experienceId: integer("experience_id").notNull(),
+  startAt: timestamp("start_at").notNull(),
+  endAt: timestamp("end_at").notNull(),
+  capacity: integer("capacity").notNull().default(1),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXpTimeSlotSchema = createInsertSchema(xpTimeSlots).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type XpTimeSlot = typeof xpTimeSlots.$inferSelect;
+export type InsertXpTimeSlot = z.infer<typeof insertXpTimeSlotSchema>;
+
+export const xpBlackouts = pgTable("xp_blackouts", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  experienceId: integer("experience_id").notNull(),
+  startAt: timestamp("start_at").notNull(),
+  endAt: timestamp("end_at").notNull(),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXpBlackoutSchema = createInsertSchema(xpBlackouts).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type XpBlackout = typeof xpBlackouts.$inferSelect;
+export type InsertXpBlackout = z.infer<typeof insertXpBlackoutSchema>;
+
+export const xpBookings = pgTable("xp_bookings", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  experienceId: integer("experience_id").notNull(),
+  kind: varchar("kind", { length: 20 }).notNull(),
+  customerName: varchar("customer_name", { length: 255 }).notNull(),
+  customerEmail: varchar("customer_email", { length: 255 }).notNull(),
+  customerPhone: varchar("customer_phone", { length: 40 }),
+  startAt: timestamp("start_at").notNull(),
+  endAt: timestamp("end_at").notNull(),
+  status: varchar("status", { length: 40 }).notNull().default("pending_payment"),
+  currency: varchar("currency", { length: 10 }).notNull().default("USD"),
+  depositAmount: decimal("deposit_amount", { precision: 12, scale: 2 }).notNull(),
+  stripeCheckoutSessionId: varchar("stripe_checkout_session_id", { length: 255 }),
+  stripePaymentIntentId: varchar("stripe_payment_intent_id", { length: 255 }),
+  stripeCustomerId: varchar("stripe_customer_id", { length: 255 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXpBookingSchema = createInsertSchema(xpBookings).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type XpBooking = typeof xpBookings.$inferSelect;
+export type InsertXpBooking = z.infer<typeof insertXpBookingSchema>;
+
+export const xpStripeEvents = pgTable("xp_stripe_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  eventId: varchar("event_id", { length: 255 }).notNull(),
+  type: varchar("type", { length: 120 }).notNull(),
+  payload: jsonb("payload"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertXpStripeEventSchema = createInsertSchema(xpStripeEvents).omit({ id: true, createdAt: true } as any);
+export type XpStripeEvent = typeof xpStripeEvents.$inferSelect;
+export type InsertXpStripeEvent = z.infer<typeof insertXpStripeEventSchema>;
+
 // NOTIFICATION PREFERENCES TABLE
 export const notificationPreferences = pgTable("notification_preferences", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),

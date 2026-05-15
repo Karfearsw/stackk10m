@@ -21,7 +21,8 @@ import {
   MapPin,
   CheckSquare,
   CalendarDays,
-  CalendarCheck2
+  CalendarCheck2,
+  Ticket
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -34,6 +35,7 @@ export const navigation = [
   { name: "Today", href: "/today", icon: CalendarCheck2 },
   { name: "Tasks", href: "/tasks", icon: CheckSquare },
   { name: "Calendar", href: "/calendar", icon: CalendarDays },
+  { name: "XP Booking", href: "/xp", icon: Ticket },
   { name: "Leads Pipeline", href: "/leads", icon: Users },
   { name: "Teams", href: "/teams", icon: Users },
   { name: "Campaigns", href: "/campaigns", icon: Send },

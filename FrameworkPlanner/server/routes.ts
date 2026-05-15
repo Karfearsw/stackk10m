@@ -65,6 +65,7 @@ import crypto from "node:crypto";
 import { mergeTemplate } from "./services/esign/merge.js";
 import { generateSignedPdfBase64 } from "./services/esign/pdf.js";
 import { getPropertyPhotoSignedUrl, uploadPropertyPhoto, isPropertyPhotoStorageConfigured } from "./media/propertyPhotos.js";
+import Stripe from "stripe";
 
 function authJwtSecret() {
   const secret = process.env.AUTH_JWT_SECRET || process.env.SESSION_SECRET;
@@ -502,6 +503,431 @@ export async function registerRoutes(
       console.error("Health check failed:", error);
       res.status(500).json({ status: "error", db: "disconnected", message: error.message });
     }
+  });
+
+  const stripeApiVersion = "2026-04-22.dahlia";
+
+  function xpNormalizeSlug(input: string): string {
+    return String(input || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+/, "")
+      .replace(/-+$/, "");
+  }
+
+  function xpParseDate(input: unknown): Date | null {
+    if (input instanceof Date) return Number.isFinite(input.getTime()) ? input : null;
+    const s = String(input || "").trim();
+    if (!s) return null;
+    const d = new Date(s);
+    return Number.isFinite(d.getTime()) ? d : null;
+  }
+
+  function xpMoneyToCents(input: unknown): number {
+    const n = typeof input === "number" ? input : parseFloat(String(input || "0"));
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return Math.round(n * 100);
+  }
+
+  async function xpPickAdminUser(): Promise<any | null> {
+    try {
+      const users = await storage.getUsers(200, 0);
+      const su = users.find((u: any) => !!u?.isSuperAdmin);
+      if (su) return su;
+      const admin = users.find((u: any) => String(u?.role || "").toLowerCase() === "admin");
+      if (admin) return admin;
+      return users[0] || null;
+    } catch {
+      return null;
+    }
+  }
+
+  app.get("/api/xp/experiences", async (_req, res) => {
+    const items = await storage.listXpExperiences({ activeOnly: true });
+    return res.json({ items });
+  });
+
+  app.get("/api/xp/experiences/:slug", async (req, res) => {
+    const slug = String(req.params.slug || "").trim();
+    const experience = await storage.getXpExperienceBySlug(slug);
+    if (!experience || !(experience as any).active) return res.status(404).json({ message: "Not found" });
+    return res.json({ experience });
+  });
+
+  app.get("/api/xp/experiences/:slug/availability", async (req, res) => {
+    const slug = String(req.params.slug || "").trim();
+    const experience = await storage.getXpExperienceBySlug(slug);
+    if (!experience || !(experience as any).active) return res.status(404).json({ message: "Not found" });
+
+    const from = xpParseDate(req.query.from);
+    const to = xpParseDate(req.query.to);
+    if (!from || !to) return res.status(400).json({ message: "from and to are required" });
+    if (to.getTime() <= from.getTime()) return res.status(400).json({ message: "Invalid range" });
+
+    const mode = String((experience as any).mode || "time_slot");
+
+    const out: any = { experienceId: (experience as any).id, mode };
+
+    if (mode === "time_slot" || mode === "both") {
+      const slots = await storage.listXpTimeSlots((experience as any).id, { from, to, activeOnly: true });
+      const items = [];
+      for (const s of slots) {
+        const used = await storage.countXpActiveBookingsOverlapping({ experienceId: (experience as any).id, kind: "time_slot", startAt: (s as any).startAt, endAt: (s as any).endAt });
+        const cap = Number((s as any).capacity || 1);
+        items.push({
+          id: (s as any).id,
+          startAt: (s as any).startAt,
+          endAt: (s as any).endAt,
+          capacity: cap,
+          remaining: Math.max(0, cap - used),
+        });
+      }
+      out.timeSlots = items;
+    }
+
+    if (mode === "date_range" || mode === "both") {
+      const blackouts = await storage.listXpBlackouts((experience as any).id, { from, to });
+      const bookings = (await storage.listXpBookings({ experienceId: (experience as any).id, from, to, limit: 500, offset: 0 })).items;
+      out.blackouts = (blackouts || []).map((b: any) => ({ startAt: b.startAt, endAt: b.endAt }));
+      out.booked = (bookings || [])
+        .filter((b: any) => b.kind === "date_range" && (b.status === "pending_payment" || b.status === "confirmed"))
+        .map((b: any) => ({ startAt: b.startAt, endAt: b.endAt }));
+      out.capacity = Number((experience as any).capacity || 1);
+    }
+
+    return res.json(out);
+  });
+
+  app.post("/api/xp/bookings/checkout", async (req, res) => {
+    const body = req.body || {};
+    const experienceSlug = String(body.experienceSlug || "").trim();
+    const experience = await storage.getXpExperienceBySlug(experienceSlug);
+    if (!experience || !(experience as any).active) return res.status(404).json({ message: "Not found" });
+
+    const mode = String((experience as any).mode || "time_slot");
+    const kindRaw = String(body.kind || "").trim();
+    const kind = kindRaw === "date_range" ? "date_range" : "time_slot";
+    if (mode !== "both" && mode !== kind) return res.status(400).json({ message: "Invalid kind for experience" });
+
+    const customerName = String(body.customerName || "").trim();
+    const customerEmail = String(body.customerEmail || "").trim();
+    const customerPhone = String(body.customerPhone || "").trim() || null;
+    if (!customerName || !customerEmail) return res.status(400).json({ message: "Missing customer fields" });
+
+    const startAt = xpParseDate(body.startAt);
+    const endAt = xpParseDate(body.endAt);
+    if (!startAt || !endAt) return res.status(400).json({ message: "Missing startAt/endAt" });
+    if (endAt.getTime() <= startAt.getTime()) return res.status(400).json({ message: "Invalid window" });
+
+    const experienceId = Number((experience as any).id);
+    if (await storage.hasXpBlackoutOverlap({ experienceId, startAt, endAt })) {
+      return res.status(409).json({ message: "Unavailable" });
+    }
+
+    if (kind === "time_slot") {
+      const slots = await storage.listXpTimeSlots(experienceId, { from: startAt, to: startAt, activeOnly: true });
+      const slot = slots.find((s: any) => new Date(s.startAt).getTime() === startAt.getTime() && new Date(s.endAt).getTime() === endAt.getTime());
+      if (!slot) return res.status(404).json({ message: "Time slot not found" });
+      const used = await storage.countXpActiveBookingsOverlapping({ experienceId, kind, startAt, endAt });
+      const cap = Number((slot as any).capacity || 1);
+      if (used >= cap) return res.status(409).json({ message: "Unavailable" });
+    } else {
+      const used = await storage.countXpActiveBookingsOverlapping({ experienceId, kind, startAt, endAt });
+      const cap = Number((experience as any).capacity || 1);
+      if (used >= cap) return res.status(409).json({ message: "Unavailable" });
+    }
+
+    const depositAmount = (experience as any).depositAmount;
+    const cents = xpMoneyToCents(depositAmount);
+    if (!cents) return res.status(400).json({ message: "Invalid deposit amount" });
+
+    const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
+    if (!stripeKey) return res.status(500).json({ message: "Stripe is not configured" });
+
+    const booking = await storage.createXpBookingPending({
+      experienceId,
+      kind,
+      customerName,
+      customerEmail,
+      customerPhone,
+      startAt,
+      endAt,
+      status: "pending_payment",
+      currency: String((experience as any).currency || "USD"),
+      depositAmount,
+      stripeCheckoutSessionId: null,
+      stripePaymentIntentId: null,
+      stripeCustomerId: null,
+    } as any);
+
+    const stripe = new Stripe(stripeKey, { apiVersion: stripeApiVersion });
+    const origin = `${req.protocol}://${req.get("host")}`;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      success_url: `${origin}/xp/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/xp/checkout/cancel`,
+      customer_email: customerEmail,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: "usd",
+            unit_amount: cents,
+            product_data: {
+              name: String((experience as any).title || "Experience deposit"),
+            },
+          },
+        },
+      ],
+      metadata: {
+        bookingId: String((booking as any).id),
+        experienceId: String(experienceId),
+        kind,
+      },
+    });
+
+    await db.execute(sql`
+      UPDATE xp_bookings
+      SET stripe_checkout_session_id = ${session.id}, updated_at = NOW()
+      WHERE id = ${(booking as any).id}
+    `);
+
+    return res.status(201).json({ checkoutUrl: session.url });
+  });
+
+  app.post("/api/stripe/webhook", async (req, res) => {
+    const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
+    const webhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || "").trim();
+    if (!stripeKey || !webhookSecret) return res.status(500).json({ message: "Stripe is not configured" });
+
+    const sig = String(req.headers["stripe-signature"] || "").trim();
+    if (!sig) return res.status(400).json({ message: "Missing stripe-signature" });
+
+    const stripe = new Stripe(stripeKey, { apiVersion: stripeApiVersion });
+
+    const raw = Buffer.isBuffer((req as any).rawBody)
+      ? ((req as any).rawBody as Buffer)
+      : Buffer.from(JSON.stringify(req.body || {}));
+
+    let event: Stripe.Event;
+    try {
+      event = stripe.webhooks.constructEvent(raw, sig, webhookSecret);
+    } catch (e: any) {
+      return res.status(400).json({ message: String(e?.message || e) });
+    }
+
+    if (await storage.hasStripeEvent(event.id)) return res.json({ received: true });
+    await storage.recordStripeEvent({ eventId: event.id, type: event.type, payload: { id: event.id, type: event.type, created: event.created } } as any);
+
+    if (event.type === "checkout.session.completed") {
+      const session = event.data.object as Stripe.Checkout.Session;
+      const sessionId = String(session.id || "").trim();
+      const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : null;
+      const stripeCustomerId = typeof session.customer === "string" ? session.customer : null;
+
+      const booking = await storage.getXpBookingByStripeSessionId(sessionId);
+      if (booking && String((booking as any).status) !== "confirmed") {
+        const confirmed = await storage.confirmXpBookingByStripeSessionId({ sessionId, paymentIntentId, stripeCustomerId });
+        if (confirmed) {
+          const admin = await xpPickAdminUser();
+          if (admin) {
+            await createTask({
+              title: `XP booking confirmed: ${String((confirmed as any).customerName || "")}`.trim(),
+              description: JSON.stringify({
+                bookingId: (confirmed as any).id,
+                experienceId: (confirmed as any).experienceId,
+                kind: (confirmed as any).kind,
+                startAt: (confirmed as any).startAt,
+                endAt: (confirmed as any).endAt,
+                customerEmail: (confirmed as any).customerEmail,
+                customerPhone: (confirmed as any).customerPhone,
+              }),
+              type: "xp_booking",
+              relatedEntityType: "xp_booking",
+              relatedEntityId: (confirmed as any).id,
+              dueAt: (confirmed as any).startAt,
+              priority: "high",
+              status: "open",
+              assignedToUserId: admin.id,
+              isRecurring: false,
+              recurrenceRule: null,
+              isPrivate: false,
+              createdBy: admin.id,
+            });
+          }
+        }
+      }
+    }
+
+    return res.json({ received: true });
+  });
+
+  app.get("/api/xp/admin/experiences", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const items = await storage.listXpExperiences({ activeOnly: false });
+    return res.json({ items });
+  });
+
+  app.post("/api/xp/admin/experiences", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const body = req.body || {};
+    const slug = xpNormalizeSlug(body.slug);
+    const title = String(body.title || "").trim();
+    if (!slug || !title) return res.status(400).json({ message: "Missing fields" });
+    const mode = String(body.mode || "time_slot");
+    const depositAmount = body.depositAmount;
+    if (!xpMoneyToCents(depositAmount)) return res.status(400).json({ message: "Invalid depositAmount" });
+    const row = await storage.createXpExperience({
+      slug,
+      title,
+      description: String(body.description || "").trim() || null,
+      mode,
+      currency: "USD",
+      priceTotal: body.priceTotal ?? null,
+      depositAmount,
+      capacity: typeof body.capacity === "number" ? body.capacity : 1,
+      active: body.active !== false,
+      images: Array.isArray(body.images) ? body.images.map((x: any) => String(x || "")).filter(Boolean) : null,
+    } as any);
+    return res.status(201).json({ experience: row });
+  });
+
+  app.patch("/api/xp/admin/experiences/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const body = req.body || {};
+    const patch: any = {};
+    if (Object.prototype.hasOwnProperty.call(body, "slug")) patch.slug = xpNormalizeSlug(body.slug);
+    if (Object.prototype.hasOwnProperty.call(body, "title")) patch.title = String(body.title || "").trim();
+    if (Object.prototype.hasOwnProperty.call(body, "description")) patch.description = String(body.description || "").trim() || null;
+    if (Object.prototype.hasOwnProperty.call(body, "mode")) patch.mode = String(body.mode || "").trim();
+    if (Object.prototype.hasOwnProperty.call(body, "priceTotal")) patch.priceTotal = body.priceTotal ?? null;
+    if (Object.prototype.hasOwnProperty.call(body, "depositAmount")) {
+      if (!xpMoneyToCents(body.depositAmount)) return res.status(400).json({ message: "Invalid depositAmount" });
+      patch.depositAmount = body.depositAmount;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "capacity")) patch.capacity = typeof body.capacity === "number" ? body.capacity : 1;
+    if (Object.prototype.hasOwnProperty.call(body, "active")) patch.active = !!body.active;
+    const row = await storage.updateXpExperience(id, patch);
+    return res.json({ experience: row });
+  });
+
+  app.delete("/api/xp/admin/experiences/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const row = await storage.deactivateXpExperience(id);
+    return res.json({ experience: row });
+  });
+
+  app.get("/api/xp/admin/experiences/:id/time-slots", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const from = req.query.from ? xpParseDate(req.query.from) || undefined : undefined;
+    const to = req.query.to ? xpParseDate(req.query.to) || undefined : undefined;
+    const items = await storage.listXpTimeSlots(id, { from, to, activeOnly: false });
+    return res.json({ items });
+  });
+
+  app.post("/api/xp/admin/experiences/:id/time-slots", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const startAt = xpParseDate(req.body?.startAt);
+    const endAt = xpParseDate(req.body?.endAt);
+    if (!startAt || !endAt) return res.status(400).json({ message: "Missing startAt/endAt" });
+    if (endAt.getTime() <= startAt.getTime()) return res.status(400).json({ message: "Invalid window" });
+    const capacity = typeof req.body?.capacity === "number" ? req.body.capacity : 1;
+    const row = await storage.createXpTimeSlot({ experienceId: id, startAt, endAt, capacity, active: req.body?.active !== false } as any);
+    return res.status(201).json({ timeSlot: row });
+  });
+
+  app.delete("/api/xp/admin/time-slots/:slotId", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const slotId = parseInt(req.params.slotId, 10);
+    if (!Number.isFinite(slotId)) return res.status(400).json({ message: "Invalid id" });
+    await storage.deleteXpTimeSlot(slotId);
+    return res.json({ ok: true });
+  });
+
+  app.get("/api/xp/admin/experiences/:id/blackouts", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const from = req.query.from ? xpParseDate(req.query.from) || undefined : undefined;
+    const to = req.query.to ? xpParseDate(req.query.to) || undefined : undefined;
+    const items = await storage.listXpBlackouts(id, { from, to });
+    return res.json({ items });
+  });
+
+  app.post("/api/xp/admin/experiences/:id/blackouts", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const startAt = xpParseDate(req.body?.startAt);
+    const endAt = xpParseDate(req.body?.endAt);
+    if (!startAt || !endAt) return res.status(400).json({ message: "Missing startAt/endAt" });
+    if (endAt.getTime() <= startAt.getTime()) return res.status(400).json({ message: "Invalid window" });
+    const row = await storage.createXpBlackout({ experienceId: id, startAt, endAt, reason: String(req.body?.reason || "").trim() || null } as any);
+    return res.status(201).json({ blackout: row });
+  });
+
+  app.delete("/api/xp/admin/blackouts/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    await storage.deleteXpBlackout(id);
+    return res.json({ ok: true });
+  });
+
+  app.get("/api/xp/admin/bookings", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const experienceIdRaw = req.query.experienceId;
+    const experienceId = typeof experienceIdRaw === "string" && experienceIdRaw.trim() ? parseInt(experienceIdRaw, 10) : undefined;
+    const status = typeof req.query.status === "string" && req.query.status.trim() ? String(req.query.status).trim() : undefined;
+    const from = req.query.from ? xpParseDate(req.query.from) || undefined : undefined;
+    const to = req.query.to ? xpParseDate(req.query.to) || undefined : undefined;
+    const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : undefined;
+    const offset = typeof req.query.offset === "string" ? parseInt(req.query.offset, 10) : undefined;
+    const out = await storage.listXpBookings({ experienceId: typeof experienceId === "number" && Number.isFinite(experienceId) ? experienceId : undefined, status, from: from || undefined, to: to || undefined, limit: Number.isFinite(limit as any) ? (limit as any) : undefined, offset: Number.isFinite(offset as any) ? (offset as any) : undefined });
+    return res.json(out);
+  });
+
+  app.post("/api/xp/admin/bookings/:id/cancel", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const row = await storage.cancelXpBooking(id);
+    if (!row) return res.status(404).json({ message: "Not found" });
+    return res.json({ booking: row });
   });
 
   app.get("/api/address/suggest", async (req, res) => {
