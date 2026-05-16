@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [20.x]
+        node-version: [24.x]
     steps:
       - uses: actions/checkout@v4
       - name: Use Node.js ${{ matrix.node-version }}
@@ -43,7 +43,7 @@ jobs:
     if: ${{ inputs.base_url != '' || secrets.STAGING_BASE_URL != '' }}
     strategy:
       matrix:
-        node-version: [20.x]
+        node-version: [24.x]
     env:
       TEST_BASE_URL: ${{ inputs.base_url || secrets.STAGING_BASE_URL }}
     steps:
@@ -67,7 +67,7 @@ jobs:
     if: ${{ inputs.base_url != '' || secrets.STAGING_BASE_URL != '' }}
     strategy:
       matrix:
-        node-version: [20.x]
+        node-version: [24.x]
     env:
       PLAYWRIGHT_BASE_URL: ${{ inputs.base_url || secrets.STAGING_BASE_URL }}
       E2E_EMPLOYEE_CODE: ${{ secrets.TEST_EMPLOYEE_CODE }}
@@ -97,7 +97,7 @@ jobs:
     if: ${{ inputs.base_url != '' || secrets.STAGING_BASE_URL != '' }}
     strategy:
       matrix:
-        node-version: [20.x]
+        node-version: [24.x]
     env:
       TARGET_URL: ${{ inputs.base_url || secrets.STAGING_BASE_URL }}
     steps:
