@@ -59,6 +59,8 @@ import { computeArvFromComps, computeDealMath, computeRepairTotal, underwritingS
 import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
 import { sendSignalWireSms } from "./services/messaging/signalwire.js";
 import { sendResendEmail } from "./services/messaging/resend.js";
+import { getAuthStatusSnapshot, getEmailProviderMissing } from "./auth/config.js";
+import { isEmailNotConfiguredError, sendAuthError } from "./auth/errors.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
 import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
@@ -1102,6 +1104,11 @@ export async function registerRoutes(
     });
   }
 
+  app.get("/api/auth/status", (_req, res) => {
+    const snapshot = getAuthStatusSnapshot();
+    res.json(snapshot);
+  });
+
   const authRateBuckets = new Map<string, { count: number; resetAt: number }>();
   function checkAuthRateLimit(req: any, res: any): boolean {
     const windowMs = 60_000;
@@ -1190,7 +1197,7 @@ export async function registerRoutes(
                userAgent: String(req.headers["user-agent"] || ""),
                metadata: { path: req.path, error: String((dbError as any)?.message || dbError) },
              });
-             return res.status(503).json({ message: "Database connection failed during admin login" });
+             return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
         }
       }
 
@@ -1217,7 +1224,7 @@ export async function registerRoutes(
     } catch (error: any) {
       console.error("[Auth] Login error:", error);
       if (isDbConnectivityError(error)) {
-        return res.status(503).json({ message: "Database is unavailable" });
+        return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
       }
       res.status(500).json({ message: `Login failed: ${error.message}` });
     }
@@ -1229,6 +1236,11 @@ export async function registerRoutes(
       const normalizedEmail = String(req.body?.email || "").trim().toLowerCase();
       if (!normalizedEmail) {
         return res.status(400).json({ message: "Email is required" });
+      }
+
+      const emailMissing = getEmailProviderMissing();
+      if (emailMissing.length) {
+        return sendAuthError(res, 503, { code: "email_not_configured", message: "Email is not configured", missing: emailMissing });
       }
 
       const orgDomain = String(process.env.ORG_EMAIL_DOMAIN || "oceanluxe.org").trim().toLowerCase();
@@ -1288,9 +1300,13 @@ export async function registerRoutes(
         metadata: { path: req.path, error: String(error?.message || error) },
       });
       if (isDbConnectivityError(error)) {
-        return res.status(503).json({ message: "Database is unavailable" });
+        return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
       }
-      return res.status(503).json({ message: error?.message || "Email is not configured" });
+      if (isEmailNotConfiguredError(error)) {
+        const missing = getEmailProviderMissing();
+        return sendAuthError(res, 503, { code: "email_not_configured", message: error?.message || "Email is not configured", missing: missing.length ? missing : undefined });
+      }
+      return sendAuthError(res, 503, { code: "email_send_failed", message: error?.message || "Email send failed" });
     }
   });
 
@@ -1344,7 +1360,7 @@ export async function registerRoutes(
         metadata: { path: req.path, error: String(error?.message || error) },
       });
       if (isDbConnectivityError(error)) {
-        return res.status(503).json({ message: "Database is unavailable" });
+        return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
       }
       return res.status(500).json({ message: "Password reset failed" });
     }
@@ -1356,6 +1372,11 @@ export async function registerRoutes(
       const normalizedEmail = String(req.body?.email || "").trim().toLowerCase();
       if (!normalizedEmail) {
         return res.status(400).json({ message: "Email is required" });
+      }
+
+      const emailMissing = getEmailProviderMissing();
+      if (emailMissing.length) {
+        return sendAuthError(res, 503, { code: "email_not_configured", message: "Email is not configured", missing: emailMissing });
       }
 
       const orgDomain = String(process.env.ORG_EMAIL_DOMAIN || "oceanluxe.org").trim().toLowerCase();
@@ -1412,9 +1433,13 @@ export async function registerRoutes(
         metadata: { path: req.path, error: String(error?.message || error) },
       });
       if (isDbConnectivityError(error)) {
-        return res.status(503).json({ message: "Database is unavailable" });
+        return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
       }
-      return res.status(503).json({ message: error?.message || "Email is not configured" });
+      if (isEmailNotConfiguredError(error)) {
+        const missing = getEmailProviderMissing();
+        return sendAuthError(res, 503, { code: "email_not_configured", message: error?.message || "Email is not configured", missing: missing.length ? missing : undefined });
+      }
+      return sendAuthError(res, 503, { code: "email_send_failed", message: error?.message || "Email send failed" });
     }
   });
 
@@ -1466,7 +1491,7 @@ export async function registerRoutes(
         metadata: { path: req.path, error: String(error?.message || error) },
       });
       if (isDbConnectivityError(error)) {
-        return res.status(503).json({ message: "Database is unavailable" });
+        return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
       }
       return res.status(500).json({ message: "Sign-in failed" });
     }
@@ -1606,7 +1631,11 @@ export async function registerRoutes(
       const codesConfigured =
         Boolean(adminCode) && Boolean(teamLeaderCode) && Boolean(agentCode) && Boolean(vaCode);
       if (!codesConfigured && !legacyEmployeeCode) {
-        return res.status(503).json({ message: "Signup codes are not configured" });
+        return sendAuthError(res, 503, {
+          code: "signup_not_configured",
+          message: "Signup codes are not configured",
+          missing: ["env:EMPLOYEE_ACCESS_CODE", "env:ADMIN_ROLE_CODE", "env:TEAM_LEADER_ROLE_CODE", "env:AGENT_ROLE_CODE", "env:VA_ROLE_CODE"],
+        });
       }
 
       let role: string | null = null;
@@ -1677,7 +1706,7 @@ export async function registerRoutes(
     } catch (error: any) {
       console.error("[Auth] Signup error:", error);
       if (isDbConnectivityError(error)) {
-        return res.status(503).json({ message: "Database is unavailable" });
+        return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
       }
       res.status(500).json({ message: `Signup failed: ${error.message}` });
     }
