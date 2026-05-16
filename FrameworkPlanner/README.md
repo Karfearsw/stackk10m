@@ -88,6 +88,7 @@ Optional env vars:
    - `EMPLOYEE_ACCESS_CODE`: your internal employee access code.
    - `NODE_ENV`: `production`.
    - `AUTO_APPLY_MIGRATIONS`: `true` (Production only; runs SQL migrations at build time).
+   - `DEBUG_ENDPOINTS`: `1` (Optional; temporary troubleshooting only. Enables `/api/debug/config` and `/api/debug/session`.)
 4. Deploy.
 
 ### Troubleshooting Vercel 500 Errors
@@ -95,6 +96,12 @@ If you encounter `500 INTERNAL_SERVER_ERROR` on signup/login:
 - Verify `DATABASE_URL` does not have `channel_binding=require`.
 - Ensure `SESSION_SECRET` and `EMPLOYEE_ACCESS_CODE` are set.
 - Check Vercel Function logs for startup errors.
+
+### Troubleshooting Signup 503
+If `POST /api/auth/signup` returns `503`:
+- `Employee access code is not configured`: set `EMPLOYEE_ACCESS_CODE` in Vercel.
+- `Database is unavailable`: verify `DATABASE_URL` connectivity and Neon quota, then re-deploy.
+- Use the `x-request-id` response header to correlate browser errors with Vercel Function logs.
 
 ## CI/CD
 

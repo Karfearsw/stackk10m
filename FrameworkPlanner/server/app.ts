@@ -198,6 +198,20 @@ if (!sessionSecret) {
   );
 
   if (process.env.DEBUG_ENDPOINTS === "1") {
+    app.get("/api/debug/config", (_req: Request, res: Response) => {
+      res.json({
+        hasSessionSecret: Boolean(sessionSecret && String(sessionSecret).trim()),
+        hasDatabaseUrl,
+        hasEmployeeAccessCode: Boolean(
+          process.env.EMPLOYEE_ACCESS_CODE && String(process.env.EMPLOYEE_ACCESS_CODE).trim(),
+        ),
+        cookieDomain:
+          process.env.NODE_ENV === "production"
+            ? String(process.env.COOKIE_DOMAIN || ".oceanluxe.org").trim() || ".oceanluxe.org"
+            : null,
+        env: process.env.NODE_ENV || "development",
+      });
+    });
     app.get("/api/debug/session", (req: Request, res: Response) => {
       const cookieHeader = String(req.headers.cookie || "");
       res.json({

@@ -1073,9 +1073,15 @@ export async function registerRoutes(
         return res.status(400).json({ message: "All fields are required" });
       }
 
+      const requestId = (res.locals as any)?.requestId || undefined;
       const accessCode = process.env.EMPLOYEE_ACCESS_CODE;
       if (!accessCode || !String(accessCode).trim()) {
-        return res.status(503).json({ message: "Employee access code is not configured" });
+        return res.status(503).json({
+          message: "Employee access code is not configured",
+          kind: "auth_not_configured",
+          missing: ["env:EMPLOYEE_ACCESS_CODE"],
+          requestId,
+        });
       }
       if (!employeeCode || employeeCode !== accessCode) {
         return res.status(403).json({ message: "Invalid employee code" });
@@ -1126,10 +1132,11 @@ export async function registerRoutes(
       res.status(201).json({ user: userWithoutPassword, token });
     } catch (error: any) {
       console.error("[Auth] Signup error:", error);
+      const requestId = (res.locals as any)?.requestId || undefined;
       if (isDbConnectivityError(error)) {
-        return res.status(503).json({ message: "Database is unavailable" });
+        return res.status(503).json({ message: "Database is unavailable", kind: "db_unavailable", requestId });
       }
-      res.status(500).json({ message: `Signup failed: ${error.message}` });
+      res.status(500).json({ message: `Signup failed: ${error.message}`, requestId });
     }
   });
 

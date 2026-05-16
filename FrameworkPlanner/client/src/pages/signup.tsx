@@ -20,20 +20,11 @@ export default function Signup() {
   const [teamInviteCode, setTeamInviteCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const VALID_EMPLOYEE_CODE = "3911";
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
-      // Validate employee code
-      if (employeeCode !== VALID_EMPLOYEE_CODE) {
-        toast.error('Invalid employee code. Contact your manager for access.');
-        setIsLoading(false);
-        return;
-      }
-
       // Validate passwords match
       if (password !== confirmPassword) {
         toast.error('Passwords do not match');
@@ -52,7 +43,14 @@ export default function Signup() {
       toast.success('Account created! Redirecting...');
       setTimeout(() => setLocation('/'), 500);
     } catch (error: any) {
-      toast.error(error.message || 'Signup failed');
+      const message = String(error?.message || 'Signup failed');
+      if (message.toLowerCase().includes('not configured')) {
+        toast.error('Signup is temporarily unavailable. An admin needs to configure access.');
+      } else if (message.toLowerCase().includes('invalid employee code')) {
+        toast.error('Invalid access code. Contact your manager for access.');
+      } else {
+        toast.error(message);
+      }
     } finally {
       setIsLoading(false);
     }
