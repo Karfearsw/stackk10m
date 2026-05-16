@@ -12,6 +12,7 @@ import Login from "@/pages/login";
 import Signup from "@/pages/signup";
 import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
+import MagicLink from "@/pages/magic-link";
 
 const Dashboard = React.lazy(() => import("@/pages/dashboard"));
 const Leads = React.lazy(() => import("@/pages/leads"));
@@ -88,6 +89,9 @@ function Router() {
         </Route>
         <Route path="/reset-password">
           {isAuthenticated ? <Redirect to="/dashboard" /> : <ResetPassword />}
+        </Route>
+        <Route path="/magic-link">
+          {isAuthenticated ? <Redirect to="/dashboard" /> : <MagicLink />}
         </Route>
         <Route path="/xp/admin">
           {() => <ProtectedRoute component={XpAdminPage} />}

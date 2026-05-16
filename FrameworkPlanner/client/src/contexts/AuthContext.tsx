@@ -19,6 +19,8 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  requestMagicLink: (email: string) => Promise<void>;
+  consumeMagicLink: (token: string) => Promise<void>;
   devBypass: (email: string, employeeCode: string) => Promise<void>;
   signup: (data: {
     firstName: string;
@@ -122,6 +124,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLocation('/');
   };
 
+  const requestMagicLink: AuthContextType['requestMagicLink'] = async (email) => {
+    const res = await fetch('/api/auth/magic-link/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error((error as any).message || 'Magic link request failed');
+    }
+  };
+
+  const consumeMagicLink: AuthContextType['consumeMagicLink'] = async (token) => {
+    const res = await fetch('/api/auth/magic-link/consume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error((error as any).message || 'Magic link sign-in failed');
+    }
+
+    const { user: userData } = await res.json();
+    setUser(userData);
+    try {
+      await postTimeclock('/api/timeclock/auto-start');
+    } catch {}
+    setLocation('/');
+  };
+
   const devBypass: AuthContextType['devBypass'] = async (email, employeeCode) => {
     const res = await fetch('/api/auth/dev-bypass', {
       method: 'POST',
@@ -192,7 +228,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, devBypass, signup, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, loading, login, requestMagicLink, consumeMagicLink, devBypass, signup, logout, isAuthenticated: !!user }}>
       {children}
     </AuthContext.Provider>
   );
