@@ -87,11 +87,12 @@ Optional env vars:
 1. Push to GitHub.
 2. Import project into Vercel.
 3. Configure **Environment Variables** (Settings -> Environment Variables):
-   - `DATABASE_URL`: Your Neon connection string (Use `sslmode=require`, **remove** `channel_binding=require` if present).
+   - `DATABASE_URL` (or `POSTGRES_URL_NON_POOLING` / `POSTGRES_PRISMA_URL` / `POSTGRES_URL`): Your Neon connection string (Use `sslmode=require`, `channel_binding=require` is auto-sanitized).
+   - `MIGRATIONS_DATABASE_URL` (optional): Dedicated URL used by `npm run migrate` (defaults to the same resolution as runtime; recommended to use a non-pooling Neon URL).
    - `SESSION_SECRET`: A strong random string.
    - `EMPLOYEE_ACCESS_CODE`: your internal employee access code.
    - `NODE_ENV`: `production`.
-   - `AUTO_APPLY_MIGRATIONS`: `true` (Production only; runs SQL migrations at build time).
+   - `AUTO_APPLY_MIGRATIONS`: `true` (runs SQL migrations at build time; recommended in Preview + Production when Preview uses isolated Neon data).
 4. Deploy.
 
 ### Troubleshooting Vercel 500 Errors

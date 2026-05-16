@@ -1,22 +1,10 @@
 import { defineConfig } from "drizzle-kit";
 import "dotenv/config";
+import { migrationsDatabaseEnvNames, resolveDatabaseUrlFromEnv } from "./server/db-url.js";
 
-if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL, ensure the database is provisioned");
-}
-
-function sanitizeDatabaseUrl(input: string): string {
-  try {
-    const u = new URL(input);
-    const channelBinding = (u.searchParams.get("channel_binding") || "").toLowerCase();
-    if (channelBinding === "require") {
-      u.searchParams.delete("channel_binding");
-      return u.toString();
-    }
-    return input;
-  } catch {
-    return input;
-  }
+const resolved = resolveDatabaseUrlFromEnv(migrationsDatabaseEnvNames);
+if (!resolved.url) {
+  throw new Error(`Database URL is required for migrations. Set one of: ${migrationsDatabaseEnvNames.join(", ")}`);
 }
 
 export default defineConfig({
@@ -24,6 +12,6 @@ export default defineConfig({
   schema: "./server/shared-schema.ts",
   dialect: "postgresql",
   dbCredentials: {
-    url: sanitizeDatabaseUrl(process.env.DATABASE_URL),
+    url: resolved.url,
   },
 });

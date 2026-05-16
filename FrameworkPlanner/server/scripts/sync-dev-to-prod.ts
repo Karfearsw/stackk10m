@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import pg from "pg";
+import { sanitizeDatabaseUrl, sslOptionsFor } from "../db-url.js";
 
 dotenv.config({ path: join(process.cwd(), "FrameworkPlanner", ".env") });
 
@@ -10,25 +11,6 @@ function requiredEnv(name: string) {
   const v = process.env[name];
   if (!v || !String(v).trim()) throw new Error(`Missing ${name}`);
   return String(v).trim();
-}
-
-function shouldUseSsl(connectionString: string) {
-  try {
-    const u = new URL(connectionString);
-    const sslmode = (u.searchParams.get("sslmode") || process.env.PGSSLMODE || "").toLowerCase();
-    if (sslmode === "require" || sslmode === "verify-full" || sslmode === "verify-ca") return true;
-    if (u.hostname.endsWith(".neon.tech")) return true;
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-function sslOptionsFor(connectionString: string) {
-  if (!shouldUseSsl(connectionString)) return undefined;
-  const raw = String(process.env.DB_SSL_REJECT_UNAUTHORIZED ?? "").trim().toLowerCase();
-  const rejectUnauthorized = raw ? raw === "1" || raw === "true" || raw === "yes" || raw === "on" : true;
-  return { rejectUnauthorized };
 }
 
 function sha256(text: string) {
@@ -44,6 +26,7 @@ async function run() {
   const targetUrl = process.env.SYNC_TARGET_DATABASE_URL
     ? String(process.env.SYNC_TARGET_DATABASE_URL).trim()
     : requiredEnv("DATABASE_URL");
+  const sanitizedTargetUrl = sanitizeDatabaseUrl(targetUrl) || targetUrl;
 
   const migrationsDir = join(process.cwd(), "FrameworkPlanner", "migrations");
   const files = readdirSync(migrationsDir)
@@ -51,8 +34,8 @@ async function run() {
     .sort();
 
   const pool = new pg.Pool({
-    connectionString: targetUrl,
-    ssl: sslOptionsFor(targetUrl),
+    connectionString: sanitizedTargetUrl,
+    ssl: sslOptionsFor(sanitizedTargetUrl),
     max: 1,
     idleTimeoutMillis: 10000,
     connectionTimeoutMillis: 10000,

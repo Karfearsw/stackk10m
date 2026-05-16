@@ -5,7 +5,7 @@
 - SQL migrations live in: [FrameworkPlanner/migrations](file:///workspace/FrameworkPlanner/migrations)
 - Migration runner: `npm run migrate` executes [apply-migrations.ts](file:///workspace/FrameworkPlanner/server/scripts/apply-migrations.ts)
 - Vercel build can auto-apply migrations:
-  - controlled by `AUTO_APPLY_MIGRATIONS` and Vercel env detection: [vercel-build.ts](file:///workspace/FrameworkPlanner/server/scripts/vercel-build.ts#L4-L18)
+  - controlled by `AUTO_APPLY_MIGRATIONS=true`: [vercel-build.ts](file:///workspace/FrameworkPlanner/server/scripts/vercel-build.ts#L4-L18)
 
 ## Schema Readiness Gate (Production Safeguard)
 
@@ -47,4 +47,3 @@ Impact:
 3) **Migration hygiene**
 - Keep schema readiness requirements in sync with migrations:
   - when adding a new “required” column/table, include it in both SQL migrations and readiness checks.
-

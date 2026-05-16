@@ -3,18 +3,12 @@ import { applyMigrations } from "./apply-migrations.js";
 
 async function run() {
   const raw = String(process.env.AUTO_APPLY_MIGRATIONS ?? "").trim().toLowerCase();
-  const explicit =
-    raw === "true" ? true :
-    raw === "false" ? false :
-    null;
-
-  const isVercel = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
-  const shouldApply = explicit ?? isVercel;
+  const shouldApply = raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 
   if (shouldApply) {
     await applyMigrations();
   } else {
-    console.log("Skipping migrations (set AUTO_APPLY_MIGRATIONS=true to enable, false to force-disable)");
+    console.log("Skipping migrations (set AUTO_APPLY_MIGRATIONS=true to enable)");
   }
 
   const npmCli = process.env.npm_execpath;
