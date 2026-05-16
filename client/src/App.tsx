@@ -17,7 +17,9 @@ import Settings from "@/pages/settings";
 import Calculator from "@/pages/calculator";
 import Timesheet from "@/pages/timesheet";
 import Login from "@/pages/login";
-import Signup from "@/pages/signup"; import ForgotPassword from "@/pages/forgot-password"; import ResetPassword from "@/pages/reset-password";
+import Signup from "@/pages/signup";
+import ForgotPassword from "@/pages/forgot-password";
+import ResetPassword from "@/pages/reset-password";
 import Notifications from "@/pages/notifications";
 import Playground from "@/pages/playground";
 import Buyers from "@/pages/buyers";
@@ -30,40 +32,41 @@ import SearchPage from "@/pages/search";
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
   const [location] = useLocation();
-
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-8 w-8 animate-spin text-border" />
       </div>
     );
   }
-
   if (!isAuthenticated) {
     return <Redirect to="/login" />;
   }
-
   return <Component />;
 }
 
 function Router() {
   const { isAuthenticated, loading } = useAuth();
-
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-8 w-8 animate-spin text-border" />
       </div>
     );
   }
-
   return (
     <Switch>
       <Route path="/login">
         {isAuthenticated ? <Redirect to="/" /> : <Login />}
       </Route>
       <Route path="/signup">
-        {isAuthenticated ? <Redirect to="/" /> : <Signup />}         </Route>         <Route path="/forgot-password">     <ForgotPassword />         </Route>         <Route path="/reset-password">     <ResetPassword />
+        {isAuthenticated ? <Redirect to="/" /> : <Signup />}
+      </Route>
+      <Route path="/forgot-password">
+        <ForgotPassword />
+      </Route>
+      <Route path="/reset-password">
+        <ResetPassword />
       </Route>
       <Route path="/">
         {() => <ProtectedRoute component={Dashboard} />}
@@ -147,6 +150,3 @@ function App() {
 }
 
 export default App;
-      <Route path="/dialer">
-        {() => <ProtectedRoute component={require('@/pages/dialer').default} />}
-      </Route>
