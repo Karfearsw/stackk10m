@@ -87,6 +87,7 @@ Optional env vars:
    - `SESSION_SECRET`: A strong random string.
    - `EMPLOYEE_ACCESS_CODE`: your internal employee access code.
    - `NODE_ENV`: `production`.
+   - `COOKIE_DOMAIN`: Optional. Set only when you need a shared session cookie across `*.oceanluxe.org` (use `.oceanluxe.org`). Leave unset for `*.vercel.app` deployments.
    - `AUTO_APPLY_MIGRATIONS`: `true` (Production only; runs SQL migrations at build time).
    - `DEBUG_ENDPOINTS`: `1` (Optional; temporary troubleshooting only. Enables `/api/debug/config` and `/api/debug/session`.)
 4. Deploy.

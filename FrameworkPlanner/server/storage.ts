@@ -890,7 +890,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
-    const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (!normalizedEmail) return undefined;
+    const result = await db
+      .select()
+      .from(users)
+      .where(sql`lower(${users.email}) = ${normalizedEmail}`)
+      .limit(2);
+    if (result.length > 1) {
+      throw new Error("Multiple users found for email");
+    }
     return result[0];
   }
 
