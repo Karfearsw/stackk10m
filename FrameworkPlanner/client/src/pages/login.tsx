@@ -14,7 +14,7 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [employeeCode, setEmployeeCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { login, devBypass } = useAuth();
+  const { login, requestMagicLink, devBypass } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,6 +37,18 @@ export default function Login() {
       toast.success('Dev bypass active');
     } catch (error: any) {
       toast.error(error.message || 'Dev bypass failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleMagicLink = async () => {
+    setIsLoading(true);
+    try {
+      await requestMagicLink(email);
+      toast.success('If an account exists, a sign-in link will arrive shortly.');
+    } catch (error: any) {
+      toast.error(error.message || 'Magic link request failed');
     } finally {
       setIsLoading(false);
     }
@@ -90,6 +102,16 @@ export default function Login() {
                 Forgot password?
               </Link>
             </div>
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full"
+              disabled={isLoading || !email}
+              onClick={handleMagicLink}
+            >
+              {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Email me a sign-in link
+            </Button>
             <Button
               type="submit"
               className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"

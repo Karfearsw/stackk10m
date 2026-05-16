@@ -1350,6 +1350,128 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/auth/magic-link/request", async (req, res) => {
+    try {
+      if (!checkAuthRateLimit(req, res)) return;
+      const normalizedEmail = String(req.body?.email || "").trim().toLowerCase();
+      if (!normalizedEmail) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      const orgDomain = String(process.env.ORG_EMAIL_DOMAIN || "oceanluxe.org").trim().toLowerCase();
+      if (!normalizedEmail.endsWith(`@${orgDomain}`)) {
+        return res.json({ message: "If an account exists, you will receive a sign-in link shortly." });
+      }
+
+      const user = await storage.getUserByEmail(normalizedEmail);
+      if (!user || !user.isActive) {
+        return res.json({ message: "If an account exists, you will receive a sign-in link shortly." });
+      }
+
+      const token = crypto.randomBytes(32).toString("base64url");
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+      await db.execute(sql`
+        INSERT INTO auth_magic_links (user_id, token_hash, expires_at, request_ip, user_agent)
+        VALUES (${user.id}, ${tokenHash}, ${expiresAt.toISOString()}, ${String(req.ip || "").trim() || null}, ${String(req.headers["user-agent"] || "") || null})
+      `);
+
+      const baseUrlFromEnv = String(process.env.APP_BASE_URL || "").trim();
+      const proto = String((req.headers["x-forwarded-proto"] as any) || req.protocol || "https").split(",")[0].trim();
+      const host = String(req.headers.host || "").trim();
+      const baseUrl = baseUrlFromEnv || (host ? `${proto}://${host}` : "");
+      const signInLink = baseUrl ? `${baseUrl}/magic-link?token=${encodeURIComponent(token)}` : token;
+
+      await sendResendEmail({
+        to: user.email,
+        subject: "Your Ocean Luxe CRM sign-in link",
+        text: baseUrl
+          ? `Use this link to sign in (expires in 15 minutes):\n\n${signInLink}\n\nIf you did not request this, you can ignore this email.`
+          : `Your sign-in token (expires in 15 minutes):\n\n${signInLink}\n\nIf you did not request this, you can ignore this email.`,
+      });
+
+      void writeAuthAuditLog({
+        action: "magic_link_request",
+        outcome: "sent",
+        userId: user.id,
+        email: user.email,
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path },
+      });
+
+      return res.json({ message: "If an account exists, you will receive a sign-in link shortly." });
+    } catch (error: any) {
+      void writeAuthAuditLog({
+        action: "magic_link_request",
+        outcome: "error",
+        email: String(req.body?.email || ""),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path, error: String(error?.message || error) },
+      });
+      if (isDbConnectivityError(error)) {
+        return res.status(503).json({ message: "Database is unavailable" });
+      }
+      return res.status(503).json({ message: error?.message || "Email is not configured" });
+    }
+  });
+
+  app.post("/api/auth/magic-link/consume", async (req, res) => {
+    try {
+      if (!checkAuthRateLimit(req, res)) return;
+      const token = String(req.body?.token || "").trim();
+      if (!token) return res.status(400).json({ message: "Token is required" });
+
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+      const consumed: any = await db.execute(sql`
+        UPDATE auth_magic_links
+        SET used_at = NOW()
+        WHERE token_hash = ${tokenHash}
+          AND used_at IS NULL
+          AND expires_at > NOW()
+        RETURNING user_id
+      `);
+
+      const userId = Number((consumed as any).rows?.[0]?.user_id || 0);
+      if (!userId) return res.status(400).json({ message: "Invalid or expired sign-in link" });
+
+      const user = await storage.getUserById(userId);
+      if (!user || !user.isActive) return res.status(403).json({ message: "Account is inactive" });
+
+      req.session.userId = user.id;
+      req.session.email = user.email;
+      await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
+
+      void writeAuthAuditLog({
+        action: "magic_link_consume",
+        outcome: "success",
+        userId: user.id,
+        email: user.email,
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path },
+      });
+
+      const { passwordHash, ...userWithoutPassword } = user;
+      return res.json({ user: userWithoutPassword });
+    } catch (error: any) {
+      void writeAuthAuditLog({
+        action: "magic_link_consume",
+        outcome: "error",
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path, error: String(error?.message || error) },
+      });
+      if (isDbConnectivityError(error)) {
+        return res.status(503).json({ message: "Database is unavailable" });
+      }
+      return res.status(500).json({ message: "Sign-in failed" });
+    }
+  });
+
   app.post("/api/auth/dev-bypass", async (req, res) => {
     try {
       if (!checkAuthRateLimit(req, res)) return;
