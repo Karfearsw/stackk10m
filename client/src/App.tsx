@@ -17,7 +17,7 @@ import Settings from "@/pages/settings";
 import Calculator from "@/pages/calculator";
 import Timesheet from "@/pages/timesheet";
 import Login from "@/pages/login";
-import Signup from "@/pages/signup";
+import Signup from "@/pages/signup"; import ForgotPassword from "@/pages/forgot-password"; import ResetPassword from "@/pages/reset-password";
 import Notifications from "@/pages/notifications";
 import Playground from "@/pages/playground";
 import Buyers from "@/pages/buyers";
@@ -63,7 +63,7 @@ function Router() {
         {isAuthenticated ? <Redirect to="/" /> : <Login />}
       </Route>
       <Route path="/signup">
-        {isAuthenticated ? <Redirect to="/" /> : <Signup />}
+        {isAuthenticated ? <Redirect to="/" /> : <Signup />}   </Route>   <Route path="/forgot-password">     <ForgotPassword />   </Route>   <Route path="/reset-password">     <ResetPassword />
       </Route>
       <Route path="/">
         {() => <ProtectedRoute component={Dashboard} />}
