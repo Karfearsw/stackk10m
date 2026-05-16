@@ -57,17 +57,13 @@ function Router() {
   return (
     <Switch>
       <Route path="/login">
-        {isAuthenticated ? <Redirect to="/" /> : <Login />}
+        {() => (isAuthenticated ? <Redirect to="/" /> : <Login />)}
       </Route>
       <Route path="/signup">
-        {isAuthenticated ? <Redirect to="/" /> : <Signup />}
+        {() => (isAuthenticated ? <Redirect to="/" /> : <Signup />)}
       </Route>
-      <Route path="/forgot-password">
-        <ForgotPassword />
-      </Route>
-      <Route path="/reset-password">
-        <ResetPassword />
-      </Route>
+      <Route path="/forgot-password" component={ForgotPassword} />
+      <Route path="/reset-password" component={ResetPassword} />
       <Route path="/">
         {() => <ProtectedRoute component={Dashboard} />}
       </Route>
