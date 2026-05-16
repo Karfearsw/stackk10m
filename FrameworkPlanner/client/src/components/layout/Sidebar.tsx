@@ -36,6 +36,7 @@ export const navigation = [
   { name: "Tasks", href: "/tasks", icon: CheckSquare },
   { name: "Calendar", href: "/calendar", icon: CalendarDays },
   { name: "XP Booking", href: "/xp", icon: Ticket },
+  { name: "XP Admin", href: "/xp/admin", icon: Settings },
   { name: "Leads Pipeline", href: "/leads", icon: Users },
   { name: "Teams", href: "/teams", icon: Users },
   { name: "Campaigns", href: "/campaigns", icon: Send },
@@ -59,6 +60,7 @@ export function Sidebar() {
   const [location, setLocation] = useLocation();
   const { user, logout } = useAuth();
   const { state, cycleState, isExpanded, isIconOnly, isHidden } = useSidebar();
+  const variant = String(import.meta.env.VITE_APP_VARIANT || "deals").trim().toLowerCase();
 
   const { data: userData } = useQuery<any>({
     queryKey: [`/api/users/${user?.id}`],
@@ -79,6 +81,12 @@ export function Sidebar() {
   const showLabels = isExpanded;
   
   const profileImage = userData?.profilePicture || userData?.avatarUrl;
+  const navItems = (() => {
+    if (variant === "xp") return navigation.filter((x) => x.href === "/xp" || x.href === "/xp/admin" || x.href === "/settings");
+    if (variant === "career") return navigation.filter((x) => x.href === "/timesheet" || x.href === "/teams" || x.href === "/settings");
+    if (variant === "public") return [];
+    return navigation;
+  })();
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -125,7 +133,7 @@ export function Sidebar() {
           isHidden && "opacity-0"
         )}>
           <nav className={cn("space-y-1.5", showIconsOnly ? "px-2" : "px-3")}>
-            {navigation.map((item) => {
+            {navItems.map((item) => {
               const isActive = location === item.href || (item.href !== '/' && location.startsWith(item.href));
               
               const navItem = (

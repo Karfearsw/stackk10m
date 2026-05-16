@@ -41,6 +41,8 @@ const XpExperiencePage = React.lazy(() => import("@/pages/xp/experience"));
 const XpAdminPage = React.lazy(() => import("@/pages/xp/admin"));
 const XpCheckoutSuccessPage = React.lazy(() => import("@/pages/xp/checkout-success"));
 const XpCheckoutCancelPage = React.lazy(() => import("@/pages/xp/checkout-cancel"));
+const PublicHomePage = React.lazy(() => import("@/pages/public-home"));
+const CareerHomePage = React.lazy(() => import("@/pages/career-home"));
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -67,6 +69,7 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
 
 function Router() {
   const { isAuthenticated, loading } = useAuth();
+  const variant = String(import.meta.env.VITE_APP_VARIANT || "deals").trim().toLowerCase();
 
   if (loading) {
     return (
@@ -87,7 +90,7 @@ function Router() {
         {isAuthenticated ? <Redirect to="/" /> : <Login />}
       </Route>
       <Route path="/signup">
-        {isAuthenticated ? <Redirect to="/" /> : <Signup />}
+        {variant === "deals" ? (isAuthenticated ? <Redirect to="/" /> : <Signup />) : <Redirect to="/login" />}
       </Route>
       <Route path="/xp/admin">
         {() => <ProtectedRoute component={XpAdminPage} />}
@@ -113,7 +116,23 @@ function Router() {
         </Suspense>
       </Route>
       <Route path="/">
-        {() => <ProtectedRoute component={Dashboard} />}
+        {() => {
+          if (variant === "xp" || variant === "public") {
+            return (
+              <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+                {variant === "xp" ? <XpLandingPage /> : <PublicHomePage />}
+              </Suspense>
+            );
+          }
+          if (variant === "career") {
+            return (
+              <Suspense fallback={<div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>}>
+                <CareerHomePage />
+              </Suspense>
+            );
+          }
+          return <ProtectedRoute component={Dashboard} />;
+        }}
       </Route>
       <Route path="/leads">
         {() => <ProtectedRoute component={Leads} />}

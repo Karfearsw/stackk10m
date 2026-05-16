@@ -1328,6 +1328,21 @@ export async function registerRoutes(
   app.post("/api/auth/signup", async (req, res) => {
     try {
       if (!checkAuthRateLimit(req, res)) return;
+
+      const allowSignupEnv = parseEnvBool(process.env.APP_PUBLIC_SIGNUP);
+      if (allowSignupEnv === false) {
+        return res.status(403).json({ message: "Signup is disabled" });
+      }
+
+      const allowedHosts = String(process.env.SIGNUP_ALLOWED_HOSTS || "")
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      if (allowedHosts.length) {
+        const host = String(req.headers.host || "").split(":")[0].trim().toLowerCase();
+        if (!allowedHosts.includes(host)) return res.status(403).json({ message: "Signup is not allowed on this domain" });
+      }
+
       const { firstName, lastName, email, password } = req.body;
       
       if (!firstName || !lastName || !email || !password) {
