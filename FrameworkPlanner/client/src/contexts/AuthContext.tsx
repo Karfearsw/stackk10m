@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useLocation } from 'wouter';
+import { AuthApiError, type AuthErrorBody } from '@/lib/authApiError';
 
 interface User {
   id: number;
@@ -111,8 +112,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!res.ok) {
-      const error = await res.json();
-      throw new Error(error.message || 'Login failed');
+      const body = (await res.json().catch(() => null)) as AuthErrorBody | null;
+      throw new AuthApiError(res.status, body, 'Login failed');
     }
 
     const { user: userData, token } = await res.json();
@@ -132,8 +133,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!res.ok) {
-      const error = await res.json().catch(() => ({}));
-      throw new Error((error as any).message || 'Magic link request failed');
+      const body = (await res.json().catch(() => null)) as AuthErrorBody | null;
+      throw new AuthApiError(res.status, body, 'Magic link request failed');
     }
   };
 
@@ -146,8 +147,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!res.ok) {
-      const error = await res.json().catch(() => ({}));
-      throw new Error((error as any).message || 'Magic link sign-in failed');
+      const body = (await res.json().catch(() => null)) as AuthErrorBody | null;
+      throw new AuthApiError(res.status, body, 'Magic link sign-in failed');
     }
 
     const { user: userData } = await res.json();
@@ -167,8 +168,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!res.ok) {
-      const error = await res.json().catch(() => ({}));
-      throw new Error((error as any).message || 'Dev bypass failed');
+      const body = (await res.json().catch(() => null)) as AuthErrorBody | null;
+      throw new AuthApiError(res.status, body, 'Dev bypass failed');
     }
 
     const { user: userData, token } = await res.json();
@@ -199,8 +200,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!res.ok) {
-      const error = await res.json();
-      throw new Error(error.message || 'Signup failed');
+      const body = (await res.json().catch(() => null)) as AuthErrorBody | null;
+      throw new AuthApiError(res.status, body, 'Signup failed');
     }
 
     const { user: userData, token } = await res.json();

@@ -10,6 +10,8 @@ import { initSentry, Sentry } from "./sentry.js";
 import crypto from "node:crypto";
 import { httpRequestsTotal, httpErrorsTotal, metricsText } from "./metrics.js";
 import { getSchemaReadiness, schemaFixInstructions } from "./schema-readiness.js";
+import { getDatabaseUrlMissing, getSessionSecretMissing } from "./auth/config.js";
+import { getRequestIdFromRes, sendAuthError } from "./auth/errors.js";
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -131,20 +133,30 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: false }));
 
+app.use((req, res, next) => {
+  const requestId = (req.headers["x-request-id"] as string) || crypto.randomUUID();
+  (res.locals as any).requestId = requestId;
+  res.setHeader("x-request-id", requestId);
+  next();
+});
+
 if (!sessionSecret) {
   app.use("/api", (_req, res) => {
-    res.status(503).json({ message: "Server authentication is not configured" });
+    const missing = getSessionSecretMissing();
+    return sendAuthError(res, 503, { code: "session_secret_missing", message: "Server authentication is not configured", missing: missing.length ? missing : undefined });
   });
   app.use((_req, _res, next) => {
     next(new Error("SESSION_SECRET is required"));
   });
 } else if (process.env.NODE_ENV === "production" && !hasDatabaseUrl) {
   app.use("/api", (_req, res) => {
+    const missing = getDatabaseUrlMissing();
     res.status(503).json({
       message: "Server database is not configured",
       kind: "db_unavailable",
-      missing: ["env:DATABASE_URL", "env:POSTGRES_URL_NON_POOLING", "env:POSTGRES_PRISMA_URL", "env:POSTGRES_URL"],
-      code: null,
+      missing,
+      code: "db_not_configured",
+      requestId: getRequestIdFromRes(res),
       howToFix: schemaFixInstructions(),
     });
   });
@@ -157,11 +169,14 @@ if (!sessionSecret) {
     getSchemaReadiness()
       .then((r) => {
         if (r.ok) return next();
+        const requestId = getRequestIdFromRes(res);
+        const code = r.kind === "db_unavailable" ? "db_unavailable" : "schema_not_ready";
         res.status(503).json({
           message: r.message,
           kind: r.kind,
           missing: r.missing,
-          code: r.code,
+          code,
+          requestId,
           howToFix: schemaFixInstructions(),
         });
       })
@@ -230,9 +245,12 @@ if (!sessionSecret) {
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
-  const requestId = (req.headers["x-request-id"] as string) || crypto.randomUUID();
+  const requestId =
+    (res.locals as any).requestId ||
+    (req.headers["x-request-id"] as string) ||
+    crypto.randomUUID();
   (res.locals as any).requestId = requestId;
-  res.setHeader("x-request-id", requestId);
+  if (!res.getHeader("x-request-id")) res.setHeader("x-request-id", requestId);
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
 
   const originalResJson = res.json;

@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'wouter';
 import { useAuth } from '@/contexts/AuthContext';
+import { AuthApiError } from '@/lib/authApiError';
+import { getAuth503Guidance } from '@/lib/auth503Guidance';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Loader2 } from 'lucide-react';
@@ -14,15 +17,23 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [employeeCode, setEmployeeCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [apiError, setApiError] = useState<AuthApiError | null>(null);
   const { login, requestMagicLink, devBypass } = useAuth();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setIsLoading(true);
+    setApiError(null);
+
     try {
       await login(email, password);
-    } catch (err: any) {
-      toast.error(err?.message || 'Login failed');
+      toast.success('Welcome back!');
+    } catch (error: any) {
+      if (error instanceof AuthApiError && error.status === 503 && getAuth503Guidance(error.code, error.missing)) {
+        setApiError(error);
+      } else {
+        toast.error(error.message || 'Invalid email or password');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -30,11 +41,16 @@ export default function Login() {
 
   const handleDevBypass = async () => {
     setIsLoading(true);
+    setApiError(null);
     try {
       await devBypass(email, employeeCode);
       toast.success('Dev bypass active');
-    } catch (err: any) {
-      toast.error(err?.message || 'Dev bypass failed');
+    } catch (error: any) {
+      if (error instanceof AuthApiError && error.status === 503 && getAuth503Guidance(error.code, error.missing)) {
+        setApiError(error);
+      } else {
+        toast.error(error.message || 'Dev bypass failed');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -42,15 +58,22 @@ export default function Login() {
 
   const handleMagicLink = async () => {
     setIsLoading(true);
+    setApiError(null);
     try {
       await requestMagicLink(email);
       toast.success('If an account exists, a sign-in link will arrive shortly.');
     } catch (error: any) {
-      toast.error(error.message || 'Magic link request failed');
+      if (error instanceof AuthApiError && error.status === 503 && getAuth503Guidance(error.code, error.missing)) {
+        setApiError(error);
+      } else {
+        toast.error(error.message || 'Magic link request failed');
+      }
     } finally {
       setIsLoading(false);
     }
   };
+
+  const guidance = apiError ? getAuth503Guidance(apiError.code, apiError.missing) : null;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -68,6 +91,25 @@ export default function Login() {
           <CardDescription>Sign in to your account to continue</CardDescription>
         </CardHeader>
         <CardContent>
+          {apiError && guidance && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTitle>{guidance.title}</AlertTitle>
+              <AlertDescription className="space-y-2">
+                <p>{guidance.description}</p>
+                {guidance.steps?.length ? (
+                  <ul className="list-disc ml-5 space-y-1">
+                    {guidance.steps.map((s) => (
+                      <li key={s}>{s}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div className="text-xs text-muted-foreground space-y-1">
+                  {apiError.code ? <p>Code: {apiError.code}</p> : null}
+                  {apiError.requestId ? <p>Request ID: {apiError.requestId}</p> : null}
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>

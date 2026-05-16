@@ -34,5 +34,6 @@ describe("Auth DB failure handling", () => {
       .post("/api/auth/login")
       .send({ email: "x@example.com", password: "password123" });
     expect(res.status).toBe(503);
+    expect(res.body?.code).toBe("db_unavailable");
   });
 });
