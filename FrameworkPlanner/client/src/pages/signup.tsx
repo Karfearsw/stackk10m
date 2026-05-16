@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -20,20 +21,11 @@ export default function Signup() {
   const [teamInviteCode, setTeamInviteCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const VALID_EMPLOYEE_CODE = "3911";
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
     try {
-      // Validate employee code
-      if (employeeCode !== VALID_EMPLOYEE_CODE) {
-        toast.error('Invalid employee code. Contact your manager for access.');
-        setIsLoading(false);
-        return;
-      }
-
       // Validate passwords match
       if (password !== confirmPassword) {
         toast.error('Passwords do not match');
@@ -121,9 +113,8 @@ export default function Signup() {
 
             <div className="space-y-2">
               <Label htmlFor="employeeCode">Employee Code</Label>
-              <Input
+              <PasswordInput
                 id="employeeCode"
-                type="password"
                 placeholder="Enter your employee code"
                 value={employeeCode}
                 onChange={(e) => setEmployeeCode(e.target.value)}
@@ -151,9 +142,8 @@ export default function Signup() {
 
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
                 placeholder="Enter your password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -165,9 +155,8 @@ export default function Signup() {
 
             <div className="space-y-2">
               <Label htmlFor="confirmPassword">Confirm Password</Label>
-              <Input
+              <PasswordInput
                 id="confirmPassword"
-                type="password"
                 placeholder="Confirm your password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}

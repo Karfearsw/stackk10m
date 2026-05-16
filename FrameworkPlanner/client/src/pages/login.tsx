@@ -5,13 +5,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Loader2, Eye, EyeOff } from 'lucide-react';
+import { PasswordInput } from '@/components/ui/password-input';
+import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [employeeCode, setEmployeeCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -28,6 +28,18 @@ export default function Login() {
       setIsLoading(false);
     }
   }
+
+  const handleDevBypass = async () => {
+    setIsLoading(true);
+    try {
+      await devBypass(email, employeeCode);
+      toast.success('Dev bypass active');
+    } catch (err: any) {
+      toast.error(err?.message || 'Dev bypass failed');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
@@ -59,45 +71,57 @@ export default function Login() {
               />
             </div>
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="password">Password</Label>
-                <Link href="/forgot-password" className="text-sm text-primary hover:underline">
-                  Forgot password?
-                </Link>
-              </div>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter your password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  autoComplete="current-password"
-                  className="pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((prev) => !prev)}
-                  className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground hover:text-foreground transition-colors"
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </button>
-              </div>
+              <Label htmlFor="password">Password</Label>
+              <PasswordInput
+                id="password"
+                placeholder="Enter your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                disabled={isLoading}
+                data-testid="input-login-password"
+              />
             </div>
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Signing in...</>
-              ) : (
-                'Sign In'
-              )}
+            <div className="flex items-center justify-end">
+              <Link href="/forgot-password" className="text-sm text-primary hover:underline font-medium">
+                Forgot password?
+              </Link>
+            </div>
+            <Button
+              type="submit"
+              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+              disabled={isLoading}
+              data-testid="button-login"
+            >
+              {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Sign In
             </Button>
           </form>
+
+          {import.meta.env.DEV && (
+            <div className="mt-4 space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="employeeCode">Employee Access Code</Label>
+                <PasswordInput
+                  id="employeeCode"
+                  placeholder="Enter employee code"
+                  value={employeeCode}
+                  onChange={(e) => setEmployeeCode(e.target.value)}
+                  disabled={isLoading}
+                />
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full"
+                disabled={isLoading || !email || !employeeCode}
+                onClick={handleDevBypass}
+              >
+                {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Dev Bypass Sign In
+              </Button>
+            </div>
+          )}
           <div className="mt-6 text-center text-sm text-muted-foreground">
             Luxe Relationship Management
           </div>
