@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -74,9 +75,8 @@ export default function Login() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
                 placeholder="Enter your password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -84,6 +84,11 @@ export default function Login() {
                 disabled={isLoading}
                 data-testid="input-login-password"
               />
+            </div>
+            <div className="flex items-center justify-end">
+              <Link href="/forgot-password" className="text-sm text-primary hover:underline font-medium">
+                Forgot password?
+              </Link>
             </div>
             <Button
               type="submit"
@@ -100,9 +105,8 @@ export default function Login() {
             <div className="mt-4 space-y-3">
               <div className="space-y-2">
                 <Label htmlFor="employeeCode">Employee Access Code</Label>
-                <Input
+                <PasswordInput
                   id="employeeCode"
-                  type="password"
                   placeholder="Enter employee code"
                   value={employeeCode}
                   onChange={(e) => setEmployeeCode(e.target.value)}

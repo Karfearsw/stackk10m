@@ -1223,6 +1223,133 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/auth/password-reset/request", async (req, res) => {
+    try {
+      if (!checkAuthRateLimit(req, res)) return;
+      const normalizedEmail = String(req.body?.email || "").trim().toLowerCase();
+      if (!normalizedEmail) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      const orgDomain = String(process.env.ORG_EMAIL_DOMAIN || "oceanluxe.org").trim().toLowerCase();
+      if (!normalizedEmail.endsWith(`@${orgDomain}`)) {
+        return res.json({ message: "If an account exists, you will receive a reset email shortly." });
+      }
+
+      const user = await storage.getUserByEmail(normalizedEmail);
+      if (!user || !user.isActive) {
+        return res.json({ message: "If an account exists, you will receive a reset email shortly." });
+      }
+
+      const token = crypto.randomBytes(32).toString("base64url");
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+      await db.execute(sql`
+        INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, request_ip, user_agent)
+        VALUES (${user.id}, ${tokenHash}, ${expiresAt.toISOString()}, ${String(req.ip || "").trim() || null}, ${String(req.headers["user-agent"] || "") || null})
+      `);
+
+      const baseUrlFromEnv = String(process.env.APP_BASE_URL || "").trim();
+      const proto = String((req.headers["x-forwarded-proto"] as any) || req.protocol || "https").split(",")[0].trim();
+      const host = String(req.headers.host || "").trim();
+      const baseUrl = baseUrlFromEnv || (host ? `${proto}://${host}` : "");
+      const resetLink = baseUrl ? `${baseUrl}/reset-password?token=${encodeURIComponent(token)}` : token;
+
+      const subject = "Reset your Ocean Luxe CRM password";
+      const text = baseUrl
+        ? `Use this link to reset your password (expires in 1 hour):\n\n${resetLink}\n\nIf you did not request this, you can ignore this email.`
+        : `Your password reset token (expires in 1 hour):\n\n${resetLink}\n\nIf you did not request this, you can ignore this email.`;
+
+      await sendResendEmail({
+        to: user.email,
+        subject,
+        text,
+      });
+
+      void writeAuthAuditLog({
+        action: "password_reset_request",
+        outcome: "sent",
+        userId: user.id,
+        email: user.email,
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path },
+      });
+
+      return res.json({ message: "If an account exists, you will receive a reset email shortly." });
+    } catch (error: any) {
+      void writeAuthAuditLog({
+        action: "password_reset_request",
+        outcome: "error",
+        email: String(req.body?.email || ""),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path, error: String(error?.message || error) },
+      });
+      if (isDbConnectivityError(error)) {
+        return res.status(503).json({ message: "Database is unavailable" });
+      }
+      return res.status(503).json({ message: error?.message || "Email is not configured" });
+    }
+  });
+
+  app.post("/api/auth/password-reset/confirm", async (req, res) => {
+    try {
+      if (!checkAuthRateLimit(req, res)) return;
+      const token = String(req.body?.token || "").trim();
+      const password = String(req.body?.password || "");
+      if (!token) return res.status(400).json({ message: "Reset token is required" });
+      if (!password || password.length < 8) return res.status(400).json({ message: "Password must be at least 8 characters" });
+
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const passwordHash = await bcrypt.hash(password, 12);
+
+      const result: any = await db.execute(sql`
+        WITH t AS (
+          UPDATE password_reset_tokens
+          SET used_at = NOW()
+          WHERE token_hash = ${tokenHash}
+            AND used_at IS NULL
+            AND expires_at > NOW()
+          RETURNING user_id
+        )
+        UPDATE users
+        SET password_hash = ${passwordHash}, updated_at = NOW()
+        WHERE id = (SELECT user_id FROM t)
+        RETURNING id
+      `);
+
+      const updatedUserId = Number((result as any).rows?.[0]?.id || 0);
+      if (!updatedUserId) {
+        return res.status(400).json({ message: "Invalid or expired reset link" });
+      }
+
+      void writeAuthAuditLog({
+        action: "password_reset_confirm",
+        outcome: "success",
+        userId: updatedUserId,
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path },
+      });
+
+      return res.json({ message: "Password updated. You can sign in now." });
+    } catch (error: any) {
+      void writeAuthAuditLog({
+        action: "password_reset_confirm",
+        outcome: "error",
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path, error: String(error?.message || error) },
+      });
+      if (isDbConnectivityError(error)) {
+        return res.status(503).json({ message: "Database is unavailable" });
+      }
+      return res.status(500).json({ message: "Password reset failed" });
+    }
+  });
+
   app.post("/api/auth/dev-bypass", async (req, res) => {
     try {
       if (!checkAuthRateLimit(req, res)) return;

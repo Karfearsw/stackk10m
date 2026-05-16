@@ -9,6 +9,8 @@ import { Loader2 } from "lucide-react";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import Signup from "@/pages/signup";
+import ForgotPassword from "@/pages/forgot-password";
+import ResetPassword from "@/pages/reset-password";
 
 const Dashboard = React.lazy(() => import("@/pages/dashboard"));
 const Leads = React.lazy(() => import("@/pages/leads"));
@@ -88,6 +90,12 @@ function Router() {
       </Route>
       <Route path="/signup">
         {isAuthenticated ? <Redirect to="/" /> : <Signup />}
+      </Route>
+      <Route path="/forgot-password">
+        {isAuthenticated ? <Redirect to="/" /> : <ForgotPassword />}
+      </Route>
+      <Route path="/reset-password">
+        {isAuthenticated ? <Redirect to="/" /> : <ResetPassword />}
       </Route>
       <Route path="/xp/admin">
         {() => <ProtectedRoute component={XpAdminPage} />}
