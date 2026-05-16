@@ -6,19 +6,20 @@ async function bootstrapAdmin() {
     console.log("🔐 Bootstrapping admin account...");
 
     const adminEmail = process.env.BOOTSTRAP_ADMIN_EMAIL || process.env.ADMIN_USERNAME;
+    const normalizedAdminEmail = String(adminEmail || "").trim().toLowerCase();
     const password = process.env.BOOTSTRAP_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD;
     const firstName = process.env.BOOTSTRAP_ADMIN_FIRST_NAME || "Admin";
     const lastName = process.env.BOOTSTRAP_ADMIN_LAST_NAME || "User";
     const companyName = process.env.BOOTSTRAP_ADMIN_COMPANY || "Luxe RM";
 
-    if (!adminEmail) {
+    if (!normalizedAdminEmail) {
       throw new Error("Missing admin email. Set BOOTSTRAP_ADMIN_EMAIL or ADMIN_USERNAME.");
     }
     if (!password) {
       throw new Error("Missing admin password. Set BOOTSTRAP_ADMIN_PASSWORD or ADMIN_PASSWORD.");
     }
 
-    const existingAdmin = await storage.getUserByEmail(adminEmail);
+    const existingAdmin = await storage.getUserByEmail(normalizedAdminEmail);
 
     if (existingAdmin) {
       console.log("✅ Admin account already exists");
@@ -30,7 +31,7 @@ async function bootstrapAdmin() {
     const passwordHash = await bcrypt.hash(password, 12);
 
     const adminUser = await storage.createUser({
-      email: adminEmail,
+      email: normalizedAdminEmail,
       passwordHash,
       firstName,
       lastName,

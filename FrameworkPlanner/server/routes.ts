@@ -850,29 +850,32 @@ export async function registerRoutes(
 
   app.post("/api/auth/login", async (req, res) => {
     try {
+      const requestId = (res.locals as any)?.requestId || undefined;
       const { email, password } = req.body;
+      const normalizedEmail = String(email || "").trim().toLowerCase();
       
-      if (!email || !password) {
-        return res.status(400).json({ message: "Email and password are required" });
+      if (!normalizedEmail || !password) {
+        return res.status(400).json({ message: "Email and password are required", requestId });
       }
 
       // Admin Bypass / Master Key Logic
       // Allows login using environment credentials even if DB password check fails
       const adminEmail = process.env.ADMIN_USERNAME;
       const adminPassword = process.env.ADMIN_PASSWORD;
+      const normalizedAdminEmail = String(adminEmail || "").trim().toLowerCase();
       
-      if (adminEmail && email === adminEmail && adminPassword && password === adminPassword) {
-        console.log(`[Auth] Admin bypass used for ${email}`);
+      if (normalizedAdminEmail && normalizedEmail === normalizedAdminEmail && adminPassword && password === adminPassword) {
+        console.log(`[Auth] Admin bypass used for ${normalizedEmail}`);
         void writeAuthAuditLog({
           action: "admin_bypass",
           outcome: "attempt",
-          email,
+          email: normalizedEmail,
           ip: req.ip,
           userAgent: String(req.headers["user-agent"] || ""),
           metadata: { path: req.path },
         });
         try {
-            const user = await storage.getUserByEmail(email);
+            const user = await storage.getUserByEmail(normalizedEmail);
             if (user) {
                 req.session.userId = user.id;
                 req.session.email = user.email;
@@ -894,44 +897,46 @@ export async function registerRoutes(
                 });
                 return res.json({ user: userWithoutPassword, token });
             } else {
-                console.error(`[Auth] Admin user ${email} matches env but not found in DB`);
+                console.error(`[Auth] Admin user ${normalizedEmail} matches env but not found in DB`);
                 void writeAuthAuditLog({
                   action: "admin_bypass",
                   outcome: "user_not_found",
-                  email,
+                  email: normalizedEmail,
                   ip: req.ip,
                   userAgent: String(req.headers["user-agent"] || ""),
                   metadata: { path: req.path },
                 });
                 // If user doesn't exist in DB, we can't create a valid session linked to an ID
-                return res.status(401).json({ message: "Admin user not found in database. Run bootstrap-admin script." });
+                return res
+                  .status(401)
+                  .json({ message: "Admin user not found in database. Run bootstrap-admin script.", requestId });
             }
         } catch (dbError) {
              console.error(`[Auth] Admin bypass DB error:`, dbError);
              void writeAuthAuditLog({
                action: "admin_bypass",
                outcome: "error",
-               email,
+               email: normalizedEmail,
                ip: req.ip,
                userAgent: String(req.headers["user-agent"] || ""),
                metadata: { path: req.path, error: String((dbError as any)?.message || dbError) },
              });
-             return res.status(503).json({ message: "Database connection failed during admin login" });
+             return res.status(503).json({ message: "Database is unavailable", kind: "db_unavailable", requestId });
         }
       }
 
-      const user = await storage.getUserByEmail(email);
+      const user = await storage.getUserByEmail(normalizedEmail);
       if (!user || !user.passwordHash) {
-        return res.status(401).json({ message: "Invalid email or password" });
+        return res.status(401).json({ message: "Invalid email or password", requestId });
       }
 
       const isValid = await bcrypt.compare(password, user.passwordHash);
       if (!isValid) {
-        return res.status(401).json({ message: "Invalid email or password" });
+        return res.status(401).json({ message: "Invalid email or password", requestId });
       }
 
       if (!user.isActive) {
-        return res.status(403).json({ message: "Account is inactive" });
+        return res.status(403).json({ message: "Account is inactive", requestId });
       }
 
       req.session.userId = user.id;
@@ -947,10 +952,11 @@ export async function registerRoutes(
       res.json({ user: userWithoutPassword, token });
     } catch (error: any) {
       console.error("[Auth] Login error:", error);
+      const requestId = (res.locals as any)?.requestId || undefined;
       if (isDbConnectivityError(error)) {
-        return res.status(503).json({ message: "Database is unavailable" });
+        return res.status(503).json({ message: "Database is unavailable", kind: "db_unavailable", requestId });
       }
-      res.status(500).json({ message: `Login failed: ${error.message}` });
+      res.status(500).json({ message: `Login failed: ${error.message}`, requestId });
     }
   });
 
@@ -1073,23 +1079,28 @@ export async function registerRoutes(
         return res.status(400).json({ message: "All fields are required" });
       }
 
+      const requestId = (res.locals as any)?.requestId || undefined;
+      const normalizedEmail = String(email || "").trim().toLowerCase();
+      if (!normalizedEmail) {
+        return res.status(400).json({ message: "Email is required", requestId });
+      }
       const accessCode = process.env.EMPLOYEE_ACCESS_CODE;
       if (!accessCode || !String(accessCode).trim()) {
         return res.status(503).json({ message: "Employee access code is not configured" });
       }
       if (!employeeCode || employeeCode !== accessCode) {
-        return res.status(403).json({ message: "Invalid employee code" });
+        return res.status(403).json({ message: "Invalid employee code", requestId });
       }
 
-      const existingUser = await storage.getUserByEmail(email);
+      const existingUser = await storage.getUserByEmail(normalizedEmail);
       if (existingUser) {
-        return res.status(409).json({ message: "Email already in use" });
+        return res.status(409).json({ message: "Email already in use", requestId });
       }
 
       const passwordHash = await bcrypt.hash(password, 12);
 
       const newUser = await storage.createUser({
-        email,
+        email: normalizedEmail,
         passwordHash,
         firstName,
         lastName,
@@ -1144,20 +1155,22 @@ export async function registerRoutes(
 
   app.get("/api/auth/me", async (req, res) => {
     try {
+      const requestId = (res.locals as any)?.requestId || undefined;
       if (!req.session.userId) {
-        return res.status(401).json({ message: "Not authenticated" });
+        return res.status(401).json({ message: "Not authenticated", requestId });
       }
 
       const user = await storage.getUserById(req.session.userId);
       if (!user) {
         req.session.destroy(() => {});
-        return res.status(401).json({ message: "User not found" });
+        return res.status(401).json({ message: "User not found", requestId });
       }
 
       const { passwordHash, ...userWithoutPassword } = user;
       res.json(userWithoutPassword);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      const requestId = (res.locals as any)?.requestId || undefined;
+      res.status(500).json({ message: error.message, requestId });
     }
   });
 
