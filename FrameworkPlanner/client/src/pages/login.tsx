@@ -18,7 +18,6 @@ export default function Login() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
-
     try {
       await login(email, password);
       toast.success('Welcome back!');
@@ -42,20 +41,16 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted/20 p-4">
+    <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1 text-center">
-          <div className="flex justify-center mb-4">
-            <img 
-              src="/luxe-logo.png" 
-              alt="Luxe RM Logo" 
-              className="h-24 w-auto object-contain"
-            />
-          </div>
-          <CardTitle className="text-3xl font-bold">Luxe RM</CardTitle>
-          <CardDescription>
-            Sign in to your account to continue
-          </CardDescription>
+        <CardHeader className="text-center">
+          <img
+            src="/luxe-logo.jpg"
+            alt="Luxe RM Logo"
+            className="h-16 w-16 rounded-md object-cover mx-auto mb-2"
+          />
+          <CardTitle>Luxe RM</CardTitle>
+          <CardDescription>Sign in to your account to continue</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -73,7 +68,15 @@ export default function Login() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                <Link
+                  href="/forgot-password"
+                  className="text-xs text-primary hover:underline"
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <Input
                 id="password"
                 type="password"
@@ -85,19 +88,14 @@ export default function Login() {
                 data-testid="input-login-password"
               />
             </div>
-            <Button
-              type="submit"
-              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-              disabled={isLoading}
-              data-testid="button-login"
-            >
-              {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Sign In
             </Button>
           </form>
 
           {import.meta.env.DEV && (
-            <div className="mt-4 space-y-3">
+            <div className="mt-4 space-y-2 border-t pt-4">
               <div className="space-y-2">
                 <Label htmlFor="employeeCode">Employee Access Code</Label>
                 <Input
@@ -111,24 +109,28 @@ export default function Login() {
               </div>
               <Button
                 type="button"
-                variant="secondary"
+                variant="outline"
                 className="w-full"
-                disabled={isLoading || !email || !employeeCode}
                 onClick={handleDevBypass}
+                disabled={isLoading}
               >
-                {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Dev Bypass Sign In
               </Button>
             </div>
           )}
-          
+
           <div className="mt-6 text-center text-sm text-muted-foreground">
-            <p>Luxe Relationship Management</p>
-            <p className="mt-2">Don't have an account?</p>
-            <Link href="/signup" className="text-primary hover:underline font-medium">
+            Luxe Relationship Management
+          </div>
+          <div className="mt-2 text-center text-sm">
+            Don't have an account?{' '}
+            <Link href="/signup" className="text-primary hover:underline">
               Sign up as an employee
             </Link>
-            <p className="mt-4 text-xs">© 2025 Luxe RM. All rights reserved.</p>
+          </div>
+          <div className="mt-4 text-center text-xs text-muted-foreground">
+            &copy; 2025 Luxe RM. All rights reserved.
           </div>
         </CardContent>
       </Card>
