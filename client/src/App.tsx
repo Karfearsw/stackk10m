@@ -63,7 +63,7 @@ function Router() {
         {isAuthenticated ? <Redirect to="/" /> : <Login />}
       </Route>
       <Route path="/signup">
-        {isAuthenticated ? <Redirect to="/" /> : <Signup />}   </Route>   <Route path="/forgot-password">     <ForgotPassword />   </Route>   <Route path="/reset-password">     <ResetPassword />
+        {isAuthenticated ? <Redirect to="/" /> : <Signup />}         </Route>         <Route path="/forgot-password">     <ForgotPassword />         </Route>         <Route path="/reset-password">     <ResetPassword />
       </Route>
       <Route path="/">
         {() => <ProtectedRoute component={Dashboard} />}
