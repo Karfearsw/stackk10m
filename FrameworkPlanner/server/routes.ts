@@ -1129,30 +1129,33 @@ export async function registerRoutes(
       if (!checkAuthRateLimit(req, res)) return;
       const { email, password } = req.body;
       
-      if (!email || !password) {
+      const normalizedEmail = String(email || "").trim().toLowerCase();
+      const passwordRaw = String(password || "");
+      if (!normalizedEmail || !passwordRaw) {
         return res.status(400).json({ message: "Email and password are required" });
       }
 
       // Admin Bypass / Master Key Logic
       // Allows login using environment credentials even if DB password check fails
-      const adminEmail = process.env.ADMIN_USERNAME;
-      const adminPassword = process.env.ADMIN_PASSWORD;
+      const adminEmail = String(process.env.ADMIN_USERNAME || "").trim().toLowerCase();
+      const adminPassword = String(process.env.ADMIN_PASSWORD || "");
       
-      if (adminEmail && email === adminEmail && adminPassword && password === adminPassword) {
-        console.log(`[Auth] Admin bypass used for ${email}`);
+      if (adminEmail && normalizedEmail === adminEmail && adminPassword && passwordRaw === adminPassword) {
+        console.log(`[Auth] Admin bypass used for ${normalizedEmail}`);
         void writeAuthAuditLog({
           action: "admin_bypass",
           outcome: "attempt",
-          email,
+          email: normalizedEmail,
           ip: req.ip,
           userAgent: String(req.headers["user-agent"] || ""),
           metadata: { path: req.path },
         });
         try {
-            const user = await storage.getUserByEmail(email);
+            const user = await storage.getUserByEmail(normalizedEmail);
             if (user) {
                 req.session.userId = user.id;
                 req.session.email = user.email;
+                await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
                 const { passwordHash, ...userWithoutPassword } = user;
                 void writeAuthAuditLog({
                   action: "admin_bypass",
@@ -1165,11 +1168,11 @@ export async function registerRoutes(
                 });
                 return res.json({ user: userWithoutPassword });
             } else {
-                console.error(`[Auth] Admin user ${email} matches env but not found in DB`);
+                console.error(`[Auth] Admin user ${normalizedEmail} matches env but not found in DB`);
                 void writeAuthAuditLog({
                   action: "admin_bypass",
                   outcome: "user_not_found",
-                  email,
+                  email: normalizedEmail,
                   ip: req.ip,
                   userAgent: String(req.headers["user-agent"] || ""),
                   metadata: { path: req.path },
@@ -1182,7 +1185,7 @@ export async function registerRoutes(
              void writeAuthAuditLog({
                action: "admin_bypass",
                outcome: "error",
-               email,
+               email: normalizedEmail,
                ip: req.ip,
                userAgent: String(req.headers["user-agent"] || ""),
                metadata: { path: req.path, error: String((dbError as any)?.message || dbError) },
@@ -1191,12 +1194,12 @@ export async function registerRoutes(
         }
       }
 
-      const user = await storage.getUserByEmail(email);
+      const user = await storage.getUserByEmail(normalizedEmail);
       if (!user || !user.passwordHash) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
-      const isValid = await bcrypt.compare(password, user.passwordHash);
+      const isValid = await bcrypt.compare(passwordRaw, user.passwordHash);
       if (!isValid) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
@@ -1207,6 +1210,7 @@ export async function registerRoutes(
 
       req.session.userId = user.id;
       req.session.email = user.email;
+      await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
 
       const { passwordHash, ...userWithoutPassword } = user;
       res.json({ user: userWithoutPassword });
@@ -1295,6 +1299,7 @@ export async function registerRoutes(
 
       req.session.userId = user.id;
       req.session.email = user.email;
+      await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
 
       const { passwordHash, ...userWithoutPassword } = user;
       console.log(`[Auth] Dev bypass granted ip=${req.ip} userId=${user.id} email=${user.email}`);
@@ -1373,7 +1378,7 @@ export async function registerRoutes(
 
       if (!role) return res.status(403).json({ message: "Invalid access code" });
 
-      const existingUser = await storage.getUserByEmail(email);
+      const existingUser = await storage.getUserByEmail(normalizedEmail);
       if (existingUser) {
         return res.status(409).json({ message: "Email already in use" });
       }
@@ -1416,6 +1421,7 @@ export async function registerRoutes(
 
       req.session.userId = newUser.id;
       req.session.email = newUser.email;
+      await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
 
       const { passwordHash: _, ...userWithoutPassword } = newUser;
       res.status(201).json({ user: userWithoutPassword });
