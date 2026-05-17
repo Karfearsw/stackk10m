@@ -2185,7 +2185,7 @@ export async function registerRoutes(
 
   app.post("/api/auth/signup", async (req, res) => {
     try {
-      const { firstName, lastName, email, password, role = "employee", isSuperAdmin = false, isActive = true, employeeCode, teamInviteCode } = req.body;
+      const { firstName, lastName, email, password, isActive = true, teamInviteCode } = req.body;
       
       if (!firstName || !lastName || !email || !password) {
         return res.status(400).json({ message: "All fields are required" });
