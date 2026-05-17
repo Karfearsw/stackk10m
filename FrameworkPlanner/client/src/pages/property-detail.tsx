@@ -42,6 +42,22 @@ export default function PropertyDetail() {
   const { user } = useAuth();
   const { toast } = useToast();
   const id = params?.id ? parseInt(params.id) : 0;
+  const getAuthToken = React.useCallback((): string | null => {
+    try {
+      return localStorage.getItem("authToken") || localStorage.getItem("token");
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const authHeaders = React.useCallback((): Record<string, string> => {
+    const token = getAuthToken();
+    if (!token) return {};
+    return { Authorization: `Bearer ${token}` };
+  }, [getAuthToken]);
+
+  const [skipTraceDialogOpen, setSkipTraceDialogOpen] = React.useState(false);
+  const [skipTraceOwnerName, setSkipTraceOwnerName] = React.useState("");
   const { data, isLoading, error } = useQuery<any>({
     queryKey: ["/api/opportunities", id],
     queryFn: async () => {
@@ -58,7 +74,10 @@ export default function PropertyDetail() {
     queryKey: ["/api/opportunities", id, "skip-trace-latest"],
     enabled: !!id,
     queryFn: async () => {
-      const res = await fetch(`/api/opportunities/${id}/skip-trace/latest`, { credentials: "include" });
+      const res = await fetch(`/api/opportunities/${id}/skip-trace/latest`, {
+        credentials: "include",
+        headers: authHeaders(),
+      });
       if (res.status === 404) return null;
       if (!res.ok) throw new Error("Failed to fetch skip trace");
       return res.json();
@@ -66,11 +85,10 @@ export default function PropertyDetail() {
   });
 
   const skipTraceMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`/api/opportunities/${id}/skip-trace`, { method: "POST", credentials: "include" });
-      if (res.status === 404) throw new Error("Skip trace is disabled");
-      if (!res.ok) throw new Error("Skip trace failed");
-      return res.json();
+    mutationFn: async (ownerName?: string) => {
+      const body = ownerName && ownerName.trim() ? { ownerName: ownerName.trim() } : undefined;
+      const res = await apiRequest("POST", `/api/opportunities/${id}/skip-trace`, body);
+      return await res.json();
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id] });
@@ -403,9 +421,54 @@ export default function PropertyDetail() {
                       </div>
                     </div>
                     <div className="space-y-2">
-                      <Button variant="secondary" className="w-full" disabled={skipTraceMutation.isPending} onClick={() => skipTraceMutation.mutate()}>
+                      <Button
+                        variant="secondary"
+                        className="w-full"
+                        disabled={skipTraceMutation.isPending}
+                        onClick={() => {
+                          const ownerName = String(lead?.ownerName || "").trim();
+                          if (!ownerName) {
+                            setSkipTraceOwnerName("");
+                            setSkipTraceDialogOpen(true);
+                            return;
+                          }
+                          skipTraceMutation.mutate(ownerName);
+                        }}
+                      >
                         Skip Trace Owner
                       </Button>
+                      <Dialog open={skipTraceDialogOpen} onOpenChange={setSkipTraceDialogOpen}>
+                        <DialogContent>
+                          <DialogHeader>
+                            <DialogTitle>Owner name required</DialogTitle>
+                          </DialogHeader>
+                          <div className="space-y-2">
+                            <Label htmlFor="skip-trace-owner-name">Owner name</Label>
+                            <Input
+                              id="skip-trace-owner-name"
+                              value={skipTraceOwnerName}
+                              onChange={(e) => setSkipTraceOwnerName(e.target.value)}
+                              placeholder="e.g., John Smith"
+                            />
+                            <div className="flex justify-end gap-2 pt-2">
+                              <Button variant="outline" onClick={() => setSkipTraceDialogOpen(false)}>
+                                Cancel
+                              </Button>
+                              <Button
+                                onClick={() => {
+                                  const v = skipTraceOwnerName.trim();
+                                  if (!v) return;
+                                  setSkipTraceDialogOpen(false);
+                                  skipTraceMutation.mutate(v);
+                                }}
+                                disabled={!skipTraceOwnerName.trim()}
+                              >
+                                Run skip trace
+                              </Button>
+                            </div>
+                          </div>
+                        </DialogContent>
+                      </Dialog>
                       {skipTraceLatest && (
                         <div className="border rounded-md p-3 text-sm bg-muted/20">
                           <div className="flex items-center justify-between">
