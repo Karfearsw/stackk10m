@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { DealCalculator } from "@/components/deals/DealCalculator";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
+import { SkipTraceJobPanel } from "@/components/skipTrace/SkipTraceJobPanel";
 import { 
   ArrowLeft, 
   MapPin, 
@@ -53,35 +54,6 @@ export default function PropertyDetail() {
   const property = data?.property;
   const lead = data?.lead;
   const num = (v: unknown) => (typeof v === "string" ? (Number.isFinite(parseFloat(v)) ? parseFloat(v) : 0) : typeof v === "number" ? (Number.isFinite(v) ? v : 0) : 0);
-
-  const { data: skipTraceLatest } = useQuery<any>({
-    queryKey: ["/api/opportunities", id, "skip-trace-latest"],
-    enabled: !!id,
-    queryFn: async () => {
-      const res = await fetch(`/api/opportunities/${id}/skip-trace/latest`, { credentials: "include" });
-      if (res.status === 404) return null;
-      if (!res.ok) throw new Error("Failed to fetch skip trace");
-      return res.json();
-    },
-  });
-
-  const skipTraceMutation = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`/api/opportunities/${id}/skip-trace`, { method: "POST", credentials: "include" });
-      if (res.status === 404) throw new Error("Skip trace is disabled");
-      if (!res.ok) throw new Error("Skip trace failed");
-      return res.json();
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id] });
-      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "skip-trace-latest"] });
-      toast({ title: "Skip trace completed" });
-    },
-    onError: (e: any) => {
-      toast({ title: e?.message || "Skip trace failed", variant: "destructive" });
-    },
-  });
-
   const { data: internalComps } = useQuery<any>({
     queryKey: ["/api/opportunities", id, "comps-snapshots"],
     enabled: !!id,
@@ -402,45 +374,7 @@ export default function PropertyDetail() {
                         <p className="font-medium">{lead?.motivation ?? "—"}</p>
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      <Button variant="secondary" className="w-full" disabled={skipTraceMutation.isPending} onClick={() => skipTraceMutation.mutate()}>
-                        Skip Trace Owner
-                      </Button>
-                      {skipTraceLatest && (
-                        <div className="border rounded-md p-3 text-sm bg-muted/20">
-                          <div className="flex items-center justify-between">
-                            <div className="text-xs text-muted-foreground">Last Result</div>
-                            <div className="text-xs text-muted-foreground">
-                              {skipTraceLatest.completedAt
-                                ? new Date(skipTraceLatest.completedAt).toLocaleString()
-                                : skipTraceLatest.requestedAt
-                                  ? new Date(skipTraceLatest.requestedAt).toLocaleString()
-                                  : "—"}
-                            </div>
-                          </div>
-                          <div className="mt-2 grid grid-cols-1 gap-1">
-                            <div>
-                              <span className="text-muted-foreground">Status:</span>{" "}
-                              <span className="font-medium">{String(skipTraceLatest.status || "—")}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Phones:</span>{" "}
-                              <span className="font-medium">{Array.isArray(skipTraceLatest.phones) && skipTraceLatest.phones.length ? skipTraceLatest.phones.join(", ") : "—"}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Emails:</span>{" "}
-                              <span className="font-medium">{Array.isArray(skipTraceLatest.emails) && skipTraceLatest.emails.length ? skipTraceLatest.emails.join(", ") : "—"}</span>
-                            </div>
-                            <div>
-                              <span className="text-muted-foreground">Cost:</span>{" "}
-                              <span className="font-medium">
-                                {typeof skipTraceLatest.costCents === "number" ? `$${(skipTraceLatest.costCents / 100).toFixed(2)}` : "—"}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                    <SkipTraceJobPanel entityType="opportunity" entityId={id} />
                   </CardContent>
                 </Card>
               </TabsContent>

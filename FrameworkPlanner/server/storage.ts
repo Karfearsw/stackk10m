@@ -3,7 +3,7 @@ import { asc, desc, sql } from "drizzle-orm";
 import { 
   leads, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
-  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents
+  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -45,6 +45,10 @@ import {
   type PlaygroundPropertySession, type InsertPlaygroundPropertySession,
   type UserFeatureFlag, type InsertUserFeatureFlag,
   type SkipTraceResult, type InsertSkipTraceResult,
+  type SkipTraceJob, type InsertSkipTraceJob,
+  type SkipTraceJobEvent, type InsertSkipTraceJobEvent,
+  type SkipTraceEvidence, type InsertSkipTraceEvidence,
+  type LeadScoreSnapshot, type InsertLeadScoreSnapshot,
   type LeadSourceOption, type InsertLeadSourceOption,
   type Campaign, type InsertCampaign,
   type CampaignStep, type InsertCampaignStep,
@@ -83,6 +87,20 @@ export interface IStorage {
   getLatestSkipTraceByCacheKey(cacheKey: string): Promise<SkipTraceResult | undefined>;
   createSkipTraceResult(input: InsertSkipTraceResult): Promise<SkipTraceResult>;
   updateSkipTraceResult(id: number, patch: Partial<InsertSkipTraceResult>): Promise<SkipTraceResult>;
+
+  createSkipTraceJob(input: InsertSkipTraceJob): Promise<SkipTraceJob>;
+  updateSkipTraceJob(id: number, patch: Partial<InsertSkipTraceJob>): Promise<SkipTraceJob>;
+  getSkipTraceJobById(id: number): Promise<SkipTraceJob | undefined>;
+  listSkipTraceJobsForEntity(entityType: string, entityId: number, limit?: number): Promise<SkipTraceJob[]>;
+  listQueuedSkipTraceJobs(limit?: number): Promise<SkipTraceJob[]>;
+  claimSkipTraceJobForRun(id: number, startedAt: Date): Promise<SkipTraceJob | undefined>;
+  createSkipTraceJobEvent(input: InsertSkipTraceJobEvent): Promise<SkipTraceJobEvent>;
+  listSkipTraceJobEvents(jobId: number, limit?: number): Promise<SkipTraceJobEvent[]>;
+  createSkipTraceEvidence(input: InsertSkipTraceEvidence): Promise<SkipTraceEvidence>;
+  listSkipTraceEvidence(jobId: number, limit?: number): Promise<SkipTraceEvidence[]>;
+  createLeadScoreSnapshot(input: InsertLeadScoreSnapshot): Promise<LeadScoreSnapshot>;
+  getLatestLeadScoreSnapshot(entityType: string, entityId: number): Promise<LeadScoreSnapshot | undefined>;
+  listLeadScoreSnapshotsByJobId(jobId: number): Promise<LeadScoreSnapshot[]>;
 
   getLeadSourceOptions(userId: number): Promise<LeadSourceOption[]>;
   upsertLeadSourceOption(input: InsertLeadSourceOption): Promise<LeadSourceOption>;
@@ -498,6 +516,99 @@ export class DatabaseStorage implements IStorage {
   async updateSkipTraceResult(id: number, patch: Partial<InsertSkipTraceResult>): Promise<SkipTraceResult> {
     const result = await db.update(skipTraceResults).set(patch as any).where(eq(skipTraceResults.id, id)).returning();
     return result[0];
+  }
+
+  async createSkipTraceJob(input: InsertSkipTraceJob): Promise<SkipTraceJob> {
+    const result = await db.insert(skipTraceJobs).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateSkipTraceJob(id: number, patch: Partial<InsertSkipTraceJob>): Promise<SkipTraceJob> {
+    const result = await db.update(skipTraceJobs).set(patch as any).where(eq(skipTraceJobs.id, id)).returning();
+    return result[0];
+  }
+
+  async getSkipTraceJobById(id: number): Promise<SkipTraceJob | undefined> {
+    const result = await db.select().from(skipTraceJobs).where(eq(skipTraceJobs.id, id)).limit(1);
+    return result[0];
+  }
+
+  async listSkipTraceJobsForEntity(entityType: string, entityId: number, limit: number = 20): Promise<SkipTraceJob[]> {
+    return db
+      .select()
+      .from(skipTraceJobs)
+      .where(and(eq(skipTraceJobs.entityType, entityType), eq(skipTraceJobs.entityId, entityId)))
+      .orderBy(desc(skipTraceJobs.createdAt), desc(skipTraceJobs.id))
+      .limit(limit);
+  }
+
+  async listQueuedSkipTraceJobs(limit: number = 25): Promise<SkipTraceJob[]> {
+    return db
+      .select()
+      .from(skipTraceJobs)
+      .where(eq(skipTraceJobs.status, "queued"))
+      .orderBy(asc(skipTraceJobs.createdAt), asc(skipTraceJobs.id))
+      .limit(limit);
+  }
+
+  async claimSkipTraceJobForRun(id: number, startedAt: Date): Promise<SkipTraceJob | undefined> {
+    const result = await db
+      .update(skipTraceJobs)
+      .set({ status: "running", startedAt, errorMessage: null } as any)
+      .where(and(eq(skipTraceJobs.id, id), eq(skipTraceJobs.status, "queued")))
+      .returning();
+    return result[0];
+  }
+
+  async createSkipTraceJobEvent(input: InsertSkipTraceJobEvent): Promise<SkipTraceJobEvent> {
+    const result = await db.insert(skipTraceJobEvents).values(input as any).returning();
+    return result[0];
+  }
+
+  async listSkipTraceJobEvents(jobId: number, limit: number = 200): Promise<SkipTraceJobEvent[]> {
+    return db
+      .select()
+      .from(skipTraceJobEvents)
+      .where(eq(skipTraceJobEvents.jobId, jobId))
+      .orderBy(asc(skipTraceJobEvents.createdAt), asc(skipTraceJobEvents.id))
+      .limit(limit);
+  }
+
+  async createSkipTraceEvidence(input: InsertSkipTraceEvidence): Promise<SkipTraceEvidence> {
+    const result = await db.insert(skipTraceEvidence).values(input as any).returning();
+    return result[0];
+  }
+
+  async listSkipTraceEvidence(jobId: number, limit: number = 500): Promise<SkipTraceEvidence[]> {
+    return db
+      .select()
+      .from(skipTraceEvidence)
+      .where(eq(skipTraceEvidence.jobId, jobId))
+      .orderBy(desc(skipTraceEvidence.collectedAt), desc(skipTraceEvidence.id))
+      .limit(limit);
+  }
+
+  async createLeadScoreSnapshot(input: InsertLeadScoreSnapshot): Promise<LeadScoreSnapshot> {
+    const result = await db.insert(leadScoreSnapshots).values(input as any).returning();
+    return result[0];
+  }
+
+  async getLatestLeadScoreSnapshot(entityType: string, entityId: number): Promise<LeadScoreSnapshot | undefined> {
+    const result = await db
+      .select()
+      .from(leadScoreSnapshots)
+      .where(and(eq(leadScoreSnapshots.entityType, entityType), eq(leadScoreSnapshots.entityId, entityId)))
+      .orderBy(desc(leadScoreSnapshots.createdAt), desc(leadScoreSnapshots.id))
+      .limit(1);
+    return result[0];
+  }
+
+  async listLeadScoreSnapshotsByJobId(jobId: number): Promise<LeadScoreSnapshot[]> {
+    return db
+      .select()
+      .from(leadScoreSnapshots)
+      .where(eq(leadScoreSnapshots.jobId, jobId))
+      .orderBy(desc(leadScoreSnapshots.createdAt), desc(leadScoreSnapshots.id));
   }
 
   async getLeadSourceOptions(userId: number): Promise<LeadSourceOption[]> {

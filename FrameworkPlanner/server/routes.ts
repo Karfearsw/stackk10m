@@ -61,7 +61,8 @@ import {
 } from "./shared-schema.js";
 import { z } from "zod";
 import { computeArvFromComps, computeDealMath, computeRepairTotal, underwritingSchemaV1, underwritingTemplateConfigSchema } from "../shared/underwriting.js";
-import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
+import { createSkipTraceJob, isHttpError, runProviderSkipTraceForEntity, runSkipTraceJob } from "./services/skipTrace/orchestrator.js";
+import { hydrateSkipTraceResultForApi, mergeSkipTraceResult } from "./services/skipTrace/merge.js";
 import { sendSignalWireSms } from "./services/messaging/signalwire.js";
 import { sendResendEmail } from "./services/messaging/resend.js";
 import { getAuthStatusSnapshot, getEmailProviderMissing } from "./auth/config.js";
@@ -2571,6 +2572,119 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/skip-trace/jobs", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
+
+      const body = z
+        .object({
+          entityType: z.enum(["lead", "opportunity"]),
+          entityId: z.coerce.number().int().positive(),
+          mode: z.enum(["provider", "public_research", "both"]),
+        })
+        .parse(req.body);
+
+      const job = await createSkipTraceJob({
+        entityType: body.entityType,
+        entityId: body.entityId,
+        mode: body.mode,
+        requestedByUserId: user.id,
+      });
+
+      if (body.mode === "provider") {
+        const out = await runSkipTraceJob(job.id);
+        return res.json({ jobId: out.job.id, status: out.job.status });
+      }
+
+      res.json({ jobId: job.id, status: job.status });
+    } catch (error: any) {
+      if (isHttpError(error)) return res.status(error.statusCode).json({ message: error.message });
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/skip-trace/jobs/:jobId/run", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
+
+      const jobId = parseInt(req.params.jobId, 10);
+      if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
+
+      const job = await storage.getSkipTraceJobById(jobId);
+      if (!job) return res.status(404).json({ message: "Not found" });
+      if (!user.isSuperAdmin && (job as any).requestedByUserId && Number((job as any).requestedByUserId) !== user.id) return res.status(404).json({ message: "Not found" });
+
+      const out = await runSkipTraceJob(job.id);
+      res.json({ jobId: out.job.id, status: out.job.status });
+    } catch (error: any) {
+      if (isHttpError(error)) return res.status(error.statusCode).json({ message: error.message });
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/skip-trace/jobs/:jobId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
+
+      const jobId = parseInt(req.params.jobId, 10);
+      if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
+
+      const job = await storage.getSkipTraceJobById(jobId);
+      if (!job) return res.status(404).json({ message: "Not found" });
+      if (!user.isSuperAdmin && (job as any).requestedByUserId && Number((job as any).requestedByUserId) !== user.id) return res.status(404).json({ message: "Not found" });
+
+      const events = await storage.listSkipTraceJobEvents(job.id, 500);
+      const evidence = await storage.listSkipTraceEvidence(job.id, 500);
+      const scoreSnapshot = (await storage.listLeadScoreSnapshotsByJobId(job.id))[0] ?? null;
+
+      const entityType = String((job as any).entityType || "").trim().toLowerCase();
+      const entityId = Number((job as any).entityId);
+
+      const lead = entityType === "lead" ? ((await storage.getLeadById(entityId)) ?? null) : null;
+      const property = entityType === "opportunity" ? ((await storage.getPropertyById(entityId)) ?? null) : null;
+
+      const providerRow =
+        entityType === "lead"
+          ? await storage.getLatestSkipTraceForLead(entityId)
+          : entityType === "opportunity"
+            ? await storage.getLatestSkipTraceForProperty(entityId)
+            : null;
+
+      const providerResult = providerRow && (providerRow as any).jobId === job.id ? hydrateSkipTraceResultForApi(providerRow as any) : null;
+
+      const merged =
+        entityType === "lead" || entityType === "opportunity"
+          ? mergeSkipTraceResult({
+              entityType: entityType as any,
+              entityId,
+              lead,
+              property,
+              providerResult: providerRow && (providerRow as any).jobId === job.id ? (providerRow as any) : null,
+              evidence: evidence as any,
+              scoreSnapshot: scoreSnapshot as any,
+            })
+          : null;
+
+      res.json({
+        job,
+        events,
+        evidence,
+        providerResult,
+        scoreSnapshot,
+        merged,
+      });
+    } catch (error: any) {
+      if (isHttpError(error)) return res.status(error.statusCode).json({ message: error.message });
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get("/api/leads/:id/skip-trace/latest", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -2601,138 +2715,13 @@ export async function registerRoutes(
       if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
 
       const leadId = parseInt(req.params.id);
-      const lead = await storage.getLeadById(leadId);
-      if (!lead) return res.status(404).json({ message: "Lead not found" });
-
-      const ownerName = String((lead as any).ownerName || "").trim();
-      const address = String((lead as any).address || "").trim();
-      const city = String((lead as any).city || "").trim();
-      const state = String((lead as any).state || "").trim();
-      const zipCode = String((lead as any).zipCode || "").trim();
-      if (!ownerName || !address || !city || !state || !zipCode) return res.status(400).json({ message: "Lead is missing required fields" });
-
-      const cacheKey = skipTraceCacheKey({ ownerName, address, city, state, zipCode });
-      const existing = await storage.getLatestSkipTraceByCacheKey(cacheKey);
-
-      const now = Date.now();
-      const ms90d = 1000 * 60 * 60 * 24 * 90;
-      const ms5m = 1000 * 60 * 5;
-
-      if (existing && String((existing as any).status || "") === "success" && (existing as any).completedAt) {
-        const completedAtMs = new Date((existing as any).completedAt).getTime();
-        if (Number.isFinite(completedAtMs) && now - completedAtMs < ms90d) {
-          await storage.createGlobalActivity({
-            userId: user.id,
-            action: "skip_trace_cached",
-            description: `Skip trace cache hit: ${address}`,
-            metadata: JSON.stringify({ leadId, skipTraceId: (existing as any).id }),
-          } as any);
-          return res.json({
-            cached: true,
-            result: {
-              ...existing,
-              phones: parseJsonArrayText((existing as any).phonesJson),
-              emails: parseJsonArrayText((existing as any).emailsJson),
-            },
-          });
-        }
+      const out = await runProviderSkipTraceForEntity({ entityType: "lead", entityId: leadId, requestedByUserId: user.id });
+      if ("pending" in out && out.pending) {
+        return res.json({ pending: true, result: hydrateSkipTraceResultForApi(out.providerResult as any) });
       }
-
-      if (existing && String((existing as any).status || "") === "pending" && (existing as any).requestedAt) {
-        const requestedAtMs = new Date((existing as any).requestedAt).getTime();
-        if (Number.isFinite(requestedAtMs) && now - requestedAtMs < ms5m) {
-          return res.json({
-            pending: true,
-            result: {
-              ...existing,
-              phones: parseJsonArrayText((existing as any).phonesJson),
-              emails: parseJsonArrayText((existing as any).emailsJson),
-            },
-          });
-        }
-      }
-
-      const provider = getSkipTraceProvider();
-      const pending = await storage.createSkipTraceResult({
-        leadId,
-        providerName: provider.name,
-        status: "pending",
-        phonesJson: "[]",
-        emailsJson: "[]",
-        cacheKey,
-        requestedAt: new Date(),
-      } as any);
-
-      await storage.createGlobalActivity({
-        userId: user.id,
-        action: "skip_trace_requested",
-        description: `Skip trace requested: ${address}`,
-        metadata: JSON.stringify({ leadId, skipTraceId: pending.id, provider: provider.name }),
-      } as any);
-
-      let updated: any = pending;
-      try {
-        const out = await provider.skipTrace({ ownerName, address, city, state, zipCode });
-        if (out.status === "success") {
-          updated = await storage.updateSkipTraceResult(pending.id, {
-            status: "success",
-            phonesJson: JSON.stringify(out.phones || []),
-            emailsJson: JSON.stringify(out.emails || []),
-            costCents: out.costCents,
-            completedAt: new Date(),
-            rawResponseJson: JSON.stringify(out.raw ?? null),
-          } as any);
-
-          const leadPatch: any = {};
-          if (!String((lead as any).ownerPhone || "").trim() && out.phones?.[0]) leadPatch.ownerPhone = out.phones[0];
-          if (!String((lead as any).ownerEmail || "").trim() && out.emails?.[0]) leadPatch.ownerEmail = out.emails[0];
-          if (Object.keys(leadPatch).length) await storage.updateLead(leadId, leadPatch);
-
-          await storage.createGlobalActivity({
-            userId: user.id,
-            action: "skip_trace_success",
-            description: `Skip trace success: ${address}`,
-            metadata: JSON.stringify({ leadId, skipTraceId: pending.id, phones: out.phones?.length || 0, emails: out.emails?.length || 0, costCents: out.costCents }),
-          } as any);
-        } else {
-          updated = await storage.updateSkipTraceResult(pending.id, {
-            status: "fail",
-            phonesJson: JSON.stringify(out.phones || []),
-            emailsJson: JSON.stringify(out.emails || []),
-            costCents: out.costCents,
-            completedAt: new Date(),
-            rawResponseJson: JSON.stringify(out.raw ?? null),
-          } as any);
-          await storage.createGlobalActivity({
-            userId: user.id,
-            action: "skip_trace_failed",
-            description: `Skip trace failed: ${address}`,
-            metadata: JSON.stringify({ leadId, skipTraceId: pending.id, error: (out as any).errorMessage || "failed", costCents: out.costCents }),
-          } as any);
-        }
-      } catch (e: any) {
-        updated = await storage.updateSkipTraceResult(pending.id, {
-          status: "fail",
-          completedAt: new Date(),
-          rawResponseJson: JSON.stringify({ error: String(e?.message || e) }),
-        } as any);
-        await storage.createGlobalActivity({
-          userId: user.id,
-          action: "skip_trace_failed",
-          description: `Skip trace failed: ${address}`,
-          metadata: JSON.stringify({ leadId, skipTraceId: pending.id, error: String(e?.message || e) }),
-        } as any);
-      }
-
-      return res.json({
-        cached: false,
-        result: {
-          ...updated,
-          phones: parseJsonArrayText(updated.phonesJson),
-          emails: parseJsonArrayText(updated.emailsJson),
-        },
-      });
+      return res.json({ cached: out.cached, result: hydrateSkipTraceResultForApi(out.providerResult as any) });
     } catch (error: any) {
+      if (isHttpError(error)) return res.status(error.statusCode).json({ message: error.message });
       res.status(500).json({ message: error.message });
     }
   });
@@ -3269,67 +3258,11 @@ export async function registerRoutes(
             const s = z.object({ leadId: z.number().int().positive() });
             const p = s.parse(a.payload || {});
             if (!(await isFeatureEnabled(user.id, "skip_trace"))) throw new Error("Skip trace disabled");
-            const lead = await storage.getLeadById(p.leadId);
-            if (!lead) throw new Error("Lead not found");
-            const ownerName = String((lead as any).ownerName || "").trim();
-            const address = String((lead as any).address || "").trim();
-            const city = String((lead as any).city || "").trim();
-            const state = String((lead as any).state || "").trim();
-            const zipCode = String((lead as any).zipCode || "").trim();
-            const cacheKey = skipTraceCacheKey({ ownerName, address, city, state, zipCode });
-
-            const existingSt = await storage.getLatestSkipTraceByCacheKey(cacheKey);
-            const now = Date.now();
-            const ms90d = 1000 * 60 * 60 * 24 * 90;
-            if (existingSt && String((existingSt as any).status || "") === "success" && (existingSt as any).completedAt) {
-              const completedAtMs = new Date((existingSt as any).completedAt).getTime();
-              if (Number.isFinite(completedAtMs) && now - completedAtMs < ms90d) {
-                out = { ...out, cached: true, skipTraceId: (existingSt as any).id };
-              } else {
-                out = { ...out, cached: false };
-              }
-            }
-
-            if (!out.cached) {
-              const provider = getSkipTraceProvider();
-              const pending = await storage.createSkipTraceResult({
-                leadId: p.leadId,
-                providerName: provider.name,
-                status: "pending",
-                phonesJson: "[]",
-                emailsJson: "[]",
-                cacheKey,
-                requestedAt: new Date(),
-              } as any);
-              try {
-                const r = await provider.skipTrace({ ownerName, address, city, state, zipCode });
-                if (r.status === "success") {
-                  await storage.updateSkipTraceResult(pending.id, {
-                    status: "success",
-                    phonesJson: JSON.stringify(r.phones || []),
-                    emailsJson: JSON.stringify(r.emails || []),
-                    costCents: r.costCents,
-                    completedAt: new Date(),
-                    rawResponseJson: JSON.stringify(r.raw ?? null),
-                  } as any);
-                } else {
-                  await storage.updateSkipTraceResult(pending.id, {
-                    status: "fail",
-                    phonesJson: JSON.stringify(r.phones || []),
-                    emailsJson: JSON.stringify(r.emails || []),
-                    costCents: r.costCents,
-                    completedAt: new Date(),
-                    rawResponseJson: JSON.stringify(r.raw ?? null),
-                  } as any);
-                }
-              } catch (e: any) {
-                await storage.updateSkipTraceResult(pending.id, {
-                  status: "fail",
-                  completedAt: new Date(),
-                  rawResponseJson: JSON.stringify({ error: String(e?.message || e) }),
-                } as any);
-              }
-              out = { ...out, cached: false, skipTraceId: pending.id };
+            const r = await runProviderSkipTraceForEntity({ entityType: "lead", entityId: p.leadId, requestedByUserId: user.id });
+            if ("pending" in r && r.pending) {
+              out = { ...out, pending: true, cached: false, skipTraceId: (r.providerResult as any).id };
+            } else {
+              out = { ...out, cached: r.cached, skipTraceId: (r.providerResult as any).id };
             }
           } else if (a.type === "upload_media") {
             const s = z.object({
@@ -3688,148 +3621,14 @@ export async function registerRoutes(
       if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
 
       const propertyId = parseInt(req.params.id);
-      const property = await storage.getPropertyById(propertyId);
-      if (!property) return res.status(404).json({ message: "Opportunity not found" });
-
-      let lead: any = null;
-      if ((property as any).sourceLeadId) {
-        try {
-          lead = await storage.getLeadById((property as any).sourceLeadId);
-        } catch {}
+      const ownerNameOverride = req.body?.ownerName ? String(req.body.ownerName).trim() : null;
+      const out = await runProviderSkipTraceForEntity({ entityType: "opportunity", entityId: propertyId, requestedByUserId: user.id, ownerNameOverride });
+      if ("pending" in out && out.pending) {
+        return res.json({ pending: true, result: hydrateSkipTraceResultForApi(out.providerResult as any) });
       }
-
-      const ownerName = String((lead?.ownerName ?? req.body?.ownerName ?? "")).trim();
-      const address = String((property as any).address || "").trim();
-      const city = String((property as any).city || "").trim();
-      const state = String((property as any).state || "").trim();
-      const zipCode = String((property as any).zipCode || "").trim();
-      if (!ownerName || !address || !city || !state || !zipCode) return res.status(400).json({ message: "Opportunity is missing required fields" });
-
-      const cacheKey = skipTraceCacheKey({ ownerName, address, city, state, zipCode });
-      const existing = await storage.getLatestSkipTraceByCacheKey(cacheKey);
-
-      const now = Date.now();
-      const ms90d = 1000 * 60 * 60 * 24 * 90;
-      const ms5m = 1000 * 60 * 5;
-
-      if (existing && String((existing as any).status || "") === "success" && (existing as any).completedAt) {
-        const completedAtMs = new Date((existing as any).completedAt).getTime();
-        if (Number.isFinite(completedAtMs) && now - completedAtMs < ms90d) {
-          await storage.createGlobalActivity({
-            userId: user.id,
-            action: "skip_trace_cached",
-            description: `Skip trace cache hit: ${address}`,
-            metadata: JSON.stringify({ propertyId, skipTraceId: (existing as any).id }),
-          } as any);
-          return res.json({
-            cached: true,
-            result: {
-              ...existing,
-              phones: parseJsonArrayText((existing as any).phonesJson),
-              emails: parseJsonArrayText((existing as any).emailsJson),
-            },
-          });
-        }
-      }
-
-      if (existing && String((existing as any).status || "") === "pending" && (existing as any).requestedAt) {
-        const requestedAtMs = new Date((existing as any).requestedAt).getTime();
-        if (Number.isFinite(requestedAtMs) && now - requestedAtMs < ms5m) {
-          return res.json({
-            pending: true,
-            result: {
-              ...existing,
-              phones: parseJsonArrayText((existing as any).phonesJson),
-              emails: parseJsonArrayText((existing as any).emailsJson),
-            },
-          });
-        }
-      }
-
-      const provider = getSkipTraceProvider();
-      const pending = await storage.createSkipTraceResult({
-        propertyId,
-        leadId: lead?.id ?? null,
-        providerName: provider.name,
-        status: "pending",
-        phonesJson: "[]",
-        emailsJson: "[]",
-        cacheKey,
-        requestedAt: new Date(),
-      } as any);
-
-      await storage.createGlobalActivity({
-        userId: user.id,
-        action: "skip_trace_requested",
-        description: `Skip trace requested: ${address}`,
-        metadata: JSON.stringify({ propertyId, leadId: lead?.id ?? null, skipTraceId: pending.id, provider: provider.name }),
-      } as any);
-
-      let updated: any = pending;
-      try {
-        const out = await provider.skipTrace({ ownerName, address, city, state, zipCode });
-        if (out.status === "success") {
-          updated = await storage.updateSkipTraceResult(pending.id, {
-            status: "success",
-            phonesJson: JSON.stringify(out.phones || []),
-            emailsJson: JSON.stringify(out.emails || []),
-            costCents: out.costCents,
-            completedAt: new Date(),
-            rawResponseJson: JSON.stringify(out.raw ?? null),
-          } as any);
-
-          if (lead?.id) {
-            const leadPatch: any = {};
-            if (!String(lead?.ownerPhone || "").trim() && out.phones?.[0]) leadPatch.ownerPhone = out.phones[0];
-            if (!String(lead?.ownerEmail || "").trim() && out.emails?.[0]) leadPatch.ownerEmail = out.emails[0];
-            if (Object.keys(leadPatch).length) await storage.updateLead(lead.id, leadPatch);
-          }
-
-          await storage.createGlobalActivity({
-            userId: user.id,
-            action: "skip_trace_success",
-            description: `Skip trace success: ${address}`,
-            metadata: JSON.stringify({ propertyId, leadId: lead?.id ?? null, skipTraceId: pending.id, phones: out.phones?.length || 0, emails: out.emails?.length || 0, costCents: out.costCents }),
-          } as any);
-        } else {
-          updated = await storage.updateSkipTraceResult(pending.id, {
-            status: "fail",
-            phonesJson: JSON.stringify(out.phones || []),
-            emailsJson: JSON.stringify(out.emails || []),
-            costCents: out.costCents,
-            completedAt: new Date(),
-            rawResponseJson: JSON.stringify(out.raw ?? null),
-          } as any);
-          await storage.createGlobalActivity({
-            userId: user.id,
-            action: "skip_trace_failed",
-            description: `Skip trace failed: ${address}`,
-            metadata: JSON.stringify({ propertyId, leadId: lead?.id ?? null, skipTraceId: pending.id, error: (out as any).errorMessage || "failed", costCents: out.costCents }),
-          } as any);
-        }
-      } catch (e: any) {
-        updated = await storage.updateSkipTraceResult(pending.id, {
-          status: "fail",
-          completedAt: new Date(),
-          rawResponseJson: JSON.stringify({ error: String(e?.message || e) }),
-        } as any);
-        await storage.createGlobalActivity({
-          userId: user.id,
-          action: "skip_trace_failed",
-          description: `Skip trace failed: ${address}`,
-          metadata: JSON.stringify({ propertyId, leadId: lead?.id ?? null, skipTraceId: pending.id, error: String(e?.message || e) }),
-        } as any);
-      }
-
-      return res.json({
-        cached: false,
-        result: {
-          ...updated,
-          phones: parseJsonArrayText(updated.phonesJson),
-          emails: parseJsonArrayText(updated.emailsJson),
-        },
-      });
+      return res.json({ cached: out.cached, result: hydrateSkipTraceResultForApi(out.providerResult as any) });
     } catch (error: any) {
+      if (isHttpError(error)) return res.status(error.statusCode).json({ message: error.message });
       res.status(500).json({ message: error.message });
     }
   });

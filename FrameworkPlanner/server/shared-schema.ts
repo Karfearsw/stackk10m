@@ -142,6 +142,7 @@ export type InsertProperty = z.infer<typeof insertPropertySchema>;
 
 export const skipTraceResults = pgTable("skip_trace_results", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  jobId: integer("job_id"),
   leadId: integer("lead_id"),
   propertyId: integer("property_id"),
   providerName: varchar("provider_name", { length: 100 }).notNull(),
@@ -159,6 +160,75 @@ export const skipTraceResults = pgTable("skip_trace_results", {
 export const insertSkipTraceResultSchema = createInsertSchema(skipTraceResults).omit({ id: true, createdAt: true } as any);
 export type SkipTraceResult = typeof skipTraceResults.$inferSelect;
 export type InsertSkipTraceResult = z.infer<typeof insertSkipTraceResultSchema>;
+
+export const skipTraceJobs = pgTable("skip_trace_jobs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 20 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  requestedByUserId: integer("requested_by_user_id"),
+  mode: varchar("mode", { length: 20 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("queued"),
+  providerName: varchar("provider_name", { length: 100 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  errorMessage: text("error_message"),
+  idempotencyKey: varchar("idempotency_key", { length: 400 }),
+});
+
+export const insertSkipTraceJobSchema = createInsertSchema(skipTraceJobs).omit(
+  { id: true, createdAt: true, startedAt: true, completedAt: true } as any,
+);
+export type SkipTraceJob = typeof skipTraceJobs.$inferSelect;
+export type InsertSkipTraceJob = z.infer<typeof insertSkipTraceJobSchema>;
+
+export const skipTraceJobEvents = pgTable("skip_trace_job_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  jobId: integer("job_id").notNull(),
+  status: varchar("status", { length: 20 }).notNull(),
+  message: text("message"),
+  metadataJson: jsonb("metadata_json").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertSkipTraceJobEventSchema = createInsertSchema(skipTraceJobEvents).omit({ id: true, createdAt: true } as any);
+export type SkipTraceJobEvent = typeof skipTraceJobEvents.$inferSelect;
+export type InsertSkipTraceJobEvent = z.infer<typeof insertSkipTraceJobEventSchema>;
+
+export const skipTraceEvidence = pgTable("skip_trace_evidence", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  jobId: integer("job_id").notNull(),
+  entityType: varchar("entity_type", { length: 20 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  sourceType: varchar("source_type", { length: 50 }).notNull(),
+  sourceUrl: text("source_url"),
+  collectedAt: timestamp("collected_at").notNull().defaultNow(),
+  extractedJson: jsonb("extracted_json").notNull().default(sql`'{}'::jsonb`),
+  confidenceJson: jsonb("confidence_json").notNull().default(sql`'{}'::jsonb`),
+  notes: text("notes"),
+  screenshotRef: text("screenshot_ref"),
+});
+
+export const insertSkipTraceEvidenceSchema = createInsertSchema(skipTraceEvidence).omit({ id: true, collectedAt: true } as any);
+export type SkipTraceEvidence = typeof skipTraceEvidence.$inferSelect;
+export type InsertSkipTraceEvidence = z.infer<typeof insertSkipTraceEvidenceSchema>;
+
+export const leadScoreSnapshots = pgTable("lead_score_snapshots", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 20 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  jobId: integer("job_id"),
+  scoreTotal: integer("score_total").notNull(),
+  confidence: varchar("confidence", { length: 20 }),
+  urgencyTier: varchar("urgency_tier", { length: 20 }),
+  reasonSummary: text("reason_summary"),
+  factorsJson: jsonb("factors_json").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertLeadScoreSnapshotSchema = createInsertSchema(leadScoreSnapshots).omit({ id: true, createdAt: true } as any);
+export type LeadScoreSnapshot = typeof leadScoreSnapshots.$inferSelect;
+export type InsertLeadScoreSnapshot = z.infer<typeof insertLeadScoreSnapshotSchema>;
 
 export const leadSourceOptions = pgTable("lead_source_options", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
