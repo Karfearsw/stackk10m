@@ -919,7 +919,7 @@ export default function Leads() {
             <SheetDescription>{selectedLead ? selectedLead.ownerName : ""}</SheetDescription>
           </SheetHeader>
           {selectedLead ? (
-            <div className="mt-6 space-y-4">
+            <div className="mt-6 max-h-[calc(100dvh-9rem)] space-y-4 pr-2 scroll-y-container">
               <div className="flex items-center justify-between">
                 <Badge variant="outline" className={getStatusBadgeColor(selectedLead.status)}>
                   {pipelineColumnsWithMissing.find((s) => s.value === selectedLead.status)?.label || selectedLead.status}

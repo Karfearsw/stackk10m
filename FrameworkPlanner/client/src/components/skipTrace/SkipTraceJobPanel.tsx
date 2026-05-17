@@ -345,8 +345,8 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
               <div className="text-xs text-muted-foreground">Evidence</div>
               <div className="text-xs text-muted-foreground">{evidence.length ? `${evidence.length} items` : "—"}</div>
             </div>
-            <ScrollArea className="mt-2 h-40">
-              <div className="space-y-2 pr-3">
+            <div className="mt-2 max-h-40 overflow-y-auto pr-2 scroll-y-container">
+              <div className="space-y-2">
                 {evidence.length ? (
                   evidence.map((ev: any) => {
                     const url = toStr(ev?.sourceUrl).trim();
@@ -379,7 +379,7 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
                   <div className="text-sm text-muted-foreground">No evidence yet.</div>
                 )}
               </div>
-            </ScrollArea>
+            </div>
           </div>
 
           <div className="rounded-md border p-3">
@@ -393,8 +393,8 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
                 <div className="text-xs text-muted-foreground">—</div>
               )}
             </div>
-            <ScrollArea className="mt-2 h-40">
-              <div className="space-y-2 pr-3">
+            <div className="mt-2 max-h-40 overflow-y-auto pr-2 scroll-y-container">
+              <div className="space-y-2">
                 {events.length ? (
                   [...events]
                     .sort((a: any, b: any) => new Date(toStr(b?.createdAt) || 0).getTime() - new Date(toStr(a?.createdAt) || 0).getTime())
@@ -416,7 +416,7 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
                   <div className="text-sm text-muted-foreground">No events yet.</div>
                 )}
               </div>
-            </ScrollArea>
+            </div>
           </div>
         </div>
       </div>
