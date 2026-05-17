@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { ResearchHub, type PlaygroundQuickLink, type PlaygroundResearchNote } from "@/components/underwriting/ResearchHub";
 import { UnderwriteDealPanel } from "@/components/underwriting/UnderwriteDealPanel";
+import { SkipTraceJobPanel } from "@/components/skipTrace/SkipTraceJobPanel";
 import { makeAddressSearchUrl } from "@/utils/playgroundPersistence";
 import { makeEmptyUnderwritingV1, underwritingSchemaV1, type UnderwritingComp, type UnderwritingV1 } from "@shared/underwriting";
 
@@ -115,6 +116,7 @@ export function UnderwriteDealWorkspace(props: {
   const propertyId = props.propertyId ?? null;
   const leadId = props.leadId ?? null;
   const subject = props.subject ?? null;
+  const skipTraceEntity = propertyId ? ({ entityType: "opportunity" as const, entityId: propertyId } as const) : leadId ? ({ entityType: "lead" as const, entityId: leadId } as const) : null;
 
   const sessionKey = props.sessionId ? `id:${props.sessionId}` : propertyId ? `property:${propertyId}` : leadId ? `lead:${leadId}` : `addr:${address}`;
 
@@ -341,7 +343,7 @@ export function UnderwriteDealWorkspace(props: {
           onSaveComp={(comp) => addComp({ ...comp, url: comp.url || currentUrl })}
         />
       </div>
-      <div className="xl:col-span-5 min-h-[70vh] min-w-0">
+      <div className="xl:col-span-5 min-h-[70vh] min-w-0 flex flex-col gap-4">
         <UnderwriteDealPanel
           subject={subject}
           underwriting={underwriting}
@@ -372,6 +374,7 @@ export function UnderwriteDealWorkspace(props: {
             return json;
           }}
         />
+        {skipTraceEntity ? <SkipTraceJobPanel entityType={skipTraceEntity.entityType} entityId={skipTraceEntity.entityId} /> : null}
       </div>
     </div>
   );
