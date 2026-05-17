@@ -8,11 +8,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { XpItineraryEditor } from "@/components/xp/XpItineraryEditor";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiRequest } from "@/lib/queryClient";
+import type { XpItinerary } from "@/lib/xp/itinerary";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 type XpExperience = {
   id: number;
@@ -20,11 +22,19 @@ type XpExperience = {
   title: string;
   description?: string | null;
   mode?: string | null;
+  paymentMode?: string | null;
   currency?: string | null;
   priceTotal?: string | number | null;
   depositAmount?: string | number | null;
   capacity?: number | null;
   active?: boolean | null;
+  images?: string[] | null;
+  itinerary?: any;
+  location?: string | null;
+  durationMinutes?: number | null;
+  highlights?: string[] | null;
+  inclusions?: string[] | null;
+  cancellationPolicy?: string | null;
 };
 
 type XpTimeSlot = {
@@ -69,6 +79,19 @@ function dtLocalToIso(v: string): string | null {
   return Number.isFinite(d.getTime()) ? d.toISOString() : null;
 }
 
+function linesToList(v: string): string[] | null {
+  const items = String(v || "")
+    .split(/\r?\n/g)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return items.length ? items : null;
+}
+
+function listToLines(v: unknown): string {
+  if (!Array.isArray(v)) return "";
+  return v.map((x) => String(x || "").trim()).filter(Boolean).join("\n");
+}
+
 export default function XpAdminPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -92,6 +115,68 @@ export default function XpAdminPage() {
   const [selectedExperienceId, setSelectedExperienceId] = useState<string>("");
   const selectedId = parseInt(selectedExperienceId, 10);
   const selectedExperience = Number.isFinite(selectedId) ? experiencesById.get(selectedId) : null;
+  const [editForm, setEditForm] = useState({
+    slug: "",
+    title: "",
+    description: "",
+    mode: "both",
+    paymentMode: "deposit",
+    depositAmount: "",
+    priceTotal: "",
+    capacity: "1",
+    active: true,
+    location: "",
+    durationMinutes: "",
+    images: "",
+    highlights: "",
+    inclusions: "",
+    cancellationPolicy: "",
+  });
+  const [editItinerary, setEditItinerary] = useState<XpItinerary | null>(null);
+
+  useEffect(() => {
+    if (!selectedExperience) {
+      setEditForm({
+        slug: "",
+        title: "",
+        description: "",
+        mode: "both",
+        paymentMode: "deposit",
+        depositAmount: "",
+        priceTotal: "",
+        capacity: "1",
+        active: true,
+        location: "",
+        durationMinutes: "",
+        images: "",
+        highlights: "",
+        inclusions: "",
+        cancellationPolicy: "",
+      });
+      setEditItinerary(null);
+      return;
+    }
+    setEditForm({
+      slug: String(selectedExperience.slug || ""),
+      title: String(selectedExperience.title || ""),
+      description: String(selectedExperience.description || ""),
+      mode: String(selectedExperience.mode || "both"),
+      paymentMode: String(selectedExperience.paymentMode || "deposit"),
+      depositAmount: selectedExperience.depositAmount != null ? String(selectedExperience.depositAmount) : "",
+      priceTotal: selectedExperience.priceTotal != null ? String(selectedExperience.priceTotal) : "",
+      capacity: selectedExperience.capacity != null ? String(selectedExperience.capacity) : "1",
+      active: selectedExperience.active !== false,
+      location: String(selectedExperience.location || ""),
+      durationMinutes: selectedExperience.durationMinutes != null ? String(selectedExperience.durationMinutes) : "",
+      images: listToLines(selectedExperience.images),
+      highlights: listToLines(selectedExperience.highlights),
+      inclusions: listToLines(selectedExperience.inclusions),
+      cancellationPolicy: String(selectedExperience.cancellationPolicy || ""),
+    });
+    const raw = (selectedExperience as any).itinerary;
+    if (raw && Array.isArray(raw.sections)) setEditItinerary(raw as any);
+    else setEditItinerary(null);
+  }, [selectedExperienceId]);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState({
@@ -99,11 +184,19 @@ export default function XpAdminPage() {
     title: "",
     description: "",
     mode: "both",
+    paymentMode: "deposit",
     depositAmount: "",
     priceTotal: "",
     capacity: "1",
     active: true,
+    location: "",
+    durationMinutes: "",
+    images: "",
+    highlights: "",
+    inclusions: "",
+    cancellationPolicy: "",
   });
+  const [createItinerary, setCreateItinerary] = useState<XpItinerary | null>(null);
 
   const createExperience = useMutation({
     mutationFn: async () => {
@@ -112,10 +205,18 @@ export default function XpAdminPage() {
         title: form.title.trim(),
         description: form.description.trim() || undefined,
         mode: form.mode,
-        depositAmount: form.depositAmount.trim(),
+        paymentMode: form.paymentMode,
+        depositAmount: form.paymentMode === "full" ? undefined : form.depositAmount.trim() || undefined,
         priceTotal: form.priceTotal.trim() || undefined,
         capacity: parseInt(form.capacity, 10) || 1,
         active: !!form.active,
+        location: form.location.trim() || undefined,
+        durationMinutes: form.durationMinutes.trim() ? parseInt(form.durationMinutes, 10) : undefined,
+        images: linesToList(form.images),
+        highlights: linesToList(form.highlights),
+        inclusions: linesToList(form.inclusions),
+        cancellationPolicy: form.cancellationPolicy.trim() || undefined,
+        itinerary: createItinerary && Array.isArray(createItinerary.sections) && createItinerary.sections.length ? createItinerary : null,
       };
       const res = await apiRequest("POST", "/api/xp/admin/experiences", payload);
       return res.json();
@@ -123,11 +224,47 @@ export default function XpAdminPage() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/xp/admin/experiences"] });
       setCreateOpen(false);
-      setForm({ slug: "", title: "", description: "", mode: "both", depositAmount: "", priceTotal: "", capacity: "1", active: true });
+      setForm({
+        slug: "",
+        title: "",
+        description: "",
+        mode: "both",
+        paymentMode: "deposit",
+        depositAmount: "",
+        priceTotal: "",
+        capacity: "1",
+        active: true,
+        location: "",
+        durationMinutes: "",
+        images: "",
+        highlights: "",
+        inclusions: "",
+        cancellationPolicy: "",
+      });
+      setCreateItinerary(null);
       toast({ title: "Experience created" });
     },
     onError: (err: any) => {
       toast({ title: "Create failed", description: String(err?.message || err), variant: "destructive" as any });
+    },
+  });
+
+  const updateExperience = useMutation({
+    mutationFn: async (input: { id: number; payload: any }) => {
+      const res = await apiRequest("PATCH", `/api/xp/admin/experiences/${input.id}`, input.payload);
+      return res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/xp/admin/experiences"] });
+      if (Number.isFinite(selectedId)) {
+        await queryClient.invalidateQueries({ queryKey: ["/api/xp/admin/experiences", selectedId, "time-slots"] });
+        await queryClient.invalidateQueries({ queryKey: ["/api/xp/admin/experiences", selectedId, "blackouts"] });
+        await queryClient.invalidateQueries({ queryKey: ["/api/xp/admin/bookings", String(selectedId)] });
+      }
+      toast({ title: "Experience updated" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Update failed", description: String(err?.message || err), variant: "destructive" as any });
     },
   });
 
@@ -334,14 +471,55 @@ export default function XpAdminPage() {
                   <Input value={form.capacity} onChange={(e) => setForm((p) => ({ ...p, capacity: e.target.value }))} />
                 </div>
                 <div className="space-y-2">
-                  <Label>Deposit amount (USD)</Label>
-                  <Input value={form.depositAmount} onChange={(e) => setForm((p) => ({ ...p, depositAmount: e.target.value }))} placeholder="100.00" />
+                  <Label>Payment mode</Label>
+                  <Select value={form.paymentMode} onValueChange={(v) => setForm((p) => ({ ...p, paymentMode: v }))}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="deposit">Deposit</SelectItem>
+                      <SelectItem value="full">Full</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Price total (optional)</Label>
-                  <Input value={form.priceTotal} onChange={(e) => setForm((p) => ({ ...p, priceTotal: e.target.value }))} placeholder="500.00" />
+                  <Label>{form.paymentMode === "full" ? "Total price (USD)" : "Deposit amount (USD)"}</Label>
+                  <Input value={form.paymentMode === "full" ? form.priceTotal : form.depositAmount} onChange={(e) => setForm((p) => ({ ...p, [form.paymentMode === "full" ? "priceTotal" : "depositAmount"]: e.target.value }))} placeholder={form.paymentMode === "full" ? "500.00" : "100.00"} />
+                </div>
+                <div className="space-y-2">
+                  <Label>{form.paymentMode === "full" ? "Deposit (auto)" : "Price total (optional)"}</Label>
+                  <Input value={form.paymentMode === "full" ? "" : form.priceTotal} onChange={(e) => setForm((p) => ({ ...p, priceTotal: e.target.value }))} placeholder={form.paymentMode === "full" ? "—" : "500.00"} disabled={form.paymentMode === "full"} />
                 </div>
               </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Location</Label>
+                  <Input value={form.location} onChange={(e) => setForm((p) => ({ ...p, location: e.target.value }))} placeholder="Nassau, Bahamas" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Duration (minutes)</Label>
+                  <Input value={form.durationMinutes} onChange={(e) => setForm((p) => ({ ...p, durationMinutes: e.target.value }))} placeholder="180" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Image URLs (one per line)</Label>
+                <Textarea value={form.images} onChange={(e) => setForm((p) => ({ ...p, images: e.target.value }))} placeholder={"https://...\nhttps://..."} />
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Highlights (one per line)</Label>
+                  <Textarea value={form.highlights} onChange={(e) => setForm((p) => ({ ...p, highlights: e.target.value }))} placeholder={"Private crew\nChampagne service"} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Inclusions (one per line)</Label>
+                  <Textarea value={form.inclusions} onChange={(e) => setForm((p) => ({ ...p, inclusions: e.target.value }))} placeholder={"Transfers\nWelcome drink"} />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Cancellation policy</Label>
+                <Textarea value={form.cancellationPolicy} onChange={(e) => setForm((p) => ({ ...p, cancellationPolicy: e.target.value }))} />
+              </div>
+              <XpItineraryEditor value={createItinerary} onChange={setCreateItinerary} />
               <Button disabled={createExperience.isPending} onClick={() => createExperience.mutate()}>
                 Create
               </Button>
@@ -375,6 +553,142 @@ export default function XpAdminPage() {
           ) : null}
         </CardContent>
       </Card>
+
+      {selectedExperience ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Edit experience</CardTitle>
+            <CardDescription>Update public-facing details and checkout settings.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm text-muted-foreground">
+                Editing: <span className="font-medium text-foreground">{selectedExperience.title}</span>
+              </div>
+              <Button
+                disabled={updateExperience.isPending}
+                onClick={() =>
+                  updateExperience.mutate({
+                    id: selectedId,
+                    payload: {
+                      slug: editForm.slug.trim(),
+                      title: editForm.title.trim(),
+                      description: editForm.description.trim() || null,
+                      mode: editForm.mode,
+                      paymentMode: editForm.paymentMode,
+                      priceTotal: editForm.priceTotal.trim() || null,
+                      depositAmount: editForm.paymentMode === "full" ? undefined : editForm.depositAmount.trim() || null,
+                      capacity: editForm.capacity.trim() ? parseInt(editForm.capacity, 10) : 1,
+                      active: !!editForm.active,
+                      location: editForm.location.trim() || null,
+                      durationMinutes: editForm.durationMinutes.trim() ? parseInt(editForm.durationMinutes, 10) : null,
+                      images: linesToList(editForm.images),
+                      highlights: linesToList(editForm.highlights),
+                      inclusions: linesToList(editForm.inclusions),
+                      cancellationPolicy: editForm.cancellationPolicy.trim() || null,
+                      itinerary: editItinerary && editItinerary.sections.length ? editItinerary : null,
+                    },
+                  })
+                }
+              >
+                Save changes
+              </Button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Title</Label>
+                <Input value={editForm.title} onChange={(e) => setEditForm((p) => ({ ...p, title: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Slug</Label>
+                <Input value={editForm.slug} onChange={(e) => setEditForm((p) => ({ ...p, slug: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea value={editForm.description} onChange={(e) => setEditForm((p) => ({ ...p, description: e.target.value }))} />
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Mode</Label>
+                <Select value={editForm.mode} onValueChange={(v) => setEditForm((p) => ({ ...p, mode: v }))}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="time_slot">Time slot</SelectItem>
+                    <SelectItem value="date_range">Date range</SelectItem>
+                    <SelectItem value="both">Both</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Payment mode</Label>
+                <Select value={editForm.paymentMode} onValueChange={(v) => setEditForm((p) => ({ ...p, paymentMode: v }))}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="deposit">Deposit</SelectItem>
+                    <SelectItem value="full">Full</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Price total</Label>
+                <Input value={editForm.priceTotal} onChange={(e) => setEditForm((p) => ({ ...p, priceTotal: e.target.value }))} placeholder="500.00" />
+              </div>
+              <div className="space-y-2">
+                <Label>Deposit amount</Label>
+                <Input
+                  value={editForm.depositAmount}
+                  onChange={(e) => setEditForm((p) => ({ ...p, depositAmount: e.target.value }))}
+                  placeholder="100.00"
+                  disabled={editForm.paymentMode === "full"}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Capacity (date range)</Label>
+                <Input value={editForm.capacity} onChange={(e) => setEditForm((p) => ({ ...p, capacity: e.target.value }))} placeholder="1" />
+              </div>
+              <div className="space-y-2">
+                <Label>Location</Label>
+                <Input value={editForm.location} onChange={(e) => setEditForm((p) => ({ ...p, location: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Duration (minutes)</Label>
+                <Input value={editForm.durationMinutes} onChange={(e) => setEditForm((p) => ({ ...p, durationMinutes: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Highlights (one per line)</Label>
+                <Textarea value={editForm.highlights} onChange={(e) => setEditForm((p) => ({ ...p, highlights: e.target.value }))} />
+              </div>
+              <div className="space-y-2">
+                <Label>Inclusions (one per line)</Label>
+                <Textarea value={editForm.inclusions} onChange={(e) => setEditForm((p) => ({ ...p, inclusions: e.target.value }))} />
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Cancellation policy</Label>
+              <Textarea value={editForm.cancellationPolicy} onChange={(e) => setEditForm((p) => ({ ...p, cancellationPolicy: e.target.value }))} />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Image URLs (one per line)</Label>
+              <Textarea value={editForm.images} onChange={(e) => setEditForm((p) => ({ ...p, images: e.target.value }))} />
+            </div>
+
+            <XpItineraryEditor value={editItinerary} onChange={setEditItinerary} />
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Tabs defaultValue="experiences">
         <TabsList>
@@ -572,4 +886,3 @@ export default function XpAdminPage() {
     </Layout>
   );
 }
-

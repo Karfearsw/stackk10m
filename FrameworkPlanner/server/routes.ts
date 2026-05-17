@@ -712,6 +712,35 @@ export async function registerRoutes(
     return Math.round(n * 100);
   }
 
+  const xpPaymentModeSchema = z.enum(["deposit", "full"]);
+  const xpItinerarySchema = z
+    .object({
+      sections: z
+        .array(
+          z.object({
+            title: z.string().trim().min(1),
+            bullets: z.array(z.string().trim().min(1)).default([]),
+          }),
+        )
+        .default([]),
+    })
+    .strict();
+
+  function xpStringList(input: unknown): string[] | null {
+    if (!input) return null;
+    if (Array.isArray(input)) {
+      const items = input.map((v) => String(v || "").trim()).filter(Boolean);
+      return items.length ? items : null;
+    }
+    const raw = String(input || "").trim();
+    if (!raw) return null;
+    const items = raw
+      .split(/\r?\n|,/g)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    return items.length ? items : null;
+  }
+
   async function xpPickAdminUser(): Promise<any | null> {
     try {
       const users = await storage.getUsers(200, 0);
@@ -820,9 +849,13 @@ export async function registerRoutes(
       if (used >= cap) return res.status(409).json({ message: "Unavailable" });
     }
 
-    const depositAmount = (experience as any).depositAmount;
-    const cents = xpMoneyToCents(depositAmount);
-    if (!cents) return res.status(400).json({ message: "Invalid deposit amount" });
+    const paymentModeRaw = String((experience as any).paymentMode || "deposit").trim().toLowerCase();
+    const paymentMode = xpPaymentModeSchema.safeParse(paymentModeRaw);
+    if (!paymentMode.success) return res.status(400).json({ message: "Invalid payment mode" });
+
+    const dueNowAmount = paymentMode.data === "full" ? (experience as any).priceTotal : (experience as any).depositAmount;
+    const cents = xpMoneyToCents(dueNowAmount);
+    if (!cents) return res.status(400).json({ message: "Invalid amount" });
 
     const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
     if (!stripeKey) return res.status(500).json({ message: "Stripe is not configured" });
@@ -837,7 +870,7 @@ export async function registerRoutes(
       endAt,
       status: "pending_payment",
       currency: String((experience as any).currency || "USD"),
-      depositAmount,
+      depositAmount: dueNowAmount,
       stripeCheckoutSessionId: null,
       stripePaymentIntentId: null,
       stripeCustomerId: null,
@@ -855,10 +888,13 @@ export async function registerRoutes(
         {
           quantity: 1,
           price_data: {
-            currency: "usd",
+            currency: String((experience as any).currency || "USD").trim().toLowerCase() || "usd",
             unit_amount: cents,
             product_data: {
-              name: String((experience as any).title || "Experience deposit"),
+              name:
+                paymentMode.data === "full"
+                  ? String((experience as any).title || "Experience")
+                  : `${String((experience as any).title || "Experience")} (Deposit)`,
             },
           },
         },
@@ -867,16 +903,43 @@ export async function registerRoutes(
         bookingId: String((booking as any).id),
         experienceId: String(experienceId),
         kind,
+        paymentMode: paymentMode.data,
       },
     });
 
-    await db.execute(sql`
-      UPDATE xp_bookings
-      SET stripe_checkout_session_id = ${session.id}, updated_at = NOW()
-      WHERE id = ${(booking as any).id}
-    `);
+    await storage.updateXpBookingStripeSession((booking as any).id, session.id);
 
     return res.status(201).json({ checkoutUrl: session.url });
+  });
+
+  app.get("/api/xp/bookings/session/:sessionId", async (req, res) => {
+    const sessionId = String(req.params.sessionId || "").trim();
+    if (!sessionId) return res.status(400).json({ message: "Missing sessionId" });
+    const booking = await storage.getXpBookingByStripeSessionId(sessionId);
+    if (!booking) return res.status(404).json({ message: "Not found" });
+    const experience = await storage.getXpExperienceById(Number((booking as any).experienceId));
+    return res.json({
+      booking: {
+        id: (booking as any).id,
+        kind: (booking as any).kind,
+        status: (booking as any).status,
+        customerName: (booking as any).customerName,
+        customerEmail: (booking as any).customerEmail,
+        startAt: (booking as any).startAt,
+        endAt: (booking as any).endAt,
+        amountDueNow: (booking as any).depositAmount,
+        currency: (booking as any).currency,
+      },
+      experience: experience
+        ? {
+            id: (experience as any).id,
+            slug: (experience as any).slug,
+            title: (experience as any).title,
+            paymentMode: (experience as any).paymentMode || "deposit",
+            priceTotal: (experience as any).priceTotal ?? null,
+          }
+        : null,
+    });
   });
 
   app.post("/api/stripe/webhook", async (req, res) => {
@@ -958,24 +1021,65 @@ export async function registerRoutes(
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
-    const body = req.body || {};
+    const schema = z
+      .object({
+        slug: z.string().trim().min(1),
+        title: z.string().trim().min(1),
+        description: z.string().optional(),
+        mode: z.enum(["time_slot", "date_range", "both"]).default("time_slot"),
+        paymentMode: xpPaymentModeSchema.default("deposit"),
+        currency: z.string().trim().min(1).default("USD"),
+        priceTotal: z.union([z.string(), z.number()]).optional().nullable(),
+        depositAmount: z.union([z.string(), z.number()]).optional().nullable(),
+        capacity: z.number().int().positive().default(1),
+        active: z.boolean().default(true),
+        images: z.array(z.string()).optional().nullable(),
+        location: z.string().optional().nullable(),
+        durationMinutes: z.number().int().positive().optional().nullable(),
+        highlights: z.any().optional().nullable(),
+        inclusions: z.any().optional().nullable(),
+        cancellationPolicy: z.string().optional().nullable(),
+        itinerary: z.any().optional().nullable(),
+      })
+      .strict();
+
+    const parsed = schema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ message: "Invalid payload" });
+    const body = parsed.data;
+
     const slug = xpNormalizeSlug(body.slug);
-    const title = String(body.title || "").trim();
+    const title = body.title;
     if (!slug || !title) return res.status(400).json({ message: "Missing fields" });
-    const mode = String(body.mode || "time_slot");
-    const depositAmount = body.depositAmount;
-    if (!xpMoneyToCents(depositAmount)) return res.status(400).json({ message: "Invalid depositAmount" });
+
+    const priceTotalCents = body.priceTotal != null ? xpMoneyToCents(body.priceTotal) : 0;
+    const depositCents = xpMoneyToCents(body.depositAmount);
+    if (body.paymentMode === "full") {
+      if (!priceTotalCents) return res.status(400).json({ message: "priceTotal is required for full payment" });
+    } else {
+      if (!depositCents) return res.status(400).json({ message: "depositAmount is required" });
+    }
+
+    const itineraryParsed = body.itinerary ? xpItinerarySchema.safeParse(body.itinerary) : null;
+    if (body.itinerary && !itineraryParsed?.success) return res.status(400).json({ message: "Invalid itinerary" });
+
     const row = await storage.createXpExperience({
       slug,
       title,
       description: String(body.description || "").trim() || null,
-      mode,
-      currency: "USD",
+      mode: body.mode,
+      paymentMode: body.paymentMode,
+      currency: body.currency,
       priceTotal: body.priceTotal ?? null,
-      depositAmount,
-      capacity: typeof body.capacity === "number" ? body.capacity : 1,
+      depositAmount: body.paymentMode === "full" ? body.priceTotal : body.depositAmount,
+      capacity: body.capacity,
       active: body.active !== false,
-      images: Array.isArray(body.images) ? body.images.map((x: any) => String(x || "")).filter(Boolean) : null,
+      images: Array.isArray(body.images) ? body.images.map((x) => String(x || "").trim()).filter(Boolean) : null,
+      location: body.location ? String(body.location).trim() : null,
+      durationMinutes: typeof body.durationMinutes === "number" ? body.durationMinutes : null,
+      highlights: xpStringList(body.highlights),
+      inclusions: xpStringList(body.inclusions),
+      cancellationPolicy: body.cancellationPolicy ? String(body.cancellationPolicy).trim() : null,
+      itinerary: itineraryParsed?.success ? itineraryParsed.data : null,
     } as any);
     return res.status(201).json({ experience: row });
   });
@@ -992,6 +1096,12 @@ export async function registerRoutes(
     if (Object.prototype.hasOwnProperty.call(body, "title")) patch.title = String(body.title || "").trim();
     if (Object.prototype.hasOwnProperty.call(body, "description")) patch.description = String(body.description || "").trim() || null;
     if (Object.prototype.hasOwnProperty.call(body, "mode")) patch.mode = String(body.mode || "").trim();
+    if (Object.prototype.hasOwnProperty.call(body, "paymentMode")) {
+      const pm = xpPaymentModeSchema.safeParse(String(body.paymentMode || "").trim().toLowerCase());
+      if (!pm.success) return res.status(400).json({ message: "Invalid paymentMode" });
+      patch.paymentMode = pm.data;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "currency")) patch.currency = String(body.currency || "").trim() || "USD";
     if (Object.prototype.hasOwnProperty.call(body, "priceTotal")) patch.priceTotal = body.priceTotal ?? null;
     if (Object.prototype.hasOwnProperty.call(body, "depositAmount")) {
       if (!xpMoneyToCents(body.depositAmount)) return res.status(400).json({ message: "Invalid depositAmount" });
@@ -999,6 +1109,39 @@ export async function registerRoutes(
     }
     if (Object.prototype.hasOwnProperty.call(body, "capacity")) patch.capacity = typeof body.capacity === "number" ? body.capacity : 1;
     if (Object.prototype.hasOwnProperty.call(body, "active")) patch.active = !!body.active;
+    if (Object.prototype.hasOwnProperty.call(body, "images")) {
+      patch.images = Array.isArray(body.images) ? body.images.map((x: any) => String(x || "").trim()).filter(Boolean) : null;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "location")) patch.location = body.location ? String(body.location).trim() : null;
+    if (Object.prototype.hasOwnProperty.call(body, "durationMinutes")) {
+      patch.durationMinutes = typeof body.durationMinutes === "number" ? body.durationMinutes : null;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "highlights")) patch.highlights = xpStringList(body.highlights);
+    if (Object.prototype.hasOwnProperty.call(body, "inclusions")) patch.inclusions = xpStringList(body.inclusions);
+    if (Object.prototype.hasOwnProperty.call(body, "cancellationPolicy")) patch.cancellationPolicy = body.cancellationPolicy ? String(body.cancellationPolicy).trim() : null;
+    if (Object.prototype.hasOwnProperty.call(body, "itinerary")) {
+      if (body.itinerary == null) patch.itinerary = null;
+      else {
+        const itin = xpItinerarySchema.safeParse(body.itinerary);
+        if (!itin.success) return res.status(400).json({ message: "Invalid itinerary" });
+        patch.itinerary = itin.data;
+      }
+    }
+
+    const nextPaymentMode = String(patch.paymentMode || "").trim();
+    const paymentMode = nextPaymentMode ? xpPaymentModeSchema.safeParse(nextPaymentMode) : null;
+    const current = await storage.getXpExperienceById(id);
+    if (!current) return res.status(404).json({ message: "Not found" });
+    const effectivePaymentMode = paymentMode?.success ? paymentMode.data : String((current as any).paymentMode || "deposit");
+    if (effectivePaymentMode === "full") {
+      const effectivePriceTotal = Object.prototype.hasOwnProperty.call(patch, "priceTotal") ? patch.priceTotal : (current as any).priceTotal;
+      if (!xpMoneyToCents(effectivePriceTotal)) return res.status(400).json({ message: "priceTotal is required for full payment" });
+      patch.depositAmount = effectivePriceTotal;
+    } else {
+      const effectiveDeposit = Object.prototype.hasOwnProperty.call(patch, "depositAmount") ? patch.depositAmount : (current as any).depositAmount;
+      if (!xpMoneyToCents(effectiveDeposit)) return res.status(400).json({ message: "depositAmount is required" });
+    }
+
     const row = await storage.updateXpExperience(id, patch);
     return res.json({ experience: row });
   });

@@ -13,6 +13,7 @@ import Signup from "@/pages/signup";
 import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
 import MagicLink from "@/pages/magic-link";
+import { getAppVariant } from "@/lib/appVariant";
 
 const Dashboard = React.lazy(() => import("@/pages/dashboard"));
 const Leads = React.lazy(() => import("@/pages/leads"));
@@ -68,6 +69,7 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
 
 function Router() {
   const { isAuthenticated, loading } = useAuth();
+  const variant = getAppVariant();
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -120,7 +122,7 @@ function Router() {
           {() => <ProtectedRoute component={Dashboard} />}
         </Route>
         <Route path="/">
-          {() => (isAuthenticated ? <Redirect to="/dashboard" /> : <Redirect to="/login" />)}
+          {() => (variant === "xp" ? <Redirect to="/xp" /> : (isAuthenticated ? <Redirect to="/dashboard" /> : <Redirect to="/login" />))}
         </Route>
         <Route path="/leads">
           {() => <ProtectedRoute component={Leads} />}

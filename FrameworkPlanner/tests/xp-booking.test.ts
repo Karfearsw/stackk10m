@@ -65,6 +65,7 @@ describe("XP booking API", () => {
     storage.hasXpBlackoutOverlap = (async () => false) as any;
     storage.countXpActiveBookingsOverlapping = (async () => 0) as any;
     storage.createXpBookingPending = (async (input: any) => ({ id: 99, ...input, status: "pending_payment" })) as any;
+    storage.updateXpBookingStripeSession = (async (_id: number, _sessionId: string) => ({ id: 99 })) as any;
     storage.hasStripeEvent = (async () => false) as any;
     storage.recordStripeEvent = (async (input: any) => input) as any;
     storage.getXpBookingByStripeSessionId = (async () => ({ id: 99, experienceId: 1, status: "pending_payment" })) as any;
@@ -104,4 +105,3 @@ describe("XP booking API", () => {
     expect(res.body.received).toBe(true);
   });
 });
-
