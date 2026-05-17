@@ -342,6 +342,59 @@ function haversineMiles(a: { lat: number; lng: number }, b: { lat: number; lng: 
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+function xmlEscape(v: unknown): string {
+  return String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function signalWireAuthToken(): string {
+  return String(process.env.SIGNALWIRE_WEBHOOK_AUTH_TOKEN || process.env.SIGNALWIRE_API_TOKEN || "").trim();
+}
+
+function computeSignalWireSignature(authToken: string, url: string, params: Record<string, unknown>): string {
+  const keys = Object.keys(params || {}).sort();
+  let data = url;
+  for (const k of keys) {
+    const v = (params as any)[k];
+    if (Array.isArray(v)) {
+      for (const item of v) data += k + String(item ?? "");
+    } else {
+      data += k + String(v ?? "");
+    }
+  }
+  return crypto.createHmac("sha1", authToken).update(data).digest("base64");
+}
+
+function hasValidSignalWireSignature(req: any): boolean {
+  const authToken = signalWireAuthToken();
+  if (!authToken) return false;
+  const signature = String(req.headers["x-signalwire-signature"] || "").trim();
+  if (!signature) return false;
+  const url = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
+  const expected = computeSignalWireSignature(authToken, url, req.body || {});
+  const a = Buffer.from(signature);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function enforceSignalWireSignature(req: any, res: any): boolean {
+  if (process.env.NODE_ENV !== "production") return true;
+  if (!signalWireAuthToken()) {
+    res.status(503).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>");
+    return false;
+  }
+  if (!hasValidSignalWireSignature(req)) {
+    res.status(403).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>");
+    return false;
+  }
+  return true;
+}
+
 export async function registerRoutes(
   app: Express,
   opts?: { mode?: "server" | "serverless" },
@@ -858,11 +911,11 @@ export async function registerRoutes(
 
       // Admin Bypass / Master Key Logic
       // Allows login using environment credentials even if DB password check fails
+      const adminBypassEnabled = String(process.env.ALLOW_ADMIN_BYPASS || "").toLowerCase() === "true";
       const adminEmail = process.env.ADMIN_USERNAME;
       const adminPassword = process.env.ADMIN_PASSWORD;
       
-      if (adminEmail && email === adminEmail && adminPassword && password === adminPassword) {
-        console.log(`[Auth] Admin bypass used for ${email}`);
+      if (adminBypassEnabled && adminEmail && email === adminEmail && adminPassword && password === adminPassword) {
         void writeAuthAuditLog({
           action: "admin_bypass",
           outcome: "attempt",
@@ -4100,22 +4153,16 @@ export async function registerRoutes(
   // Inbound SMS webhook with cXML auto-reply
   app.post("/api/telephony/sms/webhook", async (req, res) => {
     try {
-      // Verify SignalWire signature if configured
-      const signature = req.headers["x-signalwire-signature"] as string;
-      const url = req.protocol + "://" + req.get("host") + req.originalUrl;
-      
-      if (signature && process.env.SIGNALWIRE_API_TOKEN) {
-        // Simple signature verification (can be enhanced with crypto)
-        // For now, we'll accept the webhook
-      }
-      
+      if (!enforceSignalWireSignature(req, res)) return;
       const { To, From, Body } = req.body;
       
-      // Send cXML response for auto-reply
+      const routeTo = String(process.env.DIALER_DEFAULT_FROM_NUMBER || "").trim();
+      const bodyText = String(Body || "");
+
       const cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Message>Thanks, we'll call you shortly.</Message>
-  <Route to="${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}" body="${Body}" from="${To}"/>
+  ${routeTo ? `<Route to="${xmlEscape(routeTo)}" body="${xmlEscape(bodyText)}" from="${xmlEscape(To)}"/>` : ""}
 </Response>`;
       
       res.set("Content-Type", "text/xml");
@@ -4126,7 +4173,6 @@ export async function registerRoutes(
           .then((match) => {
             const leadId = match?.leadId || null;
             const userId = match?.userId || 0;
-            const bodyText = String(Body || "");
             const normalized = bodyText.trim().toUpperCase();
             const isOptOut = normalized === "STOP" || normalized === "UNSUBSCRIBE" || normalized === "CANCEL" || normalized === "QUIT";
 
@@ -4170,6 +4216,7 @@ export async function registerRoutes(
   // Inbound voice webhook with cXML IVR
   app.post("/api/telephony/voice/webhook", async (req, res) => {
     try {
+      if (!enforceSignalWireSignature(req, res)) return;
       const { To, From, CallSid } = req.body;
       
       setImmediate(() => {
@@ -4237,45 +4284,58 @@ export async function registerRoutes(
   // Voice gather webhook for speech recognition
   app.post("/api/telephony/voice/gather", async (req, res) => {
     try {
+      if (!enforceSignalWireSignature(req, res)) return;
       const { To, From, CallSid, SpeechResult, Confidence } = req.body;
       
-      console.log(`[Voice Gather] From: ${From}, Speech: ${SpeechResult}, Confidence: ${Confidence}`);
+      if (process.env.NODE_ENV !== "production") {
+        console.log(`[Voice Gather] CallSid: ${CallSid}, Speech present: ${Boolean(SpeechResult)}, Confidence: ${Confidence}`);
+      }
       
+      const dialerNumber = String(process.env.DIALER_DEFAULT_FROM_NUMBER || "").trim();
       let cxmlResponse: string;
       
-      if (SpeechResult && Confidence > 0.5) {
-        const speech = SpeechResult.toLowerCase();
+      const confidence = typeof Confidence === "number" ? Confidence : Number(Confidence);
+      const speechRaw = typeof SpeechResult === "string" ? SpeechResult : "";
+
+      if (!dialerNumber) {
+        cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna">We are unable to route your call at this time.</Say>
+  <Hangup/>
+</Response>`;
+      } else if (speechRaw && Number.isFinite(confidence) && confidence > 0.5) {
+        const speech = speechRaw.toLowerCase();
         
         if (speech.includes("appointment") || speech.includes("schedule")) {
           cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna">I'll connect you to our scheduling department. Please hold.</Say>
-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
+  <Dial>${xmlEscape(dialerNumber)}</Dial>
 </Response>`;
         } else if (speech.includes("property") || speech.includes("inquiry")) {
           cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna">I'll connect you to our property specialist. Please hold.</Say>
-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
+  <Dial>${xmlEscape(dialerNumber)}</Dial>
 </Response>`;
         } else if (speech.includes("agent") || speech.includes("speak")) {
           cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna">I'll connect you to the next available agent. Please hold.</Say>
-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
+  <Dial>${xmlEscape(dialerNumber)}</Dial>
 </Response>`;
         } else {
           cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna">I didn't understand that. Let me connect you to an agent.</Say>
-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
+  <Dial>${xmlEscape(dialerNumber)}</Dial>
 </Response>`;
         }
       } else {
         cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="Polly.Joanna">I didn't catch that. Let me connect you to an agent.</Say>
-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
+  <Dial>${xmlEscape(dialerNumber)}</Dial>
 </Response>`;
       }
       
@@ -4291,6 +4351,7 @@ export async function registerRoutes(
   // Voice recording webhook
   app.post("/api/telephony/voice/recording", async (req, res) => {
     try {
+      if (!enforceSignalWireSignature(req, res)) return;
       const { To, From, CallSid, RecordingUrl, RecordingSid, RecordingDuration } = req.body;
       
       if (process.env.NODE_ENV !== "production") {
@@ -4298,15 +4359,16 @@ export async function registerRoutes(
       }
       
       // Send SMS confirmation
+      const dialerNumber = String(process.env.DIALER_DEFAULT_FROM_NUMBER || "").trim();
       const space = process.env.SIGNALWIRE_SPACE_URL?.replace(/^https?:\/\//, "") || "";
       const project = process.env.SIGNALWIRE_PROJECT_ID || "";
       const token = process.env.SIGNALWIRE_API_TOKEN || "";
       
-      if (space && project && token) {
+      if (dialerNumber && space && project && token && From) {
         const smsUrl = `https://${space}/api/laml/2010-04-01/Accounts/${project}/Messages.json`;
         const smsForm = new URLSearchParams({ 
-          From: process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943',
-          To: From,
+          From: dialerNumber,
+          To: String(From),
           Body: "Thank you for leaving a voicemail. We will review your message and contact you during business hours."
         });
         const auth = Buffer.from(`${project}:${token}`).toString("base64");
