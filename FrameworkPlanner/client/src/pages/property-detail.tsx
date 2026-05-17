@@ -423,23 +423,25 @@ export default function PropertyDetail() {
                       {(internalComps?.saleComps || []).length === 0 ? (
                         <div className="text-sm text-muted-foreground">No sale comps yet.</div>
                       ) : (
-                        <div className="border rounded-md overflow-hidden">
-                          <div className="grid grid-cols-6 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
-                            <div className="col-span-2">Address</div>
-                            <div>Distance</div>
-                            <div>Sold Price</div>
-                            <div>Sold Date</div>
-                            <div>SqFt</div>
-                          </div>
-                          {(internalComps.saleComps || []).slice(0, 25).map((r: any) => (
-                            <div key={String(r.id)} className="grid grid-cols-6 gap-2 p-2 text-sm border-t">
-                              <div className="col-span-2 truncate">{r.comp?.address || `Property ${r.compPropertyId}`}</div>
-                              <div>{typeof r.distanceMiles === "number" ? r.distanceMiles.toFixed(2) : "—"} mi</div>
-                              <div>{typeof r.soldPrice === "number" ? `$${Math.round(r.soldPrice).toLocaleString()}` : "—"}</div>
-                              <div>{r.soldDate ? new Date(r.soldDate).toLocaleDateString() : "—"}</div>
-                              <div>{r.comp?.sqft ? Number(r.comp.sqft).toLocaleString() : "—"}</div>
+                        <div className="border rounded-md scroll-x-container">
+                          <div className="min-w-[900px]">
+                            <div className="grid grid-cols-6 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
+                              <div className="col-span-2">Address</div>
+                              <div>Distance</div>
+                              <div>Sold Price</div>
+                              <div>Sold Date</div>
+                              <div>SqFt</div>
                             </div>
-                          ))}
+                            {(internalComps.saleComps || []).slice(0, 25).map((r: any) => (
+                              <div key={String(r.id)} className="grid grid-cols-6 gap-2 p-2 text-sm border-t">
+                                <div className="col-span-2 truncate">{r.comp?.address || `Property ${r.compPropertyId}`}</div>
+                                <div>{typeof r.distanceMiles === "number" ? r.distanceMiles.toFixed(2) : "—"} mi</div>
+                                <div>{typeof r.soldPrice === "number" ? `$${Math.round(r.soldPrice).toLocaleString()}` : "—"}</div>
+                                <div>{r.soldDate ? new Date(r.soldDate).toLocaleDateString() : "—"}</div>
+                                <div>{r.comp?.sqft ? Number(r.comp.sqft).toLocaleString() : "—"}</div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -449,23 +451,25 @@ export default function PropertyDetail() {
                       {(internalComps?.rentalComps || []).length === 0 ? (
                         <div className="text-sm text-muted-foreground">No rental comps yet.</div>
                       ) : (
-                        <div className="border rounded-md overflow-hidden">
-                          <div className="grid grid-cols-6 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
-                            <div className="col-span-2">Address</div>
-                            <div>Distance</div>
-                            <div>Rent</div>
-                            <div>Rented Date</div>
-                            <div>SqFt</div>
-                          </div>
-                          {(internalComps.rentalComps || []).slice(0, 25).map((r: any) => (
-                            <div key={String(r.id)} className="grid grid-cols-6 gap-2 p-2 text-sm border-t">
-                              <div className="col-span-2 truncate">{r.comp?.address || `Property ${r.compPropertyId}`}</div>
-                              <div>{typeof r.distanceMiles === "number" ? r.distanceMiles.toFixed(2) : "—"} mi</div>
-                              <div>{typeof r.rentPerMonth === "number" ? `$${Math.round(r.rentPerMonth).toLocaleString()}/mo` : "—"}</div>
-                              <div>{r.comp?.rented_date || r.comp?.rentedDate ? new Date(r.comp.rented_date || r.comp.rentedDate).toLocaleDateString() : "—"}</div>
-                              <div>{r.comp?.sqft ? Number(r.comp.sqft).toLocaleString() : "—"}</div>
+                        <div className="border rounded-md scroll-x-container">
+                          <div className="min-w-[900px]">
+                            <div className="grid grid-cols-6 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
+                              <div className="col-span-2">Address</div>
+                              <div>Distance</div>
+                              <div>Rent</div>
+                              <div>Rented Date</div>
+                              <div>SqFt</div>
                             </div>
-                          ))}
+                            {(internalComps.rentalComps || []).slice(0, 25).map((r: any) => (
+                              <div key={String(r.id)} className="grid grid-cols-6 gap-2 p-2 text-sm border-t">
+                                <div className="col-span-2 truncate">{r.comp?.address || `Property ${r.compPropertyId}`}</div>
+                                <div>{typeof r.distanceMiles === "number" ? r.distanceMiles.toFixed(2) : "—"} mi</div>
+                                <div>{typeof r.rentPerMonth === "number" ? `$${Math.round(r.rentPerMonth).toLocaleString()}/mo` : "—"}</div>
+                                <div>{r.comp?.rented_date || r.comp?.rentedDate ? new Date(r.comp.rented_date || r.comp.rentedDate).toLocaleDateString() : "—"}</div>
+                                <div>{r.comp?.sqft ? Number(r.comp.sqft).toLocaleString() : "—"}</div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -485,46 +489,44 @@ export default function PropertyDetail() {
                     {buyerMatches.length === 0 ? (
                       <div className="text-sm text-muted-foreground">No matches yet.</div>
                     ) : (
-                      <div className="border rounded-md overflow-hidden">
-                        <div className="grid grid-cols-12 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
-                          <div className="col-span-5">Buyer</div>
-                          <div className="col-span-2">Score</div>
-                          <div className="col-span-3">Reasons</div>
-                          <div className="col-span-2 text-right">Actions</div>
+                      <div className="border rounded-md scroll-x-container">
+                        <div className="min-w-[1000px]">
+                          <div className="grid grid-cols-12 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
+                            <div className="col-span-5">Buyer</div>
+                            <div className="col-span-2">Score</div>
+                            <div className="col-span-3">Reasons</div>
+                            <div className="col-span-2 text-right">Actions</div>
+                          </div>
+                          {buyerMatches.slice(0, 25).map((m: any) => {
+                            const buyerId = Number(m.buyerId ?? m.buyer_id);
+                            const reasons = Array.isArray(m.reasons) ? m.reasons : [];
+                            const score = typeof m.matchScore === "number" ? m.matchScore : typeof m.score === "number" ? m.score / 1000 : 0;
+                            return (
+                              <div key={String(m.id)} className="grid grid-cols-12 gap-2 p-2 text-sm border-t items-center">
+                                <div className="col-span-5 truncate">{buyerNameById.get(buyerId) || `Buyer ${buyerId}`}</div>
+                                <div className="col-span-2 font-medium">{score.toFixed(2)}</div>
+                                <div className="col-span-3 flex flex-wrap gap-1">
+                                  {reasons.slice(0, 3).map((r: string) => (
+                                    <Badge key={r} variant="secondary" className="text-xs">{r}</Badge>
+                                  ))}
+                                </div>
+                                <div className="col-span-2 flex justify-end gap-2">
+                                  <Button size="sm" variant="outline" onClick={() => toast({ title: "Notify Buyer is not implemented yet" })}>
+                                    Notify
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => assignBuyerMutation.mutate(buyerId)}
+                                    disabled={assignBuyerMutation.isPending}
+                                  >
+                                    Assign
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                        {buyerMatches.slice(0, 25).map((m: any) => {
-                          const buyerId = Number(m.buyerId ?? m.buyer_id);
-                          const reasons = Array.isArray(m.reasons) ? m.reasons : [];
-                          const score = typeof m.matchScore === "number" ? m.matchScore : typeof m.score === "number" ? m.score / 1000 : 0;
-                          return (
-                            <div key={String(m.id)} className="grid grid-cols-12 gap-2 p-2 text-sm border-t items-center">
-                              <div className="col-span-5 truncate">{buyerNameById.get(buyerId) || `Buyer ${buyerId}`}</div>
-                              <div className="col-span-2 font-medium">{score.toFixed(2)}</div>
-                              <div className="col-span-3 flex flex-wrap gap-1">
-                                {reasons.slice(0, 3).map((r: string) => (
-                                  <Badge key={r} variant="secondary" className="text-xs">{r}</Badge>
-                                ))}
-                              </div>
-                              <div className="col-span-2 flex justify-end gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => toast({ title: "Notify Buyer is not implemented yet" })}
-                                >
-                                  Notify
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => assignBuyerMutation.mutate(buyerId)}
-                                  disabled={assignBuyerMutation.isPending}
-                                >
-                                  Assign
-                                </Button>
-                              </div>
-                            </div>
-                          );
-                        })}
                       </div>
                     )}
                   </CardContent>

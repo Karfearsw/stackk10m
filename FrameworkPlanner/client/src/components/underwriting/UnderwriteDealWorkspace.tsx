@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { ResearchHub, type PlaygroundQuickLink, type PlaygroundResearchNote } from "@/components/underwriting/ResearchHub";
 import { UnderwriteDealPanel } from "@/components/underwriting/UnderwriteDealPanel";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { makeAddressSearchUrl } from "@/utils/playgroundPersistence";
 import { makeEmptyUnderwritingV1, underwritingSchemaV1, type UnderwritingComp, type UnderwritingV1 } from "@shared/underwriting";
 
@@ -315,64 +316,133 @@ export function UnderwriteDealWorkspace(props: {
   }
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-12 gap-4 min-h-[70vh] overflow-hidden">
-      <div className="xl:col-span-7 min-h-[70vh] min-w-0">
-        <ResearchHub
-          address={address}
-          currentUrl={currentUrl}
-          onUrlChange={setCurrentUrl}
-          browserMode={browserMode}
-          onBrowserModeChange={setBrowserMode}
-          quickLinks={quickLinks}
-          onQuickLinksChange={setQuickLinks}
-          notes={notes}
-          onNotesChange={setNotes}
-          tags={tags}
-          onTagsChange={setTags}
-          checklist={checklist}
-          onChecklistChange={setChecklist}
-          assignedTo={assignedTo}
-          onAssignedToChange={setAssignedTo}
-          assignmentDueAt={assignmentDueAt}
-          onAssignmentDueAtChange={setAssignmentDueAt}
-          assignmentStatus={assignmentStatus}
-          onAssignmentStatusChange={setAssignmentStatus}
-          users={users || []}
-          onSaveComp={(comp) => addComp({ ...comp, url: comp.url || currentUrl })}
-        />
+    <>
+      <div className="grid grid-cols-1 gap-4 min-h-[70vh] overflow-hidden xl:hidden">
+        <div className="min-h-[70vh] min-w-0">
+          <ResearchHub
+            address={address}
+            currentUrl={currentUrl}
+            onUrlChange={setCurrentUrl}
+            browserMode={browserMode}
+            onBrowserModeChange={setBrowserMode}
+            quickLinks={quickLinks}
+            onQuickLinksChange={setQuickLinks}
+            notes={notes}
+            onNotesChange={setNotes}
+            tags={tags}
+            onTagsChange={setTags}
+            checklist={checklist}
+            onChecklistChange={setChecklist}
+            assignedTo={assignedTo}
+            onAssignedToChange={setAssignedTo}
+            assignmentDueAt={assignmentDueAt}
+            onAssignmentDueAtChange={setAssignmentDueAt}
+            assignmentStatus={assignmentStatus}
+            onAssignmentStatusChange={setAssignmentStatus}
+            users={users || []}
+            onSaveComp={(comp) => addComp({ ...comp, url: comp.url || currentUrl })}
+          />
+        </div>
+        <div className="min-h-[70vh] min-w-0">
+          <UnderwriteDealPanel
+            subject={subject}
+            underwriting={underwriting}
+            templates={templates || []}
+            selectedTemplate={selectedTemplate}
+            onUnderwritingChange={setUnderwriting}
+            onCreateTemplate={async (name, config) => {
+              const res = await fetch("/api/underwriting/templates", {
+                method: "POST",
+                credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name, config }),
+              });
+              const json = await res.json();
+              if (!res.ok) throw new Error(json?.message || "Failed to create template");
+              qc.invalidateQueries({ queryKey: ["/api/underwriting/templates"] });
+              return json;
+            }}
+            onRunAi={async (payload) => {
+              const res = await fetch("/api/underwriting/ai", {
+                method: "POST",
+                credentials: "include",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+              });
+              const json = await res.json();
+              if (!res.ok) throw new Error(json?.message || "AI request failed");
+              return json;
+            }}
+          />
+        </div>
       </div>
-      <div className="xl:col-span-5 min-h-[70vh] min-w-0">
-        <UnderwriteDealPanel
-          subject={subject}
-          underwriting={underwriting}
-          templates={templates || []}
-          selectedTemplate={selectedTemplate}
-          onUnderwritingChange={setUnderwriting}
-          onCreateTemplate={async (name, config) => {
-            const res = await fetch("/api/underwriting/templates", {
-              method: "POST",
-              credentials: "include",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ name, config }),
-            });
-            const json = await res.json();
-            if (!res.ok) throw new Error(json?.message || "Failed to create template");
-            qc.invalidateQueries({ queryKey: ["/api/underwriting/templates"] });
-            return json;
-          }}
-          onRunAi={async (payload) => {
-            const res = await fetch("/api/underwriting/ai", {
-              method: "POST",
-              credentials: "include",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(payload),
-            });
-            const json = await res.json();
-            if (!res.ok) throw new Error(json?.message || "AI request failed");
-            return json;
-          }}
-        />
+
+      <div className="hidden xl:block min-h-[70vh]">
+        <ResizablePanelGroup direction="horizontal" className="min-h-[70vh]" autoSaveId="underwrite-workspace">
+          <ResizablePanel defaultSize={65} minSize={35}>
+            <div className="h-full min-w-0">
+              <ResearchHub
+                address={address}
+                currentUrl={currentUrl}
+                onUrlChange={setCurrentUrl}
+                browserMode={browserMode}
+                onBrowserModeChange={setBrowserMode}
+                quickLinks={quickLinks}
+                onQuickLinksChange={setQuickLinks}
+                notes={notes}
+                onNotesChange={setNotes}
+                tags={tags}
+                onTagsChange={setTags}
+                checklist={checklist}
+                onChecklistChange={setChecklist}
+                assignedTo={assignedTo}
+                onAssignedToChange={setAssignedTo}
+                assignmentDueAt={assignmentDueAt}
+                onAssignmentDueAtChange={setAssignmentDueAt}
+                assignmentStatus={assignmentStatus}
+                onAssignmentStatusChange={setAssignmentStatus}
+                users={users || []}
+                onSaveComp={(comp) => addComp({ ...comp, url: comp.url || currentUrl })}
+              />
+            </div>
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel defaultSize={35} minSize={25}>
+            <div className="h-full min-w-0">
+              <UnderwriteDealPanel
+                subject={subject}
+                underwriting={underwriting}
+                templates={templates || []}
+                selectedTemplate={selectedTemplate}
+                onUnderwritingChange={setUnderwriting}
+                onCreateTemplate={async (name, config) => {
+                  const res = await fetch("/api/underwriting/templates", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ name, config }),
+                  });
+                  const json = await res.json();
+                  if (!res.ok) throw new Error(json?.message || "Failed to create template");
+                  qc.invalidateQueries({ queryKey: ["/api/underwriting/templates"] });
+                  return json;
+                }}
+                onRunAi={async (payload) => {
+                  const res = await fetch("/api/underwriting/ai", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload),
+                  });
+                  const json = await res.json();
+                  if (!res.ok) throw new Error(json?.message || "AI request failed");
+                  return json;
+                }}
+              />
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
-    </div>
+    </>
   );
 }

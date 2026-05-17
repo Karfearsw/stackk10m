@@ -195,6 +195,15 @@ function SettingsContent() {
     },
   });
 
+  const { data: skipTraceConfig, refetch: refetchSkipTraceConfig, isFetching: skipTraceFetching } = useQuery<any>({
+    queryKey: ["/api/skip-trace/config"],
+    queryFn: async () => {
+      const res = await fetch("/api/skip-trace/config", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch skip trace config");
+      return res.json();
+    },
+  });
+
   // Update user mutation
   const updateUserMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -1588,6 +1597,66 @@ function SettingsContent() {
               </Button>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Target className="w-5 h-5" />
+                Skip Trace
+              </CardTitle>
+              <CardDescription>Set your default workflow for provider and public research.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {skipTraceConfig?.enabled === false ? (
+                <div className="text-sm text-muted-foreground">Skip Trace is disabled for your account.</div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Provider</div>
+                      <div className="text-sm font-medium">{skipTraceConfig?.providerName || "—"}</div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Public research</div>
+                      <div className="text-sm font-medium">{skipTraceConfig?.publicResearchEnabled ? "enabled" : "disabled"}</div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Status</div>
+                      <div className="text-sm font-medium">{skipTraceFetching ? "checking…" : "ready"}</div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Default mode</Label>
+                    <Select
+                      value={String(userData?.skipTraceDefaultMode || "both")}
+                      onValueChange={(value) => updateUserMutation.mutate({ skipTraceDefaultMode: value })}
+                      disabled={updateUserMutation.isPending || skipTraceFetching}
+                    >
+                      <SelectTrigger data-testid="select-skip-trace-default-mode">
+                        <SelectValue placeholder="Select default mode" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="provider" disabled={Array.isArray(skipTraceConfig?.allowedModes) && !skipTraceConfig.allowedModes.includes("provider")}>
+                          Provider
+                        </SelectItem>
+                        <SelectItem
+                          value="public_research"
+                          disabled={Array.isArray(skipTraceConfig?.allowedModes) && !skipTraceConfig.allowedModes.includes("public_research")}
+                        >
+                          Public
+                        </SelectItem>
+                        <SelectItem value="both" disabled={Array.isArray(skipTraceConfig?.allowedModes) && !skipTraceConfig.allowedModes.includes("both")}>
+                          Both
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <Card>
               <CardHeader>

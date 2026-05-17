@@ -251,6 +251,7 @@ export const users = pgTable("users", {
   profilePicture: text("profile_picture"),
   showBannerQuotes: boolean("show_banner_quotes").default(true),
   customBannerImages: text("custom_banner_images").array(),
+  skipTraceDefaultMode: varchar("skip_trace_default_mode", { length: 30 }).notNull().default("both"),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),

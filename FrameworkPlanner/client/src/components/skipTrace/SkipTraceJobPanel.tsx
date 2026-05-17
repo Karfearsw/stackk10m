@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 import { ExternalLink, RefreshCw } from "lucide-react";
 
 type EntityType = "lead" | "opportunity";
@@ -80,8 +81,11 @@ function parseReasons(factorsJson: unknown): { label: string; points: number }[]
 
 export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: number; className?: string }) {
   const { toast } = useToast();
+  const { user } = useAuth();
   const storageKey = `skipTrace:lastJob:${props.entityType}:${props.entityId}`;
+  const modeStorageKey = user?.id ? `skipTrace:mode:${user.id}` : "";
   const [mode, setMode] = useState<Mode>("both");
+  const [didInitMode, setDidInitMode] = useState(false);
   const [jobId, setJobId] = useState<number | null>(null);
 
   useEffect(() => {
@@ -91,6 +95,53 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
       if (Number.isFinite(n) && n > 0) setJobId(n);
     } catch {}
   }, [storageKey]);
+
+  const userQuery = useQuery<any>({
+    queryKey: [`/api/users/${user?.id ?? "0"}`],
+    enabled: !!user?.id,
+  });
+
+  const configQuery = useQuery<any>({
+    queryKey: ["/api/skip-trace/config"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/skip-trace/config");
+      return res.json();
+    },
+    enabled: !!user?.id,
+  });
+
+  useEffect(() => {
+    if (didInitMode) return;
+    if (!user?.id) return;
+
+    const allowedModes = Array.isArray(configQuery.data?.allowedModes) ? (configQuery.data.allowedModes as string[]) : null;
+    const normalizeMode = (v: unknown): Mode | null => {
+      const m = String(v || "").trim().toLowerCase();
+      if (m === "provider" || m === "public_research" || m === "both") return m as Mode;
+      return null;
+    };
+
+    let next: Mode | null = null;
+    try {
+      next = normalizeMode(localStorage.getItem(modeStorageKey));
+    } catch {}
+    if (!next) next = normalizeMode(userQuery.data?.skipTraceDefaultMode);
+    if (!next) next = "both";
+
+    if (Array.isArray(allowedModes) && allowedModes.length > 0 && !allowedModes.includes(next)) {
+      next = allowedModes.includes("provider") ? "provider" : (allowedModes[0] as Mode);
+    }
+
+    setMode(next);
+    setDidInitMode(true);
+  }, [configQuery.data?.allowedModes, didInitMode, modeStorageKey, user?.id, userQuery.data?.skipTraceDefaultMode]);
+
+  useEffect(() => {
+    if (!modeStorageKey) return;
+    try {
+      localStorage.setItem(modeStorageKey, mode);
+    } catch {}
+  }, [mode, modeStorageKey]);
 
   const createJobMutation = useMutation({
     mutationFn: async () => {
@@ -184,6 +235,8 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
   const modeLabel = formatMode(toStr(job?.mode) || mode);
   const jobStatus = toStr(job?.status) || (createJobMutation.data?.status ? toStr(createJobMutation.data.status) : "");
   const isQueued = jobId ? jobStatus.toLowerCase() === "queued" : false;
+  const canRun = configQuery.data?.enabled === false ? false : true;
+  const allowedModes = Array.isArray(configQuery.data?.allowedModes) ? (configQuery.data.allowedModes as string[]) : null;
 
   return (
     <div className={props.className}>
@@ -202,25 +255,37 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
               </Badge>
             ) : null}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
             <Select value={mode} onValueChange={(v) => setMode(v as Mode)}>
-              <SelectTrigger className="h-9 w-[160px]" data-testid="select-skip-trace-mode">
+              <SelectTrigger className="h-9 w-full sm:w-[160px]" data-testid="select-skip-trace-mode" disabled={!canRun}>
                 <SelectValue placeholder="Mode" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="provider">Provider</SelectItem>
-                <SelectItem value="public_research">Public</SelectItem>
-                <SelectItem value="both">Both</SelectItem>
+                <SelectItem value="provider" disabled={Array.isArray(allowedModes) && !allowedModes.includes("provider")}>
+                  Provider
+                </SelectItem>
+                <SelectItem value="public_research" disabled={Array.isArray(allowedModes) && !allowedModes.includes("public_research")}>
+                  Public
+                </SelectItem>
+                <SelectItem value="both" disabled={Array.isArray(allowedModes) && !allowedModes.includes("both")}>
+                  Both
+                </SelectItem>
               </SelectContent>
             </Select>
             <Button
-              variant="secondary"
-              className="h-9"
+              variant="default"
+              className="h-9 font-semibold"
               onClick={() => (isQueued ? runJobMutation.mutate() : createJobMutation.mutate())}
-              disabled={isQueued ? runJobMutation.isPending || !jobId : createJobMutation.isPending || props.entityId <= 0}
+              disabled={canRun ? (isQueued ? runJobMutation.isPending || !jobId : createJobMutation.isPending || props.entityId <= 0) : true}
               data-testid="button-skip-trace-run"
             >
-              {isQueued ? (runJobMutation.isPending ? "Starting…" : "Start") : createJobMutation.isPending ? "Running…" : "Run"}
+              {isQueued
+                ? runJobMutation.isPending
+                  ? "Starting…"
+                  : "Start"
+                : createJobMutation.isPending
+                  ? "Running…"
+                  : "Run Skip Trace"}
             </Button>
             <Button
               variant="outline"
@@ -238,7 +303,7 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
         {job?.errorMessage ? (
           <Alert variant="destructive">
             <AlertTitle>Skip trace failed</AlertTitle>
-            <AlertDescription>{toStr(job.errorMessage)}</AlertDescription>
+            <AlertDescription className="break-words">{toStr(job.errorMessage)}</AlertDescription>
           </Alert>
         ) : null}
 
@@ -345,8 +410,8 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
               <div className="text-xs text-muted-foreground">Evidence</div>
               <div className="text-xs text-muted-foreground">{evidence.length ? `${evidence.length} items` : "—"}</div>
             </div>
-            <div className="mt-2 max-h-40 overflow-y-auto pr-2 scroll-y-container">
-              <div className="space-y-2">
+            <ScrollArea className="mt-2 h-40">
+              <div className="space-y-2 pr-2">
                 {evidence.length ? (
                   evidence.map((ev: any) => {
                     const url = toStr(ev?.sourceUrl).trim();
@@ -370,7 +435,7 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
                             </a>
                           ) : null}
                         </div>
-                        {notes ? <div className="mt-1 text-xs text-muted-foreground">{notes}</div> : null}
+                        {notes ? <div className="mt-1 text-xs text-muted-foreground break-words">{notes}</div> : null}
                         {when ? <div className="mt-1 text-[11px] text-muted-foreground">{new Date(when).toLocaleString()}</div> : null}
                       </div>
                     );
@@ -379,7 +444,7 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
                   <div className="text-sm text-muted-foreground">No evidence yet.</div>
                 )}
               </div>
-            </div>
+            </ScrollArea>
           </div>
 
           <div className="rounded-md border p-3">
@@ -393,8 +458,8 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
                 <div className="text-xs text-muted-foreground">—</div>
               )}
             </div>
-            <div className="mt-2 max-h-40 overflow-y-auto pr-2 scroll-y-container">
-              <div className="space-y-2">
+            <ScrollArea className="mt-2 h-40">
+              <div className="space-y-2 pr-2">
                 {events.length ? (
                   [...events]
                     .sort((a: any, b: any) => new Date(toStr(b?.createdAt) || 0).getTime() - new Date(toStr(a?.createdAt) || 0).getTime())
@@ -409,14 +474,16 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
                             {ev?.createdAt ? new Date(toStr(ev.createdAt)).toLocaleTimeString() : "—"}
                           </div>
                         </div>
-                        {toStr(ev?.message).trim() ? <div className="mt-1 text-xs text-muted-foreground">{toStr(ev.message)}</div> : null}
+                        {toStr(ev?.message).trim() ? (
+                          <div className="mt-1 text-xs text-muted-foreground break-words">{toStr(ev.message)}</div>
+                        ) : null}
                       </div>
                     ))
                 ) : (
                   <div className="text-sm text-muted-foreground">No events yet.</div>
                 )}
               </div>
-            </div>
+            </ScrollArea>
           </div>
         </div>
       </div>

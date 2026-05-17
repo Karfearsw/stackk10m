@@ -63,6 +63,7 @@ import { z } from "zod";
 import { computeArvFromComps, computeDealMath, computeRepairTotal, underwritingSchemaV1, underwritingTemplateConfigSchema } from "../shared/underwriting.js";
 import { createSkipTraceJob, isHttpError, runProviderSkipTraceForEntity, runSkipTraceJob } from "./services/skipTrace/orchestrator.js";
 import { hydrateSkipTraceResultForApi, mergeSkipTraceResult } from "./services/skipTrace/merge.js";
+import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
 import { sendSignalWireSms } from "./services/messaging/signalwire.js";
 import { sendResendEmail } from "./services/messaging/resend.js";
 import { getAuthStatusSnapshot, getEmailProviderMissing } from "./auth/config.js";
@@ -2839,6 +2840,39 @@ export async function registerRoutes(
       const lead = await storage.getLeadById(parseInt(req.params.id));
       if (!lead) return res.status(404).json({ message: "Lead not found" });
       res.json(lead);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/skip-trace/config", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+
+      const enabled = await isFeatureEnabled(user.id, "skip_trace");
+      if (!enabled) {
+        return res.json({
+          enabled: false,
+          providerName: null,
+          publicResearchEnabled: false,
+          allowedModes: [],
+        });
+      }
+
+      const providerName = getSkipTraceProvider().name;
+      const publicResearchEnabled = String(process.env.SKIP_TRACE_PUBLIC_RESEARCH_ENABLED || "")
+        .trim()
+        .toLowerCase() === "true";
+
+      const allowedModes = publicResearchEnabled ? ["provider", "public_research", "both"] : ["provider"];
+
+      res.json({
+        enabled: true,
+        providerName,
+        publicResearchEnabled,
+        allowedModes,
+      });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
