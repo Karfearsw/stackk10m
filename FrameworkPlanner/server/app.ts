@@ -253,6 +253,7 @@ import { startAutomationWorker } from "./cron/lead-automation.js";
 import { startCampaignScheduler } from "./cron/campaign-scheduler.js";
 import { startRvmPoller } from "./cron/rvm-poller.js";
 import { startTaskReminders } from "./cron/task-reminders.js";
+import { startSkipTraceWorker } from "./cron/skip-trace-worker.js";
 
 export default async function runApp(
   setup: (app: Express, server: Server) => Promise<void>,
@@ -293,6 +294,7 @@ export default async function runApp(
       : !isServerless && process.env.NODE_ENV !== "test" && hasDatabaseUrl;
   if (enableAutomationWorker) {
     startAutomationWorker(60000); // Run every minute
+    startSkipTraceWorker(15000);
   }
 
   const enableCampaignScheduler = String(process.env.FEATURE_CAMPAIGNS || "").trim().toLowerCase() === "true";

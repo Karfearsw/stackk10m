@@ -48,6 +48,7 @@ import { LeadPipelineCard } from "@/components/pipeline/LeadPipelineCard";
 import { EntityActivity } from "@/components/activity/EntityActivity";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
+import { SkipTraceJobPanel } from "@/components/skipTrace/SkipTraceJobPanel";
 import { apiRequest } from "@/lib/queryClient";
 
 const statusOptions = [
@@ -455,42 +456,6 @@ export default function Leads() {
     if (!selectedLeadId) return null;
     return (leads || []).find((l: any) => l.id === selectedLeadId) || null;
   }, [leads, selectedLeadId]);
-
-  const { data: skipTraceLatest } = useQuery<any>({
-    queryKey: ["/api/leads", selectedLeadId, "skip-trace-latest"],
-    enabled: !!selectedLeadId && isLeadSheetOpen,
-    queryFn: async () => {
-      try {
-        const res = await apiRequest("GET", `/api/leads/${selectedLeadId}/skip-trace/latest`);
-        return await res.json();
-      } catch (e: any) {
-        const msg = String(e?.message || e);
-        if (msg.startsWith("404:")) return null;
-        throw e;
-      }
-    },
-  });
-
-  const skipTraceMutation = useMutation({
-    mutationFn: async (leadId: number) => {
-      try {
-        const res = await apiRequest("POST", `/api/leads/${leadId}/skip-trace`, {});
-        return await res.json();
-      } catch (e: any) {
-        const msg = String(e?.message || e);
-        if (msg.startsWith("404:")) throw new Error("Skip trace is disabled");
-        throw e;
-      }
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/leads", selectedLeadId, "skip-trace-latest"] });
-      await queryClient.invalidateQueries({ queryKey: ["leads"] });
-      toast({ title: "Skip trace completed" });
-    },
-    onError: (e: any) => {
-      toast({ title: e?.message || "Skip trace failed", variant: "destructive" });
-    },
-  });
 
   useEffect(() => {
     if (didApplyQueryLead) return;
@@ -1001,50 +966,7 @@ export default function Leads() {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Button
-                  variant="secondary"
-                  className="w-full"
-                  disabled={skipTraceMutation.isPending}
-                  onClick={() => skipTraceMutation.mutate(selectedLead.id)}
-                >
-                  Skip Trace Owner
-                </Button>
-                {skipTraceLatest && (
-                  <div className="border rounded-md p-3 text-sm bg-muted/20">
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs text-muted-foreground">Last Result</div>
-                      <div className="text-xs text-muted-foreground">
-                        {skipTraceLatest.completedAt
-                          ? new Date(skipTraceLatest.completedAt).toLocaleString()
-                          : skipTraceLatest.requestedAt
-                            ? new Date(skipTraceLatest.requestedAt).toLocaleString()
-                            : "—"}
-                      </div>
-                    </div>
-                    <div className="mt-2 grid grid-cols-1 gap-1">
-                      <div>
-                        <span className="text-muted-foreground">Status:</span>{" "}
-                        <span className="font-medium">{String(skipTraceLatest.status || "—")}</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Phones:</span>{" "}
-                        <span className="font-medium">{Array.isArray(skipTraceLatest.phones) && skipTraceLatest.phones.length ? skipTraceLatest.phones.join(", ") : "—"}</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Emails:</span>{" "}
-                        <span className="font-medium">{Array.isArray(skipTraceLatest.emails) && skipTraceLatest.emails.length ? skipTraceLatest.emails.join(", ") : "—"}</span>
-                      </div>
-                      <div>
-                        <span className="text-muted-foreground">Cost:</span>{" "}
-                        <span className="font-medium">
-                          {typeof skipTraceLatest.costCents === "number" ? `$${(skipTraceLatest.costCents / 100).toFixed(2)}` : "—"}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <SkipTraceJobPanel entityType="lead" entityId={selectedLead.id} />
 
               <EntityTasksWidget entityType="lead" entityId={selectedLead.id} />
 
