@@ -143,6 +143,10 @@ function isManagerUser(user: any) {
   return !!user?.isSuperAdmin || role === "admin" || role === "manager" || role === "owner";
 }
 
+function isAdminUser(user: any) {
+  return isManagerUser(user);
+}
+
 async function requireAuth(req: any, res: any) {
   const userId = req.session?.userId;
   if (!userId) {
