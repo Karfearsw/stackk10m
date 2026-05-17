@@ -735,6 +735,64 @@ export const insertXpStripeEventSchema = createInsertSchema(xpStripeEvents).omit
 export type XpStripeEvent = typeof xpStripeEvents.$inferSelect;
 export type InsertXpStripeEvent = z.infer<typeof insertXpStripeEventSchema>;
 
+export const xpLocations = pgTable("xp_locations", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: varchar("type", { length: 40 }).notNull().default("resort"),
+  address1: varchar("address1", { length: 255 }),
+  address2: varchar("address2", { length: 255 }),
+  city: varchar("city", { length: 120 }),
+  state: varchar("state", { length: 40 }),
+  zip: varchar("zip", { length: 20 }),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXpLocationSchema = createInsertSchema(xpLocations).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type XpLocation = typeof xpLocations.$inferSelect;
+export type InsertXpLocation = z.infer<typeof insertXpLocationSchema>;
+
+export const xpVehicles = pgTable("xp_vehicles", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: varchar("type", { length: 40 }).notNull().default("tesla"),
+  licensePlate: varchar("license_plate", { length: 40 }),
+  locationId: integer("location_id"),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXpVehicleSchema = createInsertSchema(xpVehicles).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type XpVehicle = typeof xpVehicles.$inferSelect;
+export type InsertXpVehicle = z.infer<typeof insertXpVehicleSchema>;
+
+export const xpBookingAssignments = pgTable("xp_booking_assignments", {
+  bookingId: integer("booking_id").primaryKey(),
+  locationId: integer("location_id"),
+  vehicleId: integer("vehicle_id"),
+  conciergeUserId: integer("concierge_user_id"),
+  assignedAt: timestamp("assigned_at"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXpBookingAssignmentSchema = createInsertSchema(xpBookingAssignments);
+export type XpBookingAssignment = typeof xpBookingAssignments.$inferSelect;
+export type InsertXpBookingAssignment = z.infer<typeof insertXpBookingAssignmentSchema>;
+
+export const xpBookingNotes = pgTable("xp_booking_notes", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  bookingId: integer("booking_id").notNull(),
+  authorUserId: integer("author_user_id"),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertXpBookingNoteSchema = createInsertSchema(xpBookingNotes).omit({ id: true, createdAt: true } as any);
+export type XpBookingNote = typeof xpBookingNotes.$inferSelect;
+export type InsertXpBookingNote = z.infer<typeof insertXpBookingNoteSchema>;
+
 // NOTIFICATION PREFERENCES TABLE
 export const notificationPreferences = pgTable("notification_preferences", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),

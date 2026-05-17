@@ -138,6 +138,15 @@ function isAdminUser(user: any) {
   return !!user?.isSuperAdmin || role === "admin";
 }
 
+function isConciergeUser(user: any) {
+  const role = String(user?.role || "").trim().toLowerCase();
+  return role === "concierge";
+}
+
+function isXpOpsUser(user: any) {
+  return isAdminUser(user) || isConciergeUser(user);
+}
+
 async function allowedLeadAssigneeUserIds(userId: number): Promise<number[]> {
   const out = new Set<number>();
   out.add(Number(userId));
@@ -909,16 +918,50 @@ export async function registerRoutes(
   app.get("/api/xp/admin/bookings", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
     const experienceIdRaw = req.query.experienceId;
     const experienceId = typeof experienceIdRaw === "string" && experienceIdRaw.trim() ? parseInt(experienceIdRaw, 10) : undefined;
     const status = typeof req.query.status === "string" && req.query.status.trim() ? String(req.query.status).trim() : undefined;
+    const kind = typeof req.query.kind === "string" && req.query.kind.trim() ? String(req.query.kind).trim() : undefined;
+    const locationId = typeof req.query.locationId === "string" && String(req.query.locationId).trim() ? parseInt(String(req.query.locationId), 10) : undefined;
+    const vehicleId = typeof req.query.vehicleId === "string" && String(req.query.vehicleId).trim() ? parseInt(String(req.query.vehicleId), 10) : undefined;
+    const conciergeUserIdQuery = typeof req.query.conciergeUserId === "string" && String(req.query.conciergeUserId).trim() ? parseInt(String(req.query.conciergeUserId), 10) : undefined;
     const from = req.query.from ? xpParseDate(req.query.from) || undefined : undefined;
     const to = req.query.to ? xpParseDate(req.query.to) || undefined : undefined;
     const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : undefined;
     const offset = typeof req.query.offset === "string" ? parseInt(req.query.offset, 10) : undefined;
-    const out = await storage.listXpBookings({ experienceId: typeof experienceId === "number" && Number.isFinite(experienceId) ? experienceId : undefined, status, from: from || undefined, to: to || undefined, limit: Number.isFinite(limit as any) ? (limit as any) : undefined, offset: Number.isFinite(offset as any) ? (offset as any) : undefined });
+    const out = await storage.listXpBookings({
+      experienceId: typeof experienceId === "number" && Number.isFinite(experienceId) ? experienceId : undefined,
+      status,
+      kind,
+      from: from || undefined,
+      to: to || undefined,
+      conciergeUserId: isConciergeUser(user)
+        ? Number(user.id)
+        : typeof conciergeUserIdQuery === "number" && Number.isFinite(conciergeUserIdQuery)
+          ? conciergeUserIdQuery
+          : undefined,
+      locationId: typeof locationId === "number" && Number.isFinite(locationId) ? locationId : undefined,
+      vehicleId: typeof vehicleId === "number" && Number.isFinite(vehicleId) ? vehicleId : undefined,
+      limit: Number.isFinite(limit as any) ? (limit as any) : undefined,
+      offset: Number.isFinite(offset as any) ? (offset as any) : undefined,
+    });
     return res.json(out);
+  });
+
+  app.get("/api/xp/admin/bookings/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const booking = await storage.getXpBookingById(id);
+    if (!booking) return res.status(404).json({ message: "Not found" });
+    if (isConciergeUser(user) && Number(booking.assignment?.conciergeUserId || 0) !== Number(user.id)) {
+      return res.status(404).json({ message: "Not found" });
+    }
+    const experience = await storage.getXpExperienceById(Number((booking as any).experienceId));
+    return res.json({ booking, experience: experience || null });
   });
 
   app.post("/api/xp/admin/bookings/:id/cancel", async (req, res) => {
@@ -930,6 +973,206 @@ export async function registerRoutes(
     const row = await storage.cancelXpBooking(id);
     if (!row) return res.status(404).json({ message: "Not found" });
     return res.json({ booking: row });
+  });
+
+  function parseNullableInt(v: any): number | null {
+    if (v === undefined || v === null || v === "") return null;
+    const n = typeof v === "number" ? v : parseInt(String(v), 10);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  app.get("/api/xp/admin/locations", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const activeOnly =
+      isConciergeUser(user)
+        ? true
+        : String(req.query.activeOnly || "").trim() === "1" || String(req.query.activeOnly || "").trim().toLowerCase() === "true";
+    const items = await storage.listXpLocations({ activeOnly });
+    return res.json({ items });
+  });
+
+  app.post("/api/xp/admin/locations", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const name = String(req.body?.name || "").trim();
+    if (!name) return res.status(400).json({ message: "Missing name" });
+    const row = await storage.createXpLocation({
+      name,
+      type: String(req.body?.type || "resort").trim() || "resort",
+      address1: String(req.body?.address1 || "").trim() || null,
+      address2: String(req.body?.address2 || "").trim() || null,
+      city: String(req.body?.city || "").trim() || null,
+      state: String(req.body?.state || "").trim() || null,
+      zip: String(req.body?.zip || "").trim() || null,
+      active: true,
+    } as any);
+    return res.status(201).json({ location: row });
+  });
+
+  app.patch("/api/xp/admin/locations/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const patch: any = {};
+    if (req.body?.name !== undefined) patch.name = String(req.body?.name || "").trim();
+    if (req.body?.type !== undefined) patch.type = String(req.body?.type || "").trim() || "resort";
+    if (req.body?.address1 !== undefined) patch.address1 = String(req.body?.address1 || "").trim() || null;
+    if (req.body?.address2 !== undefined) patch.address2 = String(req.body?.address2 || "").trim() || null;
+    if (req.body?.city !== undefined) patch.city = String(req.body?.city || "").trim() || null;
+    if (req.body?.state !== undefined) patch.state = String(req.body?.state || "").trim() || null;
+    if (req.body?.zip !== undefined) patch.zip = String(req.body?.zip || "").trim() || null;
+    if (req.body?.active !== undefined) patch.active = Boolean(req.body?.active);
+    const row = await storage.updateXpLocation(id, patch);
+    return res.json({ location: row });
+  });
+
+  app.delete("/api/xp/admin/locations/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const row = await storage.deactivateXpLocation(id);
+    return res.json({ location: row });
+  });
+
+  app.get("/api/xp/admin/vehicles", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const activeOnly =
+      isConciergeUser(user)
+        ? true
+        : String(req.query.activeOnly || "").trim() === "1" || String(req.query.activeOnly || "").trim().toLowerCase() === "true";
+    const locationIdRaw = String(req.query.locationId || "").trim();
+    const locationId = locationIdRaw ? parseInt(locationIdRaw, 10) : undefined;
+    const items = await storage.listXpVehicles({
+      activeOnly,
+      locationId: typeof locationId === "number" && Number.isFinite(locationId) ? locationId : undefined,
+    });
+    return res.json({ items });
+  });
+
+  app.post("/api/xp/admin/vehicles", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const name = String(req.body?.name || "").trim();
+    if (!name) return res.status(400).json({ message: "Missing name" });
+    const row = await storage.createXpVehicle({
+      name,
+      type: String(req.body?.type || "tesla").trim() || "tesla",
+      licensePlate: String(req.body?.licensePlate || "").trim() || null,
+      locationId: parseNullableInt(req.body?.locationId),
+      active: true,
+    } as any);
+    return res.status(201).json({ vehicle: row });
+  });
+
+  app.patch("/api/xp/admin/vehicles/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const patch: any = {};
+    if (req.body?.name !== undefined) patch.name = String(req.body?.name || "").trim();
+    if (req.body?.type !== undefined) patch.type = String(req.body?.type || "").trim() || "tesla";
+    if (req.body?.licensePlate !== undefined) patch.licensePlate = String(req.body?.licensePlate || "").trim() || null;
+    if (req.body?.locationId !== undefined) patch.locationId = parseNullableInt(req.body?.locationId);
+    if (req.body?.active !== undefined) patch.active = Boolean(req.body?.active);
+    const row = await storage.updateXpVehicle(id, patch);
+    return res.json({ vehicle: row });
+  });
+
+  app.delete("/api/xp/admin/vehicles/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const row = await storage.deactivateXpVehicle(id);
+    return res.json({ vehicle: row });
+  });
+
+  app.get("/api/xp/admin/concierges", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const items = await storage.listXpConciergeUsers();
+    const safe = items.map((u: any) => {
+      const { passwordHash, ...rest } = u;
+      return rest;
+    });
+    return res.json({ items: safe });
+  });
+
+  app.put("/api/xp/admin/bookings/:id/assignment", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const booking = await storage.getXpBookingById(id);
+    if (!booking) return res.status(404).json({ message: "Not found" });
+    if (isConciergeUser(user) && Number(booking.assignment?.conciergeUserId || 0) !== Number(user.id)) {
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    const locationId = req.body?.locationId !== undefined ? parseNullableInt(req.body?.locationId) : booking.assignment?.locationId ?? null;
+    const vehicleId = req.body?.vehicleId !== undefined ? parseNullableInt(req.body?.vehicleId) : booking.assignment?.vehicleId ?? null;
+    const conciergeUserId = isAdminUser(user)
+      ? req.body?.conciergeUserId !== undefined
+        ? parseNullableInt(req.body?.conciergeUserId)
+        : booking.assignment?.conciergeUserId ?? null
+      : Number(user.id);
+
+    const assignment = await storage.upsertXpBookingAssignment({
+      bookingId: id,
+      locationId,
+      vehicleId,
+      conciergeUserId,
+    });
+
+    return res.json({ assignment });
+  });
+
+  app.get("/api/xp/admin/bookings/:id/notes", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const booking = await storage.getXpBookingById(id);
+    if (!booking) return res.status(404).json({ message: "Not found" });
+    if (isConciergeUser(user) && Number(booking.assignment?.conciergeUserId || 0) !== Number(user.id)) {
+      return res.status(404).json({ message: "Not found" });
+    }
+    const items = await storage.listXpBookingNotes(id);
+    return res.json({ items });
+  });
+
+  app.post("/api/xp/admin/bookings/:id/notes", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const booking = await storage.getXpBookingById(id);
+    if (!booking) return res.status(404).json({ message: "Not found" });
+    if (isConciergeUser(user) && Number(booking.assignment?.conciergeUserId || 0) !== Number(user.id)) {
+      return res.status(404).json({ message: "Not found" });
+    }
+    const body = String(req.body?.body || "").trim();
+    if (!body) return res.status(400).json({ message: "Missing body" });
+    if (body.length > 2000) return res.status(400).json({ message: "Body too long" });
+    const note = await storage.createXpBookingNote({ bookingId: id, authorUserId: Number(user.id), body } as any);
+    return res.status(201).json({ note });
   });
 
   app.get("/api/address/suggest", async (req, res) => {
@@ -1626,6 +1869,7 @@ export async function registerRoutes(
       const teamLeaderCode = String(process.env.TEAM_LEADER_ROLE_CODE || "").trim();
       const agentCode = String(process.env.AGENT_ROLE_CODE || "").trim();
       const vaCode = String(process.env.VA_ROLE_CODE || "").trim();
+      const conciergeCode = String(process.env.CONCIERGE_ROLE_CODE || "").trim();
       const legacyEmployeeCode = String(process.env.EMPLOYEE_ACCESS_CODE || "").trim();
 
       const codesConfigured =
@@ -1650,6 +1894,8 @@ export async function registerRoutes(
         role = "agent";
       } else if (vaCode && roleCode === vaCode) {
         role = "va";
+      } else if (conciergeCode && roleCode === conciergeCode) {
+        role = "concierge";
       } else if (legacyEmployeeCode && roleCode === legacyEmployeeCode) {
         role = "agent";
       }

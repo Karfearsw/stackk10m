@@ -8,11 +8,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { XpAdminHeader } from "@/components/xp-admin/XpAdminHeader";
+import { XpBookingsSavedViews, type XpBookingFilters, type XpSavedViewId } from "@/components/xp-admin/XpBookingsSavedViews";
+import { XpBookingsFilters } from "@/components/xp-admin/XpBookingsFilters";
+import { XpBookingsTable } from "@/components/xp-admin/XpBookingsTable";
+import { XpBookingDrawer } from "@/components/xp-admin/XpBookingDrawer";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiRequest } from "@/lib/queryClient";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { addDays, format } from "date-fns";
+import { useEffect, useMemo, useState } from "react";
 
 type XpExperience = {
   id: number;
@@ -52,14 +58,54 @@ type XpBooking = {
   customerName: string;
   customerEmail: string;
   customerPhone?: string | null;
-  startAt: string;
-  endAt: string;
+  startAt: string | Date;
+  endAt: string | Date;
   stripeCheckoutSessionId?: string | null;
-  createdAt?: string | null;
+  createdAt?: string | Date | null;
+  assignment?: {
+    locationId: number | null;
+    locationName: string | null;
+    vehicleId: number | null;
+    vehicleName: string | null;
+    conciergeUserId: number | null;
+    conciergeName: string | null;
+    conciergeEmail: string | null;
+    assignedAt: string | Date | null;
+  } | null;
+};
+
+type XpLocation = {
+  id: number;
+  name: string;
+  type?: string | null;
+  active?: boolean | null;
+};
+
+type XpVehicle = {
+  id: number;
+  name: string;
+  type?: string | null;
+  licensePlate?: string | null;
+  locationId?: number | null;
+  active?: boolean | null;
+};
+
+type ConciergeUser = {
+  id: number;
+  email: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  role?: string | null;
+  isActive?: boolean | null;
 };
 
 function isAdmin(user: any): boolean {
   return Boolean(user?.isSuperAdmin) || String(user?.role || "").toLowerCase() === "admin";
+}
+
+function isXpOps(user: any): boolean {
+  const r = String(user?.role || "").toLowerCase();
+  return Boolean(user?.isSuperAdmin) || r === "admin" || r === "concierge";
 }
 
 function dtLocalToIso(v: string): string | null {
@@ -74,12 +120,14 @@ export default function XpAdminPage() {
   const { toast } = useToast();
   const { user } = useAuth();
   const admin = isAdmin(user);
+  const ops = isXpOps(user);
 
   const experiencesQuery = useQuery<{ items: XpExperience[] }>({
-    queryKey: ["/api/xp/admin/experiences"],
-    enabled: admin,
+    queryKey: [admin ? "/api/xp/admin/experiences" : "/api/xp/experiences"],
+    enabled: ops,
     queryFn: async () => {
-      const res = await fetch("/api/xp/admin/experiences", { credentials: "include" });
+      const url = admin ? "/api/xp/admin/experiences" : "/api/xp/experiences";
+      const res = await fetch(url, { credentials: "include" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((json as any).message || "Failed to load");
       return json;
@@ -88,6 +136,7 @@ export default function XpAdminPage() {
 
   const experiences = Array.isArray(experiencesQuery.data?.items) ? experiencesQuery.data?.items : [];
   const experiencesById = useMemo(() => new Map<number, XpExperience>(experiences.map((e) => [e.id, e])), [experiences]);
+  const experienceTitleById = useMemo(() => new Map<number, string>(experiences.map((e) => [e.id, e.title])), [experiences]);
 
   const [selectedExperienceId, setSelectedExperienceId] = useState<string>("");
   const selectedId = parseInt(selectedExperienceId, 10);
@@ -167,17 +216,218 @@ export default function XpAdminPage() {
     },
   });
 
-  const bookingsQuery = useQuery<{ items: XpBooking[]; total: number }>({
-    queryKey: ["/api/xp/admin/bookings", selectedId || ""],
-    enabled: admin,
+  const [savedView, setSavedView] = useState<XpSavedViewId>("all");
+  const [filters, setFilters] = useState<XpBookingFilters>({
+    experienceId: "all",
+    status: "all",
+    kind: "all",
+    locationId: "all",
+    vehicleId: "all",
+    conciergeUserId: "all",
+    from: "",
+    to: "",
+  });
+  const [appliedFilters, setAppliedFilters] = useState(filters);
+  const [pageIndex, setPageIndex] = useState(0);
+  const pageSize = 25;
+
+  useEffect(() => {
+    const id = setTimeout(() => setAppliedFilters(filters), 250);
+    return () => clearTimeout(id);
+  }, [filters]);
+
+  useEffect(() => {
+    setPageIndex(0);
+  }, [appliedFilters]);
+
+  useEffect(() => {
+    if (savedView === "all") return;
+    const today = new Date();
+    const todayStr = format(today, "yyyy-MM-dd");
+    const next7 = format(addDays(today, 7), "yyyy-MM-dd");
+
+    if (savedView === "today") {
+      setFilters((p) => ({ ...p, status: "all", from: todayStr, to: todayStr }));
+      return;
+    }
+    if (savedView === "upcoming_7") {
+      setFilters((p) => ({ ...p, status: "all", from: todayStr, to: next7 }));
+      return;
+    }
+    if (savedView === "pending_payment") {
+      setFilters((p) => ({ ...p, status: "pending_payment" }));
+      return;
+    }
+    if (savedView === "confirmed") {
+      setFilters((p) => ({ ...p, status: "confirmed" }));
+      return;
+    }
+    if (savedView === "cancelled") {
+      setFilters((p) => ({ ...p, status: "cancelled" }));
+      return;
+    }
+  }, [savedView]);
+
+  const locationsQuery = useQuery<{ items: XpLocation[] }>({
+    queryKey: ["/api/xp/admin/locations", "active"],
+    enabled: ops,
     queryFn: async () => {
-      const qs = selectedId ? `?experienceId=${encodeURIComponent(String(selectedId))}` : "";
-      const res = await fetch(`/api/xp/admin/bookings${qs}`, { credentials: "include" });
+      const res = await fetch("/api/xp/admin/locations?activeOnly=true", { credentials: "include" });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((json as any).message || "Failed to load");
       return json;
     },
   });
+
+  const vehiclesQuery = useQuery<{ items: XpVehicle[] }>({
+    queryKey: ["/api/xp/admin/vehicles", "active"],
+    enabled: ops,
+    queryFn: async () => {
+      const res = await fetch("/api/xp/admin/vehicles?activeOnly=true", { credentials: "include" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((json as any).message || "Failed to load");
+      return json;
+    },
+  });
+
+  const conciergesQuery = useQuery<{ items: ConciergeUser[] }>({
+    queryKey: ["/api/xp/admin/concierges"],
+    enabled: admin,
+    queryFn: async () => {
+      const res = await fetch("/api/xp/admin/concierges", { credentials: "include" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((json as any).message || "Failed to load");
+      return json;
+    },
+  });
+
+  const locations = Array.isArray(locationsQuery.data?.items) ? locationsQuery.data!.items : [];
+  const vehicles = Array.isArray(vehiclesQuery.data?.items) ? vehiclesQuery.data!.items : [];
+  const concierges = Array.isArray(conciergesQuery.data?.items) ? conciergesQuery.data!.items : [];
+
+  const [locationDialogOpen, setLocationDialogOpen] = useState(false);
+  const [editingLocationId, setEditingLocationId] = useState<number | null>(null);
+  const [locationForm, setLocationForm] = useState<{ name: string; type: string }>({ name: "", type: "resort" });
+
+  const upsertLocation = useMutation({
+    mutationFn: async () => {
+      const name = locationForm.name.trim();
+      if (!name) throw new Error("Name required");
+      if (editingLocationId) {
+        const res = await apiRequest("PATCH", `/api/xp/admin/locations/${editingLocationId}`, { name, type: locationForm.type });
+        return res.json();
+      }
+      const res = await apiRequest("POST", "/api/xp/admin/locations", { name, type: locationForm.type });
+      return res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/xp/admin/locations"] });
+      setLocationDialogOpen(false);
+      setEditingLocationId(null);
+      setLocationForm({ name: "", type: "resort" });
+      toast({ title: "Location saved" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Save failed", description: String(err?.message || err), variant: "destructive" as any });
+    },
+  });
+
+  const deactivateLocation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/xp/admin/locations/${id}`);
+      return res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/xp/admin/locations"] });
+      toast({ title: "Location deactivated" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Deactivate failed", description: String(err?.message || err), variant: "destructive" as any });
+    },
+  });
+
+  const [vehicleDialogOpen, setVehicleDialogOpen] = useState(false);
+  const [editingVehicleId, setEditingVehicleId] = useState<number | null>(null);
+  const [vehicleForm, setVehicleForm] = useState<{ name: string; type: string; licensePlate: string; locationId: string }>({
+    name: "",
+    type: "tesla",
+    licensePlate: "",
+    locationId: "none",
+  });
+
+  const upsertVehicle = useMutation({
+    mutationFn: async () => {
+      const name = vehicleForm.name.trim();
+      if (!name) throw new Error("Name required");
+      const payload: any = {
+        name,
+        type: vehicleForm.type,
+        licensePlate: vehicleForm.licensePlate.trim() || null,
+        locationId: vehicleForm.locationId === "none" ? null : parseInt(vehicleForm.locationId, 10),
+      };
+      if (editingVehicleId) {
+        const res = await apiRequest("PATCH", `/api/xp/admin/vehicles/${editingVehicleId}`, payload);
+        return res.json();
+      }
+      const res = await apiRequest("POST", "/api/xp/admin/vehicles", payload);
+      return res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/xp/admin/vehicles"] });
+      setVehicleDialogOpen(false);
+      setEditingVehicleId(null);
+      setVehicleForm({ name: "", type: "tesla", licensePlate: "", locationId: "none" });
+      toast({ title: "Vehicle saved" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Save failed", description: String(err?.message || err), variant: "destructive" as any });
+    },
+  });
+
+  const deactivateVehicle = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/xp/admin/vehicles/${id}`);
+      return res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/xp/admin/vehicles"] });
+      toast({ title: "Vehicle deactivated" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Deactivate failed", description: String(err?.message || err), variant: "destructive" as any });
+    },
+  });
+
+  const bookingsQuery = useQuery<{ items: XpBooking[]; total: number }>({
+    queryKey: ["xp-admin-bookings", appliedFilters, pageIndex, pageSize],
+    enabled: ops,
+    queryFn: async () => {
+      const qs = new URLSearchParams();
+      if (appliedFilters.experienceId !== "all") qs.set("experienceId", appliedFilters.experienceId);
+      if (appliedFilters.status !== "all") qs.set("status", appliedFilters.status);
+      if (appliedFilters.kind !== "all") qs.set("kind", appliedFilters.kind);
+      if (appliedFilters.locationId !== "all") qs.set("locationId", appliedFilters.locationId);
+      if (appliedFilters.vehicleId !== "all") qs.set("vehicleId", appliedFilters.vehicleId);
+      if (admin && appliedFilters.conciergeUserId !== "all") qs.set("conciergeUserId", appliedFilters.conciergeUserId);
+      if (appliedFilters.from) qs.set("from", new Date(`${appliedFilters.from}T00:00:00`).toISOString());
+      if (appliedFilters.to) qs.set("to", new Date(`${appliedFilters.to}T23:59:59`).toISOString());
+      qs.set("limit", String(pageSize));
+      qs.set("offset", String(pageIndex * pageSize));
+      const res = await fetch(`/api/xp/admin/bookings?${qs.toString()}`, { credentials: "include" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((json as any).message || "Failed to load");
+      return json;
+    },
+  });
+
+  const bookings = Array.isArray(bookingsQuery.data?.items) ? bookingsQuery.data.items : [];
+  const bookingsTotal = Number(bookingsQuery.data?.total || 0);
+  const bookingsPages = Math.max(1, Math.ceil(bookingsTotal / pageSize));
+  const canPrev = pageIndex > 0;
+  const canNext = pageIndex + 1 < bookingsPages;
+
+  const [selectedBookingId, setSelectedBookingId] = useState<number | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   const [slotStart, setSlotStart] = useState("");
   const [slotEnd, setSlotEnd] = useState("");
@@ -259,27 +509,13 @@ export default function XpAdminPage() {
     },
   });
 
-  const cancelBooking = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiRequest("POST", `/api/xp/admin/bookings/${id}/cancel`, {});
-      return res.json();
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/xp/admin/bookings", selectedId || ""] });
-      toast({ title: "Booking cancelled" });
-    },
-    onError: (err: any) => {
-      toast({ title: "Cancel failed", description: String(err?.message || err), variant: "destructive" as any });
-    },
-  });
-
-  if (!admin) {
+  if (!ops) {
     return (
       <Layout>
         <Card>
           <CardHeader>
-            <CardTitle>XP Admin</CardTitle>
-            <CardDescription>Admins only.</CardDescription>
+            <CardTitle>XP Booking</CardTitle>
+            <CardDescription>Ops access required.</CardDescription>
           </CardHeader>
         </Card>
       </Layout>
@@ -288,99 +524,74 @@ export default function XpAdminPage() {
 
   return (
     <Layout>
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">XP Admin</h1>
-          <p className="text-muted-foreground">Manage experiences, availability, and bookings.</p>
-        </div>
+      <XpAdminHeader
+        title="XP Booking"
+        subtitle="High-volume booking operations. Built to scale like PNRs."
+        right={admin ? (
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm">Create experience</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Create experience</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Slug</Label>
+                  <Input value={form.slug} onChange={(e) => setForm((p) => ({ ...p, slug: e.target.value }))} placeholder="ocean-luxe" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Title</Label>
+                  <Input value={form.title} onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))} placeholder="Ocean Luxe Experience" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Description</Label>
+                  <Textarea value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} />
+                </div>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Mode</Label>
+                    <Select value={form.mode} onValueChange={(v) => setForm((p) => ({ ...p, mode: v }))}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="time_slot">Time slot</SelectItem>
+                        <SelectItem value="date_range">Date range</SelectItem>
+                        <SelectItem value="both">Both</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Capacity (date range)</Label>
+                    <Input value={form.capacity} onChange={(e) => setForm((p) => ({ ...p, capacity: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Deposit amount (USD)</Label>
+                    <Input value={form.depositAmount} onChange={(e) => setForm((p) => ({ ...p, depositAmount: e.target.value }))} placeholder="100.00" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Price total (optional)</Label>
+                    <Input value={form.priceTotal} onChange={(e) => setForm((p) => ({ ...p, priceTotal: e.target.value }))} placeholder="500.00" />
+                  </div>
+                </div>
+                <Button disabled={createExperience.isPending} onClick={() => createExperience.mutate()}>
+                  Create
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        ) : null}
+        className="mb-6"
+      />
 
-        <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-          <DialogTrigger asChild>
-            <Button>Create experience</Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Create experience</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Slug</Label>
-                <Input value={form.slug} onChange={(e) => setForm((p) => ({ ...p, slug: e.target.value }))} placeholder="ocean-luxe" />
-              </div>
-              <div className="space-y-2">
-                <Label>Title</Label>
-                <Input value={form.title} onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))} placeholder="Ocean Luxe Experience" />
-              </div>
-              <div className="space-y-2">
-                <Label>Description</Label>
-                <Textarea value={form.description} onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))} />
-              </div>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Mode</Label>
-                  <Select value={form.mode} onValueChange={(v) => setForm((p) => ({ ...p, mode: v }))}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="time_slot">Time slot</SelectItem>
-                      <SelectItem value="date_range">Date range</SelectItem>
-                      <SelectItem value="both">Both</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Capacity (date range)</Label>
-                  <Input value={form.capacity} onChange={(e) => setForm((p) => ({ ...p, capacity: e.target.value }))} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Deposit amount (USD)</Label>
-                  <Input value={form.depositAmount} onChange={(e) => setForm((p) => ({ ...p, depositAmount: e.target.value }))} placeholder="100.00" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Price total (optional)</Label>
-                  <Input value={form.priceTotal} onChange={(e) => setForm((p) => ({ ...p, priceTotal: e.target.value }))} placeholder="500.00" />
-                </div>
-              </div>
-              <Button disabled={createExperience.isPending} onClick={() => createExperience.mutate()}>
-                Create
-              </Button>
-            </div>
-          </DialogContent>
-        </Dialog>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Experience selection</CardTitle>
-          <CardDescription>Select an experience to manage availability and view bookings.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Select value={selectedExperienceId} onValueChange={setSelectedExperienceId}>
-            <SelectTrigger className="max-w-md">
-              <SelectValue placeholder="Select experience" />
-            </SelectTrigger>
-            <SelectContent>
-              {experiences.map((e) => (
-                <SelectItem key={e.id} value={String(e.id)}>
-                  {e.title} ({e.slug})
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {selectedExperience ? (
-            <div className="text-sm text-muted-foreground">
-              Deposit: {selectedExperience.depositAmount ?? "—"} {String(selectedExperience.currency || "USD").toUpperCase()}
-            </div>
-          ) : null}
-        </CardContent>
-      </Card>
-
-      <Tabs defaultValue="experiences">
+      <Tabs defaultValue="bookings">
         <TabsList>
-          <TabsTrigger value="experiences">Experiences</TabsTrigger>
-          <TabsTrigger value="availability" disabled={!selectedExperience}>Availability</TabsTrigger>
           <TabsTrigger value="bookings">Bookings</TabsTrigger>
+          {admin ? <TabsTrigger value="experiences">Experiences</TabsTrigger> : null}
+          {admin ? <TabsTrigger value="availability">Availability</TabsTrigger> : null}
+          {admin ? <TabsTrigger value="concierge">Concierge ops</TabsTrigger> : null}
         </TabsList>
 
         <TabsContent value="experiences">
@@ -421,6 +632,21 @@ export default function XpAdminPage() {
         </TabsContent>
 
         <TabsContent value="availability">
+          <div className="mb-6 max-w-lg space-y-2">
+            <Label>Experience</Label>
+            <Select value={selectedExperienceId} onValueChange={setSelectedExperienceId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select an experience" />
+              </SelectTrigger>
+              <SelectContent>
+                {experiences.map((e) => (
+                  <SelectItem key={e.id} value={String(e.id)}>
+                    {e.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <Card>
               <CardHeader>
@@ -522,54 +748,291 @@ export default function XpAdminPage() {
           </div>
         </TabsContent>
 
-        <TabsContent value="bookings">
-          <Card>
-            <CardHeader>
-              <CardTitle>Bookings</CardTitle>
-              <CardDescription>Total: {Number(bookingsQuery.data?.total || 0)}</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Experience</TableHead>
-                    <TableHead>Kind</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Window</TableHead>
-                    <TableHead></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {(Array.isArray(bookingsQuery.data?.items) ? bookingsQuery.data?.items : []).map((b) => (
-                    <TableRow key={b.id}>
-                      <TableCell>{b.id}</TableCell>
-                      <TableCell>{experiencesById.get(b.experienceId)?.title || b.experienceId}</TableCell>
-                      <TableCell>{b.kind}</TableCell>
-                      <TableCell>{b.status}</TableCell>
-                      <TableCell>
-                        <div className="text-sm">{b.customerName}</div>
-                        <div className="text-xs text-muted-foreground">{b.customerEmail}</div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-xs">{new Date(b.startAt).toLocaleString()}</div>
-                        <div className="text-xs text-muted-foreground">{new Date(b.endAt).toLocaleString()}</div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button variant="destructive" size="sm" disabled={cancelBooking.isPending || b.status === "cancelled"} onClick={() => cancelBooking.mutate(b.id)}>
-                          Cancel
-                        </Button>
-                      </TableCell>
+        <TabsContent value="concierge">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-4">
+                <div>
+                  <CardTitle>Locations</CardTitle>
+                  <CardDescription>Resorts, pickup points, and service areas.</CardDescription>
+                </div>
+                <Dialog
+                  open={locationDialogOpen}
+                  onOpenChange={(v) => {
+                    setLocationDialogOpen(v);
+                    if (!v) {
+                      setEditingLocationId(null);
+                      setLocationForm({ name: "", type: "resort" });
+                    }
+                  }}
+                >
+                  <DialogTrigger asChild>
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        setEditingLocationId(null);
+                        setLocationForm({ name: "", type: "resort" });
+                      }}
+                    >
+                      Add location
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>{editingLocationId ? "Edit location" : "Add location"}</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Name</Label>
+                        <Input value={locationForm.name} onChange={(e) => setLocationForm((p) => ({ ...p, name: e.target.value }))} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Type</Label>
+                        <Select value={locationForm.type} onValueChange={(v) => setLocationForm((p) => ({ ...p, type: v }))}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="resort">Resort</SelectItem>
+                            <SelectItem value="pickup">Pickup</SelectItem>
+                            <SelectItem value="service_area">Service area</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button disabled={upsertLocation.isPending} onClick={() => upsertLocation.mutate()}>
+                        Save
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead></TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {locations.map((l) => (
+                      <TableRow key={l.id}>
+                        <TableCell>{l.name}</TableCell>
+                        <TableCell>{l.type || "resort"}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => {
+                                setEditingLocationId(l.id);
+                                setLocationForm({ name: l.name, type: String(l.type || "resort") });
+                                setLocationDialogOpen(true);
+                              }}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={deactivateLocation.isPending}
+                              onClick={() => deactivateLocation.mutate(l.id)}
+                            >
+                              Deactivate
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {locations.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={3} className="py-8 text-center text-sm text-muted-foreground">
+                          No locations yet.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-4">
+                <div>
+                  <CardTitle>Vehicles</CardTitle>
+                  <CardDescription>Fleet for meet-and-greet and transport workflows.</CardDescription>
+                </div>
+                <Dialog
+                  open={vehicleDialogOpen}
+                  onOpenChange={(v) => {
+                    setVehicleDialogOpen(v);
+                    if (!v) {
+                      setEditingVehicleId(null);
+                      setVehicleForm({ name: "", type: "tesla", licensePlate: "", locationId: "none" });
+                    }
+                  }}
+                >
+                  <DialogTrigger asChild>
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        setEditingVehicleId(null);
+                        setVehicleForm({ name: "", type: "tesla", licensePlate: "", locationId: "none" });
+                      }}
+                    >
+                      Add vehicle
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>{editingVehicleId ? "Edit vehicle" : "Add vehicle"}</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Name</Label>
+                        <Input value={vehicleForm.name} onChange={(e) => setVehicleForm((p) => ({ ...p, name: e.target.value }))} />
+                      </div>
+                      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label>Type</Label>
+                          <Select value={vehicleForm.type} onValueChange={(v) => setVehicleForm((p) => ({ ...p, type: v }))}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="tesla">Tesla</SelectItem>
+                              <SelectItem value="driver">Driver</SelectItem>
+                              <SelectItem value="sprinter">Sprinter</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>License plate</Label>
+                          <Input value={vehicleForm.licensePlate} onChange={(e) => setVehicleForm((p) => ({ ...p, licensePlate: e.target.value }))} />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Location</Label>
+                        <Select value={vehicleForm.locationId} onValueChange={(v) => setVehicleForm((p) => ({ ...p, locationId: v }))}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none">Not set</SelectItem>
+                            {locations.map((l) => (
+                              <SelectItem key={l.id} value={String(l.id)}>
+                                {l.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button disabled={upsertVehicle.isPending} onClick={() => upsertVehicle.mutate()}>
+                        Save
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Name</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Location</TableHead>
+                      <TableHead></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {vehicles.map((v) => (
+                      <TableRow key={v.id}>
+                        <TableCell>{v.name}</TableCell>
+                        <TableCell>{v.type || "tesla"}</TableCell>
+                        <TableCell>{v.locationId ? locations.find((l) => l.id === v.locationId)?.name || `#${v.locationId}` : ""}</TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() => {
+                                setEditingVehicleId(v.id);
+                                setVehicleForm({
+                                  name: v.name,
+                                  type: String(v.type || "tesla"),
+                                  licensePlate: String(v.licensePlate || ""),
+                                  locationId: v.locationId ? String(v.locationId) : "none",
+                                });
+                                setVehicleDialogOpen(true);
+                              }}
+                            >
+                              Edit
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={deactivateVehicle.isPending}
+                              onClick={() => deactivateVehicle.mutate(v.id)}
+                            >
+                              Deactivate
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {vehicles.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">
+                          No vehicles yet.
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="bookings">
+          <div className="mt-6 space-y-4">
+            <XpBookingsSavedViews value={savedView} onChange={setSavedView} />
+            <XpBookingsFilters
+              experiences={experiences.map((e) => ({ id: e.id, title: e.title }))}
+              locations={locations.map((l) => ({ id: l.id, name: l.name }))}
+              vehicles={vehicles.map((v) => ({ id: v.id, name: v.name }))}
+              concierges={concierges.map((c) => ({ id: c.id, email: c.email, firstName: c.firstName, lastName: c.lastName }))}
+              showConcierge={admin}
+              filters={filters}
+              onChange={setFilters}
+            />
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm text-muted-foreground">Total: {bookingsTotal}</div>
+              <div className="flex items-center gap-2">
+                <Button type="button" variant="secondary" size="sm" disabled={!canPrev} onClick={() => setPageIndex((p) => Math.max(0, p - 1))}>
+                  Prev
+                </Button>
+                <div className="text-xs text-muted-foreground">
+                  Page {pageIndex + 1} / {bookingsPages}
+                </div>
+                <Button type="button" variant="secondary" size="sm" disabled={!canNext} onClick={() => setPageIndex((p) => p + 1)}>
+                  Next
+                </Button>
+              </div>
+            </div>
+            <XpBookingsTable
+              rows={bookings as any}
+              experienceTitleById={experienceTitleById}
+              onOpen={(id) => {
+                setSelectedBookingId(id);
+                setDrawerOpen(true);
+              }}
+            />
+            <XpBookingDrawer open={drawerOpen} onOpenChange={setDrawerOpen} bookingId={selectedBookingId} isAdmin={admin} />
+          </div>
         </TabsContent>
       </Tabs>
     </Layout>
   );
 }
-
