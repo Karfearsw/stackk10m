@@ -374,6 +374,7 @@ export interface IStorage {
   listXpBookings(input?: { experienceId?: number; status?: string; from?: Date; to?: Date; limit?: number; offset?: number }): Promise<{ items: XpBooking[]; total: number }>;
   getXpBookingById(id: number): Promise<XpBooking | undefined>;
   createXpBookingPending(input: InsertXpBooking): Promise<XpBooking>;
+  updateXpBookingStripeSession(id: number, stripeCheckoutSessionId: string): Promise<XpBooking | undefined>;
   getXpBookingByStripeSessionId(sessionId: string): Promise<XpBooking | undefined>;
   confirmXpBookingByStripeSessionId(input: { sessionId: string; paymentIntentId?: string | null; stripeCustomerId?: string | null }): Promise<XpBooking | undefined>;
   cancelXpBooking(id: number): Promise<XpBooking | undefined>;
@@ -1907,6 +1908,17 @@ export class DatabaseStorage implements IStorage {
   async createXpBookingPending(input: InsertXpBooking): Promise<XpBooking> {
     const now = new Date();
     const result = await db.insert(xpBookings).values({ ...(input as any), createdAt: now, updatedAt: now } as any).returning();
+    return result[0];
+  }
+
+  async updateXpBookingStripeSession(id: number, stripeCheckoutSessionId: string): Promise<XpBooking | undefined> {
+    const sessionId = String(stripeCheckoutSessionId || "").trim();
+    if (!sessionId) return undefined;
+    const result = await db
+      .update(xpBookings)
+      .set({ stripeCheckoutSessionId: sessionId, updatedAt: new Date() } as any)
+      .where(eq(xpBookings.id, id))
+      .returning();
     return result[0];
   }
 
