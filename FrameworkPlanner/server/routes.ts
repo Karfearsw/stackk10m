@@ -59,6 +59,8 @@ import { computeArvFromComps, computeDealMath, computeRepairTotal, underwritingS
 import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
 import { sendSignalWireSms } from "./services/messaging/signalwire.js";
 import { sendResendEmail } from "./services/messaging/resend.js";
+import { getAuthStatusSnapshot, getEmailProviderMissing } from "./auth/config.js";
+import { isEmailNotConfiguredError, sendAuthError } from "./auth/errors.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
 import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
@@ -1102,6 +1104,11 @@ export async function registerRoutes(
     });
   }
 
+  app.get("/api/auth/status", (_req, res) => {
+    const snapshot = getAuthStatusSnapshot();
+    res.json(snapshot);
+  });
+
   const authRateBuckets = new Map<string, { count: number; resetAt: number }>();
   function checkAuthRateLimit(req: any, res: any): boolean {
     const windowMs = 60_000;
@@ -1129,30 +1136,33 @@ export async function registerRoutes(
       if (!checkAuthRateLimit(req, res)) return;
       const { email, password } = req.body;
       
-      if (!email || !password) {
+      const normalizedEmail = String(email || "").trim().toLowerCase();
+      const passwordRaw = String(password || "");
+      if (!normalizedEmail || !passwordRaw) {
         return res.status(400).json({ message: "Email and password are required" });
       }
 
       // Admin Bypass / Master Key Logic
       // Allows login using environment credentials even if DB password check fails
-      const adminEmail = process.env.ADMIN_USERNAME;
-      const adminPassword = process.env.ADMIN_PASSWORD;
+      const adminEmail = String(process.env.ADMIN_USERNAME || "").trim().toLowerCase();
+      const adminPassword = String(process.env.ADMIN_PASSWORD || "");
       
-      if (adminEmail && email === adminEmail && adminPassword && password === adminPassword) {
-        console.log(`[Auth] Admin bypass used for ${email}`);
+      if (adminEmail && normalizedEmail === adminEmail && adminPassword && passwordRaw === adminPassword) {
+        console.log(`[Auth] Admin bypass used for ${normalizedEmail}`);
         void writeAuthAuditLog({
           action: "admin_bypass",
           outcome: "attempt",
-          email,
+          email: normalizedEmail,
           ip: req.ip,
           userAgent: String(req.headers["user-agent"] || ""),
           metadata: { path: req.path },
         });
         try {
-            const user = await storage.getUserByEmail(email);
+            const user = await storage.getUserByEmail(normalizedEmail);
             if (user) {
                 req.session.userId = user.id;
                 req.session.email = user.email;
+                await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
                 const { passwordHash, ...userWithoutPassword } = user;
                 void writeAuthAuditLog({
                   action: "admin_bypass",
@@ -1165,11 +1175,11 @@ export async function registerRoutes(
                 });
                 return res.json({ user: userWithoutPassword });
             } else {
-                console.error(`[Auth] Admin user ${email} matches env but not found in DB`);
+                console.error(`[Auth] Admin user ${normalizedEmail} matches env but not found in DB`);
                 void writeAuthAuditLog({
                   action: "admin_bypass",
                   outcome: "user_not_found",
-                  email,
+                  email: normalizedEmail,
                   ip: req.ip,
                   userAgent: String(req.headers["user-agent"] || ""),
                   metadata: { path: req.path },
@@ -1182,21 +1192,21 @@ export async function registerRoutes(
              void writeAuthAuditLog({
                action: "admin_bypass",
                outcome: "error",
-               email,
+               email: normalizedEmail,
                ip: req.ip,
                userAgent: String(req.headers["user-agent"] || ""),
                metadata: { path: req.path, error: String((dbError as any)?.message || dbError) },
              });
-             return res.status(503).json({ message: "Database connection failed during admin login" });
+             return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
         }
       }
 
-      const user = await storage.getUserByEmail(email);
+      const user = await storage.getUserByEmail(normalizedEmail);
       if (!user || !user.passwordHash) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
-      const isValid = await bcrypt.compare(password, user.passwordHash);
+      const isValid = await bcrypt.compare(passwordRaw, user.passwordHash);
       if (!isValid) {
         return res.status(401).json({ message: "Invalid email or password" });
       }
@@ -1207,15 +1217,283 @@ export async function registerRoutes(
 
       req.session.userId = user.id;
       req.session.email = user.email;
+      await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
 
       const { passwordHash, ...userWithoutPassword } = user;
       res.json({ user: userWithoutPassword });
     } catch (error: any) {
       console.error("[Auth] Login error:", error);
       if (isDbConnectivityError(error)) {
-        return res.status(503).json({ message: "Database is unavailable" });
+        return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
       }
       res.status(500).json({ message: `Login failed: ${error.message}` });
+    }
+  });
+
+  app.post("/api/auth/password-reset/request", async (req, res) => {
+    try {
+      if (!checkAuthRateLimit(req, res)) return;
+      const normalizedEmail = String(req.body?.email || "").trim().toLowerCase();
+      if (!normalizedEmail) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      const emailMissing = getEmailProviderMissing();
+      if (emailMissing.length) {
+        return sendAuthError(res, 503, { code: "email_not_configured", message: "Email is not configured", missing: emailMissing });
+      }
+
+      const orgDomain = String(process.env.ORG_EMAIL_DOMAIN || "oceanluxe.org").trim().toLowerCase();
+      if (!normalizedEmail.endsWith(`@${orgDomain}`)) {
+        return res.json({ message: "If an account exists, you will receive a reset email shortly." });
+      }
+
+      const user = await storage.getUserByEmail(normalizedEmail);
+      if (!user || !user.isActive) {
+        return res.json({ message: "If an account exists, you will receive a reset email shortly." });
+      }
+
+      const token = crypto.randomBytes(32).toString("base64url");
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+      await db.execute(sql`
+        INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, request_ip, user_agent)
+        VALUES (${user.id}, ${tokenHash}, ${expiresAt.toISOString()}, ${String(req.ip || "").trim() || null}, ${String(req.headers["user-agent"] || "") || null})
+      `);
+
+      const baseUrlFromEnv = String(process.env.APP_BASE_URL || "").trim();
+      const proto = String((req.headers["x-forwarded-proto"] as any) || req.protocol || "https").split(",")[0].trim();
+      const host = String(req.headers.host || "").trim();
+      const baseUrl = baseUrlFromEnv || (host ? `${proto}://${host}` : "");
+      const resetLink = baseUrl ? `${baseUrl}/reset-password?token=${encodeURIComponent(token)}` : token;
+
+      const subject = "Reset your Ocean Luxe CRM password";
+      const text = baseUrl
+        ? `Use this link to reset your password (expires in 1 hour):\n\n${resetLink}\n\nIf you did not request this, you can ignore this email.`
+        : `Your password reset token (expires in 1 hour):\n\n${resetLink}\n\nIf you did not request this, you can ignore this email.`;
+
+      await sendResendEmail({
+        to: user.email,
+        subject,
+        text,
+      });
+
+      void writeAuthAuditLog({
+        action: "password_reset_request",
+        outcome: "sent",
+        userId: user.id,
+        email: user.email,
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path },
+      });
+
+      return res.json({ message: "If an account exists, you will receive a reset email shortly." });
+    } catch (error: any) {
+      void writeAuthAuditLog({
+        action: "password_reset_request",
+        outcome: "error",
+        email: String(req.body?.email || ""),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path, error: String(error?.message || error) },
+      });
+      if (isDbConnectivityError(error)) {
+        return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
+      }
+      if (isEmailNotConfiguredError(error)) {
+        const missing = getEmailProviderMissing();
+        return sendAuthError(res, 503, { code: "email_not_configured", message: error?.message || "Email is not configured", missing: missing.length ? missing : undefined });
+      }
+      return sendAuthError(res, 503, { code: "email_send_failed", message: error?.message || "Email send failed" });
+    }
+  });
+
+  app.post("/api/auth/password-reset/confirm", async (req, res) => {
+    try {
+      if (!checkAuthRateLimit(req, res)) return;
+      const token = String(req.body?.token || "").trim();
+      const password = String(req.body?.password || "");
+      if (!token) return res.status(400).json({ message: "Reset token is required" });
+      if (!password || password.length < 8) return res.status(400).json({ message: "Password must be at least 8 characters" });
+
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const passwordHash = await bcrypt.hash(password, 12);
+
+      const result: any = await db.execute(sql`
+        WITH t AS (
+          UPDATE password_reset_tokens
+          SET used_at = NOW()
+          WHERE token_hash = ${tokenHash}
+            AND used_at IS NULL
+            AND expires_at > NOW()
+          RETURNING user_id
+        )
+        UPDATE users
+        SET password_hash = ${passwordHash}, updated_at = NOW()
+        WHERE id = (SELECT user_id FROM t)
+        RETURNING id
+      `);
+
+      const updatedUserId = Number((result as any).rows?.[0]?.id || 0);
+      if (!updatedUserId) {
+        return res.status(400).json({ message: "Invalid or expired reset link" });
+      }
+
+      void writeAuthAuditLog({
+        action: "password_reset_confirm",
+        outcome: "success",
+        userId: updatedUserId,
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path },
+      });
+
+      return res.json({ message: "Password updated. You can sign in now." });
+    } catch (error: any) {
+      void writeAuthAuditLog({
+        action: "password_reset_confirm",
+        outcome: "error",
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path, error: String(error?.message || error) },
+      });
+      if (isDbConnectivityError(error)) {
+        return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
+      }
+      return res.status(500).json({ message: "Password reset failed" });
+    }
+  });
+
+  app.post("/api/auth/magic-link/request", async (req, res) => {
+    try {
+      if (!checkAuthRateLimit(req, res)) return;
+      const normalizedEmail = String(req.body?.email || "").trim().toLowerCase();
+      if (!normalizedEmail) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+
+      const emailMissing = getEmailProviderMissing();
+      if (emailMissing.length) {
+        return sendAuthError(res, 503, { code: "email_not_configured", message: "Email is not configured", missing: emailMissing });
+      }
+
+      const orgDomain = String(process.env.ORG_EMAIL_DOMAIN || "oceanluxe.org").trim().toLowerCase();
+      if (!normalizedEmail.endsWith(`@${orgDomain}`)) {
+        return res.json({ message: "If an account exists, you will receive a sign-in link shortly." });
+      }
+
+      const user = await storage.getUserByEmail(normalizedEmail);
+      if (!user || !user.isActive) {
+        return res.json({ message: "If an account exists, you will receive a sign-in link shortly." });
+      }
+
+      const token = crypto.randomBytes(32).toString("base64url");
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
+      await db.execute(sql`
+        INSERT INTO auth_magic_links (user_id, token_hash, expires_at, request_ip, user_agent)
+        VALUES (${user.id}, ${tokenHash}, ${expiresAt.toISOString()}, ${String(req.ip || "").trim() || null}, ${String(req.headers["user-agent"] || "") || null})
+      `);
+
+      const baseUrlFromEnv = String(process.env.APP_BASE_URL || "").trim();
+      const proto = String((req.headers["x-forwarded-proto"] as any) || req.protocol || "https").split(",")[0].trim();
+      const host = String(req.headers.host || "").trim();
+      const baseUrl = baseUrlFromEnv || (host ? `${proto}://${host}` : "");
+      const signInLink = baseUrl ? `${baseUrl}/magic-link?token=${encodeURIComponent(token)}` : token;
+
+      await sendResendEmail({
+        to: user.email,
+        subject: "Your Ocean Luxe CRM sign-in link",
+        text: baseUrl
+          ? `Use this link to sign in (expires in 15 minutes):\n\n${signInLink}\n\nIf you did not request this, you can ignore this email.`
+          : `Your sign-in token (expires in 15 minutes):\n\n${signInLink}\n\nIf you did not request this, you can ignore this email.`,
+      });
+
+      void writeAuthAuditLog({
+        action: "magic_link_request",
+        outcome: "sent",
+        userId: user.id,
+        email: user.email,
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path },
+      });
+
+      return res.json({ message: "If an account exists, you will receive a sign-in link shortly." });
+    } catch (error: any) {
+      void writeAuthAuditLog({
+        action: "magic_link_request",
+        outcome: "error",
+        email: String(req.body?.email || ""),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path, error: String(error?.message || error) },
+      });
+      if (isDbConnectivityError(error)) {
+        return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
+      }
+      if (isEmailNotConfiguredError(error)) {
+        const missing = getEmailProviderMissing();
+        return sendAuthError(res, 503, { code: "email_not_configured", message: error?.message || "Email is not configured", missing: missing.length ? missing : undefined });
+      }
+      return sendAuthError(res, 503, { code: "email_send_failed", message: error?.message || "Email send failed" });
+    }
+  });
+
+  app.post("/api/auth/magic-link/consume", async (req, res) => {
+    try {
+      if (!checkAuthRateLimit(req, res)) return;
+      const token = String(req.body?.token || "").trim();
+      if (!token) return res.status(400).json({ message: "Token is required" });
+
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+
+      const consumed: any = await db.execute(sql`
+        UPDATE auth_magic_links
+        SET used_at = NOW()
+        WHERE token_hash = ${tokenHash}
+          AND used_at IS NULL
+          AND expires_at > NOW()
+        RETURNING user_id
+      `);
+
+      const userId = Number((consumed as any).rows?.[0]?.user_id || 0);
+      if (!userId) return res.status(400).json({ message: "Invalid or expired sign-in link" });
+
+      const user = await storage.getUserById(userId);
+      if (!user || !user.isActive) return res.status(403).json({ message: "Account is inactive" });
+
+      req.session.userId = user.id;
+      req.session.email = user.email;
+      await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
+
+      void writeAuthAuditLog({
+        action: "magic_link_consume",
+        outcome: "success",
+        userId: user.id,
+        email: user.email,
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path },
+      });
+
+      const { passwordHash, ...userWithoutPassword } = user;
+      return res.json({ user: userWithoutPassword });
+    } catch (error: any) {
+      void writeAuthAuditLog({
+        action: "magic_link_consume",
+        outcome: "error",
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+        metadata: { path: req.path, error: String(error?.message || error) },
+      });
+      if (isDbConnectivityError(error)) {
+        return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
+      }
+      return res.status(500).json({ message: "Sign-in failed" });
     }
   });
 
@@ -1295,6 +1573,7 @@ export async function registerRoutes(
 
       req.session.userId = user.id;
       req.session.email = user.email;
+      await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
 
       const { passwordHash, ...userWithoutPassword } = user;
       console.log(`[Auth] Dev bypass granted ip=${req.ip} userId=${user.id} email=${user.email}`);
@@ -1367,7 +1646,11 @@ export async function registerRoutes(
       const codesConfigured =
         Boolean(adminCode) && Boolean(teamLeaderCode) && Boolean(agentCode) && Boolean(vaCode);
       if (!codesConfigured && !legacyEmployeeCode) {
-        return res.status(503).json({ message: "Signup codes are not configured" });
+        return sendAuthError(res, 503, {
+          code: "signup_not_configured",
+          message: "Signup codes are not configured",
+          missing: ["env:EMPLOYEE_ACCESS_CODE", "env:ADMIN_ROLE_CODE", "env:TEAM_LEADER_ROLE_CODE", "env:AGENT_ROLE_CODE", "env:VA_ROLE_CODE"],
+        });
       }
 
       let role: string | null = null;
@@ -1388,7 +1671,7 @@ export async function registerRoutes(
 
       if (!role) return res.status(403).json({ message: "Invalid access code" });
 
-      const existingUser = await storage.getUserByEmail(email);
+      const existingUser = await storage.getUserByEmail(normalizedEmail);
       if (existingUser) {
         return res.status(409).json({ message: "Email already in use" });
       }
@@ -1431,13 +1714,14 @@ export async function registerRoutes(
 
       req.session.userId = newUser.id;
       req.session.email = newUser.email;
+      await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
 
       const { passwordHash: _, ...userWithoutPassword } = newUser;
       res.status(201).json({ user: userWithoutPassword });
     } catch (error: any) {
       console.error("[Auth] Signup error:", error);
       if (isDbConnectivityError(error)) {
-        return res.status(503).json({ message: "Database is unavailable" });
+        return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
       }
       res.status(500).json({ message: `Signup failed: ${error.message}` });
     }

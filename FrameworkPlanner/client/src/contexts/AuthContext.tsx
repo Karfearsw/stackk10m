@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useLocation } from 'wouter';
+import { AuthApiError, type AuthErrorBody } from '@/lib/authApiError';
 
 interface User {
   id: number;
@@ -19,6 +20,8 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  requestMagicLink: (email: string) => Promise<void>;
+  consumeMagicLink: (token: string) => Promise<void>;
   devBypass: (email: string, employeeCode: string) => Promise<void>;
   signup: (data: {
     firstName: string;
@@ -85,8 +88,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!res.ok) {
-      const error = await res.json();
-      throw new Error(error.message || 'Login failed');
+      const body = (await res.json().catch(() => null)) as AuthErrorBody | null;
+      throw new AuthApiError(res.status, body, 'Login failed');
+    }
+
+    const { user: userData } = await res.json();
+    setUser(userData);
+    try {
+      await postTimeclock('/api/timeclock/auto-start');
+    } catch {}
+    setLocation('/');
+  };
+
+  const requestMagicLink: AuthContextType['requestMagicLink'] = async (email) => {
+    const res = await fetch('/api/auth/magic-link/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as AuthErrorBody | null;
+      throw new AuthApiError(res.status, body, 'Magic link request failed');
+    }
+  };
+
+  const consumeMagicLink: AuthContextType['consumeMagicLink'] = async (token) => {
+    const res = await fetch('/api/auth/magic-link/consume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as AuthErrorBody | null;
+      throw new AuthApiError(res.status, body, 'Magic link sign-in failed');
     }
 
     const { user: userData } = await res.json();
@@ -106,8 +143,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!res.ok) {
-      const error = await res.json().catch(() => ({}));
-      throw new Error((error as any).message || 'Dev bypass failed');
+      const body = (await res.json().catch(() => null)) as AuthErrorBody | null;
+      throw new AuthApiError(res.status, body, 'Dev bypass failed');
     }
 
     const { user: userData } = await res.json();
@@ -134,8 +171,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!res.ok) {
-      const error = await res.json();
-      throw new Error(error.message || 'Signup failed');
+      const body = (await res.json().catch(() => null)) as AuthErrorBody | null;
+      throw new AuthApiError(res.status, body, 'Signup failed');
     }
 
     const { user: userData } = await res.json();
@@ -161,7 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, devBypass, signup, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, loading, login, requestMagicLink, consumeMagicLink, devBypass, signup, logout, isAuthenticated: !!user }}>
       {children}
     </AuthContext.Provider>
   );

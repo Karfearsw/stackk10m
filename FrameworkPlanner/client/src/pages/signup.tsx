@@ -1,10 +1,14 @@
 import { useState } from 'react';
 import { useLocation } from 'wouter';
 import { useAuth } from '@/contexts/AuthContext';
+import { AuthApiError } from '@/lib/authApiError';
+import { getAuth503Guidance } from '@/lib/auth503Guidance';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -19,10 +23,12 @@ export default function Signup() {
   const [teamCode, setTeamCode] = useState('');
   const [roleCode, setRoleCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [apiError, setApiError] = useState<AuthApiError | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setApiError(null);
 
     try {
       // Validate passwords match
@@ -43,11 +49,17 @@ export default function Signup() {
       toast.success('Account created! Redirecting...');
       setTimeout(() => setLocation('/'), 500);
     } catch (error: any) {
-      toast.error(error.message || 'Signup failed');
+      if (error instanceof AuthApiError && error.status === 503 && getAuth503Guidance(error.code, error.missing)) {
+        setApiError(error);
+      } else {
+        toast.error(error.message || 'Signup failed');
+      }
     } finally {
       setIsLoading(false);
     }
   };
+
+  const guidance = apiError ? getAuth503Guidance(apiError.code, apiError.missing) : null;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted/20 p-4">
@@ -66,6 +78,25 @@ export default function Signup() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {apiError && guidance && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTitle>{guidance.title}</AlertTitle>
+              <AlertDescription className="space-y-2">
+                <p>{guidance.description}</p>
+                {guidance.steps?.length ? (
+                  <ul className="list-disc ml-5 space-y-1">
+                    {guidance.steps.map((s) => (
+                      <li key={s}>{s}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div className="text-xs text-muted-foreground space-y-1">
+                  {apiError.code ? <p>Code: {apiError.code}</p> : null}
+                  {apiError.requestId ? <p>Request ID: {apiError.requestId}</p> : null}
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
@@ -112,9 +143,8 @@ export default function Signup() {
 
             <div className="space-y-2">
               <Label htmlFor="teamCode">Team Code</Label>
-              <Input
+              <PasswordInput
                 id="teamCode"
-                type="password"
                 placeholder="Enter your team join code"
                 value={teamCode}
                 onChange={(e) => setTeamCode(e.target.value)}
@@ -129,9 +159,8 @@ export default function Signup() {
 
             <div className="space-y-2">
               <Label htmlFor="roleCode">Role Code</Label>
-              <Input
+              <PasswordInput
                 id="roleCode"
-                type="password"
                 placeholder="Enter your role access code"
                 value={roleCode}
                 onChange={(e) => setRoleCode(e.target.value)}
@@ -146,9 +175,8 @@ export default function Signup() {
 
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
                 placeholder="Enter your password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -160,9 +188,8 @@ export default function Signup() {
 
             <div className="space-y-2">
               <Label htmlFor="confirmPassword">Confirm Password</Label>
-              <Input
+              <PasswordInput
                 id="confirmPassword"
-                type="password"
                 placeholder="Confirm your password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
