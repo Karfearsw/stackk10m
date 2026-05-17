@@ -7,6 +7,7 @@ import { storage } from '../server/storage'
 
 describe('Auth Endpoints', () => {
   let app: express.Express
+  let createdUserPayload: any = null
 
   beforeAll(async () => {
     process.env.EMPLOYEE_ACCESS_CODE = '3911'
@@ -17,7 +18,10 @@ describe('Auth Endpoints', () => {
     app.use(session({ secret: 'test', resave: false, saveUninitialized: false }))
 
     storage.getUserByEmail = async (email: string) => null as any
-    storage.createUser = async (data: any) => ({ id: 1, email: data.email, firstName: data.firstName, lastName: data.lastName, isActive: true } as any)
+    storage.createUser = async (data: any) => {
+      createdUserPayload = data
+      return ({ id: 1, email: data.email, firstName: data.firstName, lastName: data.lastName, isActive: true } as any)
+    }
     storage.getUserById = async (_id: number) => ({ id: 1, email: 'new@example.com', firstName: 'New', lastName: 'User', isActive: true } as any)
 
     await registerRoutes(app)
@@ -27,11 +31,14 @@ describe('Auth Endpoints', () => {
     const agent = request.agent(app)
     const res = await agent
       .post('/api/auth/signup')
-      .send({ firstName: 'New', lastName: 'User', email: 'new@example.com', password: 'password123', employeeCode: '3911' })
+      .send({ firstName: 'New', lastName: 'User', email: 'new@example.com', password: 'password123', employeeCode: '3911', role: 'admin', isSuperAdmin: true, isActive: false })
 
     expect(res.status).toBe(201)
     expect(res.body.user.email).toBe('new@example.com')
     expect(typeof res.body.token === 'string' || res.body.token === null).toBe(true)
+    expect(createdUserPayload?.role).toBe('employee')
+    expect(createdUserPayload?.isSuperAdmin).toBe(false)
+    expect(createdUserPayload?.isActive).toBe(true)
 
     const me = await agent.get('/api/auth/me')
     expect(me.status).toBe(200)
@@ -46,4 +53,3 @@ describe('Auth Endpoints', () => {
     }
   })
 })
-

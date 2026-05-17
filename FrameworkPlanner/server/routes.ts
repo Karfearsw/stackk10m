@@ -70,6 +70,7 @@ import { isEmailNotConfiguredError, sendAuthError } from "./auth/errors.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
 import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
+import { bootstrapSuperAdmins } from "./scripts/bootstrap-super-admins.js";
 
 const require = createRequire(import.meta.url);
 const packageJson: any = (() => {
@@ -146,6 +147,40 @@ function isManagerUser(user: any) {
 
 function isAdminUser(user: any) {
   return isManagerUser(user);
+}
+
+function sanitizeUser(user: any) {
+  if (!user) return user;
+  const { passwordHash, ...rest } = user;
+  return rest;
+}
+
+const allowedSystemRoles = new Set(["user", "employee", "manager", "admin", "owner"]);
+
+function isAllowedSystemRole(role: unknown) {
+  const r = String(role || "").trim().toLowerCase();
+  return allowedSystemRoles.has(r);
+}
+
+async function requireManager(req: any, res: any) {
+  const user = await requireAuth(req, res);
+  if (!user) return null;
+  if (!isManagerUser(user)) {
+    res.status(403).json({ message: "Forbidden" });
+    return null;
+  }
+  return user;
+}
+
+async function requireSelfOrManager(req: any, res: any, targetUserId: number) {
+  const user = await requireAuth(req, res);
+  if (!user) return null;
+  if (user.id === targetUserId) return user;
+  if (!isManagerUser(user)) {
+    res.status(403).json({ message: "Forbidden" });
+    return null;
+  }
+  return user;
 }
 
 async function requireAuth(req: any, res: any) {
@@ -354,6 +389,7 @@ export async function registerRoutes(
   app: Express,
   opts?: { mode?: "server" | "serverless" },
 ): Promise<Server | null> {
+  await bootstrapSuperAdmins();
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 },
@@ -1942,7 +1978,7 @@ export async function registerRoutes(
 
   app.post("/api/auth/signup", async (req, res) => {
     try {
-      const { firstName, lastName, email, password, role = "employee", isSuperAdmin = false, isActive = true, employeeCode, teamInviteCode } = req.body;
+      const { firstName, lastName, email, password, employeeCode, teamInviteCode } = req.body;
       
       if (!firstName || !lastName || !email || !password) {
         return res.status(400).json({ message: "All fields are required" });
@@ -1977,9 +2013,9 @@ export async function registerRoutes(
         passwordHash,
         firstName,
         lastName,
-        role,
-        isSuperAdmin,
-        isActive,
+        role: "employee",
+        isSuperAdmin: false,
+        isActive: true,
       });
 
       req.session.userId = newUser.id;
@@ -5810,9 +5846,11 @@ export async function registerRoutes(
   // USERS ENDPOINTS
   app.get("/api/users", async (req, res) => {
     try {
+      const actor = await requireManager(req, res);
+      if (!actor) return;
       const { limit, offset } = parseLimitOffset(req.query);
-      const users = await storage.getUsers(limit, offset);
-      res.json(users);
+      const rows = await storage.getUsers(limit, offset);
+      res.json(rows.map(sanitizeUser));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -5820,9 +5858,15 @@ export async function registerRoutes(
 
   app.get("/api/users/:id", async (req, res) => {
     try {
-      const user = await storage.getUserById(parseInt(req.params.id));
+      const targetUserId = parseInt(req.params.id);
+      const actor = await requireSelfOrManager(req, res, targetUserId);
+      if (!actor) return;
+      const user = await storage.getUserById(targetUserId);
       if (!user) return res.status(404).json({ message: "User not found" });
-      res.json(user);
+      if (user.isSuperAdmin && !actor.isSuperAdmin && actor.id !== user.id) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      res.json(sanitizeUser(user));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -5830,9 +5874,14 @@ export async function registerRoutes(
 
   app.post("/api/users", async (req, res) => {
     try {
+      const actor = await requireManager(req, res);
+      if (!actor) return;
       const validated = insertUserSchema.parse(req.body);
-      const user = await storage.createUser(validated);
-      res.status(201).json(user);
+      const payload: any = { ...validated };
+      if (!actor.isSuperAdmin) delete payload.isSuperAdmin;
+      if (payload.role && !isAllowedSystemRole(payload.role)) return res.status(400).json({ message: "Invalid role" });
+      const user = await storage.createUser(payload);
+      res.status(201).json(sanitizeUser(user));
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -5882,9 +5931,45 @@ export async function registerRoutes(
 
   app.patch("/api/users/:id", async (req, res) => {
     try {
+      const targetUserId = parseInt(req.params.id);
+      const actor = await requireSelfOrManager(req, res, targetUserId);
+      if (!actor) return;
+      const target = await storage.getUserById(targetUserId);
+      if (!target) return res.status(404).json({ message: "User not found" });
+      if (target.isSuperAdmin && !actor.isSuperAdmin && actor.id !== target.id) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       const partial = insertUserSchema.partial().parse(req.body);
-      const user = await storage.updateUser(parseInt(req.params.id), partial);
-      res.json(user);
+
+      const safeProfileFields = new Set([
+        "firstName",
+        "lastName",
+        "phone",
+        "companyName",
+        "licenseNumber",
+        "avatarUrl",
+        "profilePicture",
+        "showBannerQuotes",
+        "customBannerImages",
+      ]);
+
+      const patch: any = {};
+      for (const key of Object.keys(partial)) {
+        if (safeProfileFields.has(key)) patch[key] = (partial as any)[key];
+      }
+
+      const actorIsEditingSelf = actor.id === targetUserId;
+      if (!actorIsEditingSelf && isManagerUser(actor)) {
+        if (partial.role !== undefined) {
+          if (!isAllowedSystemRole(partial.role)) return res.status(400).json({ message: "Invalid role" });
+          patch.role = String(partial.role).trim().toLowerCase();
+        }
+        if (partial.isActive !== undefined) patch.isActive = Boolean(partial.isActive);
+        if (actor.isSuperAdmin && partial.isSuperAdmin !== undefined) patch.isSuperAdmin = Boolean(partial.isSuperAdmin);
+      }
+
+      const updated = await storage.updateUser(targetUserId, patch);
+      res.json(sanitizeUser(updated));
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -6180,6 +6265,15 @@ export async function registerRoutes(
           userId: user.id,
           action: "team_joined",
           description: `${user.email} joined`,
+          metadata: null as any,
+        } as any);
+      } else if (String(existing.status || "").toLowerCase() !== "active") {
+        await storage.updateTeamMember(existing.id, { status: "active", joinedAt: new Date() } as any);
+        await storage.createTeamActivityLog({
+          teamId: team.id,
+          userId: user.id,
+          action: "team_rejoined",
+          description: `${user.email} re-joined`,
           metadata: null as any,
         } as any);
       }

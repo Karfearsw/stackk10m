@@ -1186,7 +1186,16 @@ export class DatabaseStorage implements IStorage {
     const rows = await db
       .select({
         membership: teamMembers,
-        user: users,
+        user: {
+          id: users.id,
+          email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          profilePicture: users.profilePicture,
+          isActive: users.isActive,
+          role: users.role,
+          isSuperAdmin: users.isSuperAdmin,
+        },
       })
       .from(teamMembers)
       .innerJoin(users, eq(teamMembers.userId, users.id))

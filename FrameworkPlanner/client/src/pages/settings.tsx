@@ -30,6 +30,7 @@ function SettingsContent() {
   const [joinInviteCode, setJoinInviteCode] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
+  const [adminUserSearch, setAdminUserSearch] = useState("");
 
   const [location, setLocation] = useLocation();
 
@@ -37,10 +38,12 @@ function SettingsContent() {
     const raw = location.includes("?") ? location.split("?")[1] : "";
     const tab = new URLSearchParams(raw).get("tab");
     if (!tab) return;
-    const allowed = new Set(["account", "security", "notifications", "team", "goals", "offers", "pipeline", "appearance", "system"]);
+    const allowed = new Set(["account", "security", "notifications", "team", "admin", "goals", "offers", "pipeline", "appearance", "system"]);
     if (allowed.has(tab) && tab !== activeTab) setActiveTab(tab);
   }, [activeTab, location]);
   const { user } = useAuth();
+  const systemRole = String(user?.role || "").toLowerCase();
+  const canManageSystem = Boolean(user?.isSuperAdmin) || systemRole === "admin" || systemRole === "manager" || systemRole === "owner";
 
   // Fetch user data
   const { data: userData, isLoading: userLoading } = useQuery<any>({
@@ -59,6 +62,11 @@ function SettingsContent() {
   // Fetch notification preferences
   const { data: notificationPrefs, isLoading: notifsLoading } = useQuery<any>({
     queryKey: [`/api/users/${user!.id}/notification-preferences`],
+  });
+
+  const { data: adminUsers = [], isLoading: adminUsersLoading } = useQuery<any[]>({
+    queryKey: ["/api/users"],
+    enabled: !!user?.id && canManageSystem,
   });
 
   const { data: myTeams = [], isLoading: myTeamsLoading } = useQuery<any[]>({
@@ -213,6 +221,29 @@ function SettingsContent() {
     },
     onError: () => {
       toast.error('Failed to update profile');
+    },
+  });
+
+  const updateAdminUserMutation = useMutation({
+    mutationFn: async (data: { id: number; patch: any }) => {
+      const res = await fetch(`/api/users/${data.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data.patch),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.message || "Failed to update user");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+      toast.success("User updated");
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || "Failed to update user");
     },
   });
 
@@ -528,6 +559,12 @@ function SettingsContent() {
             <Users className="w-4 h-4 mr-2" />
             Team
           </TabsTrigger>
+          {canManageSystem ? (
+            <TabsTrigger value="admin" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+              <Shield className="w-4 h-4 mr-2" />
+              Admin
+            </TabsTrigger>
+          ) : null}
           <TabsTrigger value="goals" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <Target className="w-4 h-4 mr-2" />
             Goals
@@ -1118,6 +1155,114 @@ function SettingsContent() {
                 </CardContent>
               </Card>
             </>
+          )}
+        </TabsContent>
+
+        <TabsContent value="admin" className="mt-6 space-y-6">
+          {!canManageSystem ? (
+            <Card>
+              <CardContent className="p-6">
+                <p className="text-sm text-muted-foreground">You do not have access to admin tools.</p>
+              </CardContent>
+            </Card>
+          ) : adminUsersLoading ? (
+            <Card>
+              <CardContent className="flex items-center justify-center p-8">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardHeader>
+                <CardTitle>User Management</CardTitle>
+                <CardDescription>Manage user roles and access.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="adminUserSearch">Search</Label>
+                  <Input
+                    id="adminUserSearch"
+                    value={adminUserSearch}
+                    onChange={(e) => setAdminUserSearch(e.target.value)}
+                    placeholder="Search by email or name"
+                  />
+                </div>
+                <div className="space-y-3">
+                  {adminUsers
+                    .filter((u: any) => {
+                      const q = adminUserSearch.trim().toLowerCase();
+                      if (!q) return true;
+                      const hay = `${u.email || ""} ${u.firstName || ""} ${u.lastName || ""}`.toLowerCase();
+                      return hay.includes(q);
+                    })
+                    .slice(0, 100)
+                    .map((u: any) => {
+                      const isSelf = Number(u.id) === Number(user?.id);
+                      const displayName =
+                        u.firstName || u.lastName
+                          ? `${u.firstName || ""} ${u.lastName || ""}`.trim()
+                          : String(u.email || "");
+                      const canToggleSuperAdmin = Boolean(user?.isSuperAdmin) && !isSelf;
+                      const canEditRole = !isSelf;
+                      const canEditActive = !isSelf;
+                      return (
+                        <div key={u.id} className="flex flex-col gap-3 border rounded p-3">
+                          <div className="min-w-0">
+                            <div className="font-medium truncate">{displayName}</div>
+                            <div className="text-sm text-muted-foreground truncate">{String(u.email || "")}</div>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-3">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Role</Label>
+                              <Select
+                                value={String(u.role || "employee").toLowerCase()}
+                                onValueChange={(value) => updateAdminUserMutation.mutate({ id: u.id, patch: { role: value } })}
+                                disabled={!canEditRole || updateAdminUserMutation.isPending}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="user">User</SelectItem>
+                                  <SelectItem value="employee">Employee</SelectItem>
+                                  <SelectItem value="manager">Manager</SelectItem>
+                                  <SelectItem value="admin">Admin</SelectItem>
+                                  <SelectItem value="owner">Owner</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Active</Label>
+                              <div className="flex items-center gap-2">
+                                <Switch
+                                  checked={Boolean(u.isActive)}
+                                  onCheckedChange={(checked) => updateAdminUserMutation.mutate({ id: u.id, patch: { isActive: checked } })}
+                                  disabled={!canEditActive || updateAdminUserMutation.isPending}
+                                />
+                                <span className="text-sm">{Boolean(u.isActive) ? "Active" : "Inactive"}</span>
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Super Admin</Label>
+                              <div className="flex items-center gap-2">
+                                <Switch
+                                  checked={Boolean(u.isSuperAdmin)}
+                                  onCheckedChange={(checked) => updateAdminUserMutation.mutate({ id: u.id, patch: { isSuperAdmin: checked } })}
+                                  disabled={!canToggleSuperAdmin || updateAdminUserMutation.isPending}
+                                />
+                                <span className="text-sm">{Boolean(u.isSuperAdmin) ? "Yes" : "No"}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  {!adminUsers.length ? (
+                    <p className="text-sm text-muted-foreground">No users found.</p>
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
           )}
         </TabsContent>
 
