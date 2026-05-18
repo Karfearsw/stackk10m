@@ -72,6 +72,7 @@ import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
 import { bootstrapSuperAdmins } from "./scripts/bootstrap-super-admins.js";
 import { quarantineLegacyUsers } from "./scripts/quarantine-legacy-users.js";
+import { bootstrapCompanyTeam } from "./scripts/bootstrap-company-team.js";
 
 const require = createRequire(import.meta.url);
 const packageJson: any = (() => {
@@ -232,9 +233,30 @@ async function getOrInitActiveTeamId(req: any, userId: number): Promise<number |
       if (m && String(m.status || "").toLowerCase() === "active") return active;
     }
     const teams = await storage.getTeamsForUser(userId);
-    const first = teams?.[0]?.id ? Number(teams[0].id) : null;
-    if (first) req.session.activeTeamId = first;
-    return first;
+    const companyName = String(process.env.COMPANY_TEAM_NAME || "").trim().toLowerCase();
+    if (companyName) {
+      const candidate = teams.find((t: any) => String(t?.name || "").trim().toLowerCase() === companyName);
+      const candidateId = candidate?.id ? Number(candidate.id) : null;
+      if (candidateId) {
+        const m = await storage.getTeamMemberByTeamAndUser(candidateId, userId);
+        if (m && String(m.status || "").toLowerCase() === "active") {
+          req.session.activeTeamId = candidateId;
+          return candidateId;
+        }
+      }
+    }
+
+    for (const t of teams as any[]) {
+      const id = t?.id ? Number(t.id) : null;
+      if (!id) continue;
+      const m = await storage.getTeamMemberByTeamAndUser(id, userId);
+      if (m && String(m.status || "").toLowerCase() === "active") {
+        req.session.activeTeamId = id;
+        return id;
+      }
+    }
+
+    return null;
   } catch {
     return null;
   }
@@ -391,6 +413,7 @@ export async function registerRoutes(
   opts?: { mode?: "server" | "serverless" },
 ): Promise<Server | null> {
   await bootstrapSuperAdmins();
+  await bootstrapCompanyTeam();
   await quarantineLegacyUsers();
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -2038,6 +2061,24 @@ export async function registerRoutes(
         } as any);
         req.session.activeTeamId = team.id;
       } else {
+        const autoEnroll = parseEnvBool(process.env.COMPANY_TEAM_AUTO_ENROLL) === true;
+        const companyName = String(process.env.COMPANY_TEAM_NAME || "").trim().toLowerCase();
+        if (autoEnroll && companyName) {
+          const teams = await storage.getTeams();
+          const companyTeam = teams.find((t: any) => String(t?.name || "").trim().toLowerCase() === companyName);
+          if (companyTeam?.id) {
+            await storage.createTeamMember({
+              teamId: companyTeam.id,
+              userId: newUser.id,
+              role: "member",
+              permissions: null as any,
+              invitedBy: null as any,
+              joinedAt: new Date(),
+              status: "active",
+            } as any);
+            req.session.activeTeamId = companyTeam.id;
+          }
+        }
         const at = await getOrInitActiveTeamId(req, newUser.id);
         if (at) req.session.activeTeamId = at;
         else delete req.session.activeTeamId;
@@ -6333,6 +6374,13 @@ export async function registerRoutes(
         joinedAt: new Date(),
         status: "active",
       } as any);
+      await storage.createTeamActivityLog({
+        teamId: team.id,
+        userId: user.id,
+        action: "team_created",
+        description: `${user.email} created team ${team.name}`,
+        metadata: JSON.stringify({ teamId: team.id }),
+      } as any);
       req.session.activeTeamId = team.id;
       res.status(201).json(team);
     } catch (error: any) {
@@ -6350,6 +6398,13 @@ export async function registerRoutes(
       delete patch.ownerId;
       delete patch.inviteCode;
       const team = await storage.updateTeam(teamId, patch);
+      await storage.createTeamActivityLog({
+        teamId,
+        userId: ctx.user.id,
+        action: "team_updated",
+        description: `${ctx.user.email} updated team`,
+        metadata: JSON.stringify({ teamId, fields: Object.keys(patch) }),
+      } as any);
       res.json(team);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -6432,13 +6487,38 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      const existing = await storage.getTeamMemberById(parseInt(req.params.id));
+      const memberId = parseInt(req.params.id);
+      const existing = await storage.getTeamMemberById(memberId);
       if (!existing) return res.status(404).json({ message: "Not found" });
       const teamId = Number(existing.teamId);
       const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
       if (!ctx) return;
       const partial = insertTeamMemberSchema.partial().parse(req.body);
-      const member = await storage.updateTeamMember(parseInt(req.params.id), partial);
+      const member = await storage.updateTeamMember(memberId, partial);
+      const roleBefore = String((existing as any).role || "").toLowerCase();
+      const roleAfter = String((member as any).role || "").toLowerCase();
+      const statusBefore = String((existing as any).status || "").toLowerCase();
+      const statusAfter = String((member as any).status || "").toLowerCase();
+      if (roleBefore !== roleAfter || statusBefore !== statusAfter) {
+        const targetUserId = Number((existing as any).userId);
+        const targetUser = Number.isFinite(targetUserId) ? await storage.getUserById(targetUserId) : null;
+        const label = targetUser?.email ? String(targetUser.email) : `userId=${String(targetUserId)}`;
+        await storage.createTeamActivityLog({
+          teamId,
+          userId: ctx.user.id,
+          action: "member_role_changed",
+          description: `${ctx.user.email} updated ${label}`,
+          metadata: JSON.stringify({
+            teamId,
+            memberId,
+            targetUserId,
+            roleBefore,
+            roleAfter,
+            statusBefore,
+            statusAfter,
+          }),
+        } as any);
+      }
       res.json(member);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -6447,12 +6527,23 @@ export async function registerRoutes(
 
   app.delete("/api/team-members/:id", async (req, res) => {
     try {
-      const existing = await storage.getTeamMemberById(parseInt(req.params.id));
+      const memberId = parseInt(req.params.id);
+      const existing = await storage.getTeamMemberById(memberId);
       if (!existing) return res.status(404).json({ message: "Not found" });
       const teamId = Number(existing.teamId);
       const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
       if (!ctx) return;
-      await storage.deleteTeamMember(parseInt(req.params.id));
+      await storage.deleteTeamMember(memberId);
+      const targetUserId = Number((existing as any).userId);
+      const targetUser = Number.isFinite(targetUserId) ? await storage.getUserById(targetUserId) : null;
+      const label = targetUser?.email ? String(targetUser.email) : `userId=${String(targetUserId)}`;
+      await storage.createTeamActivityLog({
+        teamId,
+        userId: ctx.user.id,
+        action: "member_removed",
+        description: `${ctx.user.email} removed ${label}`,
+        metadata: JSON.stringify({ teamId, memberId, targetUserId }),
+      } as any);
       res.json({ message: "Team member removed" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
