@@ -71,6 +71,7 @@ import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated
 import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
 import { bootstrapSuperAdmins } from "./scripts/bootstrap-super-admins.js";
+import { quarantineLegacyUsers } from "./scripts/quarantine-legacy-users.js";
 
 const require = createRequire(import.meta.url);
 const packageJson: any = (() => {
@@ -390,6 +391,7 @@ export async function registerRoutes(
   opts?: { mode?: "server" | "serverless" },
 ): Promise<Server | null> {
   await bootstrapSuperAdmins();
+  await quarantineLegacyUsers();
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 },
