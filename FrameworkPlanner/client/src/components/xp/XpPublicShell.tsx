@@ -2,6 +2,7 @@ import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { isManagerUser } from "@/lib/authz";
 
 export function XpPublicShell({
   children,
@@ -11,7 +12,7 @@ export function XpPublicShell({
   className?: string;
 }) {
   const { isAuthenticated, user } = useAuth();
-  const isAdmin = Boolean(user?.isSuperAdmin) || String(user?.role || "").toLowerCase() === "admin";
+  const isAdmin = isManagerUser(user);
 
   return (
     <div className={cn("min-h-screen bg-[radial-gradient(1200px_800px_at_15%_10%,rgba(214,188,145,0.22),transparent_60%),radial-gradient(900px_700px_at_85%_0%,rgba(13,54,69,0.18),transparent_55%),linear-gradient(to_bottom,rgba(255,255,255,0.02),rgba(0,0,0,0.0))] bg-background", className)}>

@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiRequest } from "@/lib/queryClient";
 import type { XpItinerary } from "@/lib/xp/itinerary";
+import { isManagerUser } from "@/lib/authz";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
@@ -68,10 +69,6 @@ type XpBooking = {
   createdAt?: string | null;
 };
 
-function isAdmin(user: any): boolean {
-  return Boolean(user?.isSuperAdmin) || String(user?.role || "").toLowerCase() === "admin";
-}
-
 function dtLocalToIso(v: string): string | null {
   const s = String(v || "").trim();
   if (!s) return null;
@@ -96,7 +93,7 @@ export default function XpAdminPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
-  const admin = isAdmin(user);
+  const admin = isManagerUser(user);
 
   const experiencesQuery = useQuery<{ items: XpExperience[] }>({
     queryKey: ["/api/xp/admin/experiences"],
