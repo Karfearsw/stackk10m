@@ -1233,7 +1233,12 @@ export class DatabaseStorage implements IStorage {
 
   // Team Activity Logs
   async getTeamActivityLogs(teamId: number, limit: number = 50): Promise<TeamActivityLog[]> {
-    return db.select().from(teamActivityLogs).where(eq(teamActivityLogs.teamId, teamId)).limit(limit);
+    return db
+      .select()
+      .from(teamActivityLogs)
+      .where(eq(teamActivityLogs.teamId, teamId))
+      .orderBy(desc(teamActivityLogs.createdAt))
+      .limit(limit);
   }
 
   async createTeamActivityLog(log: InsertTeamActivityLog): Promise<TeamActivityLog> {
