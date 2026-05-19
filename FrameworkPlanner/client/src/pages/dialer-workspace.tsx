@@ -560,6 +560,49 @@ function DialerWorkspaceInner() {
 
                 <div className="space-y-4">
                   <div className="rounded-lg border border-border/70 bg-background/60 p-3 space-y-2">
+                    <Label>Call Log</Label>
+                    <select
+                      className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                      value={disposition}
+                      onChange={(e) => setDisposition(e.target.value)}
+                    >
+                      <option value="">Select disposition</option>
+                      {["answered", "no_answer", "wrong_number", "call_back", "do_not_call"].map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </select>
+                    <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notes (optional)" />
+                    <div className="grid gap-1">
+                      <Label>Follow-up date</Label>
+                      <Input type="date" value={followUpAt} onChange={(e) => setFollowUpAt(e.target.value)} />
+                    </div>
+                    <Button
+                      variant="secondary"
+                      onClick={async () => {
+                        if (!callId) return;
+                        if (saveLogPending) return;
+                        setSaveLogPending(true);
+                        try {
+                          await patchCallLog(callId, {
+                            disposition: disposition || null,
+                            note: note || null,
+                            followUpAt: followUpAt ? new Date(followUpAt).toISOString() : null,
+                          });
+                          queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+                          if (powerMode) next();
+                        } finally {
+                          setSaveLogPending(false);
+                        }
+                      }}
+                      disabled={!callId || saveLogPending}
+                    >
+                      Save Log
+                    </Button>
+                  </div>
+
+                  <div className="rounded-lg border border-border/70 bg-background/60 p-3 space-y-2">
                     <Label>Stage</Label>
                     <select
                       className="h-10 rounded-md border border-input bg-background px-3 text-sm"
@@ -798,49 +841,6 @@ function DialerWorkspaceInner() {
                     <Textarea value={smsBody} onChange={(e) => setSmsBody(e.target.value)} placeholder="Write a text…" />
                     <Button onClick={() => sendSms.mutate()} disabled={!smsBody.trim() || sendSms.isPending || Boolean(lead?.doNotText)}>
                       Send SMS
-                    </Button>
-                  </div>
-
-                  <div className="rounded-lg border border-border/70 bg-background/60 p-3 space-y-2">
-                    <Label>Call Log</Label>
-                    <select
-                      className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                      value={disposition}
-                      onChange={(e) => setDisposition(e.target.value)}
-                    >
-                      <option value="">Select disposition</option>
-                      {["answered", "no_answer", "wrong_number", "call_back", "do_not_call"].map((d) => (
-                        <option key={d} value={d}>
-                          {d}
-                        </option>
-                      ))}
-                    </select>
-                    <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notes (optional)" />
-                    <div className="grid gap-1">
-                      <Label>Follow-up date</Label>
-                      <Input type="date" value={followUpAt} onChange={(e) => setFollowUpAt(e.target.value)} />
-                    </div>
-                    <Button
-                      variant="secondary"
-                      onClick={async () => {
-                        if (!callId) return;
-                        if (saveLogPending) return;
-                        setSaveLogPending(true);
-                        try {
-                          await patchCallLog(callId, {
-                            disposition: disposition || null,
-                            note: note || null,
-                            followUpAt: followUpAt ? new Date(followUpAt).toISOString() : null,
-                          });
-                          queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
-                          if (powerMode) next();
-                        } finally {
-                          setSaveLogPending(false);
-                        }
-                      }}
-                      disabled={!callId || saveLogPending}
-                    >
-                      Save Log
                     </Button>
                   </div>
                 </div>
