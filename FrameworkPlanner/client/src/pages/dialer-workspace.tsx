@@ -581,11 +581,35 @@ function DialerWorkspaceInner() {
                     <Button
                       variant="secondary"
                       onClick={async () => {
-                        if (!callId) return;
                         if (saveLogPending) return;
                         setSaveLogPending(true);
                         try {
-                          await patchCallLog(callId, {
+                          let id: number | null = callId;
+                          if (!id) {
+                            const startedAt = new Date().toISOString();
+                            const res = await fetch(`/api/telephony/calls`, {
+                              method: "POST",
+                              credentials: "include",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                direction: "outbound",
+                                number: formatted || "",
+                                status: "ended",
+                                startedAt,
+                                leadId: activeItem.leadId,
+                              }),
+                            });
+                            if (!res.ok) throw new Error(await res.text());
+                            const created = await res.json();
+                            const nextId = Number(created?.id);
+                            if (!Number.isFinite(nextId)) throw new Error("Failed to create call log");
+                            id = nextId;
+                            setCallId(nextId);
+                          }
+                          if (!id) throw new Error("Failed to create call log");
+
+                          await patchCallLog(id, {
+                            status: "ended",
                             disposition: disposition || null,
                             note: note || null,
                             followUpAt: followUpAt ? new Date(followUpAt).toISOString() : null,
@@ -596,7 +620,7 @@ function DialerWorkspaceInner() {
                           setSaveLogPending(false);
                         }
                       }}
-                      disabled={!callId || saveLogPending}
+                      disabled={!activeItem?.leadId || saveLogPending}
                     >
                       Save Log
                     </Button>
