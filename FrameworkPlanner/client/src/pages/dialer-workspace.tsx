@@ -295,12 +295,35 @@ function DialerWorkspaceInner() {
 
   return (
     <Layout>
-      <div className="grid gap-4 min-w-0 xl:grid-cols-[320px_minmax(0,1fr)_420px]">
+      <div className="grid gap-4 min-w-0 items-start xl:grid-cols-[340px_minmax(0,1fr)_440px]">
         <Card>
-          <CardHeader>
-            <CardTitle>Queue</CardTitle>
+          <CardHeader className="pb-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <CardTitle className="text-base">Queue</CardTitle>
+                <div className="text-xs text-muted-foreground">
+                  {state.queue.length ? (
+                    <span>
+                      {Math.min(state.activeIndex + 1, state.queue.length)}/{state.queue.length} active
+                    </span>
+                  ) : (
+                    <span>No active session</span>
+                  )}
+                </div>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                List:{" "}
+                {state.listId === "new"
+                  ? "New"
+                  : state.listId === "followups_due"
+                    ? "Follow-ups"
+                    : state.listId === "all_callable"
+                      ? "All"
+                      : state.listId}
+              </div>
+            </div>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-4">
             <div className="flex flex-wrap gap-2">
               <Button variant={state.listId === "new" ? "default" : "outline"} onClick={() => setListId("new")}>
                 New
@@ -331,17 +354,20 @@ function DialerWorkspaceInner() {
                     setQueueLoading(false);
                   }
                 }}
+                className="flex-1 min-w-[10rem]"
               >
                 {queueLoading ? "Loading…" : "Start Session"}
               </Button>
-              <Button variant="outline" onClick={next} disabled={!state.queue.length}>
+              <Button variant="outline" onClick={next} disabled={!state.queue.length} className="min-w-[7rem]">
                 Next
               </Button>
             </div>
 
-            <ScrollArea className="h-[min(560px,60vh)] border rounded-md p-2">
+            <ScrollArea className="h-[min(600px,62vh)] rounded-lg border border-border/70 bg-muted/20 p-2">
               {!state.queue.length ? (
-                <div className="text-sm text-muted-foreground">No queue loaded</div>
+                <div className="flex h-32 items-center justify-center text-sm text-muted-foreground">
+                  No queue loaded
+                </div>
               ) : (
                 <div className="space-y-2">
                   {state.queue.map((item, idx) => {
@@ -349,7 +375,7 @@ function DialerWorkspaceInner() {
                     return (
                       <button
                         key={item.leadId}
-                        className={`w-full text-left rounded-md border p-2 ${isActive ? "border-primary bg-primary/10" : "border-border hover:bg-muted/40"}`}
+                        className={`w-full text-left rounded-md border px-3 py-2 transition-colors ${isActive ? "border-primary bg-primary/10" : "border-border/70 bg-background/60 hover:bg-muted/50"}`}
                         onClick={() => setActiveIndex(idx)}
                       >
                         <div className="text-sm font-medium truncate">{item.ownerName}</div>
@@ -365,14 +391,29 @@ function DialerWorkspaceInner() {
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Phone</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="text-sm text-muted-foreground">
-              SignalWire: {ready ? "Connected" : connectionState === "connecting" ? "Connecting…" : connectionState}
-              {error ? <span className="text-destructive"> • {error}</span> : null}
+          <CardHeader className="pb-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <CardTitle className="text-base">Phone</CardTitle>
+                <div className="text-xs text-muted-foreground">
+                  {activeItem ? (
+                    <span className="truncate">
+                      Calling: {String(activeItem.ownerName || "").trim() || "Selected lead"}
+                    </span>
+                  ) : (
+                    <span>Select a lead from the queue</span>
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                <div className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${ready ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-border bg-muted text-muted-foreground"}`}>
+                  {ready ? "SignalWire: Connected" : `SignalWire: ${connectionState === "connecting" ? "Connecting…" : connectionState}`}
+                </div>
+                {error ? <div className="text-xs text-destructive max-w-[16rem] truncate">{error}</div> : null}
+              </div>
             </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
 
             <div className="space-y-2">
               <Label htmlFor="dialer-number">Phone Number</Label>
@@ -409,6 +450,7 @@ function DialerWorkspaceInner() {
                   }
                 }}
                 disabled={!formatted || status === "dialing" || status === "connected" || createCallLog.isPending}
+                className="min-w-[7.5rem]"
               >
                 <Phone className="w-4 h-4 mr-2" />
                 Call
@@ -439,23 +481,24 @@ function DialerWorkspaceInner() {
                   setStatus("ended");
                 }}
                 disabled={!activeCall}
+                className="min-w-[7.5rem]"
               >
                 <PhoneOff className="w-4 h-4 mr-2" />
                 End
               </Button>
               {activeCall ? (
                 <>
-                  <Button variant="outline" onClick={toggleMute}>
+                  <Button variant="outline" onClick={toggleMute} className="min-w-[7.5rem]">
                     {activeCall.muted ? <MicOff className="w-4 h-4 mr-2" /> : <Mic className="w-4 h-4 mr-2" />}
                     {activeCall.muted ? "Unmute" : "Mute"}
                   </Button>
-                  <Button variant="outline" onClick={toggleHold}>
+                  <Button variant="outline" onClick={toggleHold} className="min-w-[7.5rem]">
                     {activeCall.state === "held" ? <Play className="w-4 h-4 mr-2" /> : <Pause className="w-4 h-4 mr-2" />}
                     {activeCall.state === "held" ? "Resume" : "Hold"}
                   </Button>
                 </>
               ) : null}
-              <Button variant="outline" onClick={next} disabled={!state.queue.length}>
+              <Button variant="outline" onClick={next} disabled={!state.queue.length} className="min-w-[7.5rem]">
                 Next Lead
               </Button>
             </div>
@@ -468,21 +511,33 @@ function DialerWorkspaceInner() {
               <Switch checked={powerMode} onCheckedChange={setPowerMode} />
             </div>
 
-            <div className="text-sm text-muted-foreground">
-              Status: {status}
-              {status === "connected" && startTs ? <span> • {Math.floor((timerRef.current || 0) / 1000)}s</span> : null}
+            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 ${status === "connected" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : status === "failed" ? "border-destructive/30 bg-destructive/10 text-destructive" : "border-border bg-muted"}`}>
+                Status: {status}
+              </span>
+              {status === "connected" && startTs ? <span>Talk time: {Math.floor((timerRef.current || 0) / 1000)}s</span> : null}
+              <span className="truncate">E164: {formatted || "—"}</span>
             </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Lead</CardTitle>
+          <CardHeader className="pb-3">
+            <div className="flex items-start justify-between gap-3">
+              <CardTitle className="text-base">Lead</CardTitle>
+              {activeItem ? (
+                <div className="text-xs text-muted-foreground truncate">
+                  #{String(activeItem.leadId)}
+                </div>
+              ) : null}
+            </div>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-4">
             {!activeItem ? (
               <div className="space-y-4">
-                <div className="text-sm text-muted-foreground">Select a lead from the queue</div>
+                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                  Select a lead from the queue to view scripts, tags, and call logging.
+                </div>
                 <div className="grid gap-2 opacity-50 pointer-events-none">
                   <Label>Script Preview</Label>
                   <div className="flex gap-2">
@@ -497,14 +552,14 @@ function DialerWorkspaceInner() {
               </div>
             ) : (
               <>
-                <div>
-                  <div className="text-lg font-semibold">{lead?.ownerName || activeItem.ownerName}</div>
-                  <div className="text-sm text-muted-foreground">{lead?.address || activeItem.address}</div>
-                  <div className="text-sm text-muted-foreground">{lead?.ownerPhone || activeItem.ownerPhone}</div>
+                <div className="rounded-lg border border-border/70 bg-muted/20 p-3">
+                  <div className="text-base font-semibold truncate">{lead?.ownerName || activeItem.ownerName}</div>
+                  <div className="text-sm text-muted-foreground truncate">{lead?.address || activeItem.address}</div>
+                  <div className="text-sm text-muted-foreground truncate">{lead?.ownerPhone || activeItem.ownerPhone}</div>
                 </div>
 
-                <div className="grid gap-3">
-                  <div className="grid gap-2">
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-border/70 bg-background/60 p-3 space-y-2">
                     <Label>Stage</Label>
                     <select
                       className="h-10 rounded-md border border-input bg-background px-3 text-sm"
@@ -519,7 +574,7 @@ function DialerWorkspaceInner() {
                     </select>
                   </div>
 
-                  <div className="grid gap-2">
+                  <div className="rounded-lg border border-border/70 bg-background/60 p-3 space-y-2">
                     <Label>Flags</Label>
                     <div className="flex flex-col gap-2">
                       <label className="flex items-center gap-2 text-sm">
@@ -541,7 +596,7 @@ function DialerWorkspaceInner() {
                     </div>
                   </div>
 
-                  <div className="grid gap-2">
+                  <div className="rounded-lg border border-border/70 bg-background/60 p-3 space-y-2">
                     <Label>Tags</Label>
                     <div className="flex flex-wrap gap-2">
                       {(Array.isArray(lead?.tags) ? lead.tags : []).map((t: string) => (
@@ -578,7 +633,7 @@ function DialerWorkspaceInner() {
                     </div>
                   </div>
 
-                  <div className="grid gap-2">
+                  <div className="rounded-lg border border-border/70 bg-background/60 p-3 space-y-2">
                     <Label>Script</Label>
                     <div className="flex gap-2">
                       <select
@@ -718,7 +773,7 @@ function DialerWorkspaceInner() {
                     </div>
                   </div>
 
-                  <div className="grid gap-2">
+                  <div className="rounded-lg border border-border/70 bg-background/60 p-3 space-y-2">
                     <Label>SMS</Label>
                     <div className="flex flex-wrap gap-2">
                       <Button
@@ -746,7 +801,7 @@ function DialerWorkspaceInner() {
                     </Button>
                   </div>
 
-                  <div className="grid gap-2">
+                  <div className="rounded-lg border border-border/70 bg-background/60 p-3 space-y-2">
                     <Label>Call Log</Label>
                     <select
                       className="h-10 rounded-md border border-input bg-background px-3 text-sm"
@@ -790,7 +845,10 @@ function DialerWorkspaceInner() {
                   </div>
                 </div>
 
-                <EntityActivity leadId={activeItem.leadId} />
+                <div className="rounded-lg border border-border/70 bg-background/60 p-3">
+                  <div className="text-sm font-medium mb-2">Activity</div>
+                  <EntityActivity leadId={activeItem.leadId} />
+                </div>
               </>
             )}
           </CardContent>
