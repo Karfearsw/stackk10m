@@ -2998,6 +2998,14 @@ export async function registerRoutes(
       const { limit, offset } = parseLimitOffset(req.query);
       const q = typeof req.query?.q === "string" ? req.query.q : "";
       const status = typeof req.query?.status === "string" ? req.query.status : "";
+      const statusInRaw = typeof req.query?.statusIn === "string" ? req.query.statusIn : "";
+      const statusIn = statusInRaw
+        ? statusInRaw
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => !!s && s.length <= 50)
+            .slice(0, 10)
+        : undefined;
       const owner = typeof req.query?.owner === "string" ? req.query.owner : "";
       const zip = typeof req.query?.zip === "string" ? req.query.zip : "";
       const state = typeof req.query?.state === "string" ? req.query.state : "";
@@ -3078,6 +3086,7 @@ export async function registerRoutes(
       const { items, total } = await storage.listLeads({
         q,
         status,
+        statusIn,
         owner,
         zip,
         state,
@@ -8931,6 +8940,9 @@ export async function registerRoutes(
   app.get("/api/activity", async (req, res) => {
     try {
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+      const group = String(req.query.group || "").trim().toLowerCase() === "true";
+      const windowMinutesRaw = req.query.windowMinutes ? parseInt(req.query.windowMinutes as string) : 15;
+      const windowMinutes = Number.isFinite(windowMinutesRaw) ? Math.min(Math.max(windowMinutesRaw, 1), 60) : 15;
       const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
       const leadId = req.query.leadId ? parseInt(req.query.leadId as string) : undefined;
       const playgroundSessionIdRaw = req.query.playgroundSessionId ?? req.query.sessionId;
@@ -8952,9 +8964,49 @@ export async function registerRoutes(
         return true;
       });
 
+      const filteredOrGrouped = !group
+        ? filtered
+        : (() => {
+            const out: any[] = [];
+            const windowMs = windowMinutes * 60 * 1000;
+            for (const log of filtered) {
+              const createdAtMs = new Date(log.createdAt as any).getTime();
+              const meta = log.metadataParsed || {};
+              const key = [
+                String(log.userId ?? ""),
+                String(log.action ?? ""),
+                String(log.description ?? ""),
+                String(meta?.leadId ?? ""),
+                String(meta?.propertyId ?? ""),
+                String(meta?.playgroundSessionId ?? ""),
+              ].join("|");
+              const last = out[out.length - 1];
+              if (
+                last &&
+                last.__groupKey === key &&
+                Number.isFinite(last.__createdAtMs) &&
+                Number.isFinite(createdAtMs) &&
+                last.__createdAtMs - createdAtMs <= windowMs
+              ) {
+                last.groupCount = Number(last.groupCount || 1) + 1;
+                continue;
+              }
+              out.push({
+                ...log,
+                groupCount: 1,
+                __groupKey: key,
+                __createdAtMs: createdAtMs,
+              });
+            }
+            return out.map((l: any) => {
+              const { __groupKey, __createdAtMs, ...rest } = l;
+              return rest;
+            });
+          })();
+
       const userIds = Array.from(
         new Set(
-          filtered
+          filteredOrGrouped
             .map((log: any) => (typeof log.userId === "number" ? log.userId : null))
             .filter((id: any) => typeof id === "number" && Number.isFinite(id) && id !== 0),
         ),
@@ -8976,7 +9028,7 @@ export async function registerRoutes(
 
       const usersById = new Map<number, any>(userRows.map((u: any) => [u.id, u]));
 
-      const out = filtered.map((log: any) => {
+      const out = filteredOrGrouped.map((log: any) => {
         const user =
           log.userId === 0
             ? {

@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { FileText, Download, Plus, Eye, Save, FileSignature, CheckCircle, Send, Clock, DollarSign, ChevronRight, ArrowRight } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { useLocation } from "wouter";
 
 const statusColors: Record<string, string> = {
   draft: "bg-gray-500",
@@ -24,15 +25,25 @@ const statusColors: Record<string, string> = {
 export default function ContractGenerator() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [location, setLocation] = useLocation();
   const [activeTab, setActiveTab] = useState("list");
   const deepLink = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get("tab") || "";
     const propertyIdRaw = params.get("propertyId") || "";
     const propertyId = propertyIdRaw ? parseInt(propertyIdRaw, 10) : 0;
+    const status = String(params.get("status") || "").trim();
+    const statusInRaw = String(params.get("statusIn") || "").trim();
+    const statusIn = statusInRaw
+      ? statusInRaw
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .slice(0, 10)
+      : (status ? [status] : []);
     const validTab = tab && ["list", "create", "closing", "templates", "lois"].includes(tab) ? tab : "";
-    return { tab: validTab, propertyId: Number.isFinite(propertyId) ? propertyId : 0 };
-  }, []);
+    return { tab: validTab, propertyId: Number.isFinite(propertyId) ? propertyId : 0, statusIn };
+  }, [location]);
 
   useEffect(() => {
     if (deepLink.tab) setActiveTab(deepLink.tab);
@@ -57,6 +68,12 @@ export default function ContractGenerator() {
   const { data: properties = [] } = useQuery<any[]>({
     queryKey: ['/api/properties'],
   });
+
+  const contractsForList = useMemo(() => {
+    if (!deepLink.statusIn?.length) return contracts;
+    const set = new Set(deepLink.statusIn);
+    return (contracts || []).filter((c: any) => set.has(String(c?.status || "")));
+  }, [contracts, deepLink.statusIn]);
 
   return (
     <Layout>
@@ -98,7 +115,13 @@ export default function ContractGenerator() {
 
           {/* Contracts List Tab */}
           <TabsContent value="list" className="space-y-4">
-            <ContractsList contracts={contracts} isLoading={contractsLoading} onCreateNew={() => setActiveTab("create")} />
+            <ContractsList
+              contracts={contractsForList}
+              isLoading={contractsLoading}
+              onCreateNew={() => setActiveTab("create")}
+              statusInFilter={deepLink.statusIn}
+              onClearFilter={() => setLocation("/contracts?tab=list")}
+            />
           </TabsContent>
           
           {/* Closing Tab */}
@@ -693,7 +716,19 @@ function LOICreator({ properties, onClose }: { properties: any[], onClose: () =>
   );
 }
 
-function ContractsList({ contracts, isLoading, onCreateNew }: { contracts: any[], isLoading: boolean, onCreateNew: () => void }) {
+function ContractsList({
+  contracts,
+  isLoading,
+  onCreateNew,
+  statusInFilter,
+  onClearFilter,
+}: {
+  contracts: any[];
+  isLoading: boolean;
+  onCreateNew: () => void;
+  statusInFilter?: string[];
+  onClearFilter?: () => void;
+}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [sendOpen, setSendOpen] = useState(false);
@@ -770,6 +805,16 @@ function ContractsList({ contracts, isLoading, onCreateNew }: { contracts: any[]
           <div>
             <CardTitle>Active Contracts</CardTitle>
             <CardDescription>View and manage all contract documents</CardDescription>
+            {statusInFilter?.length ? (
+              <div className="mt-2 flex items-center gap-2 text-xs">
+                <Badge variant="outline">Filtered: {statusInFilter.join(", ")}</Badge>
+                {onClearFilter ? (
+                  <button type="button" className="text-primary hover:underline" onClick={onClearFilter}>
+                    Clear
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2 text-sm">

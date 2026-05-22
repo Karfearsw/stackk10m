@@ -99,6 +99,7 @@ function parseFiltersFromUrl() {
   return {
     query: get("q"),
     status: get("status") || "all",
+    statusIn: get("statusIn"),
     owner: get("owner"),
     zip: get("zip"),
     state: get("state"),
@@ -135,6 +136,7 @@ function writeFiltersToUrl(filters: any) {
   };
   set("q", filters.query);
   if (filters.status && filters.status !== "all") set("status", filters.status);
+  set("statusIn", filters.statusIn);
   set("owner", filters.owner);
   set("zip", filters.zip);
   set("state", filters.state);
@@ -211,6 +213,16 @@ export default function Leads() {
   const leadsQueryKey = useMemo(() => ["leads", appliedFilters], [appliedFilters]);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const add = params.get("add") || "";
+    if (add !== "1") return;
+    setIsAddDialogOpen(true);
+    params.delete("add");
+    const nextQs = params.toString();
+    window.history.replaceState({}, "", `/leads${nextQs ? `?${nextQs}` : ""}`);
+  }, []);
+
+  useEffect(() => {
     setSelectionMode("explicit");
     setSelectedIds(new Set());
     setExcludedIds(new Set());
@@ -267,7 +279,8 @@ export default function Leads() {
       p.set("limit", String(pageSize));
       p.set("offset", String(pageParam || 0));
       if (appliedFilters.query?.trim()) p.set("q", appliedFilters.query.trim());
-      if (appliedFilters.status && appliedFilters.status !== "all") p.set("status", appliedFilters.status);
+      if (appliedFilters.statusIn?.trim()) p.set("statusIn", appliedFilters.statusIn.trim());
+      else if (appliedFilters.status && appliedFilters.status !== "all") p.set("status", appliedFilters.status);
       if (appliedFilters.owner?.trim()) p.set("owner", appliedFilters.owner.trim());
       if (appliedFilters.zip?.trim()) p.set("zip", appliedFilters.zip.trim());
       if (appliedFilters.state?.trim()) p.set("state", appliedFilters.state.trim());
@@ -1021,6 +1034,7 @@ export default function Leads() {
       setFilters({
         query: "",
         status: "all",
+        statusIn: "",
         owner: "",
         zip: "",
         state: "",
@@ -1085,6 +1099,7 @@ export default function Leads() {
       ...prev,
       query: "",
       status: "all",
+      statusIn: "",
       owner: "",
       zip: "",
       state: "",
@@ -1129,6 +1144,25 @@ export default function Leads() {
           {leadsTotal ? (
             <div className="text-xs text-muted-foreground">
               Showing {Math.min(leads.length, leadsTotal).toLocaleString()} of {leadsTotal.toLocaleString()}
+            </div>
+          ) : null}
+          {filters.statusIn?.trim() ? (
+            <div className="flex items-center gap-2 text-xs">
+              <Badge variant="secondary">Multi-status</Badge>
+              <span className="text-muted-foreground">{filters.statusIn}</span>
+              <button
+                type="button"
+                className="text-primary hover:underline"
+                onClick={() =>
+                  setFilters((prev: any) => ({
+                    ...prev,
+                    statusIn: "",
+                    status: "all",
+                  }))
+                }
+              >
+                Clear
+              </button>
             </div>
           ) : null}
         </div>
