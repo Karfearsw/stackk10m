@@ -58,6 +58,7 @@ export function XpBookingsFilters({
             <SelectItem value="pending_payment">Pending payment</SelectItem>
             <SelectItem value="confirmed">Confirmed</SelectItem>
             <SelectItem value="cancelled">Cancelled</SelectItem>
+            <SelectItem value="refunded">Refunded</SelectItem>
           </SelectContent>
         </Select>
       </div>

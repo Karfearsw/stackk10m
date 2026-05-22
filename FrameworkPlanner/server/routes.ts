@@ -959,6 +959,12 @@ export async function registerRoutes(
       if (booking && String((booking as any).status) !== "confirmed") {
         const confirmed = await storage.confirmXpBookingByStripeSessionId({ sessionId, paymentIntentId, stripeCustomerId });
         if (confirmed) {
+          await storage.createXpBookingEvent({
+            bookingId: (confirmed as any).id,
+            type: "payment_confirmed",
+            payload: { sessionId, paymentIntentId, stripeCustomerId },
+            createdByUserId: null,
+          } as any);
           const admin = await xpPickAdminUser();
           if (admin) {
             await createTask({
@@ -1223,6 +1229,9 @@ export async function registerRoutes(
     const locationId = typeof req.query.locationId === "string" && String(req.query.locationId).trim() ? parseInt(String(req.query.locationId), 10) : undefined;
     const vehicleId = typeof req.query.vehicleId === "string" && String(req.query.vehicleId).trim() ? parseInt(String(req.query.vehicleId), 10) : undefined;
     const conciergeUserIdQuery = typeof req.query.conciergeUserId === "string" && String(req.query.conciergeUserId).trim() ? parseInt(String(req.query.conciergeUserId), 10) : undefined;
+    const missingConcierge = String(req.query.missingConcierge || "").trim() === "1" || String(req.query.missingConcierge || "").trim().toLowerCase() === "true";
+    const missingVehicle = String(req.query.missingVehicle || "").trim() === "1" || String(req.query.missingVehicle || "").trim().toLowerCase() === "true";
+    const missingLocation = String(req.query.missingLocation || "").trim() === "1" || String(req.query.missingLocation || "").trim().toLowerCase() === "true";
     const from = req.query.from ? xpParseDate(req.query.from) || undefined : undefined;
     const to = req.query.to ? xpParseDate(req.query.to) || undefined : undefined;
     const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : undefined;
@@ -1240,10 +1249,313 @@ export async function registerRoutes(
           : undefined,
       locationId: typeof locationId === "number" && Number.isFinite(locationId) ? locationId : undefined,
       vehicleId: typeof vehicleId === "number" && Number.isFinite(vehicleId) ? vehicleId : undefined,
+      missingConcierge: !isConciergeUser(user) && missingConcierge ? true : undefined,
+      missingVehicle: missingVehicle ? true : undefined,
+      missingLocation: missingLocation ? true : undefined,
       limit: Number.isFinite(limit as any) ? (limit as any) : undefined,
       offset: Number.isFinite(offset as any) ? (offset as any) : undefined,
     });
+    const now = Date.now();
+    const items = (out.items || []).map((b: any) => {
+      const status = String(b?.status || "").toLowerCase();
+      const createdAt = b?.createdAt ? new Date(b.createdAt) : null;
+      const startAt = b?.startAt ? new Date(b.startAt) : null;
+      const createdOk = createdAt && Number.isFinite(createdAt.getTime());
+      const startOk = startAt && Number.isFinite(startAt.getTime());
+      const paymentStaleMs = 30 * 60 * 1000;
+      const startsSoonMs = 24 * 60 * 60 * 1000;
+      const paymentStale = status === "pending_payment" && createdOk ? now - createdAt!.getTime() > paymentStaleMs : false;
+      const startsSoon = startOk ? startAt!.getTime() - now > 0 && startAt!.getTime() - now < startsSoonMs : false;
+      const missingConcierge = !b?.assignment?.conciergeUserId;
+      const missingVehicle = !b?.assignment?.vehicleId;
+      const missingLocation = !b?.assignment?.locationId;
+      const hasRefund = status === "refunded";
+      return { ...b, opsFlags: { paymentStale, startsSoon, missingConcierge, missingVehicle, missingLocation, hasRefund } };
+    });
+    return res.json({ ...out, items });
+  });
+
+  app.get("/api/xp/admin/bookings/summary", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
+
+    const experienceIdRaw = req.query.experienceId;
+    const experienceId = typeof experienceIdRaw === "string" && experienceIdRaw.trim() ? parseInt(experienceIdRaw, 10) : undefined;
+    const status = typeof req.query.status === "string" && req.query.status.trim() ? String(req.query.status).trim() : undefined;
+    const kind = typeof req.query.kind === "string" && req.query.kind.trim() ? String(req.query.kind).trim() : undefined;
+    const locationId = typeof req.query.locationId === "string" && String(req.query.locationId).trim() ? parseInt(String(req.query.locationId), 10) : undefined;
+    const vehicleId = typeof req.query.vehicleId === "string" && String(req.query.vehicleId).trim() ? parseInt(String(req.query.vehicleId), 10) : undefined;
+    const conciergeUserIdQuery = typeof req.query.conciergeUserId === "string" && String(req.query.conciergeUserId).trim() ? parseInt(String(req.query.conciergeUserId), 10) : undefined;
+    const missingConcierge = String(req.query.missingConcierge || "").trim() === "1" || String(req.query.missingConcierge || "").trim().toLowerCase() === "true";
+    const missingVehicle = String(req.query.missingVehicle || "").trim() === "1" || String(req.query.missingVehicle || "").trim().toLowerCase() === "true";
+    const missingLocation = String(req.query.missingLocation || "").trim() === "1" || String(req.query.missingLocation || "").trim().toLowerCase() === "true";
+    const from = req.query.from ? xpParseDate(req.query.from) || undefined : undefined;
+    const to = req.query.to ? xpParseDate(req.query.to) || undefined : undefined;
+    const arrivalsFrom = req.query.arrivalsFrom ? xpParseDate(req.query.arrivalsFrom) || undefined : undefined;
+    const arrivalsTo = req.query.arrivalsTo ? xpParseDate(req.query.arrivalsTo) || undefined : undefined;
+
+    const out = await storage.getXpBookingsOpsSummary({
+      experienceId: typeof experienceId === "number" && Number.isFinite(experienceId) ? experienceId : undefined,
+      status,
+      kind,
+      from: from || undefined,
+      to: to || undefined,
+      conciergeUserId: isConciergeUser(user)
+        ? Number(user.id)
+        : typeof conciergeUserIdQuery === "number" && Number.isFinite(conciergeUserIdQuery)
+          ? conciergeUserIdQuery
+          : undefined,
+      locationId: typeof locationId === "number" && Number.isFinite(locationId) ? locationId : undefined,
+      vehicleId: typeof vehicleId === "number" && Number.isFinite(vehicleId) ? vehicleId : undefined,
+      missingConcierge: !isConciergeUser(user) && missingConcierge ? true : undefined,
+      missingVehicle: missingVehicle ? true : undefined,
+      missingLocation: missingLocation ? true : undefined,
+      arrivalsFrom: arrivalsFrom || undefined,
+      arrivalsTo: arrivalsTo || undefined,
+    });
+
     return res.json(out);
+  });
+
+  app.post("/api/xp/admin/bookings/checkout", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+
+    const body = req.body || {};
+    const experienceIdRaw = body.experienceId;
+    const experienceSlug = String(body.experienceSlug || "").trim();
+    const experienceId = experienceIdRaw !== undefined && experienceIdRaw !== null && String(experienceIdRaw).trim() ? parseInt(String(experienceIdRaw), 10) : null;
+
+    const experience = Number.isFinite(experienceId as any)
+      ? await storage.getXpExperienceById(Number(experienceId))
+      : experienceSlug
+        ? await storage.getXpExperienceBySlug(experienceSlug)
+        : null;
+    if (!experience || !(experience as any).active) return res.status(404).json({ message: "Not found" });
+
+    const mode = String((experience as any).mode || "time_slot");
+    const kindRaw = String(body.kind || "").trim();
+    const kind = kindRaw === "date_range" ? "date_range" : "time_slot";
+    if (mode !== "both" && mode !== kind) return res.status(400).json({ message: "Invalid kind for experience" });
+
+    const customerName = String(body.customerName || "").trim();
+    const customerEmail = String(body.customerEmail || "").trim();
+    const customerPhone = String(body.customerPhone || "").trim() || null;
+    if (!customerName || !customerEmail) return res.status(400).json({ message: "Missing customer fields" });
+
+    const startAt = xpParseDate(body.startAt);
+    const endAt = xpParseDate(body.endAt);
+    if (!startAt || !endAt) return res.status(400).json({ message: "Missing startAt/endAt" });
+    if (endAt.getTime() <= startAt.getTime()) return res.status(400).json({ message: "Invalid window" });
+
+    const resolvedExperienceId = Number((experience as any).id);
+    if (await storage.hasXpBlackoutOverlap({ experienceId: resolvedExperienceId, startAt, endAt })) {
+      return res.status(409).json({ message: "Unavailable" });
+    }
+
+    if (kind === "time_slot") {
+      const slots = await storage.listXpTimeSlots(resolvedExperienceId, { from: startAt, to: startAt, activeOnly: true });
+      const slot = slots.find((s: any) => new Date(s.startAt).getTime() === startAt.getTime() && new Date(s.endAt).getTime() === endAt.getTime());
+      if (!slot) return res.status(404).json({ message: "Time slot not found" });
+      const usedRows: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS c
+        FROM xp_bookings
+        WHERE experience_id = ${resolvedExperienceId}
+          AND kind = ${kind}
+          AND status IN ('pending_payment', 'confirmed')
+          AND start_at < ${endAt}
+          AND end_at > ${startAt}
+      `);
+      const used = Number((usedRows as any).rows?.[0]?.c || 0);
+      const cap = Number((slot as any).capacity || 1);
+      if (used >= cap) return res.status(409).json({ message: "Unavailable" });
+    } else {
+      const usedRows: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS c
+        FROM xp_bookings
+        WHERE experience_id = ${resolvedExperienceId}
+          AND kind = ${kind}
+          AND status IN ('pending_payment', 'confirmed')
+          AND start_at < ${endAt}
+          AND end_at > ${startAt}
+      `);
+      const used = Number((usedRows as any).rows?.[0]?.c || 0);
+      const cap = Number((experience as any).capacity || 1);
+      if (used >= cap) return res.status(409).json({ message: "Unavailable" });
+    }
+
+    const paymentModeRaw = String((experience as any).paymentMode || "deposit").trim().toLowerCase();
+    const paymentMode = xpPaymentModeSchema.safeParse(paymentModeRaw);
+    if (!paymentMode.success) return res.status(400).json({ message: "Invalid payment mode" });
+
+    const dueNowAmount = paymentMode.data === "full" ? (experience as any).priceTotal : (experience as any).depositAmount;
+    const cents = xpMoneyToCents(dueNowAmount);
+    if (!cents) return res.status(400).json({ message: "Invalid amount" });
+
+    const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
+    if (!stripeKey) return res.status(500).json({ message: "Stripe is not configured" });
+
+    const booking = await storage.createXpBookingPending({
+      experienceId: resolvedExperienceId,
+      kind,
+      customerName,
+      customerEmail,
+      customerPhone,
+      startAt,
+      endAt,
+      status: "pending_payment",
+      currency: String((experience as any).currency || "USD"),
+      depositAmount: dueNowAmount,
+      stripeCheckoutSessionId: null,
+      stripePaymentIntentId: null,
+      stripeCustomerId: null,
+    } as any);
+
+    const stripe = new Stripe(stripeKey, { apiVersion: stripeApiVersion });
+    const originBase = String(process.env.APP_BASE_URL || "").trim();
+    const origin = originBase || `${req.protocol}://${req.get("host")}`;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      success_url: `${origin}/xp/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${origin}/xp/checkout/cancel`,
+      customer_email: customerEmail,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: String((experience as any).currency || "USD").trim().toLowerCase() || "usd",
+            unit_amount: cents,
+            product_data: {
+              name:
+                paymentMode.data === "full"
+                  ? String((experience as any).title || "Experience")
+                  : `${String((experience as any).title || "Experience")} (Deposit)`,
+            },
+          },
+        },
+      ],
+      metadata: {
+        bookingId: String((booking as any).id),
+        experienceId: String(resolvedExperienceId),
+        kind,
+        paymentMode: paymentMode.data,
+      },
+    });
+
+    await storage.updateXpBookingStripeSession((booking as any).id, session.id);
+
+    const checkoutUrl = typeof session.url === "string" ? session.url : null;
+    await storage.createXpBookingEvent({
+      bookingId: (booking as any).id,
+      type: "admin_checkout_created",
+      payload: { checkoutSessionId: session.id, checkoutUrl },
+      createdByUserId: user.id,
+    } as any);
+
+    const sendEmail = Boolean(body.sendEmail);
+    const sendSms = Boolean(body.sendSms);
+    const template = String(body.messageTemplate || "payment_link").trim();
+    const customMessage = String(body.customMessage || "").trim();
+
+    function ensureLink(text: string) {
+      if (!checkoutUrl) return text;
+      if (text.includes(checkoutUrl)) return text;
+      return `${text}\n\n${checkoutUrl}`.trim();
+    }
+
+    const whenStr = (() => {
+      try {
+        return new Date(startAt).toLocaleString();
+      } catch {
+        return startAt.toISOString();
+      }
+    })();
+
+    const defaultBody = ensureLink(
+      `Hi ${customerName},\n\nComplete your Ocean Luxe experience booking for ${String((experience as any).title || "Experience")} (${whenStr}).`,
+    );
+    const messageBody = template === "custom" && customMessage ? ensureLink(customMessage) : defaultBody;
+
+    const sendResult: any = {};
+
+    if (sendEmail && checkoutUrl) {
+      try {
+        const subject = `Ocean Luxe XP booking payment link`;
+        const out = await sendResendEmail({ to: customerEmail, subject, text: messageBody });
+        await storage.createXpBookingMessage({
+          bookingId: (booking as any).id,
+          channel: "email",
+          toAddress: customerEmail,
+          fromAddress: String(process.env.RESEND_FROM || "").trim() || null,
+          subject,
+          body: messageBody,
+          provider: "resend",
+          providerMessageId: out.id,
+          status: "sent",
+          error: null,
+          createdByUserId: user.id,
+        } as any);
+        await storage.createXpBookingEvent({ bookingId: (booking as any).id, type: "message_sent", payload: { channel: "email", to: customerEmail }, createdByUserId: user.id } as any);
+        sendResult.email = { ok: true, id: out.id };
+      } catch (e: any) {
+        await storage.createXpBookingMessage({
+          bookingId: (booking as any).id,
+          channel: "email",
+          toAddress: customerEmail,
+          fromAddress: String(process.env.RESEND_FROM || "").trim() || null,
+          subject: "Ocean Luxe XP booking payment link",
+          body: messageBody,
+          provider: "resend",
+          providerMessageId: null,
+          status: "failed",
+          error: String(e?.message || e),
+          createdByUserId: user.id,
+        } as any);
+        sendResult.email = { ok: false, error: String(e?.message || e) };
+      }
+    }
+
+    if (sendSms && checkoutUrl && customerPhone) {
+      try {
+        const from = String(process.env.DIALER_DEFAULT_FROM_NUMBER || process.env.SIGNALWIRE_FROM_NUMBER || "").trim() || undefined;
+        const out = await sendSignalWireSms({ to: customerPhone, body: messageBody, from });
+        await storage.createXpBookingMessage({
+          bookingId: (booking as any).id,
+          channel: "sms",
+          toAddress: customerPhone,
+          fromAddress: from || null,
+          subject: null,
+          body: messageBody,
+          provider: "signalwire",
+          providerMessageId: out.messageSid || null,
+          status: "queued",
+          error: null,
+          createdByUserId: user.id,
+        } as any);
+        await storage.createXpBookingEvent({ bookingId: (booking as any).id, type: "message_sent", payload: { channel: "sms", to: customerPhone }, createdByUserId: user.id } as any);
+        sendResult.sms = { ok: true, sid: out.messageSid };
+      } catch (e: any) {
+        await storage.createXpBookingMessage({
+          bookingId: (booking as any).id,
+          channel: "sms",
+          toAddress: customerPhone,
+          fromAddress: String(process.env.DIALER_DEFAULT_FROM_NUMBER || process.env.SIGNALWIRE_FROM_NUMBER || "").trim() || null,
+          subject: null,
+          body: messageBody,
+          provider: "signalwire",
+          providerMessageId: null,
+          status: "failed",
+          error: String(e?.message || e),
+          createdByUserId: user.id,
+        } as any);
+        sendResult.sms = { ok: false, error: String(e?.message || e) };
+      }
+    }
+
+    return res.status(201).json({ booking, checkoutUrl, sendResult });
   });
 
   app.get("/api/xp/admin/bookings/:id", async (req, res) => {
@@ -1258,7 +1570,289 @@ export async function registerRoutes(
       return res.status(404).json({ message: "Not found" });
     }
     const experience = await storage.getXpExperienceById(Number((booking as any).experienceId));
-    return res.json({ booking, experience: experience || null });
+    const events = await storage.listXpBookingEvents(id, { limit: 100 });
+    const messages = await storage.listXpBookingMessages(id, { limit: 50 });
+    const refunds = await storage.listXpBookingRefunds(id, { limit: 50 });
+    return res.json({ booking, experience: experience || null, events, messages, refunds });
+  });
+
+  app.get("/api/xp/admin/bookings/:id/payment-link", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const booking = await storage.getXpBookingById(id);
+    if (!booking) return res.status(404).json({ message: "Not found" });
+    if (isConciergeUser(user) && Number(booking.assignment?.conciergeUserId || 0) !== Number(user.id)) {
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    const sessionId = String((booking as any).stripeCheckoutSessionId || "").trim();
+    if (!sessionId) return res.status(404).json({ message: "No checkout session" });
+
+    const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
+    if (!stripeKey) return res.status(500).json({ message: "Stripe is not configured" });
+    const stripe = new Stripe(stripeKey, { apiVersion: stripeApiVersion });
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    const checkoutUrl = typeof (session as any)?.url === "string" ? (session as any).url : null;
+    return res.json({ checkoutUrl });
+  });
+
+  app.get("/api/xp/admin/bookings/:id/events", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const booking = await storage.getXpBookingById(id);
+    if (!booking) return res.status(404).json({ message: "Not found" });
+    if (isConciergeUser(user) && Number(booking.assignment?.conciergeUserId || 0) !== Number(user.id)) {
+      return res.status(404).json({ message: "Not found" });
+    }
+    const items = await storage.listXpBookingEvents(id, { limit: 200 });
+    return res.json({ items });
+  });
+
+  app.get("/api/xp/admin/bookings/:id/messages", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const booking = await storage.getXpBookingById(id);
+    if (!booking) return res.status(404).json({ message: "Not found" });
+    if (isConciergeUser(user) && Number(booking.assignment?.conciergeUserId || 0) !== Number(user.id)) {
+      return res.status(404).json({ message: "Not found" });
+    }
+    const items = await storage.listXpBookingMessages(id, { limit: 100 });
+    return res.json({ items });
+  });
+
+  app.post("/api/xp/admin/bookings/:id/messages", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const booking = await storage.getXpBookingById(id);
+    if (!booking) return res.status(404).json({ message: "Not found" });
+    if (isConciergeUser(user) && Number(booking.assignment?.conciergeUserId || 0) !== Number(user.id)) {
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    const channel = String(req.body?.channel || "").trim().toLowerCase();
+    const bodyText = String(req.body?.body || "").trim();
+    if (!bodyText) return res.status(400).json({ message: "Missing body" });
+    if (bodyText.length > 4000) return res.status(400).json({ message: "Body too long" });
+
+    if (channel !== "email" && channel !== "sms") return res.status(400).json({ message: "Invalid channel" });
+
+    if (channel === "email") {
+      const to = String(req.body?.to || (booking as any).customerEmail || "").trim();
+      if (!to) return res.status(400).json({ message: "Missing to" });
+      const subject = String(req.body?.subject || "Ocean Luxe XP booking").trim() || "Ocean Luxe XP booking";
+      try {
+        const out = await sendResendEmail({ to, subject, text: bodyText });
+        const message = await storage.createXpBookingMessage({
+          bookingId: id,
+          channel: "email",
+          toAddress: to,
+          fromAddress: String(process.env.RESEND_FROM || "").trim() || null,
+          subject,
+          body: bodyText,
+          provider: "resend",
+          providerMessageId: out.id,
+          status: "sent",
+          error: null,
+          createdByUserId: user.id,
+        } as any);
+        await storage.createXpBookingEvent({ bookingId: id, type: "message_sent", payload: { channel: "email", to }, createdByUserId: user.id } as any);
+        return res.status(201).json({ message });
+      } catch (e: any) {
+        const message = await storage.createXpBookingMessage({
+          bookingId: id,
+          channel: "email",
+          toAddress: to,
+          fromAddress: String(process.env.RESEND_FROM || "").trim() || null,
+          subject,
+          body: bodyText,
+          provider: "resend",
+          providerMessageId: null,
+          status: "failed",
+          error: String(e?.message || e),
+          createdByUserId: user.id,
+        } as any);
+        return res.status(502).json({ message: "Email send failed", record: message });
+      }
+    }
+
+    const to = String(req.body?.to || (booking as any).customerPhone || "").trim();
+    if (!to) return res.status(400).json({ message: "Missing to" });
+    const from = String(req.body?.from || process.env.DIALER_DEFAULT_FROM_NUMBER || process.env.SIGNALWIRE_FROM_NUMBER || "").trim() || undefined;
+    try {
+      const out = await sendSignalWireSms({ to, body: bodyText, from });
+      const message = await storage.createXpBookingMessage({
+        bookingId: id,
+        channel: "sms",
+        toAddress: to,
+        fromAddress: from || null,
+        subject: null,
+        body: bodyText,
+        provider: "signalwire",
+        providerMessageId: out.messageSid || null,
+        status: "queued",
+        error: null,
+        createdByUserId: user.id,
+      } as any);
+      await storage.createXpBookingEvent({ bookingId: id, type: "message_sent", payload: { channel: "sms", to }, createdByUserId: user.id } as any);
+      return res.status(201).json({ message });
+    } catch (e: any) {
+      const message = await storage.createXpBookingMessage({
+        bookingId: id,
+        channel: "sms",
+        toAddress: to,
+        fromAddress: from || null,
+        subject: null,
+        body: bodyText,
+        provider: "signalwire",
+        providerMessageId: null,
+        status: "failed",
+        error: String(e?.message || e),
+        createdByUserId: user.id,
+      } as any);
+      return res.status(502).json({ message: "SMS send failed", record: message });
+    }
+  });
+
+  app.get("/api/xp/admin/bookings/:id/refunds", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const booking = await storage.getXpBookingById(id);
+    if (!booking) return res.status(404).json({ message: "Not found" });
+    if (isConciergeUser(user) && Number(booking.assignment?.conciergeUserId || 0) !== Number(user.id)) {
+      return res.status(404).json({ message: "Not found" });
+    }
+    const items = await storage.listXpBookingRefunds(id, { limit: 100 });
+    return res.json({ items });
+  });
+
+  app.post("/api/xp/admin/bookings/:id/refund", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const booking = await storage.getXpBookingById(id);
+    if (!booking) return res.status(404).json({ message: "Not found" });
+
+    const status = String((booking as any).status || "").toLowerCase();
+    if (status === "refunded") return res.status(409).json({ message: "Already refunded" });
+    if (status !== "confirmed") return res.status(400).json({ message: "Only confirmed bookings can be refunded" });
+
+    const paymentIntentId = String((booking as any).stripePaymentIntentId || "").trim();
+    if (!paymentIntentId) return res.status(400).json({ message: "Missing payment intent" });
+
+    const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
+    if (!stripeKey) return res.status(500).json({ message: "Stripe is not configured" });
+
+    const stripe = new Stripe(stripeKey, { apiVersion: stripeApiVersion });
+    const refund = await stripe.refunds.create({ payment_intent: paymentIntentId, metadata: { bookingId: String(id) } });
+
+    const refundRow = await storage.createXpBookingRefund({
+      bookingId: id,
+      stripeRefundId: String((refund as any).id || ""),
+      stripePaymentIntentId: paymentIntentId,
+      currency: String((refund as any).currency || (booking as any).currency || "USD").toUpperCase(),
+      amountCents: typeof (refund as any).amount === "number" ? (refund as any).amount : null,
+      status: String((refund as any).status || "created"),
+      createdByUserId: user.id,
+    } as any);
+
+    const updated = await storage.setXpBookingStatus(id, "refunded");
+    await storage.createXpBookingEvent({ bookingId: id, type: "refunded", payload: { stripeRefundId: refundRow.stripeRefundId }, createdByUserId: user.id } as any);
+
+    return res.json({ refund: refundRow, booking: updated || booking });
+  });
+
+  app.put("/api/xp/admin/bookings/:id/reschedule", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const booking = await storage.getXpBookingById(id);
+    if (!booking) return res.status(404).json({ message: "Not found" });
+    if (isConciergeUser(user) && Number(booking.assignment?.conciergeUserId || 0) !== Number(user.id)) {
+      return res.status(404).json({ message: "Not found" });
+    }
+
+    const status = String((booking as any).status || "").toLowerCase();
+    if (status === "cancelled" || status === "refunded") return res.status(400).json({ message: "Booking is not active" });
+
+    const startAt = xpParseDate(req.body?.startAt);
+    const endAt = xpParseDate(req.body?.endAt);
+    if (!startAt || !endAt) return res.status(400).json({ message: "Missing startAt/endAt" });
+    if (endAt.getTime() <= startAt.getTime()) return res.status(400).json({ message: "Invalid window" });
+
+    const experienceId = Number((booking as any).experienceId);
+    const kind = String((booking as any).kind || "time_slot");
+    const experience = await storage.getXpExperienceById(experienceId);
+    if (!experience) return res.status(404).json({ message: "Experience not found" });
+
+    if (await storage.hasXpBlackoutOverlap({ experienceId, startAt, endAt })) {
+      return res.status(409).json({ message: "Unavailable" });
+    }
+
+    if (kind === "time_slot") {
+      const slots = await storage.listXpTimeSlots(experienceId, { from: startAt, to: startAt, activeOnly: true });
+      const slot = slots.find((s: any) => new Date(s.startAt).getTime() === startAt.getTime() && new Date(s.endAt).getTime() === endAt.getTime());
+      if (!slot) return res.status(404).json({ message: "Time slot not found" });
+      const usedRows: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS c
+        FROM xp_bookings
+        WHERE experience_id = ${experienceId}
+          AND kind = ${kind}
+          AND status IN ('pending_payment', 'confirmed')
+          AND id <> ${id}
+          AND start_at < ${endAt}
+          AND end_at > ${startAt}
+      `);
+      const used = Number((usedRows as any).rows?.[0]?.c || 0);
+      const cap = Number((slot as any).capacity || 1);
+      if (used >= cap) return res.status(409).json({ message: "Unavailable" });
+    } else {
+      const usedRows: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS c
+        FROM xp_bookings
+        WHERE experience_id = ${experienceId}
+          AND kind = ${kind}
+          AND status IN ('pending_payment', 'confirmed')
+          AND id <> ${id}
+          AND start_at < ${endAt}
+          AND end_at > ${startAt}
+      `);
+      const used = Number((usedRows as any).rows?.[0]?.c || 0);
+      const cap = Number((experience as any).capacity || 1);
+      if (used >= cap) return res.status(409).json({ message: "Unavailable" });
+    }
+
+    const before = { startAt: (booking as any).startAt, endAt: (booking as any).endAt };
+    const updated = await storage.updateXpBookingWindow(id, { startAt, endAt });
+    await storage.createXpBookingEvent({ bookingId: id, type: "rescheduled", payload: { before, after: { startAt, endAt } }, createdByUserId: user.id } as any);
+
+    await db.execute(sql`
+      UPDATE tasks
+      SET due_at = ${startAt}, updated_at = NOW(), reminder_sent_at = NULL, overdue_alert_sent_at = NULL
+      WHERE related_entity_type = 'xp_booking'
+        AND related_entity_id = ${id}
+        AND type = 'xp_booking'
+    `);
+
+    return res.json({ booking: updated || booking });
   });
 
   app.post("/api/xp/admin/bookings/:id/cancel", async (req, res) => {
@@ -1267,8 +1861,10 @@ export async function registerRoutes(
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
     const id = parseInt(req.params.id, 10);
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const before = await storage.getXpBookingById(id);
     const row = await storage.cancelXpBooking(id);
     if (!row) return res.status(404).json({ message: "Not found" });
+    await storage.createXpBookingEvent({ bookingId: id, type: "cancelled", payload: { beforeStatus: String((before as any)?.status || null) }, createdByUserId: user.id } as any);
     return res.json({ booking: row });
   });
 
@@ -1436,6 +2032,13 @@ export async function registerRoutes(
       conciergeUserId,
     });
 
+    await storage.createXpBookingEvent({
+      bookingId: id,
+      type: "assignment_updated",
+      payload: { before: booking.assignment || null, after: assignment },
+      createdByUserId: user.id,
+    } as any);
+
     return res.json({ assignment });
   });
 
@@ -1469,6 +2072,7 @@ export async function registerRoutes(
     if (!body) return res.status(400).json({ message: "Missing body" });
     if (body.length > 2000) return res.status(400).json({ message: "Body too long" });
     const note = await storage.createXpBookingNote({ bookingId: id, authorUserId: Number(user.id), body } as any);
+    await storage.createXpBookingEvent({ bookingId: id, type: "note_added", payload: { noteId: (note as any).id }, createdByUserId: user.id } as any);
     return res.status(201).json({ note });
   });
 

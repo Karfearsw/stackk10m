@@ -988,6 +988,55 @@ export const insertXpBookingNoteSchema = createInsertSchema(xpBookingNotes).omit
 export type XpBookingNote = typeof xpBookingNotes.$inferSelect;
 export type InsertXpBookingNote = z.infer<typeof insertXpBookingNoteSchema>;
 
+export const xpBookingEvents = pgTable("xp_booking_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  bookingId: integer("booking_id").notNull(),
+  type: varchar("type", { length: 80 }).notNull(),
+  payload: jsonb("payload"),
+  createdByUserId: integer("created_by_user_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertXpBookingEventSchema = createInsertSchema(xpBookingEvents).omit({ id: true, createdAt: true } as any);
+export type XpBookingEvent = typeof xpBookingEvents.$inferSelect;
+export type InsertXpBookingEvent = z.infer<typeof insertXpBookingEventSchema>;
+
+export const xpBookingMessages = pgTable("xp_booking_messages", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  bookingId: integer("booking_id").notNull(),
+  channel: varchar("channel", { length: 20 }).notNull(),
+  toAddress: varchar("to_address", { length: 255 }).notNull(),
+  fromAddress: varchar("from_address", { length: 255 }),
+  subject: varchar("subject", { length: 255 }),
+  body: text("body").notNull(),
+  provider: varchar("provider", { length: 50 }),
+  providerMessageId: varchar("provider_message_id", { length: 255 }),
+  status: varchar("status", { length: 50 }).notNull().default("queued"),
+  error: text("error"),
+  createdByUserId: integer("created_by_user_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertXpBookingMessageSchema = createInsertSchema(xpBookingMessages).omit({ id: true, createdAt: true } as any);
+export type XpBookingMessage = typeof xpBookingMessages.$inferSelect;
+export type InsertXpBookingMessage = z.infer<typeof insertXpBookingMessageSchema>;
+
+export const xpBookingRefunds = pgTable("xp_booking_refunds", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  bookingId: integer("booking_id").notNull(),
+  stripeRefundId: varchar("stripe_refund_id", { length: 255 }).notNull(),
+  stripePaymentIntentId: varchar("stripe_payment_intent_id", { length: 255 }),
+  currency: varchar("currency", { length: 10 }).notNull().default("USD"),
+  amountCents: integer("amount_cents"),
+  status: varchar("status", { length: 50 }).notNull().default("created"),
+  createdByUserId: integer("created_by_user_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertXpBookingRefundSchema = createInsertSchema(xpBookingRefunds).omit({ id: true, createdAt: true } as any);
+export type XpBookingRefund = typeof xpBookingRefunds.$inferSelect;
+export type InsertXpBookingRefund = z.infer<typeof insertXpBookingRefundSchema>;
+
 // NOTIFICATION PREFERENCES TABLE
 export const notificationPreferences = pgTable("notification_preferences", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),

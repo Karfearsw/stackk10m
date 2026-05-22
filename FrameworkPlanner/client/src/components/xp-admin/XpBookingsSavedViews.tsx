@@ -8,11 +8,26 @@ export type XpBookingFilters = {
   locationId: string;
   vehicleId: string;
   conciergeUserId: string;
+  missingConcierge: boolean;
+  missingVehicle: boolean;
+  missingLocation: boolean;
   from: string;
   to: string;
 };
 
-export type XpSavedViewId = "all" | "today" | "upcoming_7" | "pending_payment" | "confirmed" | "cancelled";
+export type XpSavedViewId =
+  | "all"
+  | "today"
+  | "upcoming_7"
+  | "pending_payment"
+  | "unassigned_concierge"
+  | "needs_vehicle"
+  | "needs_location"
+  | "arrivals_today"
+  | "confirmed"
+  | "cancelled"
+  | "cancelled_today"
+  | "refunded";
 
 export function XpBookingsSavedViews({
   value,
@@ -28,8 +43,14 @@ export function XpBookingsSavedViews({
     { id: "today", label: "Today" },
     { id: "upcoming_7", label: "Next 7 days" },
     { id: "pending_payment", label: "Pending payment" },
+    { id: "unassigned_concierge", label: "Unassigned" },
+    { id: "needs_vehicle", label: "Needs vehicle" },
+    { id: "needs_location", label: "Needs location" },
+    { id: "arrivals_today", label: "Arrivals today" },
     { id: "confirmed", label: "Confirmed" },
     { id: "cancelled", label: "Cancelled" },
+    { id: "cancelled_today", label: "Cancelled today" },
+    { id: "refunded", label: "Refunded" },
   ];
 
   return (

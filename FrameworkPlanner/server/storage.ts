@@ -73,10 +73,16 @@ import {
   type XpVehicle, type InsertXpVehicle,
   type XpBookingAssignment,
   type XpBookingNote, type InsertXpBookingNote,
+  type XpBookingEvent, type InsertXpBookingEvent,
+  type XpBookingMessage, type InsertXpBookingMessage,
+  type XpBookingRefund, type InsertXpBookingRefund,
   xpLocations,
   xpVehicles,
   xpBookingAssignments,
-  xpBookingNotes
+  xpBookingNotes,
+  xpBookingEvents,
+  xpBookingMessages,
+  xpBookingRefunds
 } from "./shared-schema.js";
 import { eq, and, gte, lte, isNull, inArray, or, ne, isNotNull } from "drizzle-orm";
 
@@ -2443,6 +2449,45 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+  async listXpBookingEvents(bookingId: number, input?: { limit?: number }): Promise<XpBookingEvent[]> {
+    const id = Number(bookingId);
+    if (!Number.isFinite(id)) return [];
+    const limit = typeof input?.limit === "number" ? Math.max(1, Math.min(500, input.limit)) : 100;
+    const q: any = db.select().from(xpBookingEvents).where(eq(xpBookingEvents.bookingId, id)).orderBy(desc(xpBookingEvents.createdAt)).limit(limit);
+    return q as unknown as Promise<XpBookingEvent[]>;
+  }
+
+  async createXpBookingEvent(input: InsertXpBookingEvent): Promise<XpBookingEvent> {
+    const result = await db.insert(xpBookingEvents).values(input as any).returning();
+    return result[0];
+  }
+
+  async listXpBookingMessages(bookingId: number, input?: { limit?: number }): Promise<XpBookingMessage[]> {
+    const id = Number(bookingId);
+    if (!Number.isFinite(id)) return [];
+    const limit = typeof input?.limit === "number" ? Math.max(1, Math.min(200, input.limit)) : 50;
+    const q: any = db.select().from(xpBookingMessages).where(eq(xpBookingMessages.bookingId, id)).orderBy(desc(xpBookingMessages.createdAt)).limit(limit);
+    return q as unknown as Promise<XpBookingMessage[]>;
+  }
+
+  async createXpBookingMessage(input: InsertXpBookingMessage): Promise<XpBookingMessage> {
+    const result = await db.insert(xpBookingMessages).values(input as any).returning();
+    return result[0];
+  }
+
+  async listXpBookingRefunds(bookingId: number, input?: { limit?: number }): Promise<XpBookingRefund[]> {
+    const id = Number(bookingId);
+    if (!Number.isFinite(id)) return [];
+    const limit = typeof input?.limit === "number" ? Math.max(1, Math.min(200, input.limit)) : 50;
+    const q: any = db.select().from(xpBookingRefunds).where(eq(xpBookingRefunds.bookingId, id)).orderBy(desc(xpBookingRefunds.createdAt)).limit(limit);
+    return q as unknown as Promise<XpBookingRefund[]>;
+  }
+
+  async createXpBookingRefund(input: InsertXpBookingRefund): Promise<XpBookingRefund> {
+    const result = await db.insert(xpBookingRefunds).values(input as any).returning();
+    return result[0];
+  }
+
   async listXpBookings(input?: {
     experienceId?: number;
     status?: string;
@@ -2452,6 +2497,9 @@ export class DatabaseStorage implements IStorage {
     conciergeUserId?: number;
     locationId?: number;
     vehicleId?: number;
+    missingConcierge?: boolean;
+    missingVehicle?: boolean;
+    missingLocation?: boolean;
     limit?: number;
     offset?: number;
   }): Promise<{
@@ -2482,6 +2530,9 @@ export class DatabaseStorage implements IStorage {
     if (typeof input?.conciergeUserId === "number") whereParts.push(eq(xpBookingAssignments.conciergeUserId, input.conciergeUserId));
     if (typeof input?.locationId === "number") whereParts.push(eq(xpBookingAssignments.locationId, input.locationId));
     if (typeof input?.vehicleId === "number") whereParts.push(eq(xpBookingAssignments.vehicleId, input.vehicleId));
+    if (input?.missingConcierge) whereParts.push(isNull(xpBookingAssignments.conciergeUserId));
+    if (input?.missingLocation) whereParts.push(isNull(xpBookingAssignments.locationId));
+    if (input?.missingVehicle) whereParts.push(isNull(xpBookingAssignments.vehicleId));
 
     const whereClause = whereParts.length ? and(...whereParts) : undefined;
 
@@ -2564,6 +2615,131 @@ export class DatabaseStorage implements IStorage {
     }));
 
     return { items, total };
+  }
+
+  async getXpBookingsOpsSummary(input?: {
+    experienceId?: number;
+    status?: string;
+    kind?: string;
+    from?: Date;
+    to?: Date;
+    conciergeUserId?: number;
+    locationId?: number;
+    vehicleId?: number;
+    missingConcierge?: boolean;
+    missingVehicle?: boolean;
+    missingLocation?: boolean;
+    arrivalsFrom?: Date;
+    arrivalsTo?: Date;
+    limit?: number;
+  }): Promise<{
+    total: number;
+    counts: Record<string, number>;
+    missing: { concierge: number; vehicle: number; location: number };
+    arrivals: number;
+    conciergeLoad: Array<{ conciergeUserId: number; email: string | null; name: string | null; count: number }>;
+    vehicleLoad: Array<{ vehicleId: number; name: string | null; count: number }>;
+  }> {
+    const whereParts: any[] = [];
+    if (typeof input?.experienceId === "number") whereParts.push(sql`b.experience_id = ${input.experienceId}`);
+    if (input?.status) whereParts.push(sql`b.status = ${input.status}`);
+    if (input?.kind) whereParts.push(sql`b.kind = ${input.kind}`);
+    if (input?.from && input?.to) whereParts.push(sql`b.start_at < ${input.to} AND b.end_at > ${input.from}`);
+    if (typeof input?.conciergeUserId === "number") whereParts.push(sql`a.concierge_user_id = ${input.conciergeUserId}`);
+    if (typeof input?.locationId === "number") whereParts.push(sql`a.location_id = ${input.locationId}`);
+    if (typeof input?.vehicleId === "number") whereParts.push(sql`a.vehicle_id = ${input.vehicleId}`);
+    if (input?.missingConcierge) whereParts.push(sql`a.concierge_user_id IS NULL`);
+    if (input?.missingLocation) whereParts.push(sql`a.location_id IS NULL`);
+    if (input?.missingVehicle) whereParts.push(sql`a.vehicle_id IS NULL`);
+
+    const whereClause = whereParts.length ? sql`WHERE ${sql.join(whereParts, sql` AND `)}` : sql``;
+    const limit = typeof input?.limit === "number" ? Math.max(1, Math.min(20, input.limit)) : 5;
+
+    const countsRows: any = await db.execute(sql`
+      SELECT b.status, COUNT(*)::int AS c
+      FROM xp_bookings b
+      LEFT JOIN xp_booking_assignments a ON a.booking_id = b.id
+      ${whereClause}
+      GROUP BY b.status
+    `);
+    const counts: Record<string, number> = {};
+    for (const r of (countsRows as any).rows || []) {
+      const k = String(r.status || "").trim() || "unknown";
+      counts[k] = Number(r.c || 0);
+    }
+    const total = Object.values(counts).reduce((acc, n) => acc + (Number.isFinite(n) ? n : 0), 0);
+
+    const missingRows: any = await db.execute(sql`
+      SELECT
+        COUNT(*) FILTER (WHERE a.concierge_user_id IS NULL)::int AS missing_concierge,
+        COUNT(*) FILTER (WHERE a.vehicle_id IS NULL)::int AS missing_vehicle,
+        COUNT(*) FILTER (WHERE a.location_id IS NULL)::int AS missing_location
+      FROM xp_bookings b
+      LEFT JOIN xp_booking_assignments a ON a.booking_id = b.id
+      ${whereClause}
+    `);
+    const missingRow = (missingRows as any).rows?.[0] || {};
+    const missing = {
+      concierge: Number(missingRow.missing_concierge || 0),
+      vehicle: Number(missingRow.missing_vehicle || 0),
+      location: Number(missingRow.missing_location || 0),
+    };
+
+    let arrivals = 0;
+    if (input?.arrivalsFrom && input?.arrivalsTo) {
+      const arrivalsRows: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS c
+        FROM xp_bookings b
+        LEFT JOIN xp_booking_assignments a ON a.booking_id = b.id
+        ${whereClause}
+          ${whereParts.length ? sql`AND` : sql`WHERE`} b.start_at >= ${input.arrivalsFrom} AND b.start_at <= ${input.arrivalsTo}
+      `);
+      arrivals = Number((arrivalsRows as any).rows?.[0]?.c || 0);
+    }
+
+    const conciergeRows: any = await db.execute(sql`
+      SELECT
+        a.concierge_user_id AS concierge_user_id,
+        u.email AS email,
+        NULLIF(TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))), '') AS name,
+        COUNT(*)::int AS c
+      FROM xp_bookings b
+      LEFT JOIN xp_booking_assignments a ON a.booking_id = b.id
+      LEFT JOIN users u ON u.id = a.concierge_user_id
+      ${whereClause}
+        ${whereParts.length ? sql`AND` : sql`WHERE`} a.concierge_user_id IS NOT NULL
+      GROUP BY a.concierge_user_id, u.email, u.first_name, u.last_name
+      ORDER BY c DESC
+      LIMIT ${limit}
+    `);
+    const conciergeLoad = ((conciergeRows as any).rows || []).map((r: any) => ({
+      conciergeUserId: Number(r.concierge_user_id || 0),
+      email: r.email ? String(r.email) : null,
+      name: r.name ? String(r.name) : null,
+      count: Number(r.c || 0),
+    }));
+
+    const vehicleRows: any = await db.execute(sql`
+      SELECT
+        a.vehicle_id AS vehicle_id,
+        v.name AS name,
+        COUNT(*)::int AS c
+      FROM xp_bookings b
+      LEFT JOIN xp_booking_assignments a ON a.booking_id = b.id
+      LEFT JOIN xp_vehicles v ON v.id = a.vehicle_id
+      ${whereClause}
+        ${whereParts.length ? sql`AND` : sql`WHERE`} a.vehicle_id IS NOT NULL
+      GROUP BY a.vehicle_id, v.name
+      ORDER BY c DESC
+      LIMIT ${limit}
+    `);
+    const vehicleLoad = ((vehicleRows as any).rows || []).map((r: any) => ({
+      vehicleId: Number(r.vehicle_id || 0),
+      name: r.name ? String(r.name) : null,
+      count: Number(r.c || 0),
+    }));
+
+    return { total, counts, missing, arrivals, conciergeLoad, vehicleLoad };
   }
 
   async getXpBookingById(
@@ -2701,6 +2877,25 @@ export class DatabaseStorage implements IStorage {
 
   async cancelXpBooking(id: number): Promise<XpBooking | undefined> {
     const result = await db.update(xpBookings).set({ status: "cancelled", updatedAt: new Date() } as any).where(eq(xpBookings.id, id)).returning();
+    return result[0];
+  }
+
+  async setXpBookingStatus(id: number, status: string): Promise<XpBooking | undefined> {
+    const s = String(status || "").trim();
+    if (!s) return undefined;
+    const result = await db.update(xpBookings).set({ status: s, updatedAt: new Date() } as any).where(eq(xpBookings.id, id)).returning();
+    return result[0];
+  }
+
+  async updateXpBookingWindow(id: number, input: { startAt: Date; endAt: Date }): Promise<XpBooking | undefined> {
+    const startAt = input?.startAt instanceof Date ? input.startAt : null;
+    const endAt = input?.endAt instanceof Date ? input.endAt : null;
+    if (!startAt || !endAt) return undefined;
+    const result = await db
+      .update(xpBookings)
+      .set({ startAt, endAt, updatedAt: new Date() } as any)
+      .where(eq(xpBookings.id, id))
+      .returning();
     return result[0];
   }
 

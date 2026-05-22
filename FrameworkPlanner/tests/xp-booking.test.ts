@@ -68,6 +68,7 @@ describe("XP booking API", () => {
     storage.updateXpBookingStripeSession = (async (_id: number, _sessionId: string) => ({ id: 99 })) as any;
     storage.hasStripeEvent = (async () => false) as any;
     storage.recordStripeEvent = (async (input: any) => input) as any;
+    storage.createXpBookingEvent = (async () => ({ id: 1 })) as any;
     storage.getXpBookingByStripeSessionId = (async () => ({ id: 99, experienceId: 1, status: "pending_payment" })) as any;
     storage.confirmXpBookingByStripeSessionId = (async () => ({ id: 99, experienceId: 1, status: "confirmed", startAt: new Date(), endAt: new Date(), customerName: "A", customerEmail: "a@b.com" })) as any;
     storage.getUsers = (async () => [{ id: 1, role: "admin", isSuperAdmin: false, email: "admin@example.com" }]) as any;

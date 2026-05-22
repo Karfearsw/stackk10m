@@ -12,8 +12,10 @@ import { XpItineraryEditor } from "@/components/xp/XpItineraryEditor";
 import { XpAdminHeader } from "@/components/xp-admin/XpAdminHeader";
 import { XpBookingsSavedViews, type XpBookingFilters, type XpSavedViewId } from "@/components/xp-admin/XpBookingsSavedViews";
 import { XpBookingsFilters } from "@/components/xp-admin/XpBookingsFilters";
+import { XpBookingsSummary } from "@/components/xp-admin/XpBookingsSummary";
 import { XpBookingsTable } from "@/components/xp-admin/XpBookingsTable";
 import { XpBookingDrawer } from "@/components/xp-admin/XpBookingDrawer";
+import { XpCreateBookingDialog } from "@/components/xp-admin/XpCreateBookingDialog";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiRequest } from "@/lib/queryClient";
@@ -361,6 +363,9 @@ export default function XpAdminPage() {
     locationId: "all",
     vehicleId: "all",
     conciergeUserId: "all",
+    missingConcierge: false,
+    missingVehicle: false,
+    missingLocation: false,
     from: "",
     to: "",
   });
@@ -384,23 +389,47 @@ export default function XpAdminPage() {
     const next7 = format(addDays(today, 7), "yyyy-MM-dd");
 
     if (savedView === "today") {
-      setFilters((p) => ({ ...p, status: "all", from: todayStr, to: todayStr }));
+      setFilters((p) => ({ ...p, status: "all", missingConcierge: false, missingVehicle: false, missingLocation: false, from: todayStr, to: todayStr }));
       return;
     }
     if (savedView === "upcoming_7") {
-      setFilters((p) => ({ ...p, status: "all", from: todayStr, to: next7 }));
+      setFilters((p) => ({ ...p, status: "all", missingConcierge: false, missingVehicle: false, missingLocation: false, from: todayStr, to: next7 }));
       return;
     }
     if (savedView === "pending_payment") {
-      setFilters((p) => ({ ...p, status: "pending_payment" }));
+      setFilters((p) => ({ ...p, status: "pending_payment", missingConcierge: false, missingVehicle: false, missingLocation: false }));
+      return;
+    }
+    if (savedView === "unassigned_concierge") {
+      setFilters((p) => ({ ...p, status: "all", missingConcierge: true, missingVehicle: false, missingLocation: false }));
+      return;
+    }
+    if (savedView === "needs_vehicle") {
+      setFilters((p) => ({ ...p, status: "all", missingConcierge: false, missingVehicle: true, missingLocation: false }));
+      return;
+    }
+    if (savedView === "needs_location") {
+      setFilters((p) => ({ ...p, status: "all", missingConcierge: false, missingVehicle: false, missingLocation: true }));
+      return;
+    }
+    if (savedView === "arrivals_today") {
+      setFilters((p) => ({ ...p, status: "confirmed", missingConcierge: false, missingVehicle: false, missingLocation: false, from: todayStr, to: todayStr }));
       return;
     }
     if (savedView === "confirmed") {
-      setFilters((p) => ({ ...p, status: "confirmed" }));
+      setFilters((p) => ({ ...p, status: "confirmed", missingConcierge: false, missingVehicle: false, missingLocation: false }));
       return;
     }
     if (savedView === "cancelled") {
-      setFilters((p) => ({ ...p, status: "cancelled" }));
+      setFilters((p) => ({ ...p, status: "cancelled", missingConcierge: false, missingVehicle: false, missingLocation: false }));
+      return;
+    }
+    if (savedView === "cancelled_today") {
+      setFilters((p) => ({ ...p, status: "cancelled", missingConcierge: false, missingVehicle: false, missingLocation: false, from: todayStr, to: todayStr }));
+      return;
+    }
+    if (savedView === "refunded") {
+      setFilters((p) => ({ ...p, status: "refunded", missingConcierge: false, missingVehicle: false, missingLocation: false }));
       return;
     }
   }, [savedView]);
@@ -546,6 +575,9 @@ export default function XpAdminPage() {
       if (appliedFilters.locationId !== "all") qs.set("locationId", appliedFilters.locationId);
       if (appliedFilters.vehicleId !== "all") qs.set("vehicleId", appliedFilters.vehicleId);
       if (admin && appliedFilters.conciergeUserId !== "all") qs.set("conciergeUserId", appliedFilters.conciergeUserId);
+      if (appliedFilters.missingConcierge) qs.set("missingConcierge", "true");
+      if (appliedFilters.missingVehicle) qs.set("missingVehicle", "true");
+      if (appliedFilters.missingLocation) qs.set("missingLocation", "true");
       if (appliedFilters.from) qs.set("from", new Date(`${appliedFilters.from}T00:00:00`).toISOString());
       if (appliedFilters.to) qs.set("to", new Date(`${appliedFilters.to}T23:59:59`).toISOString());
       qs.set("limit", String(pageSize));
@@ -563,8 +595,61 @@ export default function XpAdminPage() {
   const canPrev = pageIndex > 0;
   const canNext = pageIndex + 1 < bookingsPages;
 
+  const [selectedBookingIds, setSelectedBookingIds] = useState<number[]>([]);
+  useEffect(() => {
+    setSelectedBookingIds([]);
+  }, [appliedFilters, pageIndex]);
+
   const [selectedBookingId, setSelectedBookingId] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [createBookingOpen, setCreateBookingOpen] = useState(false);
+
+  const [bulkAssignOpen, setBulkAssignOpen] = useState(false);
+  const [bulkAssignForm, setBulkAssignForm] = useState<{ locationId: string; vehicleId: string; conciergeUserId: string }>({
+    locationId: "keep",
+    vehicleId: "keep",
+    conciergeUserId: "keep",
+  });
+
+  const bulkAssignMutation = useMutation({
+    mutationFn: async () => {
+      const ids = selectedBookingIds.slice();
+      if (!ids.length) return;
+      const payload: any = {};
+      if (bulkAssignForm.locationId !== "keep") payload.locationId = bulkAssignForm.locationId === "none" ? null : parseInt(bulkAssignForm.locationId, 10);
+      if (bulkAssignForm.vehicleId !== "keep") payload.vehicleId = bulkAssignForm.vehicleId === "none" ? null : parseInt(bulkAssignForm.vehicleId, 10);
+      if (admin && bulkAssignForm.conciergeUserId !== "keep") {
+        payload.conciergeUserId = bulkAssignForm.conciergeUserId === "none" ? null : parseInt(bulkAssignForm.conciergeUserId, 10);
+      }
+      await Promise.all(ids.map((id) => apiRequest("PUT", `/api/xp/admin/bookings/${id}/assignment`, payload).then((r) => r.json())));
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["xp-admin-bookings"] });
+      setBulkAssignOpen(false);
+      setSelectedBookingIds([]);
+      setBulkAssignForm({ locationId: "keep", vehicleId: "keep", conciergeUserId: "keep" });
+      toast({ title: "Assignments updated" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Bulk assign failed", description: String(err?.message || err), variant: "destructive" as any });
+    },
+  });
+
+  const bulkCancelMutation = useMutation({
+    mutationFn: async () => {
+      const ids = selectedBookingIds.slice();
+      if (!ids.length) return;
+      await Promise.all(ids.map((id) => apiRequest("POST", `/api/xp/admin/bookings/${id}/cancel`, {}).then((r) => r.json())));
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["xp-admin-bookings"] });
+      setSelectedBookingIds([]);
+      toast({ title: "Bookings cancelled" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Bulk cancel failed", description: String(err?.message || err), variant: "destructive" as any });
+    },
+  });
 
   const [slotStart, setSlotStart] = useState("");
   const [slotEnd, setSlotEnd] = useState("");
@@ -1297,6 +1382,7 @@ export default function XpAdminPage() {
         <TabsContent value="bookings">
           <div className="mt-6 space-y-4">
             <XpBookingsSavedViews value={savedView} onChange={setSavedView} />
+            <XpBookingsSummary filters={appliedFilters} isAdmin={admin} onPickView={setSavedView} />
             <XpBookingsFilters
               experiences={experiences.map((e) => ({ id: e.id, title: e.title }))}
               locations={locations.map((l) => ({ id: l.id, name: l.name }))}
@@ -1307,7 +1393,14 @@ export default function XpAdminPage() {
               onChange={setFilters}
             />
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm text-muted-foreground">Total: {bookingsTotal}</div>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="text-sm text-muted-foreground">Total: {bookingsTotal}</div>
+                {admin ? (
+                  <Button type="button" size="sm" onClick={() => setCreateBookingOpen(true)}>
+                    Create booking
+                  </Button>
+                ) : null}
+              </div>
               <div className="flex items-center gap-2">
                 <Button type="button" variant="secondary" size="sm" disabled={!canPrev} onClick={() => setPageIndex((p) => Math.max(0, p - 1))}>
                   Prev
@@ -1320,6 +1413,97 @@ export default function XpAdminPage() {
                 </Button>
               </div>
             </div>
+            {selectedBookingIds.length ? (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/60 bg-muted/10 px-4 py-3">
+                <div className="text-sm">
+                  Selected: <span className="font-semibold">{selectedBookingIds.length}</span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="secondary" size="sm" onClick={() => setBulkAssignOpen(true)} disabled={bulkAssignMutation.isPending}>
+                    Bulk assign
+                  </Button>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => setSelectedBookingIds([])}>
+                    Clear
+                  </Button>
+                  {admin ? (
+                    <Button type="button" variant="destructive" size="sm" onClick={() => bulkCancelMutation.mutate()} disabled={bulkCancelMutation.isPending}>
+                      Cancel
+                    </Button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+            <Dialog
+              open={bulkAssignOpen}
+              onOpenChange={(v) => {
+                setBulkAssignOpen(v);
+                if (!v) setBulkAssignForm({ locationId: "keep", vehicleId: "keep", conciergeUserId: "keep" });
+              }}
+            >
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Bulk assign</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Location</Label>
+                    <Select value={bulkAssignForm.locationId} onValueChange={(v) => setBulkAssignForm((p) => ({ ...p, locationId: v }))}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="keep">No change</SelectItem>
+                        <SelectItem value="none">Clear</SelectItem>
+                        {locations.map((l) => (
+                          <SelectItem key={l.id} value={String(l.id)}>
+                            {l.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Vehicle</Label>
+                    <Select value={bulkAssignForm.vehicleId} onValueChange={(v) => setBulkAssignForm((p) => ({ ...p, vehicleId: v }))}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="keep">No change</SelectItem>
+                        <SelectItem value="none">Clear</SelectItem>
+                        {vehicles.map((v) => (
+                          <SelectItem key={v.id} value={String(v.id)}>
+                            {v.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {admin ? (
+                    <div className="space-y-2">
+                      <Label>Concierge</Label>
+                      <Select value={bulkAssignForm.conciergeUserId} onValueChange={(v) => setBulkAssignForm((p) => ({ ...p, conciergeUserId: v }))}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="keep">No change</SelectItem>
+                          <SelectItem value="none">Unassigned</SelectItem>
+                          {concierges.map((c) => (
+                            <SelectItem key={c.id} value={String(c.id)}>
+                              {[c.firstName, c.lastName].filter(Boolean).join(" ") || c.email}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null}
+                  <Button type="button" onClick={() => bulkAssignMutation.mutate()} disabled={bulkAssignMutation.isPending}>
+                    Apply to {selectedBookingIds.length}
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
             <XpBookingsTable
               rows={bookings as any}
               experienceTitleById={experienceTitleById}
@@ -1327,8 +1511,40 @@ export default function XpAdminPage() {
                 setSelectedBookingId(id);
                 setDrawerOpen(true);
               }}
+              selectedIds={selectedBookingIds}
+              onSelectedIdsChange={setSelectedBookingIds}
+              onCreateBooking={() => setCreateBookingOpen(true)}
+              onClearFilters={() => {
+                setSavedView("all");
+                setFilters((p) => ({
+                  ...p,
+                  experienceId: "all",
+                  status: "all",
+                  kind: "all",
+                  locationId: "all",
+                  vehicleId: "all",
+                  conciergeUserId: "all",
+                  missingConcierge: false,
+                  missingVehicle: false,
+                  missingLocation: false,
+                  from: "",
+                  to: "",
+                }));
+              }}
+              isAdmin={admin}
             />
             <XpBookingDrawer open={drawerOpen} onOpenChange={setDrawerOpen} bookingId={selectedBookingId} isAdmin={admin} />
+            {admin ? (
+              <XpCreateBookingDialog
+                open={createBookingOpen}
+                onOpenChange={(v) => setCreateBookingOpen(v)}
+                experiences={experiences.map((e) => ({ id: e.id, title: e.title, slug: e.slug }))}
+                onCreated={(id) => {
+                  setSelectedBookingId(id);
+                  setDrawerOpen(true);
+                }}
+              />
+            ) : null}
           </div>
         </TabsContent>
       </Tabs>
