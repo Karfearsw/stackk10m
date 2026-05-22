@@ -46,6 +46,7 @@ const XpExperiencePage = React.lazy(() => import("@/pages/xp/experience"));
 const XpAdminPage = React.lazy(() => import("@/pages/xp/admin"));
 const XpCheckoutSuccessPage = React.lazy(() => import("@/pages/xp/checkout-success"));
 const XpCheckoutCancelPage = React.lazy(() => import("@/pages/xp/checkout-cancel"));
+const AuditPage = React.lazy(() => import("@/pages/audit"));
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -174,6 +175,9 @@ function Router() {
         </Route>
         <Route path="/playground">
           {() => <ProtectedRoute component={Playground} />}
+        </Route>
+        <Route path="/audit">
+          {() => <ProtectedRoute component={AuditPage} />}
         </Route>
         <Route path="/buyers">
           {() => <ProtectedRoute component={Buyers} />}

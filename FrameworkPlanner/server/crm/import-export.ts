@@ -40,6 +40,7 @@ export type ExportFilters = {
   createdTo?: string;
   status?: string;
   assignedTo?: number;
+  ids?: number[];
 };
 
 export type FieldDef = {
@@ -1333,6 +1334,7 @@ export async function processExportJob(exportId: number, limits: JobRunLimits = 
       const createdTo = filters.createdTo ? new Date(filters.createdTo) : null;
       const status = filters.status ? String(filters.status) : null;
       const assignedTo = typeof filters.assignedTo === "number" ? filters.assignedTo : null;
+      const ids = Array.isArray((filters as any).ids) ? (filters as any).ids.map((x: any) => Number(x)).filter((n: any) => Number.isFinite(n) && n > 0) : null;
 
       const table: any =
         entityType === "lead"
@@ -1348,6 +1350,7 @@ export async function processExportJob(exportId: number, limits: JobRunLimits = 
       if (createdTo) where.push(lte(table.createdAt, createdTo));
       if (status && (entityType === "lead" || entityType === "opportunity" || entityType === "buyer")) where.push(eq(table.status, status));
       if (assignedTo !== null && (entityType === "lead" || entityType === "opportunity")) where.push(eq(table.assignedTo, assignedTo));
+      if (ids && ids.length) where.push(inArray(table.id, ids));
 
       const rows: any[] = where.length ? await tx.select().from(table).where(and(...where)) : await tx.select().from(table);
 

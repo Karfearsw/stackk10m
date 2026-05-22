@@ -330,6 +330,17 @@ export default function Leads() {
     },
   });
 
+  const addNoteMutation = useMutation({
+    mutationFn: async ({ leadId, body }: { leadId: number; body: string }) => {
+      const res = await apiRequest("POST", `/api/leads/${leadId}/notes`, { body });
+      return await res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["leads"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
       const res = await apiRequest("DELETE", `/api/leads/${id}`);
@@ -1150,21 +1161,18 @@ export default function Leads() {
             <Button variant="outline" onClick={() => setIsNoteDialogOpen(false)}>Cancel</Button>
             <Button
               className="bg-primary hover:bg-primary/90 text-white"
-              disabled={!noteLead || !noteText.trim() || updateMutation.isPending}
+              disabled={!noteLead || !noteText.trim() || addNoteMutation.isPending}
               onClick={async () => {
                 if (!noteLead) return;
-                const existing = String(noteLead.notes || "").trim();
-                const stamped = `[${new Date().toLocaleString()}] ${noteText.trim()}`;
-                const notes = existing ? `${existing}\n\n${stamped}` : stamped;
                 try {
-                  await updateMutation.mutateAsync({ id: noteLead.id, data: { notes } });
+                  await addNoteMutation.mutateAsync({ leadId: noteLead.id, body: noteText.trim() });
                   setIsNoteDialogOpen(false);
                   setNoteLead(null);
                   setNoteText("");
                 } catch {}
               }}
             >
-              Save Note
+              {addNoteMutation.isPending ? "Saving..." : "Save Note"}
             </Button>
           </DialogFooter>
         </DialogContent>

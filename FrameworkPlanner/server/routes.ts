@@ -251,6 +251,7 @@ const featureEnvVars: Record<string, string> = {
   field_mode: "FEATURE_FIELD_MODE",
   comps: "FEATURE_COMPS",
   buyer_match: "FEATURE_BUYER_MATCH",
+  voice_playground: "FEATURE_VOICE_PLAYGROUND",
 };
 
 async function isFeatureEnabled(userId: number, flag: keyof typeof featureEnvVars): Promise<boolean> {
@@ -2796,8 +2797,47 @@ export async function registerRoutes(
       const q = typeof req.query?.q === "string" ? req.query.q : "";
       const status = typeof req.query?.status === "string" ? req.query.status : "";
       const owner = typeof req.query?.owner === "string" ? req.query.owner : "";
+      const zip = typeof req.query?.zip === "string" ? req.query.zip : "";
+      const state = typeof req.query?.state === "string" ? req.query.state : "";
+      const city = typeof req.query?.city === "string" ? req.query.city : "";
+      const county = typeof req.query?.county === "string" ? req.query.county : "";
+      const leadType = typeof req.query?.leadType === "string" ? req.query.leadType : "";
+
       const assignedToRaw = typeof req.query?.assignedTo === "string" ? req.query.assignedTo : "";
-      const assignedTo = assignedToRaw ? parseInt(assignedToRaw, 10) : undefined;
+      const assignedTo = assignedToRaw === "unassigned" ? "unassigned" : assignedToRaw ? parseInt(assignedToRaw, 10) : undefined;
+
+      const tagsRaw = typeof req.query?.tags === "string" ? req.query.tags : "";
+      const tags = tagsRaw ? tagsRaw.split(",").map((t) => t.trim()).filter(Boolean) : undefined;
+      const tagsModeRaw = typeof req.query?.tagsMode === "string" ? req.query.tagsMode : "";
+      const tagsMode = tagsModeRaw === "all" ? "all" : tagsModeRaw === "any" ? "any" : undefined;
+
+      const contactPresenceRaw = typeof req.query?.contactPresence === "string" ? req.query.contactPresence : "";
+      const contactPresence =
+        contactPresenceRaw === "phone_only" || contactPresenceRaw === "email_only" || contactPresenceRaw === "both" || contactPresenceRaw === "none"
+          ? (contactPresenceRaw as any)
+          : undefined;
+
+      const scoreMinRaw = typeof req.query?.scoreMin === "string" ? req.query.scoreMin : "";
+      const scoreMaxRaw = typeof req.query?.scoreMax === "string" ? req.query.scoreMax : "";
+      const scoreMin = scoreMinRaw ? Number(scoreMinRaw) : undefined;
+      const scoreMax = scoreMaxRaw ? Number(scoreMaxRaw) : undefined;
+
+      const archivedRaw = typeof req.query?.archived === "string" ? req.query.archived : "";
+      const archived = archivedRaw === "exclude" || archivedRaw === "include" || archivedRaw === "only" ? (archivedRaw as any) : undefined;
+
+      const hasNotesRaw = typeof req.query?.hasNotes === "string" ? req.query.hasNotes : "";
+      const hasNotes = hasNotesRaw === "true" ? true : hasNotesRaw === "false" ? false : undefined;
+
+      const noteUpdatedWithinDaysRaw = typeof req.query?.noteUpdatedWithinDays === "string" ? req.query.noteUpdatedWithinDays : "";
+      const noteUpdatedWithinDays = noteUpdatedWithinDaysRaw ? parseInt(noteUpdatedWithinDaysRaw, 10) : undefined;
+
+      const lastTouchFromRaw = typeof req.query?.lastTouchFrom === "string" ? req.query.lastTouchFrom : "";
+      const lastTouchToRaw = typeof req.query?.lastTouchTo === "string" ? req.query.lastTouchTo : "";
+      const nextFollowUpFromRaw = typeof req.query?.nextFollowUpFrom === "string" ? req.query.nextFollowUpFrom : "";
+      const nextFollowUpToRaw = typeof req.query?.nextFollowUpTo === "string" ? req.query.nextFollowUpTo : "";
+
+      const sortKey = typeof req.query?.sortKey === "string" ? (req.query.sortKey as any) : undefined;
+      const sortDir = typeof req.query?.sortDir === "string" ? (req.query.sortDir as any) : undefined;
 
       let createdFrom: Date | undefined = undefined;
       let createdTo: Date | undefined = undefined;
@@ -2812,7 +2852,56 @@ export async function registerRoutes(
         if (!Number.isNaN(d.getTime())) createdTo = d;
       }
 
-      const { items, total } = await storage.listLeads({ q, status, owner, assignedTo, createdFrom, createdTo, limit, offset });
+      let lastTouchFrom: Date | undefined = undefined;
+      let lastTouchTo: Date | undefined = undefined;
+      let nextFollowUpFrom: Date | undefined = undefined;
+      let nextFollowUpTo: Date | undefined = undefined;
+      if (lastTouchFromRaw) {
+        const d = new Date(lastTouchFromRaw);
+        if (!Number.isNaN(d.getTime())) lastTouchFrom = d;
+      }
+      if (lastTouchToRaw) {
+        const d = new Date(lastTouchToRaw);
+        if (!Number.isNaN(d.getTime())) lastTouchTo = d;
+      }
+      if (nextFollowUpFromRaw) {
+        const d = new Date(nextFollowUpFromRaw);
+        if (!Number.isNaN(d.getTime())) nextFollowUpFrom = d;
+      }
+      if (nextFollowUpToRaw) {
+        const d = new Date(nextFollowUpToRaw);
+        if (!Number.isNaN(d.getTime())) nextFollowUpTo = d;
+      }
+
+      const { items, total } = await storage.listLeads({
+        q,
+        status,
+        owner,
+        zip,
+        state,
+        city,
+        county,
+        leadType,
+        assignedTo: typeof assignedTo === "number" && Number.isFinite(assignedTo) ? assignedTo : assignedTo === "unassigned" ? "unassigned" : undefined,
+        tags,
+        tagsMode,
+        contactPresence,
+        scoreMin: typeof scoreMin === "number" && Number.isFinite(scoreMin) ? scoreMin : undefined,
+        scoreMax: typeof scoreMax === "number" && Number.isFinite(scoreMax) ? scoreMax : undefined,
+        archived,
+        hasNotes,
+        noteUpdatedWithinDays: typeof noteUpdatedWithinDays === "number" && Number.isFinite(noteUpdatedWithinDays) ? noteUpdatedWithinDays : undefined,
+        lastTouchFrom,
+        lastTouchTo,
+        nextFollowUpFrom,
+        nextFollowUpTo,
+        sortKey,
+        sortDir,
+        createdFrom,
+        createdTo,
+        limit,
+        offset,
+      });
       const leadIds = items.map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n) && n > 0);
       const propertyLinks = await storage.getPropertiesBySourceLeadIds(leadIds);
       const bySourceLeadId = new Map<number, number>();
@@ -2822,8 +2911,30 @@ export async function registerRoutes(
         if (Number.isFinite(sid) && Number.isFinite(pid)) bySourceLeadId.set(sid, pid);
       }
 
+      let notesAgg: any[] = [];
+      try {
+        notesAgg = await storage.getLeadNotesAggByLeadIds(leadIds);
+      } catch {
+        notesAgg = [];
+      }
+      const notesAggByLeadId = new Map<number, any>();
+      for (const r of notesAgg || []) {
+        const lid = Number((r as any).leadId);
+        if (!Number.isFinite(lid) || lid <= 0) continue;
+        notesAggByLeadId.set(lid, r);
+      }
+
       res.json({
-        items: items.map((l: any) => ({ ...l, linkedPropertyId: bySourceLeadId.get(Number(l.id)) ?? null })),
+        items: items.map((l: any) => {
+          const agg = notesAggByLeadId.get(Number(l.id));
+          return {
+            ...l,
+            linkedPropertyId: bySourceLeadId.get(Number(l.id)) ?? null,
+            notesCount: agg ? Number((agg as any).notesCount || 0) : 0,
+            lastNoteAt: agg?.lastNoteAt ?? null,
+            lastNotePreview: agg?.lastNotePreview ?? null,
+          };
+        }),
         total,
       });
     } catch (error: any) {
@@ -2842,6 +2953,769 @@ export async function registerRoutes(
       res.json(lead);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/leads/:id/notes", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const leadId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(leadId)) return res.status(400).json({ message: "Invalid lead id" });
+
+      const limitRaw = typeof req.query?.limit === "string" ? req.query.limit : "";
+      const limit = limitRaw ? parseInt(limitRaw, 10) : 50;
+      const items = await storage.listLeadNotes(leadId, limit);
+      res.json({ items });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/leads/:id/notes", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const leadId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(leadId)) return res.status(400).json({ message: "Invalid lead id" });
+
+      const body = z.object({ body: z.string().trim().min(1).max(20_000) }).parse(req.body || {});
+
+      const note = await storage.createLeadNote({
+        leadId,
+        createdBy: user.id,
+        body: body.body,
+      } as any);
+
+      const now = new Date();
+      const lead = await storage.getLeadById(leadId);
+      if (lead) {
+        const existingNotes = String((lead as any).notes || "").trim();
+        const appended = existingNotes ? `${existingNotes}\n\n${body.body}` : body.body;
+        await storage.updateLead(leadId, { lastTouchAt: now, notes: appended } as any);
+      } else {
+        await storage.updateLead(leadId, { lastTouchAt: now } as any);
+      }
+
+      if (req.session.userId) {
+        await storage.createGlobalActivity({
+          userId: req.session.userId,
+          action: "added_note",
+          description: `Added note to lead`,
+          metadata: JSON.stringify({ leadId, noteId: note.id }),
+        });
+      }
+
+      res.status(201).json(note);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/leads/views", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const teams = await storage.getTeamsForUser(user.id);
+      const teamIds = (teams || []).map((t: any) => Number(t.id)).filter((n: any) => Number.isFinite(n) && n > 0);
+      const items = await storage.listSavedViews({ entityType: "lead", userId: user.id, teamIds });
+      res.json({ items });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/leads/views", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+
+      const payload = z
+        .object({
+          name: z.string().trim().min(1).max(120),
+          visibility: z.enum(["private", "team", "link"]).default("private"),
+          teamId: z.coerce.number().int().positive().optional().nullable(),
+          configJson: z.any(),
+        })
+        .parse(req.body || {});
+
+      let teamId: number | null = payload.teamId ?? null;
+      if (payload.visibility === "team") {
+        if (!teamId) teamId = await getOrInitActiveTeamId(req, user.id);
+        if (!teamId) return res.status(400).json({ message: "No active team selected" });
+        if (!user.isSuperAdmin) {
+          const m = await storage.getTeamMemberByTeamAndUser(teamId, user.id);
+          if (!m || String((m as any).status || "").toLowerCase() !== "active") return res.status(404).json({ message: "Not found" });
+        }
+      } else {
+        teamId = null;
+      }
+
+      const shareToken = payload.visibility === "link" ? crypto.randomBytes(24).toString("hex") : null;
+      const row = await storage.createSavedView({
+        entityType: "lead",
+        name: payload.name,
+        ownerUserId: user.id,
+        teamId,
+        visibility: payload.visibility,
+        shareToken,
+        configJson: payload.configJson,
+      } as any);
+
+      res.status(201).json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/leads/views/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+
+      const existing = await storage.getSavedViewById(id);
+      if (!existing) return res.status(404).json({ message: "Not found" });
+      if (!user.isSuperAdmin && Number((existing as any).ownerUserId) !== user.id) return res.status(404).json({ message: "Not found" });
+
+      const payload = z
+        .object({
+          name: z.string().trim().min(1).max(120).optional(),
+          configJson: z.any().optional(),
+          visibility: z.enum(["private", "team", "link"]).optional(),
+        })
+        .parse(req.body || {});
+
+      const nextVisibility = payload.visibility ?? (existing as any).visibility;
+      const patch: any = {};
+      if (typeof payload.name === "string") patch.name = payload.name;
+      if (typeof payload.configJson !== "undefined") patch.configJson = payload.configJson;
+      if (payload.visibility) patch.visibility = payload.visibility;
+      if (nextVisibility === "link" && !(existing as any).shareToken) patch.shareToken = crypto.randomBytes(24).toString("hex");
+
+      const row = await storage.updateSavedView(id, patch);
+      res.json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/leads/views/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+
+      const existing = await storage.getSavedViewById(id);
+      if (!existing) return res.status(404).json({ message: "Not found" });
+      if (!user.isSuperAdmin && Number((existing as any).ownerUserId) !== user.id) return res.status(404).json({ message: "Not found" });
+
+      await storage.deleteSavedView(id);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/leads/views/by-token/:token", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      if (!token) return res.status(404).json({ message: "Not found" });
+      const row = await storage.getSavedViewByShareToken(token);
+      if (!row) return res.status(404).json({ message: "Not found" });
+      res.json(row);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/leads/bulk/preview", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+
+      const payload = z
+        .object({
+          selectionScope: z.enum(["explicit", "all_filtered"]),
+          leadIds: z.array(z.coerce.number().int().positive()).optional(),
+          filter: z.record(z.any()).optional(),
+          action: z.string().trim().min(1).max(80),
+          params: z.record(z.any()).optional(),
+        })
+        .parse(req.body || {});
+
+      const allowedAssignedToUserIds = user.isSuperAdmin
+        ? undefined
+        : await (async () => {
+            const teamId = await getOrInitActiveTeamId(req, user.id);
+            if (!teamId) return [user.id];
+            const members = await storage.getTeamMembers(teamId);
+            return (members || [])
+              .filter((m: any) => String(m.status || "").toLowerCase() === "active")
+              .map((m: any) => Number(m.userId))
+              .filter((n: any) => Number.isFinite(n) && n > 0);
+          })();
+
+      if (payload.selectionScope === "explicit") {
+        const ids = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+        if (!ids.length) return res.json({ totalTargets: 0, validLeadIds: [] });
+
+        const whereAllowed =
+          allowedAssignedToUserIds && allowedAssignedToUserIds.length
+            ? sql`AND (assigned_to IS NULL OR assigned_to IN (${sql.join(allowedAssignedToUserIds.map((id) => sql`${id}`), sql`,`)}))`
+            : sql``;
+
+        const rows: any = await db.execute(sql`
+          SELECT id
+          FROM leads
+          WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
+          ${whereAllowed}
+        `);
+
+        const validLeadIds = ((rows as any).rows || []).map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n) && n > 0);
+        return res.json({ totalTargets: validLeadIds.length, validLeadIds });
+      }
+
+      const f = payload.filter || {};
+      const { total } = await storage.listLeads({
+        ...(f as any),
+        allowedAssignedToUserIds,
+        limit: 1,
+        offset: 0,
+      });
+
+      res.json({ totalTargets: total });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/leads/bulk/jobs", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+
+      const payload = z
+        .object({
+          selectionScope: z.enum(["explicit", "all_filtered"]),
+          leadIds: z.array(z.coerce.number().int().positive()).optional(),
+          filter: z.record(z.any()).optional(),
+          action: z.enum(["set_status", "assign", "archive", "unarchive", "export"]),
+          params: z.record(z.any()).optional(),
+        })
+        .parse(req.body || {});
+
+      const allowedAssignedToUserIds = user.isSuperAdmin
+        ? undefined
+        : await (async () => {
+            const teamId = await getOrInitActiveTeamId(req, user.id);
+            if (!teamId) return [user.id];
+            const members = await storage.getTeamMembers(teamId);
+            return (members || [])
+              .filter((m: any) => String(m.status || "").toLowerCase() === "active")
+              .map((m: any) => Number(m.userId))
+              .filter((n: any) => Number.isFinite(n) && n > 0);
+          })();
+
+      const job = await storage.createLeadBulkActionJob({
+        createdBy: user.id,
+        status: "queued",
+        action: payload.action,
+        selectionScope: payload.selectionScope,
+        leadIds: payload.selectionScope === "explicit" ? payload.leadIds || [] : null,
+        filterJson: payload.selectionScope === "all_filtered" ? payload.filter || {} : null,
+        totalTargets: 0,
+        processed: 0,
+        succeeded: 0,
+        failed: 0,
+        resultJson: null,
+      } as any);
+
+      setImmediate(async () => {
+        const updateJob = async (patch: any) => {
+          try {
+            await storage.updateLeadBulkActionJob(job.id, patch);
+          } catch {}
+        };
+
+        const startAt = new Date();
+        await updateJob({ status: "running", startedAt: startAt, updatedAt: startAt });
+
+        const runBatchUpdate = async (ids: number[]) => {
+          if (!ids.length) return { processed: 0, succeeded: 0, failed: 0 };
+
+          if (payload.action === "set_status") {
+            const nextStatus = String((payload.params as any)?.status || "").trim();
+            if (!nextStatus) throw new Error("Missing status");
+            await db.execute(sql`
+              UPDATE leads
+              SET status = ${nextStatus}, status_changed_at = NOW(), updated_at = NOW()
+              WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
+            `);
+            return { processed: ids.length, succeeded: ids.length, failed: 0 };
+          }
+
+          if (payload.action === "assign") {
+            const nextAssignedTo = Number((payload.params as any)?.assignedTo);
+            if (!Number.isFinite(nextAssignedTo) || nextAssignedTo <= 0) throw new Error("Invalid assignedTo");
+            await db.execute(sql`
+              UPDATE leads
+              SET assigned_to = ${nextAssignedTo}, updated_at = NOW()
+              WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
+            `);
+            return { processed: ids.length, succeeded: ids.length, failed: 0 };
+          }
+
+          if (payload.action === "archive") {
+            await db.execute(sql`
+              UPDATE leads
+              SET archived_at = NOW(), updated_at = NOW()
+              WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
+            `);
+            return { processed: ids.length, succeeded: ids.length, failed: 0 };
+          }
+
+          if (payload.action === "unarchive") {
+            await db.execute(sql`
+              UPDATE leads
+              SET archived_at = NULL, updated_at = NOW()
+              WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
+            `);
+            return { processed: ids.length, succeeded: ids.length, failed: 0 };
+          }
+
+          if (payload.action === "export") {
+            const { job: exportJob, token } = await createExportJob({
+              entityType: "lead",
+              createdBy: user.id,
+              format: "csv",
+              filters: { ids },
+              columns: [],
+              expiresInMinutes: 60,
+            });
+            const finalExport = await processExportJob(exportJob.id);
+            await updateJob({ resultJson: { exportId: finalExport.id, token }, updatedAt: new Date() });
+            return { processed: ids.length, succeeded: ids.length, failed: 0 };
+          }
+
+          return { processed: ids.length, succeeded: 0, failed: ids.length };
+        };
+
+        try {
+          let totalTargets = 0;
+          let processed = 0;
+          let succeeded = 0;
+          let failed = 0;
+
+          if (payload.selectionScope === "explicit") {
+            const rawIds = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+            const unique = Array.from(new Set(rawIds));
+            const whereAllowed =
+              allowedAssignedToUserIds && allowedAssignedToUserIds.length
+                ? sql`AND (assigned_to IS NULL OR assigned_to IN (${sql.join(allowedAssignedToUserIds.map((id) => sql`${id}`), sql`,`)}))`
+                : sql``;
+            const rows: any = await db.execute(sql`
+              SELECT id
+              FROM leads
+              WHERE id IN (${sql.join(unique.map((id) => sql`${id}`), sql`,`)})
+              ${whereAllowed}
+            `);
+            const ids = ((rows as any).rows || []).map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n) && n > 0);
+            totalTargets = ids.length;
+
+            const out = await runBatchUpdate(ids);
+            processed += out.processed;
+            succeeded += out.succeeded;
+            failed += out.failed;
+          } else {
+            const f = payload.filter || {};
+            const pageSize = 500;
+            let offset = 0;
+            while (true) {
+              const page = await storage.listLeads({
+                ...(f as any),
+                allowedAssignedToUserIds,
+                limit: pageSize,
+                offset,
+              });
+              if (!totalTargets) totalTargets = page.total;
+              const ids = (page.items || []).map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n) && n > 0);
+              if (!ids.length) break;
+
+              const out = await runBatchUpdate(ids);
+              processed += out.processed;
+              succeeded += out.succeeded;
+              failed += out.failed;
+
+              offset += pageSize;
+              await updateJob({ totalTargets, processed, succeeded, failed, updatedAt: new Date() });
+              if (offset >= totalTargets) break;
+            }
+          }
+
+          await updateJob({ status: "completed", totalTargets, processed, succeeded, failed, finishedAt: new Date(), updatedAt: new Date() });
+        } catch (err: any) {
+          await updateJob({
+            status: "failed",
+            resultJson: { error: String(err?.message || err) },
+            finishedAt: new Date(),
+            updatedAt: new Date(),
+          });
+        }
+      });
+
+      res.status(201).json({ jobId: job.id, status: job.status });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/leads/bulk/jobs/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const job = await storage.getLeadBulkActionJobById(id);
+      if (!job) return res.status(404).json({ message: "Not found" });
+      if (!user.isSuperAdmin && Number((job as any).createdBy) !== user.id) return res.status(404).json({ message: "Not found" });
+      res.json(job);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/ai/voice/parse", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
+
+      const payload = z.object({ transcript: z.string().trim().min(1).max(5000) }).parse(req.body || {});
+      const t = payload.transcript.toLowerCase();
+
+      let action: "set_status" | "assign" | "archive" | "unarchive" | "export" | null = null;
+      const params: any = {};
+
+      if (t.includes("unarchive")) action = "unarchive";
+      else if (t.includes("archive")) action = "archive";
+      else if (t.includes("export")) action = "export";
+
+      const statusMatch =
+        t.match(/status\s+to\s+([a-z0-9_\- ]{2,40})/) ||
+        t.match(/mark\s+as\s+([a-z0-9_\- ]{2,40})/) ||
+        t.match(/set\s+status\s+([a-z0-9_\- ]{2,40})/);
+      if (statusMatch) {
+        action = "set_status";
+        params.status = String(statusMatch[1] || "").trim();
+      }
+
+      if (t.includes("assign to me")) {
+        action = "assign";
+        params.assignedTo = user.id;
+      } else {
+        const assignMatch = t.match(/assign\s+to\s+user\s+(\d{1,10})/);
+        if (assignMatch) {
+          action = "assign";
+          params.assignedTo = Number(assignMatch[1]);
+        }
+      }
+
+      res.json({ action, params, transcript: payload.transcript });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/ai/voice/preview", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
+
+      const payload = z
+        .object({
+          parsed: z.object({ action: z.string().nullable(), params: z.record(z.any()).default({}), transcript: z.string().optional() }),
+          leadIds: z.array(z.coerce.number().int().positive()).max(200),
+        })
+        .parse(req.body || {});
+
+      const ids = payload.leadIds.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      if (!ids.length) return res.json({ changes: [] });
+
+      const rows: any = await db.execute(sql`
+        SELECT id, status, assigned_to as "assignedTo", archived_at as "archivedAt"
+        FROM leads
+        WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
+      `);
+      const leadsRows = (rows as any).rows || [];
+
+      const action = payload.parsed.action as any;
+      const params = payload.parsed.params || {};
+
+      const changes = leadsRows.map((r: any) => {
+        const next: any = { id: Number(r.id) };
+        if (action === "set_status") next.status = String(params.status || "").trim();
+        if (action === "assign") next.assignedTo = Number(params.assignedTo);
+        if (action === "archive") next.archivedAt = new Date().toISOString();
+        if (action === "unarchive") next.archivedAt = null;
+        return { before: r, next };
+      });
+
+      res.json({ changes });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/ai/voice/apply", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
+
+      const payload = z
+        .object({
+          parsed: z.object({ action: z.string().nullable(), params: z.record(z.any()).default({}), transcript: z.string().optional() }),
+          transcript: z.string().trim().min(1).max(5000),
+          leadIds: z.array(z.coerce.number().int().positive()).max(200),
+        })
+        .parse(req.body || {});
+
+      const ids = payload.leadIds.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      if (!ids.length) return res.json({ ok: true, applied: 0 });
+
+      const rows: any = await db.execute(sql`
+        SELECT id, status, assigned_to as "assignedTo", archived_at as "archivedAt"
+        FROM leads
+        WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
+      `);
+      const beforeRows = (rows as any).rows || [];
+
+      const action = payload.parsed.action as any;
+      const params = payload.parsed.params || {};
+
+      const undoJson = beforeRows.map((r: any) => ({
+        id: Number(r.id),
+        status: r.status ?? null,
+        assignedTo: r.assignedTo ?? null,
+        archivedAt: r.archivedAt ?? null,
+      }));
+
+      const actionLog = await storage.createAiActionLog({
+        createdBy: user.id,
+        entityType: "lead",
+        transcript: payload.transcript,
+        parsedJson: payload.parsed,
+        selectionJson: { leadIds: ids },
+        appliedJson: { action, params },
+      } as any);
+
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+      await storage.createAiActionUndo({
+        aiActionLogId: actionLog.id,
+        undoJson,
+        expiresAt,
+      } as any);
+
+      if (action === "set_status") {
+        const nextStatus = String(params.status || "").trim();
+        if (!nextStatus) return res.status(400).json({ message: "Missing status" });
+        await db.execute(sql`
+          UPDATE leads
+          SET status = ${nextStatus}, status_changed_at = NOW(), updated_at = NOW()
+          WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
+        `);
+      } else if (action === "assign") {
+        const nextAssignedTo = Number(params.assignedTo);
+        if (!Number.isFinite(nextAssignedTo) || nextAssignedTo <= 0) return res.status(400).json({ message: "Invalid assignedTo" });
+        await db.execute(sql`
+          UPDATE leads
+          SET assigned_to = ${nextAssignedTo}, updated_at = NOW()
+          WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
+        `);
+      } else if (action === "archive") {
+        await db.execute(sql`
+          UPDATE leads
+          SET archived_at = NOW(), updated_at = NOW()
+          WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
+        `);
+      } else if (action === "unarchive") {
+        await db.execute(sql`
+          UPDATE leads
+          SET archived_at = NULL, updated_at = NOW()
+          WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
+        `);
+      } else if (action === "export") {
+        const { job: exportJob, token } = await createExportJob({
+          entityType: "lead",
+          createdBy: user.id,
+          format: "csv",
+          filters: { ids },
+          columns: [],
+          expiresInMinutes: 60,
+        });
+        await processExportJob(exportJob.id);
+        await storage.updateAiActionUndo((await storage.getAiActionUndoByActionId(actionLog.id))!.id, { undoneAt: null } as any);
+        return res.json({ ok: true, actionLogId: actionLog.id, exportId: exportJob.id, token });
+      } else {
+        return res.status(400).json({ message: "Unsupported voice action" });
+      }
+
+      res.json({ ok: true, actionLogId: actionLog.id, applied: ids.length });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/ai/voice/undo", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
+
+      const payload = z.object({ aiActionLogId: z.coerce.number().int().positive() }).parse(req.body || {});
+      const undo = await storage.getAiActionUndoByActionId(payload.aiActionLogId);
+      if (!undo) return res.status(404).json({ message: "Not found" });
+
+      const expiresAt = (undo as any).expiresAt ? new Date((undo as any).expiresAt) : null;
+      if (expiresAt && expiresAt.getTime() < Date.now()) return res.status(400).json({ message: "Undo window expired" });
+      if ((undo as any).undoneAt) return res.status(400).json({ message: "Already undone" });
+
+      const undoJson = Array.isArray((undo as any).undoJson) ? (undo as any).undoJson : [];
+      const ids = undoJson.map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n) && n > 0);
+      if (!ids.length) return res.json({ ok: true, restored: 0 });
+
+      for (const row of undoJson) {
+        const id = Number(row.id);
+        if (!Number.isFinite(id) || id <= 0) continue;
+        await db.execute(sql`
+          UPDATE leads
+          SET status = ${row.status ?? null},
+              assigned_to = ${row.assignedTo ?? null},
+              archived_at = ${row.archivedAt ?? null},
+              updated_at = NOW()
+          WHERE id = ${id}
+        `);
+      }
+
+      await storage.updateAiActionUndo((undo as any).id, { undoneAt: new Date() } as any);
+      res.json({ ok: true, restored: ids.length });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/audit/runs", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const limitRaw = typeof req.query?.limit === "string" ? req.query.limit : "";
+      const limit = limitRaw ? parseInt(limitRaw, 10) : 50;
+      const items = await storage.listAppAuditRuns({ createdBy: user.id, limit });
+      res.json({ items });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/audit/runs", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const payload = z.object({ scopeJson: z.any() }).parse(req.body || {});
+      const row = await storage.createAppAuditRun({ createdBy: user.id, scopeJson: payload.scopeJson } as any);
+      res.status(201).json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/audit/runs/:id/findings", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const runId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(runId)) return res.status(400).json({ message: "Invalid run id" });
+      const items = await storage.listAppAuditFindings({ runId, limit: 500 });
+      res.json({ items });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/audit/runs/:id/findings", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const runId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(runId)) return res.status(400).json({ message: "Invalid run id" });
+
+      const payload = z
+        .object({
+          severity: z.enum(["low", "medium", "high", "critical"]),
+          area: z.string().trim().min(1).max(80),
+          title: z.string().trim().min(1).max(160),
+          description: z.string().trim().min(1).max(20_000),
+          recommendation: z.string().trim().max(20_000).optional().nullable(),
+          technicalNotes: z.string().trim().max(20_000).optional().nullable(),
+        })
+        .parse(req.body || {});
+
+      const row = await storage.createAppAuditFinding({
+        runId,
+        severity: payload.severity,
+        area: payload.area,
+        title: payload.title,
+        description: payload.description,
+        recommendation: payload.recommendation ?? null,
+        technicalNotes: payload.technicalNotes ?? null,
+        status: "open",
+      } as any);
+
+      res.status(201).json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/audit/findings/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+
+      if (!user.isSuperAdmin) {
+        const rows: any = await db.execute(sql`
+          SELECT r.created_by as "createdBy"
+          FROM app_audit_findings f
+          JOIN app_audit_runs r ON r.id = f.run_id
+          WHERE f.id = ${id}
+          LIMIT 1
+        `);
+        const createdBy = Number((rows as any).rows?.[0]?.createdBy);
+        if (!Number.isFinite(createdBy) || createdBy !== user.id) return res.status(404).json({ message: "Not found" });
+      }
+
+      const payload = z
+        .object({
+          severity: z.enum(["low", "medium", "high", "critical"]).optional(),
+          area: z.string().trim().min(1).max(80).optional(),
+          title: z.string().trim().min(1).max(160).optional(),
+          description: z.string().trim().min(1).max(20_000).optional(),
+          recommendation: z.string().trim().max(20_000).optional().nullable(),
+          technicalNotes: z.string().trim().max(20_000).optional().nullable(),
+          status: z.enum(["open", "in_progress", "resolved", "ignored"]).optional(),
+        })
+        .parse(req.body || {});
+
+      const row = await storage.updateAppAuditFinding(id, payload as any);
+      res.json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
     }
   });
 

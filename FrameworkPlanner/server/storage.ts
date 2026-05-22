@@ -1,12 +1,19 @@
 import { db } from "./db.js";
 import { asc, desc, sql } from "drizzle-orm";
 import { 
-  leads, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
+  leads, leadNotes, savedViews, leadBulkActionJobs, aiActionLogs, aiActionUndo, appAuditRuns, appAuditFindings, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
   buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
+  type LeadNote, type InsertLeadNote,
+  type SavedView, type InsertSavedView,
+  type LeadBulkActionJob, type InsertLeadBulkActionJob,
+  type AiActionLog, type InsertAiActionLog,
+  type AiActionUndo, type InsertAiActionUndo,
+  type AppAuditRun, type InsertAppAuditRun,
+  type AppAuditFinding, type InsertAppAuditFinding,
   type Property, type InsertProperty, 
   type Contact, type InsertContact, 
   type Contract, type InsertContract,
@@ -80,8 +87,39 @@ export interface IStorage {
     q?: string;
     status?: string;
     owner?: string;
+    zip?: string;
+    state?: string;
+    city?: string;
+    county?: string;
+    leadType?: string;
+    assignedTo?: number | "unassigned";
+    tags?: string[];
+    tagsMode?: "any" | "all";
+    contactPresence?: "phone_only" | "email_only" | "both" | "none";
+    scoreMin?: number;
+    scoreMax?: number;
+    archived?: "exclude" | "include" | "only";
+    hasNotes?: boolean;
+    noteUpdatedWithinDays?: number;
+    lastTouchFrom?: Date;
+    lastTouchTo?: Date;
+    nextFollowUpFrom?: Date;
+    nextFollowUpTo?: Date;
+    sortKey?:
+      | "newest_imported"
+      | "oldest_imported"
+      | "highest_score"
+      | "lowest_score"
+      | "highest_value"
+      | "recently_updated"
+      | "oldest_untouched"
+      | "most_recent_contact"
+      | "status_age"
+      | "assigned_user";
+    sortDir?: "asc" | "desc";
     createdFrom?: Date;
     createdTo?: Date;
+    allowedAssignedToUserIds?: number[];
     limit?: number;
     offset?: number;
   }): Promise<{ items: Lead[]; total: number }>;
@@ -89,6 +127,34 @@ export interface IStorage {
   createLead(lead: InsertLead): Promise<Lead>;
   updateLead(id: number, lead: Partial<InsertLead>): Promise<Lead>;
   deleteLead(id: number): Promise<void>;
+
+  listLeadNotes(leadId: number, limit?: number): Promise<LeadNote[]>;
+  createLeadNote(input: InsertLeadNote): Promise<LeadNote>;
+  getLeadNotesAggByLeadIds(
+    leadIds: number[],
+  ): Promise<Array<{ leadId: number; notesCount: number; lastNoteAt: Date | null; lastNotePreview: string | null }>>;
+
+  listSavedViews(input: { entityType: string; userId: number; teamIds: number[] }): Promise<SavedView[]>;
+  getSavedViewById(id: number): Promise<SavedView | undefined>;
+  getSavedViewByShareToken(token: string): Promise<SavedView | undefined>;
+  createSavedView(input: InsertSavedView): Promise<SavedView>;
+  updateSavedView(id: number, patch: Partial<InsertSavedView>): Promise<SavedView>;
+  deleteSavedView(id: number): Promise<void>;
+
+  createLeadBulkActionJob(input: InsertLeadBulkActionJob): Promise<LeadBulkActionJob>;
+  getLeadBulkActionJobById(id: number): Promise<LeadBulkActionJob | undefined>;
+  updateLeadBulkActionJob(id: number, patch: Partial<InsertLeadBulkActionJob>): Promise<LeadBulkActionJob>;
+
+  createAiActionLog(input: InsertAiActionLog): Promise<AiActionLog>;
+  createAiActionUndo(input: InsertAiActionUndo): Promise<AiActionUndo>;
+  getAiActionUndoByActionId(aiActionLogId: number): Promise<AiActionUndo | undefined>;
+  updateAiActionUndo(id: number, patch: Partial<InsertAiActionUndo>): Promise<AiActionUndo>;
+
+  createAppAuditRun(input: InsertAppAuditRun): Promise<AppAuditRun>;
+  listAppAuditRuns(input: { createdBy: number; limit?: number }): Promise<AppAuditRun[]>;
+  createAppAuditFinding(input: InsertAppAuditFinding): Promise<AppAuditFinding>;
+  listAppAuditFindings(input: { runId: number; limit?: number }): Promise<AppAuditFinding[]>;
+  updateAppAuditFinding(id: number, patch: Partial<InsertAppAuditFinding>): Promise<AppAuditFinding>;
 
   getLatestSkipTraceForLead(leadId: number): Promise<SkipTraceResult | undefined>;
   getLatestSkipTraceForProperty(propertyId: number): Promise<SkipTraceResult | undefined>;
@@ -441,28 +507,78 @@ export class DatabaseStorage implements IStorage {
     q?: string;
     status?: string;
     owner?: string;
-    assignedTo?: number;
+    zip?: string;
+    state?: string;
+    city?: string;
+    county?: string;
+    leadType?: string;
+    assignedTo?: number | "unassigned";
+    tags?: string[];
+    tagsMode?: "any" | "all";
+    contactPresence?: "phone_only" | "email_only" | "both" | "none";
+    scoreMin?: number;
+    scoreMax?: number;
+    archived?: "exclude" | "include" | "only";
+    hasNotes?: boolean;
+    noteUpdatedWithinDays?: number;
+    lastTouchFrom?: Date;
+    lastTouchTo?: Date;
+    nextFollowUpFrom?: Date;
+    nextFollowUpTo?: Date;
+    sortKey?:
+      | "newest_imported"
+      | "oldest_imported"
+      | "highest_score"
+      | "lowest_score"
+      | "highest_value"
+      | "recently_updated"
+      | "oldest_untouched"
+      | "most_recent_contact"
+      | "status_age"
+      | "assigned_user";
+    sortDir?: "asc" | "desc";
     createdFrom?: Date;
     createdTo?: Date;
+    allowedAssignedToUserIds?: number[];
     limit?: number;
     offset?: number;
   }): Promise<{ items: Lead[]; total: number }> {
     const limit = typeof input.limit === "number" ? input.limit : 200;
     const offset = typeof input.offset === "number" ? input.offset : 0;
 
+    if (Array.isArray(input.allowedAssignedToUserIds)) {
+      const ids = input.allowedAssignedToUserIds.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      if (!ids.length) return { items: [], total: 0 };
+    }
+
     const whereParts: any[] = [];
+
+    const archivedMode = input.archived || "exclude";
+    if (archivedMode === "exclude") whereParts.push(isNull(leads.archivedAt));
+    if (archivedMode === "only") whereParts.push(isNotNull(leads.archivedAt));
 
     const status = String(input.status || "").trim();
     if (status && status !== "all") whereParts.push(eq(leads.status, status));
+
+    const zip = String(input.zip || "").trim();
+    if (zip) whereParts.push(eq(leads.zipCode, zip));
+
+    const state = String(input.state || "").trim();
+    if (state) whereParts.push(eq(leads.state, state));
+
+    const city = String(input.city || "").trim();
+    if (city) whereParts.push(eq(leads.city, city));
+
+    const county = String(input.county || "").trim();
+    if (county) whereParts.push(eq(leads.county, county));
+
+    const leadType = String(input.leadType || "").trim();
+    if (leadType) whereParts.push(eq(leads.leadType, leadType));
 
     const owner = String(input.owner || "").trim().toLowerCase();
     if (owner) {
       const needle = `%${owner}%`;
       whereParts.push(sql`lower(${leads.ownerName}) LIKE ${needle}`);
-    }
-
-    if (typeof input.assignedTo === "number" && Number.isFinite(input.assignedTo)) {
-      whereParts.push(eq(leads.assignedTo, input.assignedTo));
     }
 
     const qRaw = String(input.q || "").trim().toLowerCase();
@@ -480,14 +596,76 @@ export class DatabaseStorage implements IStorage {
       );
     }
 
+    if (typeof input.assignedTo === "number") whereParts.push(eq(leads.assignedTo, input.assignedTo));
+    if (input.assignedTo === "unassigned") whereParts.push(isNull(leads.assignedTo));
+
+    if (Array.isArray(input.tags) && input.tags.length) {
+      const cleaned = input.tags.map((t) => String(t || "").trim()).filter(Boolean);
+      if (cleaned.length) {
+        const arr = sql`ARRAY[${sql.join(cleaned.map((t) => sql`${t}`), sql`,`) }]::text[]`;
+        const mode = input.tagsMode || "any";
+        if (mode === "all") whereParts.push(sql`${leads.tags} @> ${arr}`);
+        else whereParts.push(sql`${leads.tags} && ${arr}`);
+      }
+    }
+
+    if (typeof input.scoreMin === "number" && Number.isFinite(input.scoreMin)) whereParts.push(gte(leads.relasScore, input.scoreMin));
+    if (typeof input.scoreMax === "number" && Number.isFinite(input.scoreMax)) whereParts.push(lte(leads.relasScore, input.scoreMax));
+
+    const contactPresence = input.contactPresence;
+    if (contactPresence) {
+      const hasPhone = sql`COALESCE(NULLIF(TRIM(${leads.ownerPhone}), ''), NULL) IS NOT NULL`;
+      const hasEmail = sql`COALESCE(NULLIF(TRIM(${leads.ownerEmail}), ''), NULL) IS NOT NULL`;
+      if (contactPresence === "phone_only") whereParts.push(and(hasPhone, sql`NOT (${hasEmail})`));
+      if (contactPresence === "email_only") whereParts.push(and(hasEmail, sql`NOT (${hasPhone})`));
+      if (contactPresence === "both") whereParts.push(and(hasPhone, hasEmail));
+      if (contactPresence === "none") whereParts.push(and(sql`NOT (${hasPhone})`, sql`NOT (${hasEmail})`));
+    }
+
+    if (typeof input.hasNotes === "boolean") {
+      if (input.hasNotes) whereParts.push(sql`EXISTS (SELECT 1 FROM lead_notes ln WHERE ln.lead_id = ${leads.id})`);
+      else whereParts.push(sql`NOT EXISTS (SELECT 1 FROM lead_notes ln WHERE ln.lead_id = ${leads.id})`);
+    }
+
+    if (typeof input.noteUpdatedWithinDays === "number" && Number.isFinite(input.noteUpdatedWithinDays) && input.noteUpdatedWithinDays > 0) {
+      whereParts.push(
+        sql`EXISTS (SELECT 1 FROM lead_notes ln WHERE ln.lead_id = ${leads.id} AND ln.created_at >= NOW() - (${input.noteUpdatedWithinDays}::int * INTERVAL '1 day'))`,
+      );
+    }
+
     if (input.createdFrom) whereParts.push(gte(leads.createdAt, input.createdFrom));
     if (input.createdTo) whereParts.push(lte(leads.createdAt, input.createdTo));
+    if (input.lastTouchFrom) whereParts.push(gte(leads.lastTouchAt, input.lastTouchFrom));
+    if (input.lastTouchTo) whereParts.push(lte(leads.lastTouchAt, input.lastTouchTo));
+    if (input.nextFollowUpFrom) whereParts.push(gte(leads.nextFollowUpAt, input.nextFollowUpFrom));
+    if (input.nextFollowUpTo) whereParts.push(lte(leads.nextFollowUpAt, input.nextFollowUpTo));
+
+    if (Array.isArray(input.allowedAssignedToUserIds)) {
+      const ids = input.allowedAssignedToUserIds.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      whereParts.push(inArray(leads.assignedTo, ids));
+    }
 
     const whereClause = whereParts.length ? and(...whereParts) : undefined;
 
+    const dir = input.sortDir === "asc" ? "asc" : "desc";
+    const dirSql = dir === "asc" ? sql`ASC` : sql`DESC`;
+    const sortKey = input.sortKey || "newest_imported";
+    const orderByParts: any[] = [];
+    if (sortKey === "newest_imported") orderByParts.push(desc(leads.createdAt), desc(leads.id));
+    else if (sortKey === "oldest_imported") orderByParts.push(asc(leads.createdAt), asc(leads.id));
+    else if (sortKey === "highest_score") orderByParts.push(sql`${leads.relasScore} DESC NULLS LAST`, desc(leads.createdAt), desc(leads.id));
+    else if (sortKey === "lowest_score") orderByParts.push(sql`${leads.relasScore} ASC NULLS LAST`, desc(leads.createdAt), desc(leads.id));
+    else if (sortKey === "highest_value") orderByParts.push(sql`${leads.estimatedValue} ${dirSql} NULLS LAST`, desc(leads.createdAt), desc(leads.id));
+    else if (sortKey === "recently_updated") orderByParts.push(sql`${leads.updatedAt} ${dirSql}`, desc(leads.id));
+    else if (sortKey === "oldest_untouched") orderByParts.push(sql`COALESCE(${leads.lastTouchAt}, ${leads.createdAt}) ASC`, asc(leads.id));
+    else if (sortKey === "most_recent_contact") orderByParts.push(sql`${leads.lastTouchAt} DESC NULLS LAST`, desc(leads.createdAt), desc(leads.id));
+    else if (sortKey === "status_age") orderByParts.push(sql`${leads.statusChangedAt} ${dirSql} NULLS LAST`, desc(leads.createdAt), desc(leads.id));
+    else if (sortKey === "assigned_user") orderByParts.push(sql`${leads.assignedTo} ${dirSql} NULLS LAST`, desc(leads.createdAt), desc(leads.id));
+    else orderByParts.push(desc(leads.createdAt), desc(leads.id));
+
     let q: any = db.select().from(leads);
     if (whereClause) q = q.where(whereClause);
-    q = q.orderBy(desc(leads.createdAt), desc(leads.id)).limit(limit).offset(offset);
+    q = q.orderBy(...orderByParts).limit(limit).offset(offset);
     const items = (await q) as unknown as Lead[];
 
     let cq: any = db.select({ count: sql<number>`count(*)::int` }).from(leads);
@@ -515,6 +693,193 @@ export class DatabaseStorage implements IStorage {
 
   async deleteLead(id: number): Promise<void> {
     await db.delete(leads).where(eq(leads.id, id));
+  }
+
+  async listLeadNotes(leadId: number, limit: number = 50): Promise<LeadNote[]> {
+    const n = Number.isFinite(limit) ? Math.max(1, Math.min(500, limit)) : 50;
+    return db
+      .select()
+      .from(leadNotes)
+      .where(eq(leadNotes.leadId, leadId))
+      .orderBy(desc(leadNotes.createdAt), desc(leadNotes.id))
+      .limit(n);
+  }
+
+  async createLeadNote(input: InsertLeadNote): Promise<LeadNote> {
+    const result = await db.insert(leadNotes).values(input as any).returning();
+    return result[0];
+  }
+
+  async getLeadNotesAggByLeadIds(
+    leadIds: number[],
+  ): Promise<Array<{ leadId: number; notesCount: number; lastNoteAt: Date | null; lastNotePreview: string | null }>> {
+    const ids = (leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+    if (!ids.length) return [];
+
+    const rows = await db
+      .select({
+        leadId: leadNotes.leadId,
+        notesCount: sql<number>`count(*)::int`,
+        lastNoteAt: sql<Date | null>`max(${leadNotes.createdAt})`,
+      })
+      .from(leadNotes)
+      .where(inArray(leadNotes.leadId, ids))
+      .groupBy(leadNotes.leadId);
+
+    const latestRows: any = await db.execute(sql`
+      SELECT DISTINCT ON (lead_id)
+        lead_id as "leadId",
+        body as "body",
+        created_at as "createdAt"
+      FROM lead_notes
+      WHERE lead_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
+      ORDER BY lead_id, created_at DESC, id DESC
+    `);
+
+    const latestByLeadId = new Map<number, { body: string; createdAt: Date | null }>();
+    for (const r of (latestRows as any).rows || []) {
+      const lid = Number(r.leadId);
+      if (!Number.isFinite(lid) || lid <= 0) continue;
+      latestByLeadId.set(lid, { body: String(r.body || ""), createdAt: r.createdAt ? new Date(r.createdAt) : null });
+    }
+
+    return rows.map((r) => {
+      const lid = Number((r as any).leadId);
+      const latest = latestByLeadId.get(lid);
+      return {
+        leadId: lid,
+        notesCount: Number((r as any).notesCount || 0),
+        lastNoteAt: (r as any).lastNoteAt ? new Date((r as any).lastNoteAt) : latest?.createdAt ?? null,
+        lastNotePreview: latest ? String(latest.body || "").trim().slice(0, 280) || null : null,
+      };
+    });
+  }
+
+  async listSavedViews(input: { entityType: string; userId: number; teamIds: number[] }): Promise<SavedView[]> {
+    const entityType = String(input.entityType || "").trim();
+    const userId = Number(input.userId);
+    const teamIds = (input.teamIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+    if (!entityType || !Number.isFinite(userId) || userId <= 0) return [];
+
+    const whereParts: any[] = [eq(savedViews.entityType, entityType)];
+    const scopes: any[] = [eq(savedViews.ownerUserId, userId)];
+    if (teamIds.length) scopes.push(and(eq(savedViews.visibility, "team"), inArray(savedViews.teamId, teamIds)));
+    scopes.push(and(eq(savedViews.visibility, "link"), eq(savedViews.ownerUserId, userId)));
+    whereParts.push(or(...scopes));
+
+    return db.select().from(savedViews).where(and(...whereParts)).orderBy(desc(savedViews.updatedAt), desc(savedViews.id));
+  }
+
+  async getSavedViewById(id: number): Promise<SavedView | undefined> {
+    const out = await db.select().from(savedViews).where(eq(savedViews.id, id)).limit(1);
+    return out[0];
+  }
+
+  async getSavedViewByShareToken(token: string): Promise<SavedView | undefined> {
+    const t = String(token || "").trim();
+    if (!t) return undefined;
+    const out = await db
+      .select()
+      .from(savedViews)
+      .where(and(eq(savedViews.shareToken, t), eq(savedViews.visibility, "link")))
+      .limit(1);
+    return out[0];
+  }
+
+  async createSavedView(input: InsertSavedView): Promise<SavedView> {
+    const result = await db.insert(savedViews).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateSavedView(id: number, patch: Partial<InsertSavedView>): Promise<SavedView> {
+    const result = await db
+      .update(savedViews)
+      .set({ ...(patch as any), updatedAt: new Date() } as any)
+      .where(eq(savedViews.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteSavedView(id: number): Promise<void> {
+    await db.delete(savedViews).where(eq(savedViews.id, id));
+  }
+
+  async createLeadBulkActionJob(input: InsertLeadBulkActionJob): Promise<LeadBulkActionJob> {
+    const result = await db.insert(leadBulkActionJobs).values(input as any).returning();
+    return result[0];
+  }
+
+  async getLeadBulkActionJobById(id: number): Promise<LeadBulkActionJob | undefined> {
+    const out = await db.select().from(leadBulkActionJobs).where(eq(leadBulkActionJobs.id, id)).limit(1);
+    return out[0];
+  }
+
+  async updateLeadBulkActionJob(id: number, patch: Partial<InsertLeadBulkActionJob>): Promise<LeadBulkActionJob> {
+    const result = await db
+      .update(leadBulkActionJobs)
+      .set({ ...(patch as any), updatedAt: new Date() } as any)
+      .where(eq(leadBulkActionJobs.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async createAiActionLog(input: InsertAiActionLog): Promise<AiActionLog> {
+    const result = await db.insert(aiActionLogs).values(input as any).returning();
+    return result[0];
+  }
+
+  async createAiActionUndo(input: InsertAiActionUndo): Promise<AiActionUndo> {
+    const result = await db.insert(aiActionUndo).values(input as any).returning();
+    return result[0];
+  }
+
+  async getAiActionUndoByActionId(aiActionLogId: number): Promise<AiActionUndo | undefined> {
+    const out = await db.select().from(aiActionUndo).where(eq(aiActionUndo.aiActionLogId, aiActionLogId)).limit(1);
+    return out[0];
+  }
+
+  async updateAiActionUndo(id: number, patch: Partial<InsertAiActionUndo>): Promise<AiActionUndo> {
+    const result = await db.update(aiActionUndo).set(patch as any).where(eq(aiActionUndo.id, id)).returning();
+    return result[0];
+  }
+
+  async createAppAuditRun(input: InsertAppAuditRun): Promise<AppAuditRun> {
+    const result = await db.insert(appAuditRuns).values(input as any).returning();
+    return result[0];
+  }
+
+  async listAppAuditRuns(input: { createdBy: number; limit?: number }): Promise<AppAuditRun[]> {
+    const n = typeof input.limit === "number" ? Math.max(1, Math.min(200, input.limit)) : 50;
+    return db
+      .select()
+      .from(appAuditRuns)
+      .where(eq(appAuditRuns.createdBy, input.createdBy))
+      .orderBy(desc(appAuditRuns.createdAt), desc(appAuditRuns.id))
+      .limit(n);
+  }
+
+  async createAppAuditFinding(input: InsertAppAuditFinding): Promise<AppAuditFinding> {
+    const result = await db.insert(appAuditFindings).values(input as any).returning();
+    return result[0];
+  }
+
+  async listAppAuditFindings(input: { runId: number; limit?: number }): Promise<AppAuditFinding[]> {
+    const n = typeof input.limit === "number" ? Math.max(1, Math.min(1000, input.limit)) : 200;
+    return db
+      .select()
+      .from(appAuditFindings)
+      .where(eq(appAuditFindings.runId, input.runId))
+      .orderBy(desc(appAuditFindings.updatedAt), desc(appAuditFindings.id))
+      .limit(n);
+  }
+
+  async updateAppAuditFinding(id: number, patch: Partial<InsertAppAuditFinding>): Promise<AppAuditFinding> {
+    const result = await db
+      .update(appAuditFindings)
+      .set({ ...(patch as any), updatedAt: new Date() } as any)
+      .where(eq(appAuditFindings.id, id))
+      .returning();
+    return result[0];
   }
 
   async getLatestSkipTraceForLead(leadId: number): Promise<SkipTraceResult | undefined> {

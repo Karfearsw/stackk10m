@@ -22,7 +22,8 @@ import {
   CheckSquare,
   CalendarDays,
   CalendarCheck2,
-  Ticket
+  Ticket,
+  Shield
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -48,6 +49,7 @@ export const navigation = [
   { name: "Contracts", href: "/contracts", icon: FileText },
   { name: "Analytics", href: "/analytics", icon: PieChart },
   { name: "Playground", href: "/playground", icon: Lightbulb },
+  { name: "Audit", href: "/audit", icon: Shield },
   { name: "Calculator", href: "/calculator", icon: Calculator },
   { name: "Timesheet", href: "/timesheet", icon: Clock },
   { name: "Notifications", href: "/notifications", icon: Bell },
