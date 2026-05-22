@@ -1,6 +1,19 @@
-import { createRequire } from "node:module";
+let cached: any | null = null;
+let cachedPromise: Promise<any> | null = null;
 
-const require = createRequire(import.meta.url);
-const mod = require("../FrameworkPlanner/dist-server/vercel.js") as any;
+async function loadHandler(): Promise<any> {
+  if (cached) return cached;
+  if (!cachedPromise) {
+    const url = new URL("../FrameworkPlanner/dist-server/vercel.js", import.meta.url);
+    cachedPromise = import(url.href).then((m: any) => {
+      cached = m?.default ?? m;
+      return cached;
+    });
+  }
+  return cachedPromise;
+}
 
-export default mod?.default ?? mod;
+export default async function handler(req: any, res: any) {
+  const h = await loadHandler();
+  return h(req, res);
+}
