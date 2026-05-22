@@ -3131,6 +3131,87 @@ export async function registerRoutes(
     }
   });
 
+  const normalizeLeadListFilter = (raw: any) => {
+    const getStr = (k: string) => (typeof raw?.[k] === "string" ? String(raw[k]) : "");
+    const parseDate = (v: any) => {
+      if (typeof v !== "string") return undefined;
+      const d = new Date(v);
+      if (!Number.isNaN(d.getTime())) return d;
+      return undefined;
+    };
+    const parseNum = (v: any) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : undefined;
+    };
+
+    const tagsRaw = raw?.tags;
+    const tags =
+      typeof tagsRaw === "string"
+        ? tagsRaw
+            .split(",")
+            .map((t: string) => t.trim())
+            .filter(Boolean)
+        : Array.isArray(tagsRaw)
+          ? tagsRaw.map((t: any) => String(t || "").trim()).filter(Boolean)
+          : undefined;
+
+    const hasNotesRaw = raw?.hasNotes;
+    const hasNotes = hasNotesRaw === true ? true : hasNotesRaw === false ? false : hasNotesRaw === "true" ? true : hasNotesRaw === "false" ? false : undefined;
+
+    const assignedToRaw = raw?.assignedTo;
+    const assignedTo =
+      assignedToRaw === "unassigned"
+        ? "unassigned"
+        : typeof assignedToRaw === "number"
+          ? assignedToRaw
+          : typeof assignedToRaw === "string" && assignedToRaw.trim()
+            ? parseInt(assignedToRaw, 10)
+            : undefined;
+
+    const archivedRaw = String(raw?.archived || "").trim();
+    const archived = archivedRaw === "exclude" || archivedRaw === "include" || archivedRaw === "only" ? archivedRaw : undefined;
+
+    const tagsModeRaw = String(raw?.tagsMode || "").trim();
+    const tagsMode = tagsModeRaw === "all" || tagsModeRaw === "any" ? tagsModeRaw : undefined;
+
+    const contactPresenceRaw = String(raw?.contactPresence || "").trim();
+    const contactPresence =
+      contactPresenceRaw === "phone_only" || contactPresenceRaw === "email_only" || contactPresenceRaw === "both" || contactPresenceRaw === "none"
+        ? contactPresenceRaw
+        : undefined;
+
+    const sortKey = typeof raw?.sortKey === "string" ? raw.sortKey : undefined;
+    const sortDir = raw?.sortDir === "asc" ? "asc" : raw?.sortDir === "desc" ? "desc" : undefined;
+
+    return {
+      q: getStr("query") || getStr("q"),
+      status: getStr("status"),
+      owner: getStr("owner"),
+      zip: getStr("zip"),
+      state: getStr("state"),
+      city: getStr("city"),
+      county: getStr("county"),
+      leadType: getStr("leadType"),
+      assignedTo: Number.isFinite(assignedTo as any) ? (assignedTo as any) : assignedTo === "unassigned" ? "unassigned" : undefined,
+      tags,
+      tagsMode,
+      contactPresence,
+      scoreMin: parseNum(raw?.scoreMin),
+      scoreMax: parseNum(raw?.scoreMax),
+      archived,
+      hasNotes,
+      noteUpdatedWithinDays: parseNum(raw?.noteUpdatedWithinDays),
+      lastTouchFrom: parseDate(raw?.lastTouchFrom),
+      lastTouchTo: parseDate(raw?.lastTouchTo),
+      nextFollowUpFrom: parseDate(raw?.nextFollowUpFrom),
+      nextFollowUpTo: parseDate(raw?.nextFollowUpTo),
+      createdFrom: parseDate(raw?.createdFrom),
+      createdTo: parseDate(raw?.createdTo),
+      sortKey,
+      sortDir,
+    };
+  };
+
   app.post("/api/leads/bulk/preview", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -3178,7 +3259,7 @@ export async function registerRoutes(
         return res.json({ totalTargets: validLeadIds.length, validLeadIds });
       }
 
-      const f = payload.filter || {};
+      const f = normalizeLeadListFilter(payload.filter || {});
       const { total } = await storage.listLeads({
         ...(f as any),
         allowedAssignedToUserIds,
@@ -3330,7 +3411,7 @@ export async function registerRoutes(
             succeeded += out.succeeded;
             failed += out.failed;
           } else {
-            const f = payload.filter || {};
+            const f = normalizeLeadListFilter(payload.filter || {});
             const pageSize = 500;
             let offset = 0;
             while (true) {
@@ -3396,8 +3477,27 @@ export async function registerRoutes(
       const payload = z.object({ transcript: z.string().trim().min(1).max(5000) }).parse(req.body || {});
       const t = payload.transcript.toLowerCase();
 
-      let action: "set_status" | "assign" | "archive" | "unarchive" | "export" | null = null;
+      let action: "set_status" | "assign" | "archive" | "unarchive" | "export" | "add_note" | "playground_append_note" | null = null;
       const params: any = {};
+
+      const playgroundNoteMatch =
+        t.match(/playground\s+note[:\s]+([\s\S]{1,5000})/) ||
+        t.match(/add\s+playground\s+note[:\s]+([\s\S]{1,5000})/) ||
+        t.match(/in\s+playground[:\s]+([\s\S]{1,5000})/);
+      if (playgroundNoteMatch) {
+        action = "playground_append_note";
+        params.note = String(playgroundNoteMatch[1] || "").trim();
+      }
+
+      const noteMatch =
+        !action &&
+        (t.match(/add\s+note[:\s]+([\s\S]{1,5000})/) ||
+          t.match(/note[:\s]+([\s\S]{1,5000})/) ||
+          t.match(/log\s+note[:\s]+([\s\S]{1,5000})/));
+      if (noteMatch) {
+        action = "add_note";
+        params.body = String(noteMatch[1] || "").trim();
+      }
 
       if (t.includes("unarchive")) action = "unarchive";
       else if (t.includes("archive")) action = "archive";
@@ -3438,22 +3538,69 @@ export async function registerRoutes(
       const payload = z
         .object({
           parsed: z.object({ action: z.string().nullable(), params: z.record(z.any()).default({}), transcript: z.string().optional() }),
-          leadIds: z.array(z.coerce.number().int().positive()).max(200),
+          leadIds: z.array(z.coerce.number().int().positive()).max(200).optional(),
+          playground: z
+            .object({
+              sessionId: z.coerce.number().int().positive().optional(),
+              address: z.string().trim().max(255).optional(),
+              leadId: z.coerce.number().int().positive().optional(),
+              propertyId: z.coerce.number().int().positive().optional(),
+            })
+            .optional(),
         })
         .parse(req.body || {});
 
-      const ids = payload.leadIds.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
-      if (!ids.length) return res.json({ changes: [] });
+      const action = payload.parsed.action as any;
+      const params = payload.parsed.params || {};
 
-      const rows: any = await db.execute(sql`
+      if (action === "playground_append_note") {
+        const note = String(params.note || "").trim();
+        if (!note) return res.status(400).json({ message: "Missing note" });
+
+        const ctx = payload.playground || {};
+        const sessionId = typeof ctx.sessionId === "number" && Number.isFinite(ctx.sessionId) ? ctx.sessionId : null;
+        const address = String(ctx.address || "").trim();
+        let session: any | null = null;
+        let wouldCreateSession = false;
+        if (sessionId) {
+          session = await storage.getPlaygroundPropertySessionById(sessionId);
+        } else if (address) {
+          const addressKey = toAddressKey(address);
+          session = await storage.getPlaygroundPropertySessionByAddressKey(user.id, addressKey);
+          if (!session) wouldCreateSession = true;
+        } else {
+          return res.status(400).json({ message: "Missing playground sessionId or address" });
+        }
+
+        return res.json({
+          changes: [],
+          notes: null,
+          playground: {
+            sessionId: session?.id ?? null,
+            wouldCreateSession,
+            notePreview: note.slice(0, 280),
+            currentNotesCount: session ? (() => { try { return Array.isArray(JSON.parse(String(session.notesJson || "[]"))) ? JSON.parse(String(session.notesJson || "[]")).length : 0; } catch { return 0; } })() : 0,
+          },
+        });
+      }
+
+      if (action === "add_note") {
+        const body = String(params.body || "").trim();
+        const ids = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+        if (!ids.length) return res.json({ changes: [], notes: null, playground: null });
+        if (!body) return res.status(400).json({ message: "Missing note body" });
+        return res.json({ changes: [], notes: { leadIdsCount: ids.length, bodyPreview: body.slice(0, 280) }, playground: null });
+      }
+
+      const ids = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      if (!ids.length) return res.json({ changes: [], notes: null, playground: null });
+
+      const leadRows: any = await db.execute(sql`
         SELECT id, status, assigned_to as "assignedTo", archived_at as "archivedAt"
         FROM leads
         WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
       `);
-      const leadsRows = (rows as any).rows || [];
-
-      const action = payload.parsed.action as any;
-      const params = payload.parsed.params || {};
+      const leadsRows = (leadRows as any).rows || [];
 
       const changes = leadsRows.map((r: any) => {
         const next: any = { id: Number(r.id) };
@@ -3464,7 +3611,7 @@ export async function registerRoutes(
         return { before: r, next };
       });
 
-      res.json({ changes });
+      res.json({ changes, notes: null, playground: null });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -3480,12 +3627,136 @@ export async function registerRoutes(
         .object({
           parsed: z.object({ action: z.string().nullable(), params: z.record(z.any()).default({}), transcript: z.string().optional() }),
           transcript: z.string().trim().min(1).max(5000),
-          leadIds: z.array(z.coerce.number().int().positive()).max(200),
+          leadIds: z.array(z.coerce.number().int().positive()).max(200).optional(),
+          playground: z
+            .object({
+              sessionId: z.coerce.number().int().positive().optional(),
+              address: z.string().trim().max(255).optional(),
+              leadId: z.coerce.number().int().positive().optional(),
+              propertyId: z.coerce.number().int().positive().optional(),
+            })
+            .optional(),
         })
         .parse(req.body || {});
 
-      const ids = payload.leadIds.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      const action = payload.parsed.action as any;
+      const params = payload.parsed.params || {};
+
+      if (action === "playground_append_note") {
+        const note = String(params.note || "").trim();
+        if (!note) return res.status(400).json({ message: "Missing note" });
+
+        const ctx = payload.playground || {};
+        const sessionId = typeof ctx.sessionId === "number" && Number.isFinite(ctx.sessionId) ? ctx.sessionId : null;
+        const address = String(ctx.address || "").trim();
+        const leadId = typeof ctx.leadId === "number" && Number.isFinite(ctx.leadId) ? ctx.leadId : undefined;
+        const propertyId = typeof ctx.propertyId === "number" && Number.isFinite(ctx.propertyId) ? ctx.propertyId : undefined;
+
+        let session: any | null = null;
+        if (sessionId) {
+          session = await storage.getPlaygroundPropertySessionById(sessionId);
+          if (!session) return res.status(404).json({ message: "Playground session not found" });
+        } else if (address) {
+          const addressKey = toAddressKey(address);
+          session = await storage.getPlaygroundPropertySessionByAddressKey(user.id, addressKey);
+          if (!session) {
+            const validated = insertPlaygroundPropertySessionSchema.parse({
+              address,
+              addressKey,
+              leadId,
+              propertyId,
+              tagsJson: "[]",
+              bookmarksJson: "[]",
+              checklistJson: "{}",
+              notesJson: "[]",
+              underwritingJson: "{}",
+              createdBy: user.id,
+              updatedBy: user.id,
+              lastOpenedBy: user.id,
+              lastOpenedAt: new Date(),
+            } as any);
+            session = await storage.createPlaygroundPropertySession(validated as any);
+          }
+        } else {
+          return res.status(400).json({ message: "Missing playground sessionId or address" });
+        }
+
+        const prevNotesJson = String((session as any).notesJson || "[]");
+        let notesArr: any[] = [];
+        try {
+          const parsed = JSON.parse(prevNotesJson);
+          notesArr = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          notesArr = [];
+        }
+
+        const noteEntry = { id: crypto.randomBytes(8).toString("hex"), createdAt: new Date().toISOString(), createdBy: user.id, body: note };
+        const nextNotesJson = JSON.stringify([...notesArr, noteEntry]);
+        const updated = await storage.updatePlaygroundPropertySession((session as any).id, { notesJson: nextNotesJson, updatedBy: user.id } as any);
+
+        const actionLog = await storage.createAiActionLog({
+          createdBy: user.id,
+          entityType: "playground",
+          transcript: payload.transcript,
+          parsedJson: payload.parsed,
+          selectionJson: { playground: { sessionId: (updated as any).id, address: (updated as any).address, leadId: (updated as any).leadId ?? null, propertyId: (updated as any).propertyId ?? null } },
+          appliedJson: { action, params },
+        } as any);
+
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+        await storage.createAiActionUndo({
+          aiActionLogId: actionLog.id,
+          undoJson: [{ sessionId: (updated as any).id, prevNotesJson }],
+          expiresAt,
+        } as any);
+
+        await storage.createGlobalActivity({
+          userId: user.id,
+          action: "playground_voice_append_note",
+          description: "Voice appended playground note",
+          metadata: JSON.stringify({ playgroundSessionId: (updated as any).id }),
+        } as any);
+
+        return res.json({ ok: true, actionLogId: actionLog.id, applied: 1, playgroundSessionId: (updated as any).id });
+      }
+
+      const ids = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
       if (!ids.length) return res.json({ ok: true, applied: 0 });
+
+      if (action === "add_note") {
+        const body = String(params.body || "").trim();
+        if (!body) return res.status(400).json({ message: "Missing note body" });
+        const now = new Date();
+        for (const leadId of ids) {
+          await storage.createLeadNote({ leadId, createdBy: user.id, body } as any);
+        }
+        await db.execute(sql`UPDATE leads SET last_touch_at = NOW(), updated_at = NOW() WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})`);
+
+        const actionLog = await storage.createAiActionLog({
+          createdBy: user.id,
+          entityType: "lead",
+          transcript: payload.transcript,
+          parsedJson: payload.parsed,
+          selectionJson: { leadIds: ids },
+          appliedJson: { action, params },
+        } as any);
+
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+        await storage.createAiActionUndo({
+          aiActionLogId: actionLog.id,
+          undoJson: [],
+          expiresAt,
+        } as any);
+
+        await storage.createGlobalActivity({
+          userId: user.id,
+          action: "lead_voice_add_note",
+          description: "Voice added lead note",
+          metadata: JSON.stringify({ leadIdsCount: ids.length }),
+        } as any);
+
+        return res.json({ ok: true, actionLogId: actionLog.id, applied: ids.length, createdAt: now.toISOString() });
+      }
 
       const rows: any = await db.execute(sql`
         SELECT id, status, assigned_to as "assignedTo", archived_at as "archivedAt"
@@ -3493,9 +3764,6 @@ export async function registerRoutes(
         WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
       `);
       const beforeRows = (rows as any).rows || [];
-
-      const action = payload.parsed.action as any;
-      const params = payload.parsed.params || {};
 
       const undoJson = beforeRows.map((r: any) => ({
         id: Number(r.id),
@@ -3585,12 +3853,11 @@ export async function registerRoutes(
       if ((undo as any).undoneAt) return res.status(400).json({ message: "Already undone" });
 
       const undoJson = Array.isArray((undo as any).undoJson) ? (undo as any).undoJson : [];
-      const ids = undoJson.map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n) && n > 0);
-      if (!ids.length) return res.json({ ok: true, restored: 0 });
+      const leadRows = undoJson.filter((r: any) => Number.isFinite(Number(r?.id)) && Number(r?.id) > 0);
+      const sessionRows = undoJson.filter((r: any) => Number.isFinite(Number(r?.sessionId)) && Number(r?.sessionId) > 0);
 
-      for (const row of undoJson) {
+      for (const row of leadRows) {
         const id = Number(row.id);
-        if (!Number.isFinite(id) || id <= 0) continue;
         await db.execute(sql`
           UPDATE leads
           SET status = ${row.status ?? null},
@@ -3601,8 +3868,14 @@ export async function registerRoutes(
         `);
       }
 
+      for (const row of sessionRows) {
+        const sessionId = Number(row.sessionId);
+        const prevNotesJson = typeof row.prevNotesJson === "string" ? row.prevNotesJson : "[]";
+        await storage.updatePlaygroundPropertySession(sessionId, { notesJson: prevNotesJson, updatedBy: user.id } as any);
+      }
+
       await storage.updateAiActionUndo((undo as any).id, { undoneAt: new Date() } as any);
-      res.json({ ok: true, restored: ids.length });
+      res.json({ ok: true, restored: leadRows.length + sessionRows.length, restoredLeads: leadRows.length, restoredPlayground: sessionRows.length });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -3661,6 +3934,10 @@ export async function registerRoutes(
           description: z.string().trim().min(1).max(20_000),
           recommendation: z.string().trim().max(20_000).optional().nullable(),
           technicalNotes: z.string().trim().max(20_000).optional().nullable(),
+          affectedPages: z.array(z.string().trim().min(1).max(120)).max(50).optional().nullable(),
+          fixPlan: z.string().trim().max(20_000).optional().nullable(),
+          ownerUserId: z.coerce.number().int().positive().optional().nullable(),
+          prdSection: z.string().trim().max(500).optional().nullable(),
         })
         .parse(req.body || {});
 
@@ -3672,10 +3949,188 @@ export async function registerRoutes(
         description: payload.description,
         recommendation: payload.recommendation ?? null,
         technicalNotes: payload.technicalNotes ?? null,
+        affectedPages: payload.affectedPages ?? [],
+        fixPlan: payload.fixPlan ?? null,
+        ownerUserId: payload.ownerUserId ?? null,
+        prdSection: payload.prdSection ?? null,
         status: "open",
       } as any);
 
       res.status(201).json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/audit/runs/:id/seed-pages", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const runId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(runId)) return res.status(400).json({ message: "Invalid run id" });
+
+      const payload = z.object({ mode: z.enum(["append", "replace"]).default("append") }).parse(req.body || {});
+
+      if (payload.mode === "replace") {
+        await db.execute(sql`DELETE FROM app_audit_findings WHERE run_id = ${runId}`);
+      }
+
+      const pages: Array<{ title: string; area: string; affectedPages: string[]; description: string; fixPlan: string }> = [
+        {
+          title: "Dashboard: KPI correctness + work-queue links",
+          area: "dashboard",
+          affectedPages: ["/dashboard"],
+          description: "Verify KPI correctness, loading states, and add deep links into active work queues (Leads, Tasks, Today).",
+          fixPlan: "Audit KPIs for correctness and freshness; add primary CTAs to Leads/Tasks/Today with context and saved views.",
+        },
+        {
+          title: "Leads: Scale workflow (filters, views, bulk, notes, voice)",
+          area: "leads",
+          affectedPages: ["/leads"],
+          description: "Upgrade Leads into the primary work queue and segmentation hub with safe bulk actions and voice-to-action.",
+          fixPlan: "Wire advanced filters + saved views + column chooser + async bulk jobs + notes preview + voice action entry points.",
+        },
+        {
+          title: "Opportunities: Lead linking + next action handoff",
+          area: "opportunities",
+          affectedPages: ["/opportunities", "/opportunities/:id"],
+          description: "Ensure Lead↔Opportunity linking is visible and provide clear next actions (Playground, Call, Follow-up).",
+          fixPlan: "Add consistent link UI and contextual actions; ensure timeline and follow-ups connect back to Leads.",
+        },
+        {
+          title: "Playground: Context binding + voice append note",
+          area: "playground",
+          affectedPages: ["/playground"],
+          description: "Playground should preserve context (leadId/propertyId/sessionId) and accept voice-to-action append notes safely.",
+          fixPlan: "Add voice entry point; implement append-only note write target via session patch; ensure preview + audit log + undo when feasible.",
+        },
+        {
+          title: "Phone: Context handoff + activity semantics",
+          area: "phone",
+          affectedPages: ["/phone"],
+          description: "Ensure opening Phone from Leads/Opportunities preserves context and creates consistent activity events.",
+          fixPlan: "Standardize query params and link targets; ensure call outcomes write activity tied to lead/property IDs.",
+        },
+        {
+          title: "Dialer: Context handoff + activity semantics",
+          area: "dialer",
+          affectedPages: ["/dialer"],
+          description: "Ensure opening Dialer from Leads preserves context and logging is consistent.",
+          fixPlan: "Normalize deep-link params and enforce consistent activity logging and compliance checks.",
+        },
+        {
+          title: "Campaigns: Enroll from saved views (planned)",
+          area: "campaigns",
+          affectedPages: ["/campaigns"],
+          description: "Allow campaign audiences to be enrolled from Leads saved views/segments (backlog this release).",
+          fixPlan: "Design enrollment UX and backend targeting based on saved view config; add suppression rules; ship after Leads views are stable.",
+        },
+        {
+          title: "RVM: Audience from saved views + suppression (planned)",
+          area: "rvm",
+          affectedPages: ["/rvm"],
+          description: "Allow RVM targeting from Leads saved views with suppression and preview counts (backlog this release).",
+          fixPlan: "Reuse saved views targeting; add suppression engine (DNC/invalid/recent contact); add launch preview and result dashboards.",
+        },
+        {
+          title: "Field Mode: Offline capture integrity",
+          area: "field",
+          affectedPages: ["/field"],
+          description: "Verify offline capture and sync creates leads, notes, and media reliably with dedupe.",
+          fixPlan: "Audit offline queue handling and failure states; ensure created records link back to Leads/Playground context.",
+        },
+        {
+          title: "Tasks: Entity-linked execution",
+          area: "tasks",
+          affectedPages: ["/tasks"],
+          description: "Ensure tasks created from Leads/Opportunities keep entity links and power Today/Calendar queues.",
+          fixPlan: "Normalize quick-create flows; ensure navigation and due-date handling supports follow-up workflows.",
+        },
+        {
+          title: "Calendar: Follow-up visibility",
+          area: "calendar",
+          affectedPages: ["/calendar"],
+          description: "Calendar should show follow-ups and tasks with links back to leads/opportunities.",
+          fixPlan: "Audit calendar sources and deep-links; ensure follow-up dates align with Leads filters.",
+        },
+        {
+          title: "Today: Work queue compression",
+          area: "today",
+          affectedPages: ["/today"],
+          description: "Today should be the operator queue for due tasks/follow-ups with one-click handoffs.",
+          fixPlan: "Audit queue correctness; add fast actions to call/open lead/open playground; minimize clicks.",
+        },
+        {
+          title: "Notifications: Routing and deep links",
+          area: "notifications",
+          affectedPages: ["/notifications"],
+          description: "Notifications should reliably link back to the correct entity context.",
+          fixPlan: "Audit notification payloads; standardize entity references and target URLs.",
+        },
+        {
+          title: "Contacts: Link to leads and calls",
+          area: "contacts",
+          affectedPages: ["/contacts"],
+          description: "Contacts should link to associated leads/opportunities and show communications context.",
+          fixPlan: "Audit entity linking and add contextual navigation and activity timeline reuse.",
+        },
+        {
+          title: "Buyers: Dispo readiness links",
+          area: "buyers",
+          affectedPages: ["/buyers"],
+          description: "Buyers should connect to opportunities and contract workflows.",
+          fixPlan: "Audit buyer→deal linking and add deep-links into opportunity detail and contracts.",
+        },
+        {
+          title: "Contracts: Opportunity context",
+          area: "contracts",
+          affectedPages: ["/contracts"],
+          description: "Contracts should be generated/managed from opportunity context.",
+          fixPlan: "Audit contract generation flow; ensure linked lead/property/buyer context is preserved and navigable.",
+        },
+        {
+          title: "Analytics: Data trust layer",
+          area: "analytics",
+          affectedPages: ["/analytics"],
+          description: "Analytics must be correct and attributable to real actions and segments.",
+          fixPlan: "Audit KPI definitions; ensure events and activity semantics are consistent and queryable.",
+        },
+        {
+          title: "Settings/Teams/System Health: Control plane alignment",
+          area: "control_plane",
+          affectedPages: ["/settings", "/teams", "/system-health"],
+          description: "Ensure feature flags, team selection, and health signals connect to audit and workflows.",
+          fixPlan: "Audit feature flag visibility and team selection; link health issues to audit findings; reduce config confusion.",
+        },
+        {
+          title: "XP surfaces: audit-only this release",
+          area: "xp",
+          affectedPages: ["/xp", "/xp/admin", "/xp/:slug", "/xp/checkout/success", "/xp/checkout/cancel"],
+          description: "Include XP pages in the audit backlog; fix only if critical regressions are found.",
+          fixPlan: "Create findings for UX correctness and conversion flow; defer enhancements unless blocking.",
+        },
+      ];
+
+      const created: any[] = [];
+      for (const p of pages) {
+        const row = await storage.createAppAuditFinding({
+          runId,
+          severity: "medium",
+          area: p.area,
+          title: p.title,
+          description: p.description,
+          recommendation: null,
+          technicalNotes: null,
+          affectedPages: p.affectedPages,
+          fixPlan: p.fixPlan,
+          ownerUserId: null,
+          prdSection: null,
+          status: "open",
+        } as any);
+        created.push(row);
+      }
+
+      res.status(201).json({ createdCount: created.length });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -3708,6 +4163,10 @@ export async function registerRoutes(
           description: z.string().trim().min(1).max(20_000).optional(),
           recommendation: z.string().trim().max(20_000).optional().nullable(),
           technicalNotes: z.string().trim().max(20_000).optional().nullable(),
+          affectedPages: z.array(z.string().trim().min(1).max(120)).max(50).optional(),
+          fixPlan: z.string().trim().max(20_000).optional().nullable(),
+          ownerUserId: z.coerce.number().int().positive().optional().nullable(),
+          prdSection: z.string().trim().max(500).optional().nullable(),
           status: z.enum(["open", "in_progress", "resolved", "ignored"]).optional(),
         })
         .parse(req.body || {});

@@ -26,19 +26,21 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Filter, Plus, Search, Building2, MoreHorizontal, Pencil, Trash2, Lightbulb } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Filter, Plus, Search, Building2, MoreHorizontal, Pencil, Trash2, Lightbulb, ListFilter, Columns2, Mic } from "lucide-react";
 import { useLocation } from "wouter";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
@@ -49,6 +51,7 @@ import { EntityActivity } from "@/components/activity/EntityActivity";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 import { SkipTraceJobPanel } from "@/components/skipTrace/SkipTraceJobPanel";
+import { VoiceActionDialog } from "@/components/leads/VoiceActionDialog";
 import { apiRequest } from "@/lib/queryClient";
 
 const statusOptions = [
@@ -63,6 +66,95 @@ const statusOptions = [
 
 const CUSTOM_SOURCE_VALUE = "__custom__";
 
+type LeadViewConfig = {
+  filters: Record<string, any>;
+  sort?: { key?: string; dir?: "asc" | "desc" };
+  columns?: Record<string, boolean>;
+  density?: "luxury" | "dense";
+};
+
+function parseLeadViewConfig(input: any): LeadViewConfig {
+  if (!input || typeof input !== "object") return { filters: {} };
+  const filters = input.filters && typeof input.filters === "object" ? input.filters : {};
+  const sortRaw = input.sort && typeof input.sort === "object" ? input.sort : {};
+  const sortKey = typeof sortRaw.key === "string" ? sortRaw.key : undefined;
+  const sortDir = sortRaw.dir === "asc" ? "asc" : sortRaw.dir === "desc" ? "desc" : undefined;
+  const columns = input.columns && typeof input.columns === "object" ? input.columns : undefined;
+  const density = input.density === "dense" ? "dense" : input.density === "luxury" ? "luxury" : undefined;
+  return { filters, sort: { key: sortKey, dir: sortDir }, columns, density };
+}
+
+function parseFiltersFromUrl() {
+  const p = new URLSearchParams(window.location.search);
+  const get = (k: string) => String(p.get(k) || "");
+  return {
+    query: get("q"),
+    status: get("status") || "all",
+    owner: get("owner"),
+    zip: get("zip"),
+    state: get("state"),
+    city: get("city"),
+    county: get("county"),
+    leadType: get("leadType"),
+    assignedTo: get("assignedTo") || "",
+    tags: get("tags"),
+    tagsMode: get("tagsMode") || "any",
+    contactPresence: get("contactPresence") || "",
+    scoreMin: get("scoreMin"),
+    scoreMax: get("scoreMax"),
+    archived: get("archived") || "exclude",
+    hasNotes: get("hasNotes"),
+    noteUpdatedWithinDays: get("noteUpdatedWithinDays"),
+    lastTouchFrom: get("lastTouchFrom"),
+    lastTouchTo: get("lastTouchTo"),
+    nextFollowUpFrom: get("nextFollowUpFrom"),
+    nextFollowUpTo: get("nextFollowUpTo"),
+    createdFrom: get("createdFrom"),
+    createdTo: get("createdTo"),
+    sortKey: get("sortKey") || "newest_imported",
+    sortDir: (get("sortDir") === "asc" ? "asc" : "desc") as "asc" | "desc",
+    viewToken: get("viewToken"),
+  };
+}
+
+function writeFiltersToUrl(filters: any) {
+  const p = new URLSearchParams();
+  const set = (k: string, v: any) => {
+    const s = String(v || "").trim();
+    if (!s) return;
+    p.set(k, s);
+  };
+  set("q", filters.query);
+  if (filters.status && filters.status !== "all") set("status", filters.status);
+  set("owner", filters.owner);
+  set("zip", filters.zip);
+  set("state", filters.state);
+  set("city", filters.city);
+  set("county", filters.county);
+  set("leadType", filters.leadType);
+  set("assignedTo", filters.assignedTo);
+  set("tags", filters.tags);
+  if (filters.tagsMode && filters.tagsMode !== "any") set("tagsMode", filters.tagsMode);
+  set("contactPresence", filters.contactPresence);
+  set("scoreMin", filters.scoreMin);
+  set("scoreMax", filters.scoreMax);
+  if (filters.archived && filters.archived !== "exclude") set("archived", filters.archived);
+  set("hasNotes", filters.hasNotes);
+  set("noteUpdatedWithinDays", filters.noteUpdatedWithinDays);
+  set("lastTouchFrom", filters.lastTouchFrom);
+  set("lastTouchTo", filters.lastTouchTo);
+  set("nextFollowUpFrom", filters.nextFollowUpFrom);
+  set("nextFollowUpTo", filters.nextFollowUpTo);
+  set("createdFrom", filters.createdFrom);
+  set("createdTo", filters.createdTo);
+  if (filters.sortKey && filters.sortKey !== "newest_imported") set("sortKey", filters.sortKey);
+  if (filters.sortDir && filters.sortDir !== "desc") set("sortDir", filters.sortDir);
+  set("viewToken", filters.viewToken);
+  const qs = p.toString();
+  const next = qs ? `?${qs}` : "";
+  window.history.replaceState({}, "", `/leads${next}`);
+}
+
 export default function Leads() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
@@ -72,19 +164,41 @@ export default function Leads() {
   const [newLeadOtherSource, setNewLeadOtherSource] = useState("");
   const [editLeadOtherSource, setEditLeadOtherSource] = useState("");
   const [filterOpen, setFilterOpen] = useState(false);
-  const [filters, setFilters] = useState({
-    query: "",
-    status: "all",
-    owner: "",
-    createdFrom: "",
-    createdTo: "",
-  });
+  const [filters, setFilters] = useState(() => parseFiltersFromUrl());
   const [appliedFilters, setAppliedFilters] = useState(filters);
+  const [density, setDensity] = useState<"luxury" | "dense">("luxury");
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
+    address: true,
+    owner: true,
+    status: true,
+    score: true,
+    value: true,
+    contact: true,
+    notes: true,
+    actions: true,
+  });
+  const [selectedView, setSelectedView] = useState<any | null>(null);
+  const [saveViewOpen, setSaveViewOpen] = useState(false);
+  const [saveViewName, setSaveViewName] = useState("");
+  const [saveViewVisibility, setSaveViewVisibility] = useState<"private" | "team" | "link">("private");
+  const [selectionMode, setSelectionMode] = useState<"explicit" | "all_filtered">("explicit");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [excludedIds, setExcludedIds] = useState<Set<number>>(new Set());
+  const selectionSignature = useMemo(() => {
+    const { viewToken, ...rest } = appliedFilters as any;
+    return JSON.stringify(rest || {});
+  }, [appliedFilters]);
   useEffect(() => {
     const id = setTimeout(() => setAppliedFilters(filters), 250);
     return () => clearTimeout(id);
   }, [filters]);
   const leadsQueryKey = useMemo(() => ["leads", appliedFilters], [appliedFilters]);
+
+  useEffect(() => {
+    setSelectionMode("explicit");
+    setSelectedIds(new Set());
+    setExcludedIds(new Set());
+  }, [selectionSignature]);
   const [selectedLeadId, setSelectedLeadId] = useState<number | null>(null);
   const [isLeadSheetOpen, setIsLeadSheetOpen] = useState(false);
   const [highlightLeadId, setHighlightLeadId] = useState<number | null>(null);
@@ -136,11 +250,31 @@ export default function Leads() {
       const p = new URLSearchParams();
       p.set("limit", String(pageSize));
       p.set("offset", String(pageParam || 0));
-      if (appliedFilters.query.trim()) p.set("q", appliedFilters.query.trim());
+      if (appliedFilters.query?.trim()) p.set("q", appliedFilters.query.trim());
       if (appliedFilters.status && appliedFilters.status !== "all") p.set("status", appliedFilters.status);
-      if (appliedFilters.owner.trim()) p.set("owner", appliedFilters.owner.trim());
-      if (appliedFilters.createdFrom) p.set("createdFrom", new Date(`${appliedFilters.createdFrom}T00:00:00`).toISOString());
-      if (appliedFilters.createdTo) p.set("createdTo", new Date(`${appliedFilters.createdTo}T23:59:59`).toISOString());
+      if (appliedFilters.owner?.trim()) p.set("owner", appliedFilters.owner.trim());
+      if (appliedFilters.zip?.trim()) p.set("zip", appliedFilters.zip.trim());
+      if (appliedFilters.state?.trim()) p.set("state", appliedFilters.state.trim());
+      if (appliedFilters.city?.trim()) p.set("city", appliedFilters.city.trim());
+      if (appliedFilters.county?.trim()) p.set("county", appliedFilters.county.trim());
+      if (appliedFilters.leadType?.trim()) p.set("leadType", appliedFilters.leadType.trim());
+      if (appliedFilters.assignedTo?.trim()) p.set("assignedTo", appliedFilters.assignedTo.trim());
+      if (appliedFilters.tags?.trim()) p.set("tags", appliedFilters.tags.trim());
+      if (appliedFilters.tagsMode && appliedFilters.tagsMode !== "any") p.set("tagsMode", appliedFilters.tagsMode);
+      if (appliedFilters.contactPresence?.trim()) p.set("contactPresence", appliedFilters.contactPresence.trim());
+      if (appliedFilters.scoreMin?.trim()) p.set("scoreMin", appliedFilters.scoreMin.trim());
+      if (appliedFilters.scoreMax?.trim()) p.set("scoreMax", appliedFilters.scoreMax.trim());
+      if (appliedFilters.archived && appliedFilters.archived !== "exclude") p.set("archived", appliedFilters.archived);
+      if (appliedFilters.hasNotes === "true" || appliedFilters.hasNotes === "false") p.set("hasNotes", appliedFilters.hasNotes);
+      if (appliedFilters.noteUpdatedWithinDays?.trim()) p.set("noteUpdatedWithinDays", appliedFilters.noteUpdatedWithinDays.trim());
+      if (appliedFilters.lastTouchFrom?.trim()) p.set("lastTouchFrom", new Date(`${appliedFilters.lastTouchFrom}T00:00:00`).toISOString());
+      if (appliedFilters.lastTouchTo?.trim()) p.set("lastTouchTo", new Date(`${appliedFilters.lastTouchTo}T23:59:59`).toISOString());
+      if (appliedFilters.nextFollowUpFrom?.trim()) p.set("nextFollowUpFrom", new Date(`${appliedFilters.nextFollowUpFrom}T00:00:00`).toISOString());
+      if (appliedFilters.nextFollowUpTo?.trim()) p.set("nextFollowUpTo", new Date(`${appliedFilters.nextFollowUpTo}T23:59:59`).toISOString());
+      if (appliedFilters.createdFrom?.trim()) p.set("createdFrom", new Date(`${appliedFilters.createdFrom}T00:00:00`).toISOString());
+      if (appliedFilters.createdTo?.trim()) p.set("createdTo", new Date(`${appliedFilters.createdTo}T23:59:59`).toISOString());
+      if (appliedFilters.sortKey && appliedFilters.sortKey !== "newest_imported") p.set("sortKey", appliedFilters.sortKey);
+      if (appliedFilters.sortDir && appliedFilters.sortDir !== "desc") p.set("sortDir", appliedFilters.sortDir);
       const res = await apiRequest("GET", `/api/leads?${p.toString()}`);
       return await res.json();
     },
@@ -171,10 +305,266 @@ export default function Leads() {
     return [forcedLead, ...leadsFlat];
   }, [forcedLead, leadsFlat]);
 
+  const selectedIdsArr = useMemo(() => Array.from(selectedIds), [selectedIds]);
+  const voiceSelectedLead = useMemo(() => {
+    if (selectionMode !== "explicit") return null;
+    if (selectedIdsArr.length !== 1) return null;
+    const id = Number(selectedIdsArr[0] || 0);
+    if (!id) return null;
+    return (leads || []).find((l: any) => Number(l?.id || 0) === id) || null;
+  }, [leads, selectedIdsArr, selectionMode]);
+
   const leadsTotal = useMemo(() => {
     const firstTotal = Number(leadsPages?.pages?.[0]?.total || 0);
     return firstTotal || leads.length || 0;
   }, [leads.length, leadsPages?.pages]);
+
+  useEffect(() => {
+    writeFiltersToUrl(filters);
+  }, [filters]);
+
+  useEffect(() => {
+    try {
+      const colsRaw = localStorage.getItem("leads.columns");
+      if (colsRaw) {
+        const parsed = JSON.parse(colsRaw);
+        if (parsed && typeof parsed === "object") setVisibleColumns(parsed);
+      }
+      const densityRaw = localStorage.getItem("leads.density");
+      if (densityRaw === "dense" || densityRaw === "luxury") setDensity(densityRaw);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("leads.columns", JSON.stringify(visibleColumns));
+    } catch {}
+  }, [visibleColumns]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("leads.density", density);
+    } catch {}
+  }, [density]);
+
+  const { data: savedViewsResp, refetch: refetchSavedViews } = useQuery<any>({
+    queryKey: ["/api/leads/views"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/leads/views");
+      return await res.json();
+    },
+  });
+
+  const savedViews = useMemo(() => (Array.isArray(savedViewsResp?.items) ? savedViewsResp.items : []), [savedViewsResp?.items]);
+
+  const createSavedViewMutation = useMutation({
+    mutationFn: async (input: { name: string; visibility: "private" | "team" | "link"; configJson: any }) => {
+      const res = await apiRequest("POST", "/api/leads/views", input);
+      return await res.json();
+    },
+    onSuccess: async (row: any) => {
+      await refetchSavedViews();
+      setSelectedView(row);
+    },
+  });
+
+  const deleteSavedViewMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/leads/views/${id}`);
+      return await res.json();
+    },
+    onSuccess: async () => {
+      await refetchSavedViews();
+      setSelectedView(null);
+      setFilters((prev: any) => ({ ...prev, viewToken: "" }));
+    },
+  });
+
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkAction, setBulkAction] = useState<"set_status" | "assign" | "archive" | "unarchive" | "export">("set_status");
+  const [bulkStatus, setBulkStatus] = useState("new");
+  const [bulkAssignedTo, setBulkAssignedTo] = useState("");
+  const [bulkJobId, setBulkJobId] = useState<number | null>(null);
+  const [bulkPreview, setBulkPreview] = useState<any | null>(null);
+
+  const bulkPreviewMutation = useMutation({
+    mutationFn: async () => {
+      const selectionScope = selectionMode === "all_filtered" ? "all_filtered" : "explicit";
+      const leadIds = selectionScope === "explicit" ? Array.from(selectedIds) : undefined;
+      const filter = selectionScope === "all_filtered" ? { ...appliedFilters, viewToken: "" } : undefined;
+      const res = await apiRequest("POST", "/api/leads/bulk/preview", { selectionScope, leadIds, filter, action: bulkAction, params: {} });
+      return await res.json();
+    },
+    onSuccess: (data) => setBulkPreview(data),
+  });
+
+  const bulkCreateJobMutation = useMutation({
+    mutationFn: async () => {
+      const selectionScope = selectionMode === "all_filtered" ? "all_filtered" : "explicit";
+      const leadIds = selectionScope === "explicit" ? Array.from(selectedIds) : undefined;
+      const filter = selectionScope === "all_filtered" ? { ...appliedFilters, viewToken: "" } : undefined;
+      const params =
+        bulkAction === "set_status"
+          ? { status: bulkStatus }
+          : bulkAction === "assign"
+            ? { assignedTo: Number(bulkAssignedTo) }
+            : {};
+      const res = await apiRequest("POST", "/api/leads/bulk/jobs", { selectionScope, leadIds, filter, action: bulkAction, params });
+      return await res.json();
+    },
+    onSuccess: (data) => {
+      const id = Number(data?.jobId || 0);
+      if (id) setBulkJobId(id);
+    },
+  });
+
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState("");
+  const [voiceParsed, setVoiceParsed] = useState<any | null>(null);
+  const [voicePreview, setVoicePreview] = useState<any | null>(null);
+  const [voiceActionLogId, setVoiceActionLogId] = useState<number | null>(null);
+
+  const toastVoiceError = (error: any) => {
+    const msg = String(error?.message || error || "");
+    if (msg.startsWith("404:")) {
+      toast({ title: "Voice", description: "Voice Playground is not enabled for your account." });
+      return;
+    }
+    toast({ title: "Voice", description: msg || "Something went wrong." });
+  };
+
+  const buildFullAddress = (lead: any) => {
+    const address = String(lead?.address || "").trim();
+    const city = String(lead?.city || "").trim();
+    const state = String(lead?.state || "").trim();
+    const zip = String(lead?.zipCode || "").trim();
+    const left = [address, city].filter(Boolean).join(city ? ", " : "");
+    const right = [state, zip].filter(Boolean).join(" ");
+    return [left, right].filter(Boolean).join(right ? " " : "").trim();
+  };
+
+  const voiceParseMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/ai/voice/parse", { transcript: voiceTranscript });
+      return await res.json();
+    },
+    onSuccess: (data) => {
+      setVoiceParsed(data);
+      setVoicePreview(null);
+      setVoiceActionLogId(null);
+    },
+    onError: toastVoiceError,
+  });
+
+  const voicePreviewMutation = useMutation({
+    mutationFn: async () => {
+      const parsedAction = String(voiceParsed?.action || "");
+      if (parsedAction === "playground_append_note") {
+        if (!voiceSelectedLead) throw new Error("Playground notes require exactly 1 selected lead");
+        const address = buildFullAddress(voiceSelectedLead);
+        if (!address) throw new Error("Missing lead address");
+        const res = await apiRequest("POST", "/api/ai/voice/preview", {
+          parsed: voiceParsed,
+          playground: { address, leadId: Number(voiceSelectedLead.id) },
+        });
+        return await res.json();
+      }
+      const leadIds = selectedIdsArr;
+      const res = await apiRequest("POST", "/api/ai/voice/preview", { parsed: voiceParsed, leadIds });
+      return await res.json();
+    },
+    onSuccess: (data) => setVoicePreview(data),
+    onError: toastVoiceError,
+  });
+
+  const voiceApplyMutation = useMutation({
+    mutationFn: async () => {
+      const parsedAction = String(voiceParsed?.action || "");
+      if (parsedAction === "playground_append_note") {
+        if (!voiceSelectedLead) throw new Error("Playground notes require exactly 1 selected lead");
+        const address = buildFullAddress(voiceSelectedLead);
+        if (!address) throw new Error("Missing lead address");
+        const res = await apiRequest("POST", "/api/ai/voice/apply", {
+          parsed: voiceParsed,
+          transcript: voiceTranscript,
+          playground: { address, leadId: Number(voiceSelectedLead.id) },
+        });
+        return await res.json();
+      }
+      const leadIds = selectedIdsArr;
+      const res = await apiRequest("POST", "/api/ai/voice/apply", { parsed: voiceParsed, transcript: voiceTranscript, leadIds });
+      return await res.json();
+    },
+    onSuccess: async (data: any) => {
+      const id = Number(data?.actionLogId || 0);
+      if (id) setVoiceActionLogId(id);
+      const exportId = Number(data?.exportId || 0);
+      const token = String(data?.token || "");
+      if (exportId && token) {
+        const url = `/api/crm/export/files/${exportId}/download?token=${encodeURIComponent(token)}`;
+        window.open(url, "_blank", "noopener,noreferrer");
+      }
+      await queryClient.invalidateQueries({ queryKey: leadsQueryKey });
+    },
+    onError: toastVoiceError,
+  });
+
+  const voiceUndoMutation = useMutation({
+    mutationFn: async () => {
+      if (!voiceActionLogId) throw new Error("Missing action id");
+      const res = await apiRequest("POST", "/api/ai/voice/undo", { aiActionLogId: voiceActionLogId });
+      return await res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: leadsQueryKey });
+    },
+    onError: toastVoiceError,
+  });
+
+  const { data: bulkJob } = useQuery<any>({
+    queryKey: ["/api/leads/bulk/jobs", bulkJobId],
+    enabled: !!bulkJobId,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/leads/bulk/jobs/${bulkJobId}`);
+      return await res.json();
+    },
+    refetchInterval: (q) => {
+      const s = String((q.state.data as any)?.status || "");
+      return s === "running" || s === "queued" ? 1500 : false;
+    },
+  });
+
+  useEffect(() => {
+    if (!bulkJob) return;
+    if (String(bulkJob.status) !== "completed") return;
+    if (String(bulkJob.action) !== "export") return;
+    const exportId = Number(bulkJob?.resultJson?.exportId || 0);
+    const token = String(bulkJob?.resultJson?.token || "");
+    if (!exportId || !token) return;
+    const url = `/api/crm/export/files/${exportId}/download?token=${encodeURIComponent(token)}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, [bulkJob]);
+
+  const savedViewToken = String(filters.viewToken || "").trim();
+  const { data: tokenViewResp } = useQuery<any>({
+    queryKey: ["/api/leads/views/by-token", savedViewToken],
+    enabled: !!savedViewToken,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/leads/views/by-token/${encodeURIComponent(savedViewToken)}`);
+      return await res.json();
+    },
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (!tokenViewResp) return;
+    const cfg = parseLeadViewConfig((tokenViewResp as any).configJson);
+    setFilters((prev: any) => ({ ...prev, ...(cfg.filters || {}), viewToken: savedViewToken }));
+    if (cfg.sort?.key) setFilters((prev: any) => ({ ...prev, sortKey: cfg.sort?.key, sortDir: cfg.sort?.dir || "desc" }));
+    if (cfg.columns) setVisibleColumns(cfg.columns);
+    if (cfg.density) setDensity(cfg.density);
+    setSelectedView(tokenViewResp);
+  }, [savedViewToken, tokenViewResp]);
 
   const { data: leadPipelineConfig } = useQuery({
     queryKey: ["/api/pipeline-config", "lead"],
@@ -468,12 +858,80 @@ export default function Leads() {
     return (leads || []).find((l: any) => l.id === selectedLeadId) || null;
   }, [leads, selectedLeadId]);
 
+  const selectedCount = useMemo(() => {
+    if (selectionMode === "all_filtered") return Math.max(0, leadsTotal - excludedIds.size);
+    return selectedIds.size;
+  }, [excludedIds.size, leadsTotal, selectedIds.size, selectionMode]);
+
+  const isSelected = (id: number) => {
+    if (selectionMode === "all_filtered") return !excludedIds.has(id);
+    return selectedIds.has(id);
+  };
+
+  const toggleRow = (id: number, checked: boolean) => {
+    if (selectionMode === "all_filtered") {
+      setExcludedIds((prev) => {
+        const next = new Set(prev);
+        if (checked) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      return;
+    }
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const toggleAllLoaded = (checked: boolean) => {
+    const ids = (filteredLeads || []).map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n) && n > 0);
+    if (!ids.length) return;
+    setSelectionMode("explicit");
+    setExcludedIds(new Set());
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) ids.forEach((id) => next.add(id));
+      else ids.forEach((id) => next.delete(id));
+      return next;
+    });
+  };
+
   useEffect(() => {
     if (didApplyQueryLead) return;
     if (!leadIdFromQuery) return;
     if (isLoading) return;
     const apply = () => {
-      setFilters({ query: "", status: "all", owner: "", createdFrom: "", createdTo: "" });
+      setFilters({
+        query: "",
+        status: "all",
+        owner: "",
+        zip: "",
+        state: "",
+        city: "",
+        county: "",
+        leadType: "",
+        assignedTo: "",
+        tags: "",
+        tagsMode: "any",
+        contactPresence: "",
+        scoreMin: "",
+        scoreMax: "",
+        archived: "exclude",
+        hasNotes: "",
+        noteUpdatedWithinDays: "",
+        lastTouchFrom: "",
+        lastTouchTo: "",
+        nextFollowUpFrom: "",
+        nextFollowUpTo: "",
+        createdFrom: "",
+        createdTo: "",
+        sortKey: "newest_imported",
+        sortDir: "desc",
+        viewToken: "",
+      });
       setSelectedLeadId(leadIdFromQuery);
       setHighlightLeadId(leadIdFromQuery);
       setIsLeadSheetOpen(true);
@@ -509,7 +967,35 @@ export default function Leads() {
   };
 
   const clearFilters = () => {
-    setFilters({ query: "", status: "all", owner: "", createdFrom: "", createdTo: "" });
+    setFilters((prev: any) => ({
+      ...prev,
+      query: "",
+      status: "all",
+      owner: "",
+      zip: "",
+      state: "",
+      city: "",
+      county: "",
+      leadType: "",
+      assignedTo: "",
+      tags: "",
+      tagsMode: "any",
+      contactPresence: "",
+      scoreMin: "",
+      scoreMax: "",
+      archived: "exclude",
+      hasNotes: "",
+      noteUpdatedWithinDays: "",
+      lastTouchFrom: "",
+      lastTouchTo: "",
+      nextFollowUpFrom: "",
+      nextFollowUpTo: "",
+      createdFrom: "",
+      createdTo: "",
+      sortKey: "newest_imported",
+      sortDir: "desc",
+      viewToken: "",
+    }));
   };
 
   if (isLoading) {
@@ -544,71 +1030,295 @@ export default function Leads() {
               data-testid="input-leads-search"
             />
           </div>
-          <Popover open={filterOpen} onOpenChange={setFilterOpen}>
-            <PopoverTrigger asChild>
-              <Button variant="outline" size="sm" data-testid="button-leads-filter">
-                <Filter className="mr-2 h-4 w-4" /> Filter
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <ListFilter className="mr-2 h-4 w-4" />
+                {selectedView?.name ? selectedView.name : "Views"}
               </Button>
-            </PopoverTrigger>
-            <PopoverContent align="end" className="w-[min(20rem,calc(100vw-2rem))]">
-              <div className="space-y-4">
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-[260px]">
+              <DropdownMenuItem
+                onClick={() => {
+                  setSelectedView(null);
+                  setFilters((prev: any) => ({ ...prev, viewToken: "" }));
+                }}
+              >
+                Default (No view)
+              </DropdownMenuItem>
+              {savedViews.length ? <DropdownMenuSeparator /> : null}
+              {savedViews.map((v: any) => (
+                <DropdownMenuItem
+                  key={v.id}
+                  onClick={() => {
+                    const cfg = parseLeadViewConfig(v.configJson);
+                    setFilters((prev: any) => ({
+                      ...prev,
+                      ...(cfg.filters || {}),
+                      sortKey: cfg.sort?.key || prev.sortKey,
+                      sortDir: cfg.sort?.dir || prev.sortDir,
+                      viewToken: v.visibility === "link" ? String(v.shareToken || "") : "",
+                    }));
+                    if (cfg.columns) setVisibleColumns(cfg.columns);
+                    if (cfg.density) setDensity(cfg.density);
+                    setSelectedView(v);
+                  }}
+                >
+                  {v.name}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={() => {
+                  setSaveViewName("");
+                  setSaveViewVisibility("private");
+                  setSaveViewOpen(true);
+                }}
+              >
+                Save current view…
+              </DropdownMenuItem>
+              {selectedView?.shareToken ? (
+                <DropdownMenuItem
+                  onClick={async () => {
+                    const url = `${window.location.origin}/leads?viewToken=${encodeURIComponent(String(selectedView.shareToken))}`;
+                    try {
+                      await navigator.clipboard.writeText(url);
+                      toast({ title: "Link copied" });
+                    } catch {
+                      toast({ title: "Could not copy link", variant: "destructive" });
+                    }
+                  }}
+                >
+                  Copy share link
+                </DropdownMenuItem>
+              ) : null}
+              {selectedView?.id ? (
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onClick={() => deleteSavedViewMutation.mutate(Number(selectedView.id))}
+                >
+                  Delete view
+                </DropdownMenuItem>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Columns2 className="mr-2 h-4 w-4" />
+                Columns
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-[220px]">
+              {[
+                { key: "address", label: "Address" },
+                { key: "owner", label: "Owner" },
+                { key: "status", label: "Status" },
+                { key: "score", label: "Score" },
+                { key: "value", label: "Value" },
+                { key: "contact", label: "Contact" },
+                { key: "notes", label: "Notes" },
+              ].map((c) => (
+                <DropdownMenuCheckboxItem
+                  key={c.key}
+                  checked={!!visibleColumns[c.key]}
+                  onCheckedChange={(checked) => setVisibleColumns((prev) => ({ ...prev, [c.key]: !!checked }))}
+                >
+                  {c.label}
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <Button variant="outline" size="sm" onClick={() => setDensity((d) => (d === "dense" ? "luxury" : "dense"))}>
+            {density === "dense" ? "Dense" : "Luxury"}
+          </Button>
+
+          <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="sm" data-testid="button-leads-filter">
+                <Filter className="mr-2 h-4 w-4" /> Filters
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-[min(520px,100vw)] overflow-y-auto">
+              <SheetHeader>
+                <SheetTitle>Filters</SheetTitle>
+              </SheetHeader>
+              <div className="mt-4 space-y-4">
                 <div className="space-y-2">
                   <Label>Status</Label>
-                  <Select value={filters.status} onValueChange={(value) => setFilters(prev => ({ ...prev, status: value }))}>
-                    <SelectTrigger data-testid="select-filter-status">
+                  <Select value={filters.status} onValueChange={(value) => setFilters((prev: any) => ({ ...prev, status: value }))}>
+                    <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All</SelectItem>
                       {pipelineColumnsWithMissing.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
                 </div>
 
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>ZIP</Label>
+                    <Input value={filters.zip} onChange={(e) => setFilters((prev: any) => ({ ...prev, zip: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>State</Label>
+                    <Input value={filters.state} onChange={(e) => setFilters((prev: any) => ({ ...prev, state: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>City</Label>
+                    <Input value={filters.city} onChange={(e) => setFilters((prev: any) => ({ ...prev, city: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>County</Label>
+                    <Input value={filters.county} onChange={(e) => setFilters((prev: any) => ({ ...prev, county: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Lead Type</Label>
+                    <Input value={filters.leadType} onChange={(e) => setFilters((prev: any) => ({ ...prev, leadType: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Assigned To</Label>
+                    <Input value={filters.assignedTo} onChange={(e) => setFilters((prev: any) => ({ ...prev, assignedTo: e.target.value }))} placeholder="user id or unassigned" />
+                  </div>
+                </div>
+
                 <div className="space-y-2">
                   <Label>Owner</Label>
-                  <Input
-                    placeholder="Owner name"
-                    value={filters.owner}
-                    onChange={(e) => setFilters(prev => ({ ...prev, owner: e.target.value }))}
-                    data-testid="input-filter-owner"
-                  />
+                  <Input value={filters.owner} onChange={(e) => setFilters((prev: any) => ({ ...prev, owner: e.target.value }))} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Tags (comma-separated)</Label>
+                  <Input value={filters.tags} onChange={(e) => setFilters((prev: any) => ({ ...prev, tags: e.target.value }))} />
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Tags Mode</Label>
+                    <Select value={filters.tagsMode || "any"} onValueChange={(v) => setFilters((prev: any) => ({ ...prev, tagsMode: v }))}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="any">Any</SelectItem>
+                        <SelectItem value="all">All</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Contact Presence</Label>
+                    <Select value={filters.contactPresence || ""} onValueChange={(v) => setFilters((prev: any) => ({ ...prev, contactPresence: v }))}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Any" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">Any</SelectItem>
+                        <SelectItem value="phone_only">Phone only</SelectItem>
+                        <SelectItem value="email_only">Email only</SelectItem>
+                        <SelectItem value="both">Both</SelectItem>
+                        <SelectItem value="none">None</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Note updated within (days)</Label>
+                  <Input value={filters.noteUpdatedWithinDays} onChange={(e) => setFilters((prev: any) => ({ ...prev, noteUpdatedWithinDays: e.target.value }))} placeholder="e.g. 7" />
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Archived</Label>
+                    <Select value={filters.archived} onValueChange={(v) => setFilters((prev: any) => ({ ...prev, archived: v }))}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="exclude">Exclude</SelectItem>
+                        <SelectItem value="include">Include</SelectItem>
+                        <SelectItem value="only">Only</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Has Notes</Label>
+                    <Select value={filters.hasNotes || ""} onValueChange={(v) => setFilters((prev: any) => ({ ...prev, hasNotes: v }))}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Any" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">Any</SelectItem>
+                        <SelectItem value="true">Yes</SelectItem>
+                        <SelectItem value="false">No</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Score Min</Label>
+                    <Input value={filters.scoreMin} onChange={(e) => setFilters((prev: any) => ({ ...prev, scoreMin: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Score Max</Label>
+                    <Input value={filters.scoreMax} onChange={(e) => setFilters((prev: any) => ({ ...prev, scoreMax: e.target.value }))} />
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-2">
-                    <Label>From</Label>
-                    <Input
-                      type="date"
-                      value={filters.createdFrom}
-                      onChange={(e) => setFilters(prev => ({ ...prev, createdFrom: e.target.value }))}
-                      data-testid="input-filter-from"
-                    />
+                    <Label>Created From</Label>
+                    <Input type="date" value={filters.createdFrom} onChange={(e) => setFilters((prev: any) => ({ ...prev, createdFrom: e.target.value }))} />
                   </div>
                   <div className="space-y-2">
-                    <Label>To</Label>
-                    <Input
-                      type="date"
-                      value={filters.createdTo}
-                      onChange={(e) => setFilters(prev => ({ ...prev, createdTo: e.target.value }))}
-                      data-testid="input-filter-to"
-                    />
+                    <Label>Created To</Label>
+                    <Input type="date" value={filters.createdTo} onChange={(e) => setFilters((prev: any) => ({ ...prev, createdTo: e.target.value }))} />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Last Touch From</Label>
+                    <Input type="date" value={filters.lastTouchFrom} onChange={(e) => setFilters((prev: any) => ({ ...prev, lastTouchFrom: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Last Touch To</Label>
+                    <Input type="date" value={filters.lastTouchTo} onChange={(e) => setFilters((prev: any) => ({ ...prev, lastTouchTo: e.target.value }))} />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Next Follow-up From</Label>
+                    <Input type="date" value={filters.nextFollowUpFrom} onChange={(e) => setFilters((prev: any) => ({ ...prev, nextFollowUpFrom: e.target.value }))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Next Follow-up To</Label>
+                    <Input type="date" value={filters.nextFollowUpTo} onChange={(e) => setFilters((prev: any) => ({ ...prev, nextFollowUpTo: e.target.value }))} />
                   </div>
                 </div>
 
                 <div className="flex justify-between">
-                  <Button variant="ghost" size="sm" onClick={clearFilters} data-testid="button-filter-clear">
+                  <Button variant="ghost" onClick={clearFilters}>
                     Clear
                   </Button>
-                  <Button variant="secondary" size="sm" onClick={() => setFilterOpen(false)} data-testid="button-filter-apply">
-                    Apply
+                  <Button variant="secondary" onClick={() => setFilterOpen(false)}>
+                    Done
                   </Button>
                 </div>
               </div>
-            </PopoverContent>
-          </Popover>
+            </SheetContent>
+          </Sheet>
 
           {hasNextPage ? (
             <>
@@ -638,6 +1348,175 @@ export default function Leads() {
             </>
           ) : null}
           
+          <Dialog open={saveViewOpen} onOpenChange={setSaveViewOpen}>
+            <DialogContent className="sm:max-w-[420px]">
+              <DialogHeader>
+                <DialogTitle>Save View</DialogTitle>
+                <DialogDescription>Save filters, sorting, columns, and density.</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="space-y-2">
+                  <Label>Name</Label>
+                  <Input value={saveViewName} onChange={(e) => setSaveViewName(e.target.value)} placeholder="e.g. High Score Orlando" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Visibility</Label>
+                  <Select value={saveViewVisibility} onValueChange={(v: any) => setSaveViewVisibility(v)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="private">Private</SelectItem>
+                      <SelectItem value="team">Team</SelectItem>
+                      <SelectItem value="link">Link</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  onClick={async () => {
+                    const name = saveViewName.trim();
+                    if (!name) {
+                      toast({ title: "Name is required", variant: "destructive" });
+                      return;
+                    }
+                    const cfg: LeadViewConfig = {
+                      filters: { ...filters, viewToken: "" },
+                      sort: { key: filters.sortKey, dir: filters.sortDir },
+                      columns: visibleColumns,
+                      density,
+                    };
+                    const row = await createSavedViewMutation.mutateAsync({ name, visibility: saveViewVisibility, configJson: cfg });
+                    if (saveViewVisibility === "link") {
+                      setFilters((prev: any) => ({ ...prev, viewToken: String(row?.shareToken || "") }));
+                    }
+                    setSaveViewOpen(false);
+                  }}
+                  disabled={createSavedViewMutation.isPending}
+                >
+                  {createSavedViewMutation.isPending ? "Saving..." : "Save"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
+            <DialogContent className="sm:max-w-[520px]">
+              <DialogHeader>
+                <DialogTitle>Bulk actions</DialogTitle>
+                <DialogDescription>Preview first, then run as an async job.</DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-2">
+                <div className="grid gap-2">
+                  <Label>Action</Label>
+                  <Select value={bulkAction} onValueChange={(v: any) => setBulkAction(v)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="set_status">Set status</SelectItem>
+                      <SelectItem value="assign">Assign</SelectItem>
+                      <SelectItem value="archive">Archive</SelectItem>
+                      <SelectItem value="unarchive">Unarchive</SelectItem>
+                      <SelectItem value="export">Export CSV</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {bulkAction === "set_status" ? (
+                  <div className="grid gap-2">
+                    <Label>Status</Label>
+                    <Select value={bulkStatus} onValueChange={(v) => setBulkStatus(v)}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {pipelineColumnsWithMissing.map((o) => (
+                          <SelectItem key={o.value} value={o.value}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : null}
+
+                {bulkAction === "assign" ? (
+                  <div className="grid gap-2">
+                    <Label>Assign to</Label>
+                    <Select value={bulkAssignedTo} onValueChange={(v) => setBulkAssignedTo(v)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select user" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {teamUsers.map((u: any) => (
+                          <SelectItem key={u.id} value={String(u.id)}>
+                            {u.firstName || u.lastName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.email}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : null}
+
+                <div className="rounded-md border px-3 py-2 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-muted-foreground">Selection</div>
+                    <div className="font-medium">
+                      {selectedCount.toLocaleString()} {selectionMode === "all_filtered" ? "(all filtered)" : ""}
+                    </div>
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-3">
+                    <div className="text-muted-foreground">Preview targets</div>
+                    <div className="font-medium">
+                      {bulkPreview ? Number(bulkPreview.totalTargets || 0).toLocaleString() : bulkPreviewMutation.isPending ? "…" : "—"}
+                    </div>
+                  </div>
+                </div>
+
+                {bulkJobId ? (
+                  <div className="rounded-md border px-3 py-2 text-sm">
+                    <div className="flex items-center justify-between">
+                      <div className="text-muted-foreground">Job</div>
+                      <div className="font-medium">#{bulkJobId}</div>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between">
+                      <div className="text-muted-foreground">Status</div>
+                      <div className="font-medium">{String(bulkJob?.status || "—")}</div>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between">
+                      <div className="text-muted-foreground">Progress</div>
+                      <div className="font-medium">
+                        {Number(bulkJob?.processed || 0).toLocaleString()} / {Number(bulkJob?.totalTargets || 0).toLocaleString()}
+                      </div>
+                    </div>
+                    {bulkJob?.resultJson?.error ? (
+                      <div className="mt-2 text-destructive whitespace-pre-wrap">{String(bulkJob.resultJson.error)}</div>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => bulkPreviewMutation.mutate()} disabled={bulkPreviewMutation.isPending}>
+                  Refresh preview
+                </Button>
+                <Button
+                  onClick={() => bulkCreateJobMutation.mutate()}
+                  disabled={
+                    bulkCreateJobMutation.isPending ||
+                    bulkPreviewMutation.isPending ||
+                    (bulkAction === "assign" && !bulkAssignedTo) ||
+                    (bulkAction === "set_status" && !bulkStatus)
+                  }
+                  className="bg-primary hover:bg-primary/90 text-white"
+                >
+                  {bulkCreateJobMutation.isPending ? "Starting..." : "Run job"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
               <Button size="sm" className="bg-primary hover:bg-primary/90" data-testid="button-add-lead">
@@ -751,6 +1630,100 @@ export default function Leads() {
         </div>
       ) : null}
 
+      {selectedCount > 0 ? (
+        <div className="mt-4 rounded-md border bg-card px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div className="text-sm">
+            <span className="font-medium">{selectedCount.toLocaleString()}</span> selected
+            {selectionMode === "all_filtered" ? <span className="text-muted-foreground"> (all filtered)</span> : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {selectionMode === "explicit" && leadsTotal > selectedCount ? (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setSelectionMode("all_filtered");
+                  setSelectedIds(new Set());
+                  setExcludedIds(new Set());
+                }}
+              >
+                Select all filtered ({leadsTotal.toLocaleString()})
+              </Button>
+            ) : null}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={selectionMode === "all_filtered" || selectedIds.size === 0 || selectedIds.size > 200}
+              onClick={() => {
+                setVoiceTranscript("");
+                setVoiceParsed(null);
+                setVoicePreview(null);
+                setVoiceActionLogId(null);
+                setVoiceOpen(true);
+              }}
+            >
+              <Mic className="mr-2 h-4 w-4" />
+              Voice
+            </Button>
+            <Button
+              size="sm"
+              className="bg-primary hover:bg-primary/90"
+              onClick={() => {
+                setBulkPreview(null);
+                setBulkJobId(null);
+                setBulkOpen(true);
+                bulkPreviewMutation.mutate();
+              }}
+            >
+              Bulk actions
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSelectionMode("explicit");
+                setSelectedIds(new Set());
+                setExcludedIds(new Set());
+              }}
+            >
+              Clear selection
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      <VoiceActionDialog
+        open={voiceOpen}
+        onOpenChange={setVoiceOpen}
+        selectionMode={selectionMode}
+        selectedIds={selectedIdsArr}
+        selectedLead={
+          voiceSelectedLead
+            ? {
+                id: Number(voiceSelectedLead.id),
+                address: voiceSelectedLead.address,
+                city: voiceSelectedLead.city,
+                state: voiceSelectedLead.state,
+                zipCode: voiceSelectedLead.zipCode,
+              }
+            : null
+        }
+        voiceTranscript={voiceTranscript}
+        setVoiceTranscript={setVoiceTranscript}
+        voiceParsed={voiceParsed}
+        setVoiceParsed={setVoiceParsed}
+        voicePreview={voicePreview}
+        setVoicePreview={setVoicePreview}
+        voiceActionLogId={voiceActionLogId}
+        setVoiceActionLogId={setVoiceActionLogId}
+        mutations={{
+          parse: { mutate: () => voiceParseMutation.mutate(), isPending: voiceParseMutation.isPending },
+          preview: { mutate: () => voicePreviewMutation.mutate(), isPending: voicePreviewMutation.isPending },
+          apply: { mutate: () => voiceApplyMutation.mutate(), isPending: voiceApplyMutation.isPending },
+          undo: { mutate: () => voiceUndoMutation.mutate(), isPending: voiceUndoMutation.isPending },
+        }}
+      />
+
       <Tabs defaultValue="list" className="mt-6">
         <TabsList>
           <TabsTrigger value="list">List</TabsTrigger>
@@ -762,12 +1735,24 @@ export default function Leads() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Address</TableHead>
-                  <TableHead>Owner</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Score</TableHead>
-                  <TableHead>Value</TableHead>
-                  <TableHead>Contact</TableHead>
+                  <TableHead className="w-[44px]">
+                    <Checkbox
+                      checked={
+                        selectionMode === "explicit" &&
+                        (filteredLeads || []).length > 0 &&
+                        (filteredLeads || []).every((l: any) => selectedIds.has(Number(l.id)))
+                      }
+                      onCheckedChange={(v) => toggleAllLoaded(!!v)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </TableHead>
+                  {visibleColumns.address ? <TableHead>Address</TableHead> : null}
+                  {visibleColumns.owner ? <TableHead>Owner</TableHead> : null}
+                  {visibleColumns.status ? <TableHead>Status</TableHead> : null}
+                  {visibleColumns.score ? <TableHead>Score</TableHead> : null}
+                  {visibleColumns.value ? <TableHead>Value</TableHead> : null}
+                  {visibleColumns.contact ? <TableHead>Contact</TableHead> : null}
+                  {visibleColumns.notes ? <TableHead>Notes</TableHead> : null}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -775,35 +1760,51 @@ export default function Leads() {
                 {filteredLeads.map((lead: any) => (
                   <TableRow
                     key={lead.id}
-                    className={`hover:bg-muted/50 transition-colors cursor-pointer ${highlightLeadId === lead.id ? "bg-accent/15" : ""}`}
+                    className={`hover:bg-muted/50 transition-colors cursor-pointer ${density === "dense" ? "[&>td]:py-2" : "[&>td]:py-4"} ${highlightLeadId === lead.id ? "bg-accent/15" : ""}`}
                     data-testid={`row-lead-${lead.id}`}
                     onClick={() => openLead(lead.id)}
                   >
-                    <TableCell className="font-medium">{lead.address}, {lead.city}</TableCell>
-                    <TableCell>{lead.ownerName}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className={getStatusBadgeColor(lead.status)}>
-                        {pipelineColumnsWithMissing.find((s) => s.value === lead.status)?.label || lead.status}
-                      </Badge>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={isSelected(Number(lead.id))}
+                        onCheckedChange={(v) => toggleRow(Number(lead.id), !!v)}
+                      />
                     </TableCell>
-                    <TableCell>{lead.relasScore || "—"}</TableCell>
-                    <TableCell>${lead.estimatedValue ? parseInt(lead.estimatedValue).toLocaleString() : "—"}</TableCell>
-                    <TableCell className="text-muted-foreground">
-                      <div className="flex flex-col">
-                        {lead.ownerPhone ? (
-                          <a className="underline underline-offset-2" href={`tel:${lead.ownerPhone}`} onClick={(e) => e.stopPropagation()}>
-                            {lead.ownerPhone}
-                          </a>
-                        ) : (
-                          <span>—</span>
-                        )}
-                        {lead.ownerEmail ? (
-                          <a className="underline underline-offset-2 truncate max-w-[220px]" href={`mailto:${lead.ownerEmail}`} onClick={(e) => e.stopPropagation()}>
-                            {lead.ownerEmail}
-                          </a>
-                        ) : null}
-                      </div>
-                    </TableCell>
+                    {visibleColumns.address ? <TableCell className="font-medium">{lead.address}, {lead.city}</TableCell> : null}
+                    {visibleColumns.owner ? <TableCell>{lead.ownerName}</TableCell> : null}
+                    {visibleColumns.status ? (
+                      <TableCell>
+                        <Badge variant="outline" className={getStatusBadgeColor(lead.status)}>
+                          {pipelineColumnsWithMissing.find((s) => s.value === lead.status)?.label || lead.status}
+                        </Badge>
+                      </TableCell>
+                    ) : null}
+                    {visibleColumns.score ? <TableCell>{lead.relasScore || "—"}</TableCell> : null}
+                    {visibleColumns.value ? <TableCell>${lead.estimatedValue ? parseInt(lead.estimatedValue).toLocaleString() : "—"}</TableCell> : null}
+                    {visibleColumns.contact ? (
+                      <TableCell className="text-muted-foreground">
+                        <div className="flex flex-col">
+                          {lead.ownerPhone ? (
+                            <a className="underline underline-offset-2" href={`tel:${lead.ownerPhone}`} onClick={(e) => e.stopPropagation()}>
+                              {lead.ownerPhone}
+                            </a>
+                          ) : (
+                            <span>—</span>
+                          )}
+                          {lead.ownerEmail ? (
+                            <a className="underline underline-offset-2 truncate max-w-[220px]" href={`mailto:${lead.ownerEmail}`} onClick={(e) => e.stopPropagation()}>
+                              {lead.ownerEmail}
+                            </a>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                    ) : null}
+                    {visibleColumns.notes ? (
+                      <TableCell>
+                        <div className="text-sm">{Number(lead.notesCount || 0) ? `${Number(lead.notesCount)} note${Number(lead.notesCount) === 1 ? "" : "s"}` : "—"}</div>
+                        {lead.lastNotePreview ? <div className="text-xs text-muted-foreground truncate max-w-[240px]" title={String(lead.lastNotePreview)}>{String(lead.lastNotePreview)}</div> : null}
+                      </TableCell>
+                    ) : null}
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
                         {lead.linkedPropertyId ? (

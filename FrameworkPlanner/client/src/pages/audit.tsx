@@ -24,6 +24,10 @@ type AuditFinding = {
   description: string;
   recommendation: string | null;
   technicalNotes: string | null;
+  affectedPages: string[];
+  fixPlan: string | null;
+  ownerUserId: number | null;
+  prdSection: string | null;
   status: string;
   createdAt: string;
   updatedAt: string;
@@ -34,6 +38,7 @@ export default function AuditPage() {
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
 
   const [newRunScope, setNewRunScope] = useState<string>('{"area":"app","notes":""}');
+  const [seedMode, setSeedMode] = useState<"append" | "replace">("append");
 
   const { data: runsResp } = useQuery<{ items: AuditRun[] }>({
     queryKey: ["/api/audit/runs"],
@@ -82,6 +87,9 @@ export default function AuditPage() {
     description: "",
     recommendation: "",
     technicalNotes: "",
+    affectedPages: "",
+    fixPlan: "",
+    prdSection: "",
   });
 
   const createFinding = useMutation({
@@ -94,12 +102,31 @@ export default function AuditPage() {
         description: newFinding.description,
         recommendation: newFinding.recommendation || null,
         technicalNotes: newFinding.technicalNotes || null,
+        affectedPages: newFinding.affectedPages
+          ? newFinding.affectedPages
+              .split(",")
+              .map((p) => p.trim())
+              .filter(Boolean)
+          : [],
+        fixPlan: newFinding.fixPlan || null,
+        prdSection: newFinding.prdSection || null,
       });
       return await res.json();
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/audit/runs", activeRunId, "findings"] });
-      setNewFinding((v) => ({ ...v, title: "", description: "", recommendation: "", technicalNotes: "" }));
+      setNewFinding((v) => ({ ...v, title: "", description: "", recommendation: "", technicalNotes: "", affectedPages: "", fixPlan: "", prdSection: "" }));
+    },
+  });
+
+  const seedPages = useMutation({
+    mutationFn: async () => {
+      if (!activeRunId) throw new Error("Select a run");
+      const res = await apiRequest("POST", `/api/audit/runs/${activeRunId}/seed-pages`, { mode: seedMode });
+      return await res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/audit/runs", activeRunId, "findings"] });
     },
   });
 
@@ -134,6 +161,23 @@ export default function AuditPage() {
                 Create Run
               </Button>
             </div>
+            {activeRunId && (
+              <div className="space-y-2">
+                <div className="text-sm font-medium">Seed Backlog</div>
+                <Select value={seedMode} onValueChange={(v: any) => setSeedMode(v)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="append">Append</SelectItem>
+                    <SelectItem value="replace">Replace</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button variant="outline" onClick={() => seedPages.mutate()} disabled={seedPages.isPending}>
+                  {seedPages.isPending ? "Seeding..." : "Seed Page Inventory"}
+                </Button>
+              </div>
+            )}
             <div className="space-y-2">
               {runs.length === 0 && <div className="text-sm text-muted-foreground">No runs yet.</div>}
               {runs.map((r) => (
@@ -192,6 +236,18 @@ export default function AuditPage() {
                 <div className="text-sm font-medium">Technical Notes</div>
                 <Textarea value={newFinding.technicalNotes} onChange={(e) => setNewFinding((s) => ({ ...s, technicalNotes: e.target.value }))} rows={3} />
               </div>
+              <div className="space-y-2 md:col-span-2">
+                <div className="text-sm font-medium">Affected Pages (comma-separated)</div>
+                <Input value={newFinding.affectedPages} onChange={(e) => setNewFinding((s) => ({ ...s, affectedPages: e.target.value }))} placeholder="/leads, /opportunities/:id" />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <div className="text-sm font-medium">Fix Plan</div>
+                <Textarea value={newFinding.fixPlan} onChange={(e) => setNewFinding((s) => ({ ...s, fixPlan: e.target.value }))} rows={3} />
+              </div>
+              <div className="space-y-2 md:col-span-2">
+                <div className="text-sm font-medium">PRD Section</div>
+                <Input value={newFinding.prdSection} onChange={(e) => setNewFinding((s) => ({ ...s, prdSection: e.target.value }))} placeholder="e.g. Leads PRD / Key upgrades" />
+              </div>
               <div className="md:col-span-2">
                 <Button onClick={() => createFinding.mutate()} disabled={!activeRunId || createFinding.isPending}>
                   Add Finding
@@ -211,9 +267,19 @@ export default function AuditPage() {
                     </div>
                   </div>
                   <div className="text-sm text-muted-foreground">{f.area}</div>
+                  {Array.isArray(f.affectedPages) && f.affectedPages.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {f.affectedPages.slice(0, 8).map((p) => (
+                        <Badge key={p} variant="outline">
+                          {p}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                   <div className="text-sm whitespace-pre-wrap">{f.description}</div>
                   {f.recommendation && <div className="text-sm whitespace-pre-wrap"><span className="font-medium">Recommendation: </span>{f.recommendation}</div>}
                   {f.technicalNotes && <div className="text-sm whitespace-pre-wrap"><span className="font-medium">Technical: </span>{f.technicalNotes}</div>}
+                  {f.fixPlan && <div className="text-sm whitespace-pre-wrap"><span className="font-medium">Fix plan: </span>{f.fixPlan}</div>}
                   <div className="flex items-center gap-2">
                     <Select value={f.status} onValueChange={(v) => patchFinding.mutate({ id: f.id, patch: { status: v } as any })}>
                       <SelectTrigger className="w-[180px]">
@@ -236,4 +302,3 @@ export default function AuditPage() {
     </Layout>
   );
 }
-
