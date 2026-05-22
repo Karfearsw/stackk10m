@@ -1,0 +1,68 @@
+import type { TeamSettingsModel } from "../settings/teamSettings.js";
+
+function str(v: unknown) {
+  return String(v ?? "").trim().toLowerCase();
+}
+
+function ruleId(rule: any, idx: number) {
+  const raw = String(rule?.id || "").trim();
+  if (raw) return raw;
+  const parts = [
+    String(rule?.priority ?? idx),
+    str(rule?.strategy),
+    (Array.isArray(rule?.assignToUserIds) ? rule.assignToUserIds.join(",") : ""),
+    (Array.isArray(rule?.when?.zipCodes) ? rule.when.zipCodes.map(str).join(",") : ""),
+    (Array.isArray(rule?.when?.sources) ? rule.when.sources.map(str).join(",") : ""),
+  ];
+  return parts.join("|");
+}
+
+function matchesRule(lead: any, rule: any) {
+  const when = rule?.when || {};
+  const zipCodes = Array.isArray(when.zipCodes) ? when.zipCodes.map(str).filter(Boolean) : [];
+  const sources = Array.isArray(when.sources) ? when.sources.map(str).filter(Boolean) : [];
+  if (zipCodes.length) {
+    if (!zipCodes.includes(str(lead?.zipCode))) return false;
+  }
+  if (sources.length) {
+    if (!sources.includes(str(lead?.source))) return false;
+  }
+  return true;
+}
+
+export function chooseLeadAssignee(input: {
+  lead: any;
+  settings: TeamSettingsModel;
+  eligibleUserIds: number[];
+}): { assigneeUserId: number | null; nextRrState: Record<string, number> } {
+  const cfg: any = input.settings?.assignment || {};
+  if (!cfg.enabled) return { assigneeUserId: null, nextRrState: { ...(cfg.rrState || {}) } };
+
+  const rules: any[] = Array.isArray(cfg.rules) ? [...cfg.rules] : [];
+  rules.sort((a, b) => Number(a?.priority ?? 0) - Number(b?.priority ?? 0));
+  const rrState: Record<string, number> = { ...(cfg.rrState || {}) };
+
+  for (let idx = 0; idx < rules.length; idx += 1) {
+    const r = rules[idx];
+    if (!matchesRule(input.lead, r)) continue;
+    const strategy = str(r?.strategy);
+    const targets = Array.isArray(r?.assignToUserIds) ? r.assignToUserIds.map((n: any) => Number(n)).filter((n: any) => Number.isFinite(n) && n > 0) : [];
+    const eligible = targets.filter((id: number) => input.eligibleUserIds.includes(id));
+    if (!eligible.length) continue;
+
+    if (strategy === "fixed") {
+      return { assigneeUserId: eligible[0], nextRrState: rrState };
+    }
+    const id = ruleId(r, idx);
+    const cur = Number(rrState[id] ?? 0);
+    const nextIndex = Number.isFinite(cur) ? cur : 0;
+    const chosen = eligible[nextIndex % eligible.length];
+    rrState[id] = nextIndex + 1;
+    return { assigneeUserId: chosen, nextRrState: rrState };
+  }
+
+  const fallback = typeof cfg.defaultAssigneeUserId === "number" ? cfg.defaultAssigneeUserId : null;
+  if (fallback && input.eligibleUserIds.includes(fallback)) return { assigneeUserId: fallback, nextRrState: rrState };
+  return { assigneeUserId: null, nextRrState: rrState };
+}
+

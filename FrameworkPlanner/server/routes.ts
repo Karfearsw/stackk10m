@@ -65,6 +65,9 @@ import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
 import { sendSignalWireSms } from "./services/messaging/signalwire.js";
 import { sendResendEmail } from "./services/messaging/resend.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
+import { getTeamSettingsModel, patchTeamSettingsModel, teamSettingsPatchSchema } from "./services/settings/teamSettings.js";
+import { computeLeadScore } from "./services/leads/score.js";
+import { chooseLeadAssignee } from "./services/leads/assign.js";
 import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
 
@@ -2538,10 +2541,35 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Lead source is required" });
       }
 
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
+      if (activeTeamId) {
+        const settings = await getTeamSettingsModel(activeTeamId);
+        if (!(validated as any).assignedTo && settings.assignment?.enabled) {
+          const members = await storage.getTeamMembers(activeTeamId);
+          const eligible = Array.from(
+            new Set(
+              (members || [])
+                .filter((m: any) => String(m?.status || "").toLowerCase() === "active")
+                .map((m: any) => Number(m?.userId || 0))
+                .filter((n: number) => Number.isFinite(n) && n > 0),
+            ),
+          );
+          const picked = chooseLeadAssignee({ lead: validated as any, settings, eligibleUserIds: eligible });
+          if (picked.assigneeUserId) (validated as any).assignedTo = picked.assigneeUserId;
+          const beforeRr = settings.assignment?.rrState || {};
+          if (JSON.stringify(beforeRr) !== JSON.stringify(picked.nextRrState)) {
+            await patchTeamSettingsModel(activeTeamId, { assignment: { rrState: picked.nextRrState } } as any);
+          }
+        }
+        if (settings.leadScoring?.enabled) {
+          (validated as any).relasScore = computeLeadScore({ lead: validated as any, settings });
+        }
+      }
+
       const assignedTo = (validated as any).assignedTo;
       if (typeof assignedTo === "number") {
-        const user = await requireAuth(req, res);
-        if (!user) return;
         const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
         if (!ok) return;
       }
@@ -2603,6 +2631,20 @@ export async function registerRoutes(
         const merged: any = { ...before, ...(partial as any) };
         if (merged.address && merged.city && merged.state && merged.zipCode && merged.ownerName) {
           (partial as any).dedupeKey = computeLeadDedupeKey(merged);
+        }
+        const touchedScoreFields = ["source", "motivation", "ownerEmail", "ownerPhone", "zipCode", "tags"].some((k) =>
+          Object.prototype.hasOwnProperty.call(partial as any, k),
+        );
+        if (touchedScoreFields) {
+          const user = await requireAuth(req, res);
+          if (!user) return;
+          const activeTeamId = await getOrInitActiveTeamId(req, user.id);
+          if (activeTeamId) {
+            const settings = await getTeamSettingsModel(activeTeamId);
+            if (settings.leadScoring?.enabled) {
+              (partial as any).relasScore = computeLeadScore({ lead: merged, settings });
+            }
+          }
         }
       }
       const lead = await storage.updateLead(id, partial);
@@ -4017,9 +4059,9 @@ export async function registerRoutes(
         return res.status(500).json({ message: "SignalWire credentials not configured" });
       }
       
-      // Generate a short-lived JWT token for WebRTC
-      // resource must be a string identifier for the client (e.g. the phone number)
-      const resolvedFrom = String(from ?? process.env.DIALER_DEFAULT_FROM_NUMBER ?? "").trim();
+      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
+      const teamDefaultFrom = activeTeamId ? (await getTeamSettingsModel(activeTeamId)).telephony?.defaultFromNumber ?? null : null;
+      const resolvedFrom = String(from ?? teamDefaultFrom ?? process.env.DIALER_DEFAULT_FROM_NUMBER ?? "").trim();
       if (!resolvedFrom) {
         return res.status(400).json({ message: "Missing from number" });
       }
@@ -4090,7 +4132,9 @@ export async function registerRoutes(
 
       const { to, from, body, metadata } = req.body || {};
       if (!to || !body) return res.status(400).json({ message: "Missing to/body" });
-      const resolvedFrom = from || process.env.DIALER_DEFAULT_FROM_NUMBER || process.env.SIGNALWIRE_FROM_NUMBER || "";
+      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
+      const teamDefaultFrom = activeTeamId ? (await getTeamSettingsModel(activeTeamId)).telephony?.defaultFromNumber ?? null : null;
+      const resolvedFrom = from || teamDefaultFrom || process.env.DIALER_DEFAULT_FROM_NUMBER || process.env.SIGNALWIRE_FROM_NUMBER || "";
       const out = await sendSignalWireSms({ to, body, from: resolvedFrom });
       const sid = out.messageSid || null;
       const smsStatus = "queued";
@@ -4799,9 +4843,20 @@ export async function registerRoutes(
       });
       const payload = schema.parse(req.body || {});
 
+      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
+      if (activeTeamId) {
+        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "viewer" });
+        if (!ctx) return;
+      }
+      const settings = activeTeamId ? await getTeamSettingsModel(activeTeamId) : null;
+      if (settings && settings.documents?.signing?.enabled === false) {
+        return res.status(403).json({ message: "Signing is disabled" });
+      }
+
       const token = crypto.randomBytes(24).toString("hex");
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-      const expiresAt = new Date(Date.now() + (payload.expiresInDays ?? 30) * 24 * 60 * 60 * 1000);
+      const defaultExpiryDays = settings?.documents?.signing?.envelopeExpiryDays ?? 30;
+      const expiresAt = new Date(Date.now() + (payload.expiresInDays ?? defaultExpiryDays) * 24 * 60 * 60 * 1000);
 
       const env = await storage.createContractEnvelope({
         documentId: id,
@@ -5349,14 +5404,28 @@ export async function registerRoutes(
 
   app.get("/api/pipeline-config", async (req, res) => {
     try {
-      const userId = req.session.userId;
-      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const user = await requireAuth(req, res);
+      if (!user) return;
 
       const entityType = String(req.query.entityType || "").trim();
       const defaults = defaultPipelineColumnsByEntityType[entityType];
       if (!defaults) return res.status(400).json({ message: "Invalid entityType" });
 
-      const row = await storage.getPipelineConfig(userId, entityType);
+      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
+      if (activeTeamId) {
+        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "viewer" });
+        if (!ctx) return;
+        const row = await storage.getPipelineConfigByTeam(activeTeamId, entityType);
+        if (!row) return res.json({ entityType, columns: defaults });
+        let parsed: any = defaults;
+        try {
+          const json = JSON.parse(row.columns);
+          if (Array.isArray(json)) parsed = json;
+        } catch {}
+        return res.json({ entityType, columns: parsed });
+      }
+
+      const row = await storage.getPipelineConfig(user.id, entityType);
       if (!row) return res.json({ entityType, columns: defaults });
 
       let parsed: any = defaults;
@@ -5373,8 +5442,8 @@ export async function registerRoutes(
 
   app.put("/api/pipeline-config", async (req, res) => {
     try {
-      const userId = req.session.userId;
-      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const user = await requireAuth(req, res);
+      if (!user) return;
 
       const entityType = String(req.query.entityType || "").trim();
       const defaults = defaultPipelineColumnsByEntityType[entityType];
@@ -5389,7 +5458,20 @@ export async function registerRoutes(
 
       if (!cleaned.length) return res.status(400).json({ message: "Invalid columns" });
 
-      const updated = await storage.upsertPipelineConfig(userId, entityType, JSON.stringify(cleaned));
+      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
+      if (activeTeamId) {
+        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "admin" });
+        if (!ctx) return;
+        const updated = await storage.upsertPipelineConfigByTeam(activeTeamId, user.id, entityType, JSON.stringify(cleaned));
+        let parsed: any = cleaned;
+        try {
+          const json = JSON.parse(updated.columns);
+          if (Array.isArray(json)) parsed = json;
+        } catch {}
+        return res.json({ entityType, columns: parsed });
+      }
+
+      const updated = await storage.upsertPipelineConfig(user.id, entityType, JSON.stringify(cleaned));
       let parsed: any = cleaned;
       try {
         const json = JSON.parse(updated.columns);
@@ -5762,6 +5844,39 @@ export async function registerRoutes(
       const validated = insertTeamActivityLogSchema.parse({ ...req.body, teamId });
       const log = await storage.createTeamActivityLog({ ...validated, userId: ctx.user.id } as any);
       res.status(201).json(log);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/teams/:teamId/settings", async (req, res) => {
+    try {
+      const teamId = parseInt(req.params.teamId);
+      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "viewer" });
+      if (!ctx) return;
+      const row = await storage.getTeamSettings(teamId);
+      const model = await getTeamSettingsModel(teamId);
+      res.json({ teamId, ...model, updatedAt: row?.updatedAt ?? null });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/teams/:teamId/settings", async (req, res) => {
+    try {
+      const teamId = parseInt(req.params.teamId);
+      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
+      if (!ctx) return;
+      const validated = teamSettingsPatchSchema.parse(req.body);
+      const { row, model } = await patchTeamSettingsModel(teamId, validated);
+      await storage.createTeamActivityLog({
+        teamId,
+        userId: ctx.user.id,
+        action: "settings_updated",
+        description: "Workspace settings updated",
+        metadata: JSON.stringify({ changedKeys: Object.keys(validated) }),
+      } as any);
+      res.json({ teamId, ...model, updatedAt: row?.updatedAt ?? null });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -6271,12 +6386,18 @@ export async function registerRoutes(
       if (open) return res.json(open);
 
       const user = await storage.getUserById(req.session.userId);
+      const activeTeamId = user ? await getOrInitActiveTeamId(req, user.id) : null;
+      if (activeTeamId) {
+        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "viewer" });
+        if (!ctx) return;
+      }
       const employee = user?.firstName || user?.lastName
         ? `${user?.firstName || ""} ${user?.lastName || ""}`.trim()
         : user?.email || "Employee";
 
       try {
         const created = await storage.createTimeClockSession({
+          teamId: activeTeamId ?? undefined,
           userId: req.session.userId,
           employee,
           task: "General",
@@ -6307,7 +6428,21 @@ export async function registerRoutes(
 
       const result = await storage.closeOpenTimeClockSessionAndCreateEntry(req.session.userId, { clockOutAt, tzOffsetMinutes });
       if (!result) return res.json({ stopped: false });
-      res.json({ stopped: true, entry: result.entry });
+      const user = await storage.getUserById(req.session.userId);
+      const activeTeamId = user ? await getOrInitActiveTeamId(req, user.id) : null;
+      if (activeTeamId) {
+        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "viewer" });
+        if (!ctx) return;
+      }
+      const settings = activeTeamId ? await getTeamSettingsModel(activeTeamId) : null;
+      const roleKey = String((user as any)?.role || "").trim().toLowerCase();
+      const defaultRate = settings?.compensation?.roleRates?.[roleKey]?.hourlyRate;
+      const hourlyRate = typeof defaultRate === "number" && Number.isFinite(defaultRate) ? defaultRate : undefined;
+      const patched = await storage.updateTimesheetEntry(result.entry.id, {
+        teamId: activeTeamId ?? (result.entry as any).teamId ?? undefined,
+        hourlyRate: hourlyRate ?? (result.entry as any).hourlyRate,
+      } as any);
+      res.json({ stopped: true, entry: patched });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -6335,10 +6470,16 @@ export async function registerRoutes(
       const from = typeof req.query.from === "string" ? req.query.from : undefined;
       const to = typeof req.query.to === "string" ? req.query.to : undefined;
       const userId = typeof req.query.userId === "string" ? parseInt(req.query.userId) : undefined;
+      const status = typeof req.query.status === "string" ? String(req.query.status).trim() : undefined;
       const { limit, offset } = parseLimitOffset(req.query);
 
       const effectiveUserId = manager ? userId : req.session.userId;
-      const entries = await storage.getTimesheetEntriesFiltered({ userId: effectiveUserId, from, to, limit, offset });
+      const activeTeamId = await getOrInitActiveTeamId(req, req.session.userId);
+      if (activeTeamId) {
+        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "viewer" });
+        if (!ctx) return;
+      }
+      const entries = await storage.getTimesheetEntriesFiltered({ userId: effectiveUserId, teamId: activeTeamId ?? undefined, status, from, to, limit, offset });
       res.json(entries);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -6368,7 +6509,30 @@ export async function registerRoutes(
 
   app.post("/api/users/:userId/timesheet", async (req, res) => {
     try {
-      const validated = insertTimesheetEntrySchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetUserId = parseInt(req.params.userId);
+      if (!Number.isFinite(targetUserId)) return res.status(400).json({ message: "Invalid userId" });
+      if (!isManagerUser(user) && user.id !== targetUserId) return res.status(403).json({ message: "Forbidden" });
+
+      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
+      if (activeTeamId) {
+        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "viewer" });
+        if (!ctx) return;
+      }
+      const settings = activeTeamId ? await getTeamSettingsModel(activeTeamId) : null;
+      const roleKey = String((user as any)?.role || "").trim().toLowerCase();
+      const defaultRate = settings?.compensation?.roleRates?.[roleKey]?.hourlyRate;
+      const hourlyRate = typeof req.body?.hourlyRate === "undefined" || req.body?.hourlyRate === null || String(req.body?.hourlyRate).trim() === ""
+        ? (typeof defaultRate === "number" && Number.isFinite(defaultRate) ? defaultRate : undefined)
+        : req.body.hourlyRate;
+
+      const validated = insertTimesheetEntrySchema.parse({
+        ...req.body,
+        hourlyRate,
+        teamId: activeTeamId ?? undefined,
+        userId: targetUserId,
+      });
       const entry = await storage.createTimesheetEntry(validated);
       res.status(201).json(entry);
     } catch (error: any) {
@@ -6378,6 +6542,11 @@ export async function registerRoutes(
 
   app.patch("/api/timesheet/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const existing = await storage.getTimesheetEntryById(parseInt(req.params.id));
+      if (!existing) return res.status(404).json({ message: "Entry not found" });
+      if (!isManagerUser(user) && Number(existing.userId) !== Number(user.id)) return res.status(403).json({ message: "Forbidden" });
       const partial = insertTimesheetEntrySchema.partial().parse(req.body);
       const entry = await storage.updateTimesheetEntry(parseInt(req.params.id), partial);
       res.json(entry);
@@ -6386,8 +6555,72 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/timesheet/:id/submit", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const entry = await storage.getTimesheetEntryById(id);
+      if (!entry) return res.status(404).json({ message: "Entry not found" });
+      if (!isManagerUser(user) && Number(entry.userId) !== Number(user.id)) return res.status(403).json({ message: "Forbidden" });
+      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
+      if (typeof entry.teamId === "number" && activeTeamId && Number(entry.teamId) !== Number(activeTeamId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      const nextTeamId = typeof entry.teamId === "number" ? entry.teamId : activeTeamId ?? null;
+      const updated = await storage.updateTimesheetEntry(id, { status: "submitted", submittedAt: new Date(), teamId: nextTeamId } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/timesheet/:id/approve", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const id = parseInt(req.params.id);
+      const entry = await storage.getTimesheetEntryById(id);
+      if (!entry) return res.status(404).json({ message: "Entry not found" });
+      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
+      if (typeof entry.teamId === "number" && activeTeamId && Number(entry.teamId) !== Number(activeTeamId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      const updated = await storage.updateTimesheetEntry(id, { status: "approved", approvedAt: new Date(), approvedBy: user.id } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/timesheet/:id/reject", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const id = parseInt(req.params.id);
+      const entry = await storage.getTimesheetEntryById(id);
+      if (!entry) return res.status(404).json({ message: "Entry not found" });
+      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
+      if (typeof entry.teamId === "number" && activeTeamId && Number(entry.teamId) !== Number(activeTeamId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      const reason = z.object({ reason: z.string().trim().min(1) }).parse(req.body || {}).reason;
+      const updated = await storage.updateTimesheetEntry(id, { status: "rejected", rejectedReason: reason, approvedBy: user.id, approvedAt: new Date() } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
   app.delete("/api/timesheet/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const existing = await storage.getTimesheetEntryById(parseInt(req.params.id));
+      if (!existing) return res.status(404).json({ message: "Entry not found" });
+      if (!isManagerUser(user) && Number(existing.userId) !== Number(user.id)) return res.status(403).json({ message: "Forbidden" });
       await storage.deleteTimesheetEntry(parseInt(req.params.id));
       res.json({ message: "Entry deleted" });
     } catch (error: any) {

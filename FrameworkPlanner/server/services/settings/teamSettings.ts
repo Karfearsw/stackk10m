@@ -1,0 +1,228 @@
+import { z } from "zod";
+import { storage } from "../../storage.js";
+
+const telephonySchema = z
+  .object({
+    defaultFromNumber: z.string().trim().min(1).nullable().optional(),
+    recordingPolicy: z.enum(["always", "never", "consent"]).optional(),
+    voicemailDropScriptId: z.number().int().positive().nullable().optional(),
+    compliance: z
+      .object({
+        dncEnforced: z.boolean().optional(),
+        dntEnforced: z.boolean().optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
+const leadScoringSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    thresholds: z
+      .object({
+        hot: z.number().int().optional(),
+        warm: z.number().int().optional(),
+      })
+      .optional(),
+    weights: z
+      .array(
+        z.object({
+          key: z.string().trim().min(1),
+          label: z.string().trim().min(1),
+          points: z.number().int(),
+          match: z.string().trim().optional(),
+        }),
+      )
+      .optional(),
+  })
+  .passthrough();
+
+const assignmentRuleSchema = z
+  .object({
+    priority: z.number().int(),
+    when: z
+      .object({
+        zipCodes: z.array(z.string().trim().min(1)).optional(),
+        sources: z.array(z.string().trim().min(1)).optional(),
+      })
+      .optional(),
+    assignToUserIds: z.array(z.number().int().positive()).min(1),
+    strategy: z.enum(["round_robin", "fixed"]),
+  })
+  .passthrough();
+
+const assignmentSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    defaultAssigneeUserId: z.number().int().positive().nullable().optional(),
+    rules: z.array(assignmentRuleSchema).optional(),
+    rrState: z.record(z.string(), z.number().int().nonnegative()).optional(),
+  })
+  .passthrough();
+
+const compensationSchema = z
+  .object({
+    roleRates: z
+      .record(
+        z.string(),
+        z.object({
+          hourlyRate: z.number(),
+          commissionPct: z.number().nullable().optional(),
+        }),
+      )
+      .optional(),
+    approvals: z
+      .object({
+        timesheet: z
+          .object({
+            requireApproval: z.boolean().optional(),
+            approverRoles: z.array(z.string().trim().min(1)).optional(),
+          })
+          .optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
+const documentsSchema = z
+  .object({
+    company: z
+      .object({
+        legalName: z.string().trim().optional(),
+        address: z.string().trim().optional(),
+        phone: z.string().trim().optional(),
+        email: z.string().trim().optional(),
+        licenseNumber: z.string().trim().optional(),
+      })
+      .optional(),
+    defaults: z
+      .object({
+        contractTemplateId: z.number().int().positive().nullable().optional(),
+        loiTemplateId: z.number().int().positive().nullable().optional(),
+      })
+      .optional(),
+    signing: z
+      .object({
+        enabled: z.boolean().optional(),
+        envelopeExpiryDays: z.number().int().min(1).max(365).optional(),
+      })
+      .optional(),
+  })
+  .passthrough();
+
+export const teamSettingsPatchSchema = z
+  .object({
+    telephony: telephonySchema.optional(),
+    leadScoring: leadScoringSchema.optional(),
+    assignment: assignmentSchema.optional(),
+    compensation: compensationSchema.optional(),
+    documents: documentsSchema.optional(),
+  })
+  .strict();
+
+export type TeamSettingsModel = z.infer<typeof teamSettingsPatchSchema> & {
+  telephony: z.infer<typeof telephonySchema>;
+  leadScoring: z.infer<typeof leadScoringSchema>;
+  assignment: z.infer<typeof assignmentSchema>;
+  compensation: z.infer<typeof compensationSchema>;
+  documents: z.infer<typeof documentsSchema>;
+};
+
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+function deepMerge<T extends Record<string, unknown>>(base: T, patch: Record<string, unknown>): T {
+  const out: any = { ...base };
+  for (const [k, v] of Object.entries(patch)) {
+    if (isPlainObject(v) && isPlainObject((out as any)[k])) {
+      (out as any)[k] = deepMerge((out as any)[k], v);
+      continue;
+    }
+    (out as any)[k] = v as any;
+  }
+  return out;
+}
+
+export function teamSettingsDefaults(): TeamSettingsModel {
+  return {
+    telephony: {
+      defaultFromNumber: null,
+      recordingPolicy: "consent",
+      voicemailDropScriptId: null,
+      compliance: { dncEnforced: true, dntEnforced: true },
+    },
+    leadScoring: {
+      enabled: false,
+      thresholds: { hot: 80, warm: 50 },
+      weights: [],
+    },
+    assignment: {
+      enabled: false,
+      defaultAssigneeUserId: null,
+      rules: [],
+      rrState: {},
+    },
+    compensation: {
+      roleRates: {},
+      approvals: { timesheet: { requireApproval: false, approverRoles: ["admin", "owner"] } },
+    },
+    documents: {
+      company: { legalName: "" },
+      defaults: { contractTemplateId: null, loiTemplateId: null },
+      signing: { enabled: false, envelopeExpiryDays: 7 },
+    },
+  } as any;
+}
+
+export function normalizeTeamSettings(row: any | undefined): TeamSettingsModel {
+  const defaults = teamSettingsDefaults();
+  const telephonyRaw = row?.telephonyJson ?? row?.telephony_json;
+  const leadScoringRaw = row?.leadScoringJson ?? row?.lead_scoring_json;
+  const assignmentRaw = row?.assignmentJson ?? row?.assignment_json;
+  const compensationRaw = row?.compensationJson ?? row?.compensation_json;
+  const documentsRaw = row?.documentsJson ?? row?.documents_json;
+
+  const telephony = telephonySchema.safeParse(telephonyRaw).success ? (telephonySchema.parse(telephonyRaw) as any) : {};
+  const leadScoring = leadScoringSchema.safeParse(leadScoringRaw).success ? (leadScoringSchema.parse(leadScoringRaw) as any) : {};
+  const assignment = assignmentSchema.safeParse(assignmentRaw).success ? (assignmentSchema.parse(assignmentRaw) as any) : {};
+  const compensation = compensationSchema.safeParse(compensationRaw).success ? (compensationSchema.parse(compensationRaw) as any) : {};
+  const documents = documentsSchema.safeParse(documentsRaw).success ? (documentsSchema.parse(documentsRaw) as any) : {};
+
+  return {
+    telephony: deepMerge(defaults.telephony as any, telephony as any),
+    leadScoring: deepMerge(defaults.leadScoring as any, leadScoring as any),
+    assignment: deepMerge(defaults.assignment as any, assignment as any),
+    compensation: deepMerge(defaults.compensation as any, compensation as any),
+    documents: deepMerge(defaults.documents as any, documents as any),
+  } as any;
+}
+
+export async function getTeamSettingsModel(teamId: number): Promise<TeamSettingsModel> {
+  const row = await storage.getTeamSettings(teamId);
+  return normalizeTeamSettings(row);
+}
+
+export async function patchTeamSettingsModel(teamId: number, patch: z.infer<typeof teamSettingsPatchSchema>) {
+  const existing = await storage.getTeamSettings(teamId);
+  const existingModel = normalizeTeamSettings(existing);
+  const merged: TeamSettingsModel = {
+    telephony: patch.telephony ? deepMerge(existingModel.telephony as any, patch.telephony as any) : existingModel.telephony,
+    leadScoring: patch.leadScoring ? deepMerge(existingModel.leadScoring as any, patch.leadScoring as any) : existingModel.leadScoring,
+    assignment: patch.assignment ? deepMerge(existingModel.assignment as any, patch.assignment as any) : existingModel.assignment,
+    compensation: patch.compensation ? deepMerge(existingModel.compensation as any, patch.compensation as any) : existingModel.compensation,
+    documents: patch.documents ? deepMerge(existingModel.documents as any, patch.documents as any) : existingModel.documents,
+  } as any;
+
+  const row = await storage.upsertTeamSettings(teamId, {
+    teamId,
+    telephonyJson: merged.telephony as any,
+    leadScoringJson: merged.leadScoring as any,
+    assignmentJson: merged.assignment as any,
+    compensationJson: merged.compensation as any,
+    documentsJson: merged.documents as any,
+  } as any);
+
+  return { row, model: normalizeTeamSettings(row) };
+}
+
