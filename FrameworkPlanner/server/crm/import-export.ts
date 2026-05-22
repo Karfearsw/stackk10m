@@ -92,10 +92,18 @@ const opportunityFields: FieldDef[] = [
 
 const contactFields: FieldDef[] = [
   { key: "name", label: "Name", required: true, type: "string" },
+  { key: "nickname", label: "Nickname", type: "string" },
   { key: "email", label: "Email", type: "email" },
   { key: "phone", label: "Phone", type: "string" },
   { key: "type", label: "Type", type: "string" },
   { key: "company", label: "Company", type: "string" },
+  { key: "title", label: "Title", type: "string" },
+  { key: "market", label: "Market", type: "string" },
+  { key: "trustLevel", label: "Trust Level", type: "int" },
+  { key: "vip", label: "VIP", type: "bool" },
+  { key: "doNotCall", label: "Do Not Call", type: "bool" },
+  { key: "doNotText", label: "Do Not Text", type: "bool" },
+  { key: "doNotEmail", label: "Do Not Email", type: "bool" },
   { key: "notes", label: "Notes", type: "string" },
 ];
 
@@ -162,10 +170,18 @@ const opportunitySynonyms: Record<string, string[]> = {
 
 const contactSynonyms: Record<string, string[]> = {
   name: ["name", "full name", "contact", "contact name"],
+  nickname: ["nickname", "nick name"],
   email: ["email", "e-mail"],
   phone: ["phone", "mobile", "cell"],
   type: ["type", "category"],
   company: ["company", "organization", "org"],
+  title: ["title", "job title", "position"],
+  market: ["market", "coverage", "coverage area", "area"],
+  trustLevel: ["trust level", "trust", "trust score"],
+  vip: ["vip", "is vip"],
+  doNotCall: ["do not call", "dnc"],
+  doNotText: ["do not text", "dnt"],
+  doNotEmail: ["do not email", "opt out email", "email opt out"],
   notes: ["notes", "note", "comments", "comment"],
 };
 

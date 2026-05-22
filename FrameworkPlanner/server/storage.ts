@@ -1,7 +1,9 @@
 import { db } from "./db.js";
 import { asc, desc, sql } from "drizzle-orm";
 import { 
-  leads, leadNotes, savedViews, leadBulkActionJobs, aiActionLogs, aiActionUndo, appAuditRuns, appAuditFindings, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
+  leads, leadNotes, savedViews, leadBulkActionJobs, aiActionLogs, aiActionUndo, appAuditRuns, appAuditFindings, properties,
+  contacts, contactNotes, companies, contactCompanyLinks, contactRoles, contactRoleLinks, contactTags, contactTagLinks, contactMethods, contactAddresses, contactRecordLinks, contactRelationships, contactScores, contactMergeEvents,
+  contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
   buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents
 } from "./shared-schema.js";
@@ -15,7 +17,18 @@ import {
   type AppAuditRun, type InsertAppAuditRun,
   type AppAuditFinding, type InsertAppAuditFinding,
   type Property, type InsertProperty, 
-  type Contact, type InsertContact, 
+  type Contact, type InsertContact,
+  type ContactNote, type InsertContactNote,
+  type Company, type InsertCompany,
+  type ContactCompanyLink, type InsertContactCompanyLink,
+  type ContactRole, type InsertContactRole,
+  type ContactTag, type InsertContactTag,
+  type ContactMethod, type InsertContactMethod,
+  type ContactAddress, type InsertContactAddress,
+  type ContactRecordLink, type InsertContactRecordLink,
+  type ContactRelationship, type InsertContactRelationship,
+  type ContactScore, type InsertContactScore,
+  type ContactMergeEvent, type InsertContactMergeEvent,
   type Contract, type InsertContract,
   type ContractTemplate, type InsertContractTemplate,
   type ContractDocument, type InsertContractDocument,
@@ -215,6 +228,54 @@ export interface IStorage {
   createContact(contact: InsertContact): Promise<Contact>;
   updateContact(id: number, contact: Partial<InsertContact>): Promise<Contact>;
   deleteContact(id: number): Promise<void>;
+
+  searchContactsV2(input: {
+    query?: string;
+    roles?: string[];
+    tags?: string[];
+    companyId?: number;
+    market?: string;
+    sort?: "score" | "recent" | "name";
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: Array<Contact & { roles?: string[]; tags?: string[]; companyPrimary?: any; score?: number | null }>; total: number }>;
+
+  listContactNotes(contactId: number, limit?: number): Promise<ContactNote[]>;
+  createContactNote(input: InsertContactNote): Promise<ContactNote>;
+  updateContactNote(id: number, patch: Partial<InsertContactNote>): Promise<ContactNote>;
+  deleteContactNote(id: number): Promise<void>;
+
+  listCompanies(input: { query?: string; limit?: number; offset?: number }): Promise<{ items: Company[]; total: number }>;
+  getCompanyById(id: number): Promise<Company | undefined>;
+  createCompany(input: InsertCompany): Promise<Company>;
+  updateCompany(id: number, patch: Partial<InsertCompany>): Promise<Company>;
+  deleteCompany(id: number): Promise<void>;
+
+  setPrimaryCompanyLink(input: { contactId: number; companyId: number; roleTitle?: string | null }): Promise<ContactCompanyLink>;
+  removeCompanyLink(input: { contactId: number; companyId: number }): Promise<void>;
+
+  listContactRoles(): Promise<ContactRole[]>;
+  upsertContactRole(input: InsertContactRole): Promise<ContactRole>;
+  addContactRoleLink(input: { contactId: number; roleKey: string }): Promise<void>;
+  removeContactRoleLink(input: { contactId: number; roleKey: string }): Promise<void>;
+
+  listContactTags(): Promise<ContactTag[]>;
+  upsertContactTag(input: InsertContactTag): Promise<ContactTag>;
+  addContactTagLink(input: { contactId: number; tagKey: string }): Promise<void>;
+  removeContactTagLink(input: { contactId: number; tagKey: string }): Promise<void>;
+
+  addContactRecordLink(input: InsertContactRecordLink): Promise<ContactRecordLink>;
+  deleteContactRecordLink(id: number): Promise<void>;
+
+  addContactRelationship(input: InsertContactRelationship): Promise<ContactRelationship>;
+  deleteContactRelationship(id: number): Promise<void>;
+
+  getContactTimeline(input: { contactId: number; limit?: number; offset?: number }): Promise<any[]>;
+  getContactGraph(contactId: number): Promise<any>;
+  recomputeContactScore(contactId: number): Promise<ContactScore>;
+
+  listContactDuplicates(input: { mode?: "dedupe_key" | "fuzzy"; limit?: number }): Promise<any>;
+  mergeContacts(input: { winnerId: number; mergedId: number; mergedByUserId?: number | null; reason?: string | null }): Promise<{ winner: Contact }>;
 
   // Contracts
   getContracts(limit?: number, offset?: number): Promise<Contract[]>;
@@ -1261,6 +1322,735 @@ export class DatabaseStorage implements IStorage {
 
   async deleteContact(id: number): Promise<void> {
     await db.delete(contacts).where(eq(contacts.id, id));
+  }
+
+  async searchContactsV2(input: {
+    query?: string;
+    roles?: string[];
+    tags?: string[];
+    companyId?: number;
+    market?: string;
+    sort?: "score" | "recent" | "name";
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: Array<Contact & { roles?: string[]; tags?: string[]; companyPrimary?: any; score?: number | null }>; total: number }> {
+    const limit = typeof input.limit === "number" ? Math.max(1, Math.min(500, input.limit)) : 50;
+    const offset = typeof input.offset === "number" ? Math.max(0, input.offset) : 0;
+    const query = String(input.query || "").trim();
+    const market = String(input.market || "").trim();
+    const roles = Array.isArray(input.roles) ? input.roles.map((r) => String(r || "").trim()).filter(Boolean) : [];
+    const tags = Array.isArray(input.tags) ? input.tags.map((t) => String(t || "").trim()).filter(Boolean) : [];
+    const companyId = typeof input.companyId === "number" && Number.isFinite(input.companyId) && input.companyId > 0 ? input.companyId : null;
+    const sort = input.sort || "recent";
+
+    const whereParts: any[] = [];
+    if (query) {
+      const term = `%${query}%`;
+      whereParts.push(sql`
+        (
+          lower(c.name) LIKE lower(${term}) OR
+          lower(COALESCE(c.nickname, '')) LIKE lower(${term}) OR
+          lower(COALESCE(c.email, '')) LIKE lower(${term}) OR
+          lower(COALESCE(c.phone, '')) LIKE lower(${term}) OR
+          lower(COALESCE(c.company, '')) LIKE lower(${term}) OR
+          lower(COALESCE(c.type, '')) LIKE lower(${term}) OR
+          lower(COALESCE(c.notes, '')) LIKE lower(${term})
+        )
+      `);
+    }
+    if (market) {
+      const term = `%${market}%`;
+      whereParts.push(sql`lower(COALESCE(c.market, '')) LIKE lower(${term})`);
+    }
+    if (companyId) {
+      whereParts.push(sql`EXISTS (SELECT 1 FROM contact_company_links ccl WHERE ccl.contact_id = c.id AND ccl.company_id = ${companyId})`);
+    }
+    if (roles.length) {
+      const list = sql.join(roles.map((r) => sql`${r}`), sql`, `);
+      whereParts.push(sql`
+        EXISTS (
+          SELECT 1
+          FROM contact_role_links crl
+          JOIN contact_roles cr ON cr.id = crl.role_id
+          WHERE crl.contact_id = c.id AND cr.key IN (${list})
+        )
+      `);
+    }
+    if (tags.length) {
+      const list = sql.join(tags.map((t) => sql`${t}`), sql`, `);
+      whereParts.push(sql`
+        EXISTS (
+          SELECT 1
+          FROM contact_tag_links ctl
+          JOIN contact_tags ct ON ct.id = ctl.tag_id
+          WHERE ctl.contact_id = c.id AND ct.key IN (${list})
+        )
+      `);
+    }
+
+    const whereSql = whereParts.length ? sql.join(whereParts, sql` AND `) : sql`TRUE`;
+
+    const countRows: any = await db.execute(sql`
+      SELECT COUNT(*)::int AS c
+      FROM contacts c
+      WHERE ${whereSql}
+    `);
+    const total = Number(countRows?.rows?.[0]?.c || 0);
+
+    const orderSql =
+      sort === "score"
+        ? sql`ORDER BY cs.score_total DESC NULLS LAST, c.name ASC`
+        : sort === "name"
+          ? sql`ORDER BY c.name ASC`
+          : sql`ORDER BY c.last_contacted_at DESC NULLS LAST, c.updated_at DESC NULLS LAST, c.name ASC`;
+
+    const rows: any = await db.execute(sql`
+      SELECT
+        c.id AS "id",
+        c.name AS "name",
+        c.nickname AS "nickname",
+        c.email AS "email",
+        c.phone AS "phone",
+        c.type AS "type",
+        c.company AS "company",
+        c.title AS "title",
+        c.market AS "market",
+        c.last_contacted_at AS "lastContactedAt",
+        c.next_follow_up_at AS "nextFollowUpAt",
+        c.trust_level AS "trustLevel",
+        c.vip AS "vip",
+        c.do_not_call AS "doNotCall",
+        c.do_not_text AS "doNotText",
+        c.do_not_email AS "doNotEmail",
+        c.notes AS "notes",
+        c.dedupe_key AS "dedupeKey",
+        c.created_at AS "createdAt",
+        c.updated_at AS "updatedAt",
+        cs.score_total AS "score",
+        (
+          SELECT COALESCE(jsonb_agg(cr.key ORDER BY cr.sort_order), '[]'::jsonb)
+          FROM contact_role_links crl
+          JOIN contact_roles cr ON cr.id = crl.role_id
+          WHERE crl.contact_id = c.id
+        ) AS "roles",
+        (
+          SELECT COALESCE(jsonb_agg(ct.key ORDER BY ct.sort_order), '[]'::jsonb)
+          FROM contact_tag_links ctl
+          JOIN contact_tags ct ON ct.id = ctl.tag_id
+          WHERE ctl.contact_id = c.id
+        ) AS "tags",
+        (
+          SELECT jsonb_build_object('id', co.id, 'name', co.name)
+          FROM contact_company_links ccl
+          JOIN companies co ON co.id = ccl.company_id
+          WHERE ccl.contact_id = c.id AND ccl.is_primary = TRUE
+          ORDER BY ccl.id DESC
+          LIMIT 1
+        ) AS "companyPrimary"
+      FROM contacts c
+      LEFT JOIN contact_scores cs ON cs.contact_id = c.id
+      WHERE ${whereSql}
+      ${orderSql}
+      LIMIT ${limit} OFFSET ${offset}
+    `);
+
+    const items = Array.isArray(rows?.rows) ? rows.rows : [];
+    return { items: items as any, total };
+  }
+
+  async listContactNotes(contactId: number, limit: number = 50): Promise<ContactNote[]> {
+    const lim = Math.max(1, Math.min(200, limit));
+    const rows = await db.select().from(contactNotes).where(eq(contactNotes.contactId, contactId)).orderBy(desc(contactNotes.createdAt)).limit(lim);
+    return rows as any;
+  }
+
+  async createContactNote(input: InsertContactNote): Promise<ContactNote> {
+    const result = await db.insert(contactNotes).values(input as any).returning();
+    return result[0] as any;
+  }
+
+  async updateContactNote(id: number, patch: Partial<InsertContactNote>): Promise<ContactNote> {
+    const result = await db.update(contactNotes).set({ ...(patch as any), updatedAt: new Date() } as any).where(eq(contactNotes.id, id)).returning();
+    return result[0] as any;
+  }
+
+  async deleteContactNote(id: number): Promise<void> {
+    await db.delete(contactNotes).where(eq(contactNotes.id, id));
+  }
+
+  async listCompanies(input: { query?: string; limit?: number; offset?: number }): Promise<{ items: Company[]; total: number }> {
+    const limit = typeof input.limit === "number" ? Math.max(1, Math.min(200, input.limit)) : 50;
+    const offset = typeof input.offset === "number" ? Math.max(0, input.offset) : 0;
+    const q = String(input.query || "").trim();
+    if (!q) {
+      const items = await db.select().from(companies).orderBy(asc(companies.name)).limit(limit).offset(offset);
+      const countRows: any = await db.execute(sql`SELECT COUNT(*)::int AS c FROM companies`);
+      return { items: items as any, total: Number(countRows?.rows?.[0]?.c || 0) };
+    }
+    const term = `%${q}%`;
+    const items = await db
+      .select()
+      .from(companies)
+      .where(sql`lower(${companies.name}) LIKE lower(${term})`)
+      .orderBy(asc(companies.name))
+      .limit(limit)
+      .offset(offset);
+    const countRows: any = await db.execute(sql`SELECT COUNT(*)::int AS c FROM companies co WHERE lower(co.name) LIKE lower(${term})`);
+    return { items: items as any, total: Number(countRows?.rows?.[0]?.c || 0) };
+  }
+
+  async getCompanyById(id: number): Promise<Company | undefined> {
+    const result = await db.select().from(companies).where(eq(companies.id, id)).limit(1);
+    return result[0] as any;
+  }
+
+  async createCompany(input: InsertCompany): Promise<Company> {
+    const result = await db.insert(companies).values(input as any).returning();
+    return result[0] as any;
+  }
+
+  async updateCompany(id: number, patch: Partial<InsertCompany>): Promise<Company> {
+    const result = await db.update(companies).set({ ...(patch as any), updatedAt: new Date() } as any).where(eq(companies.id, id)).returning();
+    return result[0] as any;
+  }
+
+  async deleteCompany(id: number): Promise<void> {
+    await db.delete(companies).where(eq(companies.id, id));
+  }
+
+  async setPrimaryCompanyLink(input: { contactId: number; companyId: number; roleTitle?: string | null }): Promise<ContactCompanyLink> {
+    const contactId = Number(input.contactId);
+    const companyId = Number(input.companyId);
+    const roleTitle = input.roleTitle ? String(input.roleTitle) : null;
+    return await db.transaction(async (tx) => {
+      await tx.update(contactCompanyLinks).set({ isPrimary: false, updatedAt: new Date() } as any).where(eq(contactCompanyLinks.contactId, contactId));
+      const existing = await tx
+        .select()
+        .from(contactCompanyLinks)
+        .where(and(eq(contactCompanyLinks.contactId, contactId), eq(contactCompanyLinks.companyId, companyId)))
+        .limit(1);
+      if (existing[0]) {
+        const updated = await tx
+          .update(contactCompanyLinks)
+          .set({ isPrimary: true, roleTitle, updatedAt: new Date() } as any)
+          .where(eq(contactCompanyLinks.id, (existing[0] as any).id))
+          .returning();
+        return updated[0] as any;
+      }
+      const inserted = await tx
+        .insert(contactCompanyLinks)
+        .values({ contactId, companyId, roleTitle, isPrimary: true } as any)
+        .returning();
+      return inserted[0] as any;
+    });
+  }
+
+  async removeCompanyLink(input: { contactId: number; companyId: number }): Promise<void> {
+    await db
+      .delete(contactCompanyLinks)
+      .where(and(eq(contactCompanyLinks.contactId, input.contactId), eq(contactCompanyLinks.companyId, input.companyId)));
+  }
+
+  async listContactRoles(): Promise<ContactRole[]> {
+    const rows = await db.select().from(contactRoles).orderBy(asc(contactRoles.sortOrder), asc(contactRoles.label));
+    return rows as any;
+  }
+
+  async upsertContactRole(input: InsertContactRole): Promise<ContactRole> {
+    const key = String((input as any).key || "").trim();
+    const label = String((input as any).label || "").trim();
+    const sortOrder = typeof (input as any).sortOrder === "number" ? Number((input as any).sortOrder) : 0;
+    const existing = await db.select().from(contactRoles).where(eq(contactRoles.key, key)).limit(1);
+    if (existing[0]) {
+      const updated = await db.update(contactRoles).set({ label, sortOrder } as any).where(eq(contactRoles.id, (existing[0] as any).id)).returning();
+      return updated[0] as any;
+    }
+    const inserted = await db.insert(contactRoles).values({ key, label, sortOrder } as any).returning();
+    return inserted[0] as any;
+  }
+
+  async addContactRoleLink(input: { contactId: number; roleKey: string }): Promise<void> {
+    const roleKey = String(input.roleKey || "").trim();
+    if (!roleKey) return;
+    const role = await this.upsertContactRole({ key: roleKey, label: roleKey } as any);
+    await db.execute(sql`
+      INSERT INTO contact_role_links (contact_id, role_id)
+      VALUES (${input.contactId}, ${(role as any).id})
+      ON CONFLICT (contact_id, role_id) DO NOTHING
+    `);
+  }
+
+  async removeContactRoleLink(input: { contactId: number; roleKey: string }): Promise<void> {
+    const roleKey = String(input.roleKey || "").trim();
+    if (!roleKey) return;
+    const role = await db.select().from(contactRoles).where(eq(contactRoles.key, roleKey)).limit(1);
+    if (!role[0]) return;
+    await db.execute(sql`DELETE FROM contact_role_links WHERE contact_id=${input.contactId} AND role_id=${(role[0] as any).id}`);
+  }
+
+  async listContactTags(): Promise<ContactTag[]> {
+    const rows = await db.select().from(contactTags).orderBy(asc(contactTags.sortOrder), asc(contactTags.label));
+    return rows as any;
+  }
+
+  async upsertContactTag(input: InsertContactTag): Promise<ContactTag> {
+    const key = String((input as any).key || "").trim();
+    const label = String((input as any).label || "").trim();
+    const color = typeof (input as any).color === "string" ? String((input as any).color || "").trim() || null : null;
+    const sortOrder = typeof (input as any).sortOrder === "number" ? Number((input as any).sortOrder) : 0;
+    const existing = await db.select().from(contactTags).where(eq(contactTags.key, key)).limit(1);
+    if (existing[0]) {
+      const updated = await db.update(contactTags).set({ label, color, sortOrder } as any).where(eq(contactTags.id, (existing[0] as any).id)).returning();
+      return updated[0] as any;
+    }
+    const inserted = await db.insert(contactTags).values({ key, label, color, sortOrder } as any).returning();
+    return inserted[0] as any;
+  }
+
+  async addContactTagLink(input: { contactId: number; tagKey: string }): Promise<void> {
+    const tagKey = String(input.tagKey || "").trim();
+    if (!tagKey) return;
+    const tag = await this.upsertContactTag({ key: tagKey, label: tagKey } as any);
+    await db.execute(sql`
+      INSERT INTO contact_tag_links (contact_id, tag_id)
+      VALUES (${input.contactId}, ${(tag as any).id})
+      ON CONFLICT (contact_id, tag_id) DO NOTHING
+    `);
+  }
+
+  async removeContactTagLink(input: { contactId: number; tagKey: string }): Promise<void> {
+    const tagKey = String(input.tagKey || "").trim();
+    if (!tagKey) return;
+    const tag = await db.select().from(contactTags).where(eq(contactTags.key, tagKey)).limit(1);
+    if (!tag[0]) return;
+    await db.execute(sql`DELETE FROM contact_tag_links WHERE contact_id=${input.contactId} AND tag_id=${(tag[0] as any).id}`);
+  }
+
+  async addContactRecordLink(input: InsertContactRecordLink): Promise<ContactRecordLink> {
+    const inserted = await db.insert(contactRecordLinks).values(input as any).returning();
+    return inserted[0] as any;
+  }
+
+  async deleteContactRecordLink(id: number): Promise<void> {
+    await db.delete(contactRecordLinks).where(eq(contactRecordLinks.id, id));
+  }
+
+  async addContactRelationship(input: InsertContactRelationship): Promise<ContactRelationship> {
+    const inserted = await db.insert(contactRelationships).values(input as any).returning();
+    return inserted[0] as any;
+  }
+
+  async deleteContactRelationship(id: number): Promise<void> {
+    await db.delete(contactRelationships).where(eq(contactRelationships.id, id));
+  }
+
+  async getContactTimeline(input: { contactId: number; limit?: number; offset?: number }): Promise<any[]> {
+    const limit = typeof input.limit === "number" ? Math.max(1, Math.min(200, input.limit)) : 50;
+    const offset = typeof input.offset === "number" ? Math.max(0, input.offset) : 0;
+    const contactId = Number(input.contactId);
+    const contactIdStr = String(contactId);
+    const like1 = `%"contactId":${contactIdStr}%`;
+    const like2 = `%"contactId":"${contactIdStr}"%`;
+    const rows: any = await db.execute(sql`
+      (
+        SELECT
+          'note'::text AS kind,
+          n.id AS id,
+          n.created_at AS occurred_at,
+          n.created_by AS user_id,
+          NULL::text AS title,
+          n.body AS body,
+          NULL::text AS meta
+        FROM contact_notes n
+        WHERE n.contact_id = ${contactId}
+      )
+      UNION ALL
+      (
+        SELECT
+          'task'::text AS kind,
+          t.id AS id,
+          t.created_at AS occurred_at,
+          t.created_by AS user_id,
+          t.title AS title,
+          t.description AS body,
+          json_build_object('status', t.status, 'dueAt', t.due_at)::text AS meta
+        FROM tasks t
+        WHERE t.related_entity_type = 'contact' AND t.related_entity_id = ${contactId}
+      )
+      UNION ALL
+      (
+        SELECT
+          'call'::text AS kind,
+          cl.id AS id,
+          cl.started_at AS occurred_at,
+          cl.user_id AS user_id,
+          (cl.direction || ' call')::text AS title,
+          COALESCE(cl.note, '')::text AS body,
+          json_build_object('number', cl.number, 'status', cl.status, 'disposition', cl.disposition, 'durationMs', cl.duration_ms)::text AS meta
+        FROM call_logs cl
+        WHERE cl.contact_id = ${contactId}
+      )
+      UNION ALL
+      (
+        SELECT
+          'activity'::text AS kind,
+          a.id AS id,
+          a.created_at AS occurred_at,
+          a.user_id AS user_id,
+          a.action AS title,
+          a.description AS body,
+          a.metadata AS meta
+        FROM global_activity_logs a
+        WHERE a.metadata LIKE ${like1} OR a.metadata LIKE ${like2}
+      )
+      ORDER BY occurred_at DESC NULLS LAST, id DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `);
+
+    const items = Array.isArray(rows?.rows) ? rows.rows : [];
+    return items.map((r: any) => {
+      let metaParsed: any = null;
+      const meta = typeof r.meta === "string" ? r.meta : null;
+      if (meta) {
+        try {
+          metaParsed = JSON.parse(meta);
+        } catch {
+          metaParsed = meta;
+        }
+      }
+      return { ...r, metaParsed };
+    });
+  }
+
+  async getContactGraph(contactId: number): Promise<any> {
+    const id = Number(contactId);
+    const rels: any = await db.execute(sql`
+      SELECT
+        r.id,
+        r.from_contact_id AS "fromContactId",
+        r.to_contact_id AS "toContactId",
+        r.relationship,
+        r.strength,
+        r.notes,
+        r.created_at AS "createdAt",
+        r.updated_at AS "updatedAt",
+        cf.name AS "fromName",
+        ct.name AS "toName"
+      FROM contact_relationships r
+      JOIN contacts cf ON cf.id = r.from_contact_id
+      JOIN contacts ct ON ct.id = r.to_contact_id
+      WHERE r.from_contact_id = ${id} OR r.to_contact_id = ${id}
+      ORDER BY r.updated_at DESC NULLS LAST, r.id DESC
+    `);
+
+    const linkCounts: any = await db.execute(sql`
+      SELECT entity_type AS "entityType", relationship, COUNT(*)::int AS count
+      FROM contact_record_links
+      WHERE contact_id = ${id}
+      GROUP BY entity_type, relationship
+      ORDER BY count DESC, entity_type ASC
+    `);
+
+    const topConnected: any = await db.execute(sql`
+      SELECT
+        b.contact_id AS "contactId",
+        COUNT(*)::int AS "sharedCount",
+        c.name AS "name",
+        c.phone AS "phone",
+        c.email AS "email"
+      FROM contact_record_links a
+      JOIN contact_record_links b
+        ON b.entity_type = a.entity_type AND b.entity_id = a.entity_id
+      JOIN contacts c ON c.id = b.contact_id
+      WHERE a.contact_id = ${id} AND b.contact_id <> ${id}
+      GROUP BY b.contact_id, c.name, c.phone, c.email
+      ORDER BY COUNT(*) DESC, c.name ASC
+      LIMIT 12
+    `);
+
+    return {
+      relationships: Array.isArray(rels?.rows) ? rels.rows : [],
+      linkedCounts: Array.isArray(linkCounts?.rows) ? linkCounts.rows : [],
+      topConnected: Array.isArray(topConnected?.rows) ? topConnected.rows : [],
+    };
+  }
+
+  async recomputeContactScore(contactId: number): Promise<ContactScore> {
+    const id = Number(contactId);
+    if (!Number.isFinite(id) || id <= 0) throw new Error("Invalid contactId");
+
+    const out = await db.transaction(async (tx) => {
+      const contactRows = await tx.select().from(contacts).where(eq(contacts.id, id)).limit(1);
+      const contact = contactRows[0] as any;
+      if (!contact) throw new Error("Contact not found");
+
+      const like1 = `%"contactId":${String(id)}%`;
+      const like2 = `%"contactId":"${String(id)}"%`;
+
+      const lastRows: any = await tx.execute(sql`
+        SELECT GREATEST(
+          COALESCE((SELECT MAX(created_at) FROM contact_notes WHERE contact_id = ${id}), to_timestamp(0)),
+          COALESCE((SELECT MAX(started_at) FROM call_logs WHERE contact_id = ${id}), to_timestamp(0)),
+          COALESCE((SELECT MAX(created_at) FROM tasks WHERE related_entity_type = 'contact' AND related_entity_id = ${id}), to_timestamp(0)),
+          COALESCE((SELECT MAX(created_at) FROM global_activity_logs WHERE metadata LIKE ${like1} OR metadata LIKE ${like2}), to_timestamp(0))
+        ) AS last_at
+      `);
+      const lastAtRaw = lastRows?.rows?.[0]?.last_at ? new Date(lastRows.rows[0].last_at) : null;
+      const lastAt = lastAtRaw && lastAtRaw.getTime() > 1000 ? lastAtRaw : null;
+
+      const now = Date.now();
+      const daysSince = lastAt ? Math.floor((now - lastAt.getTime()) / (24 * 60 * 60 * 1000)) : null;
+      const scoreRecency =
+        daysSince === null ? 0 : daysSince <= 7 ? 40 : daysSince <= 30 ? 25 : daysSince <= 90 ? 10 : daysSince <= 180 ? 5 : 0;
+
+      const touchRows: any = await tx.execute(sql`
+        SELECT
+          (SELECT COUNT(*)::int FROM contact_notes WHERE contact_id=${id} AND created_at >= now() - interval '30 days') AS notes_30,
+          (SELECT COUNT(*)::int FROM call_logs WHERE contact_id=${id} AND started_at >= now() - interval '30 days') AS calls_30,
+          (SELECT COUNT(*)::int FROM tasks WHERE related_entity_type='contact' AND related_entity_id=${id} AND created_at >= now() - interval '30 days') AS tasks_30,
+          (SELECT COUNT(*)::int FROM global_activity_logs WHERE (metadata LIKE ${like1} OR metadata LIKE ${like2}) AND created_at >= now() - interval '30 days') AS activity_30
+      `);
+      const counts = touchRows?.rows?.[0] || {};
+      const touches30 = Number(counts.notes_30 || 0) + Number(counts.calls_30 || 0) + Number(counts.tasks_30 || 0) + Number(counts.activity_30 || 0);
+      const scoreVolume = Math.min(30, Math.max(0, touches30) * 5);
+
+      const dealsRows: any = await tx.execute(sql`
+        SELECT COUNT(*)::int AS c
+        FROM contact_record_links
+        WHERE contact_id = ${id} AND entity_type IN ('lead','opportunity','property','contract','buyer')
+      `);
+      const dealsCount = Number(dealsRows?.rows?.[0]?.c || 0);
+      const scoreDeals = Math.min(20, dealsCount * 5);
+
+      const trustLevel = typeof contact.trustLevel === "number" ? Number(contact.trustLevel) : 0;
+      const trustScaled = Math.max(0, Math.min(10, Math.round(trustLevel / 10)));
+      const vipBonus = contact.vip ? 3 : 0;
+      const scoreTrustOverride = Math.max(0, Math.min(10, trustScaled + vipBonus));
+
+      const scoreTotal = Math.max(0, Math.min(100, scoreRecency + scoreVolume + scoreDeals + scoreTrustOverride));
+
+      if (lastAt) {
+        await tx.update(contacts).set({ lastContactedAt: lastAt, updatedAt: new Date() } as any).where(eq(contacts.id, id));
+      }
+
+      await tx.execute(sql`
+        INSERT INTO contact_scores (contact_id, score_total, score_recency, score_volume, score_deals, score_trust_override, computed_at)
+        VALUES (${id}, ${scoreTotal}, ${scoreRecency}, ${scoreVolume}, ${scoreDeals}, ${scoreTrustOverride}, now())
+        ON CONFLICT (contact_id) DO UPDATE SET
+          score_total = EXCLUDED.score_total,
+          score_recency = EXCLUDED.score_recency,
+          score_volume = EXCLUDED.score_volume,
+          score_deals = EXCLUDED.score_deals,
+          score_trust_override = EXCLUDED.score_trust_override,
+          computed_at = EXCLUDED.computed_at
+      `);
+
+      const scoreRows = await tx.select().from(contactScores).where(eq(contactScores.contactId, id)).limit(1);
+      return scoreRows[0] as any;
+    });
+
+    return out as any;
+  }
+
+  async listContactDuplicates(input: { mode?: "dedupe_key" | "fuzzy"; limit?: number }): Promise<any> {
+    const limit = typeof input.limit === "number" ? Math.max(1, Math.min(500, input.limit)) : 200;
+    const mode = input.mode || "dedupe_key";
+    if (mode === "fuzzy") {
+      const rows: any = await db.execute(sql`
+        SELECT
+          c1.id AS "aId",
+          c2.id AS "bId",
+          c1.name AS "aName",
+          c2.name AS "bName",
+          similarity(c1.name, c2.name) AS "nameSimilarity",
+          c1.email AS "aEmail",
+          c2.email AS "bEmail",
+          c1.phone AS "aPhone",
+          c2.phone AS "bPhone"
+        FROM contacts c1
+        JOIN contacts c2 ON c1.id < c2.id
+        WHERE
+          (
+            (c1.email IS NOT NULL AND c1.email <> '' AND lower(c1.email) = lower(c2.email)) OR
+            (c1.phone IS NOT NULL AND c1.phone <> '' AND regexp_replace(c1.phone, '\\D', '', 'g') <> '' AND regexp_replace(c1.phone, '\\D', '', 'g') = regexp_replace(c2.phone, '\\D', '', 'g'))
+          )
+          OR similarity(c1.name, c2.name) >= 0.82
+        ORDER BY "nameSimilarity" DESC NULLS LAST, c1.id DESC
+        LIMIT ${limit}
+      `);
+      return { mode, items: Array.isArray(rows?.rows) ? rows.rows : [] };
+    }
+
+    const rows: any = await db.execute(sql`
+      SELECT
+        dedupe_key AS "dedupeKey",
+        COUNT(*)::int AS count,
+        jsonb_agg(jsonb_build_object('id', id, 'name', name, 'email', email, 'phone', phone) ORDER BY id ASC) AS items
+      FROM contacts
+      WHERE dedupe_key IS NOT NULL AND dedupe_key <> ''
+      GROUP BY dedupe_key
+      HAVING COUNT(*) > 1
+      ORDER BY COUNT(*) DESC
+      LIMIT ${limit}
+    `);
+    return { mode, groups: Array.isArray(rows?.rows) ? rows.rows : [] };
+  }
+
+  async mergeContacts(input: { winnerId: number; mergedId: number; mergedByUserId?: number | null; reason?: string | null }): Promise<{ winner: Contact }> {
+    const winnerId = Number(input.winnerId);
+    const mergedId = Number(input.mergedId);
+    if (!Number.isFinite(winnerId) || !Number.isFinite(mergedId) || winnerId <= 0 || mergedId <= 0) throw new Error("Invalid contact ids");
+    if (winnerId === mergedId) throw new Error("Cannot merge a contact into itself");
+
+    const result = await db.transaction(async (tx) => {
+      const winnerRows = await tx.select().from(contacts).where(eq(contacts.id, winnerId)).limit(1);
+      const mergedRows = await tx.select().from(contacts).where(eq(contacts.id, mergedId)).limit(1);
+      const winner = winnerRows[0] as any;
+      const merged = mergedRows[0] as any;
+      if (!winner || !merged) throw new Error("Contact not found");
+
+      await tx.update(contactNotes).set({ contactId: winnerId, updatedAt: new Date() } as any).where(eq(contactNotes.contactId, mergedId));
+
+      await tx.execute(sql`
+        INSERT INTO contact_role_links (contact_id, role_id)
+        SELECT ${winnerId}, crl.role_id
+        FROM contact_role_links crl
+        WHERE crl.contact_id = ${mergedId}
+        ON CONFLICT (contact_id, role_id) DO NOTHING
+      `);
+      await tx.execute(sql`DELETE FROM contact_role_links WHERE contact_id = ${mergedId}`);
+
+      await tx.execute(sql`
+        INSERT INTO contact_tag_links (contact_id, tag_id)
+        SELECT ${winnerId}, ctl.tag_id
+        FROM contact_tag_links ctl
+        WHERE ctl.contact_id = ${mergedId}
+        ON CONFLICT (contact_id, tag_id) DO NOTHING
+      `);
+      await tx.execute(sql`DELETE FROM contact_tag_links WHERE contact_id = ${mergedId}`);
+
+      const winnerPrimaryCompany = await tx
+        .select()
+        .from(contactCompanyLinks)
+        .where(and(eq(contactCompanyLinks.contactId, winnerId), eq(contactCompanyLinks.isPrimary, true)))
+        .limit(1);
+      const winnerHasPrimaryCompany = Boolean(winnerPrimaryCompany[0]);
+
+      if (winnerHasPrimaryCompany) {
+        await tx.update(contactCompanyLinks).set({ isPrimary: false, updatedAt: new Date() } as any).where(eq(contactCompanyLinks.contactId, mergedId));
+      }
+      await tx.update(contactCompanyLinks).set({ contactId: winnerId, updatedAt: new Date() } as any).where(eq(contactCompanyLinks.contactId, mergedId));
+
+      const winnerPrimaryPhone = await tx
+        .select({ id: contactMethods.id })
+        .from(contactMethods)
+        .where(and(eq(contactMethods.contactId, winnerId), eq(contactMethods.kind, "phone"), eq(contactMethods.isPrimary, true)))
+        .limit(1);
+      const winnerPrimaryEmail = await tx
+        .select({ id: contactMethods.id })
+        .from(contactMethods)
+        .where(and(eq(contactMethods.contactId, winnerId), eq(contactMethods.kind, "email"), eq(contactMethods.isPrimary, true)))
+        .limit(1);
+
+      if (winnerPrimaryPhone[0]) {
+        await tx
+          .update(contactMethods)
+          .set({ isPrimary: false, updatedAt: new Date() } as any)
+          .where(and(eq(contactMethods.contactId, mergedId), eq(contactMethods.kind, "phone"), eq(contactMethods.isPrimary, true)));
+      }
+      if (winnerPrimaryEmail[0]) {
+        await tx
+          .update(contactMethods)
+          .set({ isPrimary: false, updatedAt: new Date() } as any)
+          .where(and(eq(contactMethods.contactId, mergedId), eq(contactMethods.kind, "email"), eq(contactMethods.isPrimary, true)));
+      }
+      await tx.update(contactMethods).set({ contactId: winnerId, updatedAt: new Date() } as any).where(eq(contactMethods.contactId, mergedId));
+
+      await tx.update(contactAddresses).set({ contactId: winnerId, updatedAt: new Date() } as any).where(eq(contactAddresses.contactId, mergedId));
+
+      await tx.execute(sql`
+        INSERT INTO contact_record_links (contact_id, entity_type, entity_id, relationship, metadata_json, created_at, updated_at)
+        SELECT ${winnerId}, crl.entity_type, crl.entity_id, crl.relationship, crl.metadata_json, crl.created_at, now()
+        FROM contact_record_links crl
+        WHERE crl.contact_id = ${mergedId}
+        ON CONFLICT (contact_id, entity_type, entity_id, relationship) DO NOTHING
+      `);
+      await tx.execute(sql`DELETE FROM contact_record_links WHERE contact_id = ${mergedId}`);
+
+      await tx.execute(sql`
+        INSERT INTO contact_relationships (from_contact_id, to_contact_id, relationship, strength, notes, created_at, updated_at)
+        SELECT ${winnerId}, r.to_contact_id, r.relationship, r.strength, r.notes, r.created_at, now()
+        FROM contact_relationships r
+        WHERE r.from_contact_id = ${mergedId} AND r.to_contact_id <> ${winnerId}
+        ON CONFLICT (from_contact_id, to_contact_id, relationship) DO NOTHING
+      `);
+      await tx.execute(sql`
+        INSERT INTO contact_relationships (from_contact_id, to_contact_id, relationship, strength, notes, created_at, updated_at)
+        SELECT r.from_contact_id, ${winnerId}, r.relationship, r.strength, r.notes, r.created_at, now()
+        FROM contact_relationships r
+        WHERE r.to_contact_id = ${mergedId} AND r.from_contact_id <> ${winnerId}
+        ON CONFLICT (from_contact_id, to_contact_id, relationship) DO NOTHING
+      `);
+      await tx.execute(sql`DELETE FROM contact_relationships WHERE from_contact_id = ${mergedId} OR to_contact_id = ${mergedId}`);
+
+      await tx.execute(sql`UPDATE call_logs SET contact_id=${winnerId} WHERE contact_id=${mergedId}`);
+      await tx.execute(sql`UPDATE tasks SET related_entity_id=${winnerId} WHERE related_entity_type='contact' AND related_entity_id=${mergedId}`);
+
+      const like1 = `%"contactId":${String(mergedId)}%`;
+      const like2 = `%"contactId":"${String(mergedId)}"%`;
+      const activityRows: any = await tx.execute(sql`
+        SELECT id, metadata
+        FROM global_activity_logs
+        WHERE metadata LIKE ${like1} OR metadata LIKE ${like2}
+        LIMIT 5000
+      `);
+      const logs = Array.isArray(activityRows?.rows) ? activityRows.rows : [];
+      for (const row of logs) {
+        const raw = typeof row.metadata === "string" ? row.metadata : "";
+        if (!raw) continue;
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object" && (parsed as any).contactId) {
+            (parsed as any).contactId = winnerId;
+            await tx.update(globalActivityLogs).set({ metadata: JSON.stringify(parsed) } as any).where(eq(globalActivityLogs.id, Number(row.id)));
+          }
+        } catch {}
+      }
+
+      const winnerLast = winner.lastContactedAt ? new Date(winner.lastContactedAt) : null;
+      const mergedLast = merged.lastContactedAt ? new Date(merged.lastContactedAt) : null;
+      const lastContactedAt =
+        winnerLast && mergedLast ? (winnerLast > mergedLast ? winnerLast : mergedLast) : winnerLast || mergedLast || null;
+      const patch: any = { updatedAt: new Date() };
+      if (lastContactedAt) patch.lastContactedAt = lastContactedAt;
+      if (!winner.email && merged.email) patch.email = merged.email;
+      if (!winner.phone && merged.phone) patch.phone = merged.phone;
+      if (!winner.company && merged.company) patch.company = merged.company;
+      if (!winner.type && merged.type) patch.type = merged.type;
+      if (!winner.market && merged.market) patch.market = merged.market;
+      if (!winner.title && merged.title) patch.title = merged.title;
+      if (!winner.nickname && merged.nickname) patch.nickname = merged.nickname;
+      if (!winner.notes && merged.notes) patch.notes = merged.notes;
+      if (!winner.trustLevel && merged.trustLevel) patch.trustLevel = merged.trustLevel;
+      if (!winner.vip && merged.vip) patch.vip = true;
+
+      const updatedWinner = await tx.update(contacts).set(patch).where(eq(contacts.id, winnerId)).returning();
+
+      await tx.delete(contactScores).where(eq(contactScores.contactId, mergedId));
+
+      await tx.insert(contactMergeEvents).values({
+        winnerContactId: winnerId,
+        mergedContactId: mergedId,
+        mergedByUserId: typeof input.mergedByUserId === "number" ? input.mergedByUserId : null,
+        reason: input.reason ? String(input.reason) : null,
+      } as any);
+
+      await tx.delete(contacts).where(eq(contacts.id, mergedId));
+
+      return { winner: updatedWinner[0] as any };
+    });
+
+    return result as any;
   }
 
   // Contracts

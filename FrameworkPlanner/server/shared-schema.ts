@@ -476,10 +476,20 @@ export type InsertRvmDrop = z.infer<typeof insertRvmDropSchema>;
 export const contacts = pgTable("contacts", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   name: varchar("name", { length: 255 }).notNull(),
+  nickname: varchar("nickname", { length: 255 }),
   email: varchar("email", { length: 255 }),
   phone: varchar("phone", { length: 20 }),
   type: varchar("type", { length: 50 }),
   company: varchar("company", { length: 255 }),
+  title: varchar("title", { length: 255 }),
+  market: varchar("market", { length: 255 }),
+  lastContactedAt: timestamp("last_contacted_at"),
+  nextFollowUpAt: timestamp("next_follow_up_at"),
+  trustLevel: integer("trust_level"),
+  vip: boolean("vip").notNull().default(false),
+  doNotCall: boolean("do_not_call").notNull().default(false),
+  doNotText: boolean("do_not_text").notNull().default(false),
+  doNotEmail: boolean("do_not_email").notNull().default(false),
   notes: text("notes"),
   dedupeKey: varchar("dedupe_key", { length: 400 }),
   createdAt: timestamp("created_at").defaultNow(),
@@ -489,6 +499,174 @@ export const contacts = pgTable("contacts", {
 export const insertContactSchema = createInsertSchema(contacts).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type Contact = typeof contacts.$inferSelect;
 export type InsertContact = z.infer<typeof insertContactSchema>;
+
+export const contactNotes = pgTable("contact_notes", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  contactId: integer("contact_id").notNull(),
+  createdBy: integer("created_by"),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertContactNoteSchema = createInsertSchema(contactNotes).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type ContactNote = typeof contactNotes.$inferSelect;
+export type InsertContactNote = Omit<typeof contactNotes.$inferInsert, "id" | "createdAt" | "updatedAt">;
+
+export const companies = pgTable("companies", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 255 }).notNull(),
+  website: varchar("website", { length: 500 }),
+  phone: varchar("phone", { length: 32 }),
+  notes: text("notes"),
+  dedupeKey: varchar("dedupe_key", { length: 400 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCompanySchema = createInsertSchema(companies).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type Company = typeof companies.$inferSelect;
+export type InsertCompany = Omit<typeof companies.$inferInsert, "id" | "createdAt" | "updatedAt">;
+
+export const contactCompanyLinks = pgTable("contact_company_links", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  contactId: integer("contact_id").notNull(),
+  companyId: integer("company_id").notNull(),
+  roleTitle: varchar("role_title", { length: 255 }),
+  isPrimary: boolean("is_primary").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertContactCompanyLinkSchema = createInsertSchema(contactCompanyLinks).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type ContactCompanyLink = typeof contactCompanyLinks.$inferSelect;
+export type InsertContactCompanyLink = Omit<typeof contactCompanyLinks.$inferInsert, "id" | "createdAt" | "updatedAt">;
+
+export const contactRoles = pgTable("contact_roles", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  key: varchar("key", { length: 80 }).notNull(),
+  label: varchar("label", { length: 120 }).notNull(),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const insertContactRoleSchema = createInsertSchema(contactRoles).omit({ id: true } as any);
+export type ContactRole = typeof contactRoles.$inferSelect;
+export type InsertContactRole = Omit<typeof contactRoles.$inferInsert, "id">;
+
+export const contactRoleLinks = pgTable("contact_role_links", {
+  contactId: integer("contact_id").notNull(),
+  roleId: integer("role_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const contactTags = pgTable("contact_tags", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  key: varchar("key", { length: 80 }).notNull(),
+  label: varchar("label", { length: 120 }).notNull(),
+  color: varchar("color", { length: 40 }),
+  sortOrder: integer("sort_order").notNull().default(0),
+});
+
+export const insertContactTagSchema = createInsertSchema(contactTags).omit({ id: true } as any);
+export type ContactTag = typeof contactTags.$inferSelect;
+export type InsertContactTag = Omit<typeof contactTags.$inferInsert, "id">;
+
+export const contactTagLinks = pgTable("contact_tag_links", {
+  contactId: integer("contact_id").notNull(),
+  tagId: integer("tag_id").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const contactMethods = pgTable("contact_methods", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  contactId: integer("contact_id").notNull(),
+  kind: varchar("kind", { length: 20 }).notNull(),
+  label: varchar("label", { length: 120 }),
+  value: varchar("value", { length: 500 }).notNull(),
+  isPrimary: boolean("is_primary").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertContactMethodSchema = createInsertSchema(contactMethods).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type ContactMethod = typeof contactMethods.$inferSelect;
+export type InsertContactMethod = Omit<typeof contactMethods.$inferInsert, "id" | "createdAt" | "updatedAt">;
+
+export const contactAddresses = pgTable("contact_addresses", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  contactId: integer("contact_id").notNull(),
+  kind: varchar("kind", { length: 20 }).notNull().default("other"),
+  address1: varchar("address_1", { length: 255 }),
+  address2: varchar("address_2", { length: 255 }),
+  city: varchar("city", { length: 100 }),
+  state: varchar("state", { length: 2 }),
+  zipCode: varchar("zip_code", { length: 10 }),
+  country: varchar("country", { length: 2 }).default("US"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertContactAddressSchema = createInsertSchema(contactAddresses).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type ContactAddress = typeof contactAddresses.$inferSelect;
+export type InsertContactAddress = Omit<typeof contactAddresses.$inferInsert, "id" | "createdAt" | "updatedAt">;
+
+export const contactRecordLinks = pgTable("contact_record_links", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  contactId: integer("contact_id").notNull(),
+  entityType: varchar("entity_type", { length: 32 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  relationship: varchar("relationship", { length: 80 }).notNull().default("related"),
+  metadataJson: jsonb("metadata_json").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertContactRecordLinkSchema = createInsertSchema(contactRecordLinks).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type ContactRecordLink = typeof contactRecordLinks.$inferSelect;
+export type InsertContactRecordLink = Omit<typeof contactRecordLinks.$inferInsert, "id" | "createdAt" | "updatedAt">;
+
+export const contactRelationships = pgTable("contact_relationships", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  fromContactId: integer("from_contact_id").notNull(),
+  toContactId: integer("to_contact_id").notNull(),
+  relationship: varchar("relationship", { length: 80 }).notNull(),
+  strength: integer("strength"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertContactRelationshipSchema = createInsertSchema(contactRelationships).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type ContactRelationship = typeof contactRelationships.$inferSelect;
+export type InsertContactRelationship = Omit<typeof contactRelationships.$inferInsert, "id" | "createdAt" | "updatedAt">;
+
+export const contactScores = pgTable("contact_scores", {
+  contactId: integer("contact_id").primaryKey(),
+  scoreTotal: integer("score_total").notNull(),
+  scoreRecency: integer("score_recency").notNull(),
+  scoreVolume: integer("score_volume").notNull(),
+  scoreDeals: integer("score_deals").notNull(),
+  scoreTrustOverride: integer("score_trust_override").notNull(),
+  computedAt: timestamp("computed_at").notNull().defaultNow(),
+});
+
+export const insertContactScoreSchema = createInsertSchema(contactScores).omit({ computedAt: true } as any);
+export type ContactScore = typeof contactScores.$inferSelect;
+export type InsertContactScore = Omit<typeof contactScores.$inferInsert, "computedAt">;
+
+export const contactMergeEvents = pgTable("contact_merge_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  winnerContactId: integer("winner_contact_id").notNull(),
+  mergedContactId: integer("merged_contact_id").notNull(),
+  mergedByUserId: integer("merged_by_user_id"),
+  reason: varchar("reason", { length: 255 }),
+  metadataJson: jsonb("metadata_json").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertContactMergeEventSchema = createInsertSchema(contactMergeEvents).omit({ id: true, createdAt: true } as any);
+export type ContactMergeEvent = typeof contactMergeEvents.$inferSelect;
+export type InsertContactMergeEvent = Omit<typeof contactMergeEvents.$inferInsert, "id" | "createdAt">;
 
 // CONTRACTS TABLE
 export const contracts = pgTable("contracts", {

@@ -1560,7 +1560,26 @@ export async function registerRoutes(
           lower(p.apn) LIKE lower(${term}) OR lower(p.zip_code) LIKE lower(${term})
         `),
         db.execute(sql`SELECT COUNT(*)::int AS c FROM contacts c WHERE 
-          lower(c.name) LIKE lower(${term}) OR lower(c.email) LIKE lower(${term}) OR lower(c.phone) LIKE lower(${term})
+          lower(c.name) LIKE lower(${term}) OR lower(COALESCE(c.email, '')) LIKE lower(${term}) OR lower(COALESCE(c.phone, '')) LIKE lower(${term}) OR
+          lower(COALESCE(c.market, '')) LIKE lower(${term}) OR lower(COALESCE(c.title, '')) LIKE lower(${term}) OR
+          EXISTS (
+            SELECT 1
+            FROM contact_company_links ccl
+            JOIN companies co ON co.id = ccl.company_id
+            WHERE ccl.contact_id = c.id AND lower(co.name) LIKE lower(${term})
+          ) OR
+          EXISTS (
+            SELECT 1
+            FROM contact_role_links crl
+            JOIN contact_roles cr ON cr.id = crl.role_id
+            WHERE crl.contact_id = c.id AND (lower(cr.key) LIKE lower(${term}) OR lower(cr.label) LIKE lower(${term}))
+          ) OR
+          EXISTS (
+            SELECT 1
+            FROM contact_tag_links ctl
+            JOIN contact_tags ct ON ct.id = ctl.tag_id
+            WHERE ctl.contact_id = c.id AND (lower(ct.key) LIKE lower(${term}) OR lower(ct.label) LIKE lower(${term}))
+          )
         `),
       ];
 
@@ -1596,14 +1615,54 @@ export async function registerRoutes(
       )
       UNION ALL
       (
-        SELECT 'contact' AS type, c.id AS id, c.name AS title, COALESCE(c.phone, c.email, '') AS subtitle,
-               '/contacts' AS path,
+        SELECT
+               'contact' AS type,
+               c.id AS id,
+               c.name AS title,
+               COALESCE(
+                 c.phone,
+                 c.email,
+                 (SELECT co.name
+                  FROM contact_company_links ccl
+                  JOIN companies co ON co.id = ccl.company_id
+                  WHERE ccl.contact_id = c.id AND ccl.is_primary = TRUE
+                  ORDER BY ccl.id DESC
+                  LIMIT 1),
+                 ''
+               ) AS subtitle,
+               ('/contacts?contactId=' || c.id)::text AS path,
                CASE 
                  WHEN lower(c.name) LIKE lower(${term}) THEN 1
+                 WHEN EXISTS (
+                   SELECT 1
+                   FROM contact_company_links ccl
+                   JOIN companies co ON co.id = ccl.company_id
+                   WHERE ccl.contact_id = c.id AND lower(co.name) LIKE lower(${term})
+                 ) THEN 2
                  ELSE 3
                END AS rank
         FROM contacts c
-        WHERE lower(c.name) LIKE lower(${term}) OR lower(c.email) LIKE lower(${term}) OR lower(c.phone) LIKE lower(${term})
+        WHERE
+          lower(c.name) LIKE lower(${term}) OR lower(COALESCE(c.email, '')) LIKE lower(${term}) OR lower(COALESCE(c.phone, '')) LIKE lower(${term}) OR
+          lower(COALESCE(c.market, '')) LIKE lower(${term}) OR lower(COALESCE(c.title, '')) LIKE lower(${term}) OR
+          EXISTS (
+            SELECT 1
+            FROM contact_company_links ccl
+            JOIN companies co ON co.id = ccl.company_id
+            WHERE ccl.contact_id = c.id AND lower(co.name) LIKE lower(${term})
+          ) OR
+          EXISTS (
+            SELECT 1
+            FROM contact_role_links crl
+            JOIN contact_roles cr ON cr.id = crl.role_id
+            WHERE crl.contact_id = c.id AND (lower(cr.key) LIKE lower(${term}) OR lower(cr.label) LIKE lower(${term}))
+          ) OR
+          EXISTS (
+            SELECT 1
+            FROM contact_tag_links ctl
+            JOIN contact_tags ct ON ct.id = ctl.tag_id
+            WHERE ctl.contact_id = c.id AND (lower(ct.key) LIKE lower(${term}) OR lower(ct.label) LIKE lower(${term}))
+          )
       )
       ORDER BY rank ASC, title ASC
       LIMIT ${limit} OFFSET ${offset}`;
@@ -3096,6 +3155,127 @@ export async function registerRoutes(
       if (!token) return res.status(404).json({ message: "Not found" });
       const row = await storage.getSavedViewByShareToken(token);
       if (!row) return res.status(404).json({ message: "Not found" });
+      res.json(row);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/contacts/views", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const teams = await storage.getTeamsForUser(user.id);
+      const teamIds = (teams || []).map((t: any) => Number(t.id)).filter((n: any) => Number.isFinite(n) && n > 0);
+      const items = await storage.listSavedViews({ entityType: "contact", userId: user.id, teamIds });
+      res.json({ items });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/contacts/views", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+
+      const payload = z
+        .object({
+          name: z.string().trim().min(1).max(120),
+          visibility: z.enum(["private", "team", "link"]).default("private"),
+          teamId: z.coerce.number().int().positive().optional().nullable(),
+          configJson: z.any(),
+        })
+        .parse(req.body || {});
+
+      let teamId: number | null = payload.teamId ?? null;
+      if (payload.visibility === "team") {
+        if (!teamId) teamId = await getOrInitActiveTeamId(req, user.id);
+        if (!teamId) return res.status(400).json({ message: "No active team selected" });
+        if (!user.isSuperAdmin) {
+          const m = await storage.getTeamMemberByTeamAndUser(teamId, user.id);
+          if (!m || String((m as any).status || "").toLowerCase() !== "active") return res.status(404).json({ message: "Not found" });
+        }
+      } else {
+        teamId = null;
+      }
+
+      const shareToken = payload.visibility === "link" ? crypto.randomBytes(24).toString("hex") : null;
+      const row = await storage.createSavedView({
+        entityType: "contact",
+        name: payload.name,
+        ownerUserId: user.id,
+        teamId,
+        visibility: payload.visibility,
+        shareToken,
+        configJson: payload.configJson,
+      } as any);
+
+      res.status(201).json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/contacts/views/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+
+      const existing = await storage.getSavedViewById(id);
+      if (!existing) return res.status(404).json({ message: "Not found" });
+      if (!user.isSuperAdmin && Number((existing as any).ownerUserId) !== user.id) return res.status(404).json({ message: "Not found" });
+      if (String((existing as any).entityType || "") !== "contact") return res.status(404).json({ message: "Not found" });
+
+      const payload = z
+        .object({
+          name: z.string().trim().min(1).max(120).optional(),
+          configJson: z.any().optional(),
+          visibility: z.enum(["private", "team", "link"]).optional(),
+        })
+        .parse(req.body || {});
+
+      const nextVisibility = payload.visibility ?? (existing as any).visibility;
+      const patch: any = {};
+      if (typeof payload.name === "string") patch.name = payload.name;
+      if (typeof payload.configJson !== "undefined") patch.configJson = payload.configJson;
+      if (payload.visibility) patch.visibility = payload.visibility;
+      if (nextVisibility === "link" && !(existing as any).shareToken) patch.shareToken = crypto.randomBytes(24).toString("hex");
+
+      const row = await storage.updateSavedView(id, patch);
+      res.json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/contacts/views/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+
+      const existing = await storage.getSavedViewById(id);
+      if (!existing) return res.status(404).json({ message: "Not found" });
+      if (!user.isSuperAdmin && Number((existing as any).ownerUserId) !== user.id) return res.status(404).json({ message: "Not found" });
+      if (String((existing as any).entityType || "") !== "contact") return res.status(404).json({ message: "Not found" });
+
+      await storage.deleteSavedView(id);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/contacts/views/by-token/:token", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      if (!token) return res.status(404).json({ message: "Not found" });
+      const row = await storage.getSavedViewByShareToken(token);
+      if (!row || String((row as any).entityType || "") !== "contact") return res.status(404).json({ message: "Not found" });
       res.json(row);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -6430,13 +6610,25 @@ export async function registerRoutes(
       if (metadata && typeof metadata === "object") {
         const leadId = (metadata as any).leadId ? Number((metadata as any).leadId) : null;
         const propertyId = (metadata as any).propertyId ? Number((metadata as any).propertyId) : null;
-        if (leadId || propertyId) {
+        const contactId = (metadata as any).contactId ? Number((metadata as any).contactId) : null;
+        if (leadId || propertyId || contactId) {
           await storage.createGlobalActivity({
             userId: user.id,
             action: "sms_sent",
             description: `Sent SMS to ${String(to || "")}`,
-            metadata: JSON.stringify({ leadId: leadId || undefined, propertyId: propertyId || undefined, to: String(to || ""), sid, status: smsStatus, body: String(body || "") }),
+            metadata: JSON.stringify({
+              leadId: leadId || undefined,
+              propertyId: propertyId || undefined,
+              contactId: contactId || undefined,
+              to: String(to || ""),
+              sid,
+              status: smsStatus,
+              body: String(body || ""),
+            }),
           } as any);
+        }
+        if (contactId) {
+          await storage.recomputeContactScore(contactId).catch(() => {});
         }
       }
       res.json({ sid, status: smsStatus });
@@ -6932,24 +7124,27 @@ export async function registerRoutes(
   app.get("/api/contacts", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
-      const query = String((req.query as any).query || "").trim().toLowerCase();
-      const allContacts = await storage.getContacts(limit, offset);
-      if (!query) return res.json(allContacts);
-      const filtered = allContacts.filter((c: any) => {
-        const hay = [
-          c?.name,
-          c?.email,
-          c?.phone,
-          c?.company,
-          c?.type,
-          c?.notes,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase();
-        return hay.includes(query);
-      });
-      res.json(filtered);
+      const query = String((req.query as any).query || "").trim();
+      const includeTotal = String((req.query as any).includeTotal || "").trim() === "1";
+      const market = typeof (req.query as any).market === "string" ? String((req.query as any).market || "").trim() : "";
+      const sortRaw = typeof (req.query as any).sort === "string" ? String((req.query as any).sort || "").trim() : "";
+      const sort = sortRaw === "score" || sortRaw === "recent" || sortRaw === "name" ? (sortRaw as any) : undefined;
+      const companyIdRaw = (req.query as any).companyId ?? (req.query as any).company_id;
+      const companyIdNum = companyIdRaw ? Number(companyIdRaw) : undefined;
+      const companyId = Number.isFinite(companyIdNum) && Number(companyIdNum) > 0 ? Number(companyIdNum) : undefined;
+
+      const parseMulti = (v: any): string[] => {
+        if (Array.isArray(v)) return v.map((x) => String(x || "").trim()).filter(Boolean);
+        if (typeof v === "string") return v.split(",").map((x) => x.trim()).filter(Boolean);
+        return [];
+      };
+
+      const roles = parseMulti((req.query as any).role ?? (req.query as any).roles);
+      const tags = parseMulti((req.query as any).tag ?? (req.query as any).tags);
+
+      const out = await storage.searchContactsV2({ query, roles, tags, companyId, market, sort, limit, offset });
+      if (includeTotal) return res.json(out);
+      res.json(out.items);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -6989,6 +7184,327 @@ export async function registerRoutes(
     try {
       await storage.deleteContact(parseInt(req.params.id));
       res.json({ message: "Contact deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/contacts/:id/timeline", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+      const offset = req.query.offset ? parseInt(req.query.offset as string, 10) : 0;
+      await storage.recomputeContactScore(id).catch(() => {});
+      const items = await storage.getContactTimeline({ contactId: id, limit, offset });
+      res.json({ items });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/contacts/:id/graph", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      await storage.recomputeContactScore(id).catch(() => {});
+      const graph = await storage.getContactGraph(id);
+      res.json(graph);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/contacts/:id/notes", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 50;
+      const items = await storage.listContactNotes(id, limit);
+      res.json({ items });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/contacts/:id/notes", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const body = String(req.body?.body || "").trim();
+      if (!body) return res.status(400).json({ message: "Missing body" });
+      const note = await storage.createContactNote({ contactId: id, createdBy: user.id, body } as any);
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "contact_note_added",
+        description: "Added note to contact",
+        metadata: JSON.stringify({ contactId: id, noteId: note.id }),
+      } as any);
+      await storage.recomputeContactScore(id).catch(() => {});
+      res.status(201).json(note);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/contacts/notes/:noteId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const noteId = parseInt(req.params.noteId, 10);
+      if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid id" });
+      const body = typeof req.body?.body === "string" ? String(req.body.body).trim() : undefined;
+      const note = await storage.updateContactNote(noteId, body ? ({ body } as any) : ({} as any));
+      res.json(note);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/contacts/notes/:noteId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const noteId = parseInt(req.params.noteId, 10);
+      if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid id" });
+      await storage.deleteContactNote(noteId);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/contacts/meta/roles", async (req, res) => {
+    try {
+      const items = await storage.listContactRoles();
+      res.json({ items });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/contacts/:id/roles", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const roleKey = String(req.body?.roleKey || req.body?.key || "").trim();
+      if (!roleKey) return res.status(400).json({ message: "Missing roleKey" });
+      await storage.addContactRoleLink({ contactId: id, roleKey });
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/contacts/:id/roles/:roleKey", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const roleKey = String(req.params.roleKey || "").trim();
+      await storage.removeContactRoleLink({ contactId: id, roleKey });
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/contacts/meta/tags", async (req, res) => {
+    try {
+      const items = await storage.listContactTags();
+      res.json({ items });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/contacts/:id/tags", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const tagKey = String(req.body?.tagKey || req.body?.key || "").trim();
+      if (!tagKey) return res.status(400).json({ message: "Missing tagKey" });
+      await storage.addContactTagLink({ contactId: id, tagKey });
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/contacts/:id/tags/:tagKey", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const tagKey = String(req.params.tagKey || "").trim();
+      await storage.removeContactTagLink({ contactId: id, tagKey });
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/contacts/:id/company/primary", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const companyId = Number(req.body?.companyId);
+      if (!Number.isFinite(companyId) || companyId <= 0) return res.status(400).json({ message: "Invalid companyId" });
+      const roleTitle = typeof req.body?.roleTitle === "string" ? String(req.body.roleTitle).trim() : null;
+      const link = await storage.setPrimaryCompanyLink({ contactId: id, companyId, roleTitle });
+      res.json(link);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/contacts/:id/company/:companyId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const companyId = parseInt(req.params.companyId, 10);
+      if (!Number.isFinite(companyId)) return res.status(400).json({ message: "Invalid companyId" });
+      await storage.removeCompanyLink({ contactId: id, companyId });
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/companies", async (req, res) => {
+    try {
+      const query = typeof (req.query as any).query === "string" ? String((req.query as any).query || "").trim() : "";
+      const { limit, offset } = parseLimitOffset(req.query);
+      const out = await storage.listCompanies({ query, limit, offset });
+      res.json(out);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/companies", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const name = String(req.body?.name || "").trim();
+      if (!name) return res.status(400).json({ message: "Missing name" });
+      const created = await storage.createCompany({
+        name,
+        website: typeof req.body?.website === "string" ? String(req.body.website).trim() || null : null,
+        phone: typeof req.body?.phone === "string" ? String(req.body.phone).trim() || null : null,
+        notes: typeof req.body?.notes === "string" ? String(req.body.notes).trim() || null : null,
+      } as any);
+      res.status(201).json(created);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/contacts/duplicates", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const mode = String((req.query as any).mode || "").trim();
+      const out = await storage.listContactDuplicates({ mode: mode === "fuzzy" ? "fuzzy" : "dedupe_key" });
+      res.json(out);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/contacts/merge", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const winnerId = Number(req.body?.winnerId);
+      const mergedId = Number(req.body?.mergedId);
+      const reason = typeof req.body?.reason === "string" ? String(req.body.reason).trim() : null;
+      const out = await storage.mergeContacts({ winnerId, mergedId, mergedByUserId: user.id, reason });
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "contact_merged",
+        description: "Merged contacts",
+        metadata: JSON.stringify({ winnerId, mergedId }),
+      } as any);
+      res.json(out);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/contacts/:id/links", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const contactId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(contactId)) return res.status(400).json({ message: "Invalid id" });
+      const entityType = String(req.body?.entityType || "").trim();
+      const entityId = Number(req.body?.entityId);
+      const relationship = typeof req.body?.relationship === "string" ? String(req.body.relationship).trim() : "related";
+      const metadataJson = req.body?.metadataJson && typeof req.body.metadataJson === "object" ? req.body.metadataJson : {};
+      if (!entityType) return res.status(400).json({ message: "Missing entityType" });
+      if (!Number.isFinite(entityId) || entityId <= 0) return res.status(400).json({ message: "Invalid entityId" });
+      const link = await storage.addContactRecordLink({ contactId, entityType, entityId, relationship, metadataJson } as any);
+      res.status(201).json(link);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/contacts/links/:linkId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.linkId, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      await storage.deleteContactRecordLink(id);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/contacts/:id/relationships", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const fromContactId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(fromContactId)) return res.status(400).json({ message: "Invalid id" });
+      const toContactId = Number(req.body?.toContactId);
+      const relationship = String(req.body?.relationship || "").trim();
+      const strength = typeof req.body?.strength === "number" ? req.body.strength : undefined;
+      const notes = typeof req.body?.notes === "string" ? String(req.body.notes).trim() || null : null;
+      if (!Number.isFinite(toContactId) || toContactId <= 0) return res.status(400).json({ message: "Invalid toContactId" });
+      if (!relationship) return res.status(400).json({ message: "Missing relationship" });
+      const row = await storage.addContactRelationship({ fromContactId, toContactId, relationship, strength, notes } as any);
+      res.status(201).json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/contacts/relationships/:relationshipId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.relationshipId, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      await storage.deleteContactRelationship(id);
+      res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -7731,6 +8247,7 @@ export async function registerRoutes(
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
       const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
       const leadId = req.query.leadId ? parseInt(req.query.leadId as string) : undefined;
+      const contactId = req.query.contactId ? parseInt(req.query.contactId as string) : undefined;
       const playgroundSessionIdRaw = req.query.playgroundSessionId ?? req.query.sessionId;
       const playgroundSessionId = playgroundSessionIdRaw ? parseInt(playgroundSessionIdRaw as string) : undefined;
       const logs = await storage.getGlobalActivityLogs(limit);
@@ -7747,6 +8264,7 @@ export async function registerRoutes(
         if (playgroundSessionId && log.metadataParsed?.playgroundSessionId !== playgroundSessionId) return false;
         if (propertyId && log.metadataParsed?.propertyId !== propertyId) return false;
         if (leadId && log.metadataParsed?.leadId !== leadId) return false;
+        if (contactId && log.metadataParsed?.contactId !== contactId) return false;
         return true;
       });
 

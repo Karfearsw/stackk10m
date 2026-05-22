@@ -9,11 +9,18 @@ describe("Contacts CRUD", () => {
   let app: express.Express;
 
   beforeAll(async () => {
-    storage.getContacts = async () =>
-      [
-        { id: 1, name: "Alice", phone: "+15551234567", email: "a@example.com", company: "Acme", type: "seller", notes: null },
-        { id: 2, name: "Bob", phone: null, email: "bob@example.com", company: null, type: null, notes: "test" },
-      ] as any;
+    const seed = [
+      { id: 1, name: "Alice", phone: "+15551234567", email: "a@example.com", company: "Acme", type: "seller", notes: null },
+      { id: 2, name: "Bob", phone: null, email: "bob@example.com", company: null, type: null, notes: "test" },
+    ] as any;
+
+    storage.searchContactsV2 = async ({ query }: any) => {
+      const q = String(query || "").trim().toLowerCase();
+      const items = !q ? seed : seed.filter((c: any) => String(c.name || "").toLowerCase().includes(q));
+      return { items, total: items.length };
+    };
+
+    storage.getContacts = async () => seed as any;
 
     storage.getContactById = async (id: number) =>
       (id === 1 ? ({ id: 1, name: "Alice", phone: "+15551234567", email: "a@example.com", company: "Acme", type: "seller", notes: null } as any) : undefined);
