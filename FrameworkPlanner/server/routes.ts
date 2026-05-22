@@ -67,6 +67,7 @@ import { sendSignalWireSms } from "./services/messaging/signalwire.js";
 import { sendResendEmail } from "./services/messaging/resend.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
 import { getRvmProvider } from "./services/rvm/provider.js";
+import { emitInAppNotification } from "./services/notifications/emit.js";
 import crypto from "node:crypto";
 
 const require = createRequire(import.meta.url);
@@ -2459,6 +2460,24 @@ export async function registerRoutes(
           createdBy: Number(req.session.userId || 0),
         });
       } catch {}
+
+      const createdAssignee = typeof (lead as any).assignedTo === "number" ? Number((lead as any).assignedTo) : null;
+      const creator = typeof req.session.userId === "number" ? req.session.userId : null;
+      if (createdAssignee && createdAssignee !== creator) {
+        try {
+          await emitInAppNotification({
+            userId: createdAssignee,
+            type: "lead_assigned",
+            severity: "info",
+            title: "Lead assigned to you",
+            description: String(lead.address || "").trim() ? `New lead: ${String(lead.address || "").trim()}` : "A lead was assigned to you",
+            linkPath: `/leads?leadId=${lead.id}`,
+            relatedType: "lead",
+            relatedId: lead.id,
+            category: "newLeads",
+          });
+        } catch {}
+      }
       
       res.status(201).json(lead);
     } catch (error: any) {
@@ -2511,6 +2530,24 @@ export async function registerRoutes(
           description,
           metadata: JSON.stringify({ leadId: lead.id, address: lead.address }),
         });
+      }
+
+      const beforeAssigned = before && typeof (before as any).assignedTo === "number" ? Number((before as any).assignedTo) : null;
+      const afterAssigned = typeof (lead as any).assignedTo === "number" ? Number((lead as any).assignedTo) : null;
+      if (afterAssigned && afterAssigned !== beforeAssigned) {
+        try {
+          await emitInAppNotification({
+            userId: afterAssigned,
+            type: "lead_assigned",
+            severity: "info",
+            title: "Lead assigned to you",
+            description: String(lead.address || "").trim() ? `Lead: ${String(lead.address || "").trim()}` : "A lead was assigned to you",
+            linkPath: `/leads?leadId=${lead.id}`,
+            relatedType: "lead",
+            relatedId: lead.id,
+            category: "newLeads",
+          });
+        } catch {}
       }
 
       try {
@@ -3056,6 +3093,24 @@ export async function registerRoutes(
           metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
         });
       }
+
+      const createdAssignee = typeof (property as any).assignedTo === "number" ? Number((property as any).assignedTo) : null;
+      const creator = typeof req.session.userId === "number" ? req.session.userId : null;
+      if (createdAssignee && createdAssignee !== creator) {
+        try {
+          await emitInAppNotification({
+            userId: createdAssignee,
+            type: "opportunity_assigned",
+            severity: "info",
+            title: "Opportunity assigned to you",
+            description: String(property.address || "").trim() ? `Opportunity: ${String(property.address || "").trim()}` : "An opportunity was assigned to you",
+            linkPath: `/opportunities/${property.id}`,
+            relatedType: "opportunity",
+            relatedId: property.id,
+            category: "dealUpdates",
+          });
+        } catch {}
+      }
       
       res.status(201).json(property);
     } catch (error: any) {
@@ -3094,6 +3149,24 @@ export async function registerRoutes(
           description,
           metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
         });
+      }
+
+      const beforeAssigned = before && typeof (before as any).assignedTo === "number" ? Number((before as any).assignedTo) : null;
+      const afterAssigned = typeof (property as any).assignedTo === "number" ? Number((property as any).assignedTo) : null;
+      if (afterAssigned && afterAssigned !== beforeAssigned) {
+        try {
+          await emitInAppNotification({
+            userId: afterAssigned,
+            type: "opportunity_assigned",
+            severity: "info",
+            title: "Opportunity assigned to you",
+            description: String(property.address || "").trim() ? `Opportunity: ${String(property.address || "").trim()}` : "An opportunity was assigned to you",
+            linkPath: `/opportunities/${property.id}`,
+            relatedType: "opportunity",
+            relatedId: property.id,
+            category: "dealUpdates",
+          });
+        } catch {}
       }
       
       res.json(property);
@@ -5507,7 +5580,13 @@ export async function registerRoutes(
   // NOTIFICATION PREFERENCES ENDPOINTS
   app.get("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
-      const prefs = await storage.getNotificationPreferencesByUserId(parseInt(req.params.userId));
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const paramUserId = Number.parseInt(req.params.userId, 10);
+      if (!Number.isFinite(paramUserId)) return res.status(400).json({ message: "Invalid userId" });
+      if (paramUserId !== user.id) return res.status(403).json({ message: "Forbidden" });
+
+      const prefs = await storage.getNotificationPreferencesByUserId(user.id);
       res.json(prefs || {});
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -5516,7 +5595,13 @@ export async function registerRoutes(
 
   app.post("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
-      const validated = insertNotificationPreferenceSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const paramUserId = Number.parseInt(req.params.userId, 10);
+      if (!Number.isFinite(paramUserId)) return res.status(400).json({ message: "Invalid userId" });
+      if (paramUserId !== user.id) return res.status(403).json({ message: "Forbidden" });
+
+      const validated = insertNotificationPreferenceSchema.parse({ ...req.body, userId: user.id });
       const prefs = await storage.createNotificationPreferences(validated);
       res.status(201).json(prefs);
     } catch (error: any) {
@@ -5526,8 +5611,14 @@ export async function registerRoutes(
 
   app.patch("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const paramUserId = Number.parseInt(req.params.userId, 10);
+      if (!Number.isFinite(paramUserId)) return res.status(400).json({ message: "Invalid userId" });
+      if (paramUserId !== user.id) return res.status(403).json({ message: "Forbidden" });
+
       const partial = insertNotificationPreferenceSchema.partial().parse(req.body);
-      const prefs = await storage.updateNotificationPreferences(parseInt(req.params.userId), partial);
+      const prefs = await storage.updateNotificationPreferences(user.id, partial);
       res.json(prefs);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -5537,8 +5628,23 @@ export async function registerRoutes(
   // USER NOTIFICATIONS ENDPOINTS (actual notification messages)
   app.get("/api/users/:userId/notifications", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const paramUserId = Number.parseInt(req.params.userId, 10);
+      if (!Number.isFinite(paramUserId)) return res.status(400).json({ message: "Invalid userId" });
+      if (paramUserId !== user.id) return res.status(403).json({ message: "Forbidden" });
+
       const { limit, offset } = parseLimitOffset(req.query);
-      const notifications = await storage.getUserNotifications(parseInt(req.params.userId), limit, offset);
+      const readRaw = req.query?.read;
+      const read =
+        typeof readRaw === "string" && readRaw.trim() !== ""
+          ? readRaw.trim().toLowerCase() === "true" || readRaw.trim() === "1"
+          : undefined;
+      const type = typeof req.query?.type === "string" && req.query.type.trim() ? req.query.type.trim() : undefined;
+      const severity =
+        typeof req.query?.severity === "string" && req.query.severity.trim() ? req.query.severity.trim() : undefined;
+
+      const notifications = await storage.getUserNotifications(user.id, limit, offset, { read, type, severity });
       res.json(notifications);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -5547,7 +5653,13 @@ export async function registerRoutes(
 
   app.post("/api/users/:userId/notifications", async (req, res) => {
     try {
-      const validated = insertUserNotificationSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const paramUserId = Number.parseInt(req.params.userId, 10);
+      if (!Number.isFinite(paramUserId)) return res.status(400).json({ message: "Invalid userId" });
+      if (paramUserId !== user.id) return res.status(403).json({ message: "Forbidden" });
+
+      const validated = insertUserNotificationSchema.parse({ ...req.body, userId: user.id });
       const notification = await storage.createUserNotification(validated);
       res.status(201).json(notification);
     } catch (error: any) {
@@ -5557,7 +5669,15 @@ export async function registerRoutes(
 
   app.patch("/api/notifications/:id/read", async (req, res) => {
     try {
-      const notification = await storage.markNotificationAsRead(parseInt(req.params.id));
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const notificationId = Number.parseInt(req.params.id, 10);
+      if (!Number.isFinite(notificationId)) return res.status(400).json({ message: "Invalid notification id" });
+
+      const existing = await storage.getUserNotificationById(notificationId);
+      if (!existing || Number(existing.userId) !== Number(user.id)) return res.status(404).json({ message: "Not found" });
+
+      const notification = await storage.markNotificationAsRead(notificationId);
       res.json(notification);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -5566,7 +5686,15 @@ export async function registerRoutes(
 
   app.delete("/api/notifications/:id", async (req, res) => {
     try {
-      await storage.deleteUserNotification(parseInt(req.params.id));
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const notificationId = Number.parseInt(req.params.id, 10);
+      if (!Number.isFinite(notificationId)) return res.status(400).json({ message: "Invalid notification id" });
+
+      const existing = await storage.getUserNotificationById(notificationId);
+      if (!existing || Number(existing.userId) !== Number(user.id)) return res.status(404).json({ message: "Not found" });
+
+      await storage.deleteUserNotification(notificationId);
       res.json({ message: "Notification deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -5575,7 +5703,13 @@ export async function registerRoutes(
 
   app.delete("/api/users/:userId/notifications", async (req, res) => {
     try {
-      await storage.deleteAllUserNotifications(parseInt(req.params.userId));
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const paramUserId = Number.parseInt(req.params.userId, 10);
+      if (!Number.isFinite(paramUserId)) return res.status(400).json({ message: "Invalid userId" });
+      if (paramUserId !== user.id) return res.status(403).json({ message: "Forbidden" });
+
+      await storage.deleteAllUserNotifications(user.id);
       res.json({ message: "All notifications deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -5584,7 +5718,13 @@ export async function registerRoutes(
 
   app.patch("/api/users/:userId/notifications/read-all", async (req, res) => {
     try {
-      await storage.markAllNotificationsAsRead(parseInt(req.params.userId));
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const paramUserId = Number.parseInt(req.params.userId, 10);
+      if (!Number.isFinite(paramUserId)) return res.status(400).json({ message: "Invalid userId" });
+      if (paramUserId !== user.id) return res.status(403).json({ message: "Forbidden" });
+
+      await storage.markAllNotificationsAsRead(user.id);
       res.json({ message: "All notifications marked as read" });
     } catch (error: any) {
       res.status(400).json({ message: error.message });

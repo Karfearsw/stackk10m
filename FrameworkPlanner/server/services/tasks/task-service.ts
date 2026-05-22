@@ -1,4 +1,5 @@
 import { storage } from "../../storage.js";
+import { emitInAppNotification } from "../notifications/emit.js";
 
 function parseRrule(rule: string | null | undefined): { freq: "DAILY" | "WEEKLY" | "MONTHLY"; interval: number } | null {
   const raw = String(rule || "").trim();
@@ -185,6 +186,22 @@ export async function onContractSigned(input: { documentId: number; title: strin
     } catch {}
   }
 
+  if (assignedToUserId) {
+    try {
+      await emitInAppNotification({
+        userId: assignedToUserId,
+        type: "contract_signed",
+        severity: "urgent",
+        title: "Contract signed",
+        description: input.title ? `Contract signed: ${input.title}` : "Contract signed",
+        linkPath: typeof input.propertyId === "number" ? `/opportunities/${input.propertyId}` : "/contracts",
+        relatedType: typeof input.propertyId === "number" ? "opportunity" : "contract",
+        relatedId: typeof input.propertyId === "number" ? input.propertyId : input.documentId,
+        category: "contractAlerts",
+      });
+    } catch {}
+  }
+
   await createTask({
     title: "Review executed contract + update deal stage",
     description: `Contract signed: ${input.title}`,
@@ -220,4 +237,3 @@ export async function onCampaignCompleted(input: { campaignId: number; leadId: n
     createdBy: input.createdBy,
   });
 }
-

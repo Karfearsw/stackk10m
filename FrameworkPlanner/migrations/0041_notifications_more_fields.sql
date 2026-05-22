@@ -1,0 +1,14 @@
+ALTER TABLE notification_preferences
+  ADD COLUMN IF NOT EXISTS task_reminders BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS campaign_updates BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS rvm_updates BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS billing_alerts BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS security_alerts BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS system_alerts BOOLEAN NOT NULL DEFAULT TRUE;
+
+ALTER TABLE user_notifications
+  ADD COLUMN IF NOT EXISTS severity VARCHAR(20) NOT NULL DEFAULT 'info',
+  ADD COLUMN IF NOT EXISTS link_path VARCHAR(500),
+  ADD COLUMN IF NOT EXISTS primary_action JSONB;
+
+CREATE INDEX IF NOT EXISTS idx_user_notifications_user_severity_created ON user_notifications (user_id, severity, created_at DESC, id DESC);

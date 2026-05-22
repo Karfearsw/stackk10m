@@ -2,6 +2,7 @@ import { db } from "../db.js";
 import { sql } from "drizzle-orm";
 import { storage } from "../storage.js";
 import { sendResendEmail } from "../services/messaging/resend.js";
+import { emitInAppNotification, getNotificationDeliveryPlan } from "../services/notifications/emit.js";
 
 function parseEnvBool(v: unknown): boolean | null {
   if (v === undefined || v === null) return null;
@@ -54,27 +55,35 @@ export function startTaskReminders(intervalMs = 60_000) {
         const title = String(r.title || "Task due soon");
         const dueAt = r.due_at ? new Date(r.due_at) : null;
 
-        const prefs = (await storage.getNotificationPreferencesByUserId(userId).catch((e: any) => {
-          console.error(JSON.stringify({ ts: new Date().toISOString(), event: "task_reminders", kind: "prefs_fetch_failed", userId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
-          return null;
-        })) as any;
-        const inAppEnabled = prefs ? prefs.inAppEnabled !== false : true;
-        const emailEnabled = prefs ? prefs.emailEnabled !== false : true;
+        const plan = await getNotificationDeliveryPlan({ userId, category: "taskReminders" }).catch((e: any) => {
+          console.error(
+            JSON.stringify({
+              ts: new Date().toISOString(),
+              event: "task_reminders",
+              kind: "prefs_fetch_failed",
+              userId,
+              message: String(e?.message || e),
+              code: e?.code ? String(e.code) : null,
+            }),
+          );
+          return { inApp: true, email: true } as any;
+        });
 
-        if (inAppEnabled) {
-          await storage.createUserNotification({
-            userId,
-            type: "task_reminder",
-            title: "Task due soon",
-            description: dueAt ? `${title} is due at ${dueAt.toISOString()}` : title,
-            read: false,
-            relatedId: taskId,
-            relatedType: "task",
-            createdAt: new Date(),
-          } as any);
-        }
+        await emitInAppNotification({
+          userId,
+          type: "task_reminder",
+          severity: "warning",
+          title: "Task due soon",
+          description: dueAt ? `${title} is due at ${dueAt.toISOString()}` : title,
+          relatedType: "task",
+          relatedId: taskId,
+          linkPath: "/tasks",
+          category: "taskReminders",
+        }).catch((e: any) => {
+          console.error(JSON.stringify({ ts: new Date().toISOString(), event: "task_reminders", kind: "in_app_emit_failed", userId, taskId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+        });
 
-        if (emailEnabled) {
+        if (plan.email) {
           try {
             const user = await storage.getUserById(userId);
             const to = String((user as any)?.email || "").trim();
@@ -115,27 +124,35 @@ export function startTaskReminders(intervalMs = 60_000) {
         const title = String(r.title || "Overdue task");
         const dueAt = r.due_at ? new Date(r.due_at) : null;
 
-        const prefs = (await storage.getNotificationPreferencesByUserId(userId).catch((e: any) => {
-          console.error(JSON.stringify({ ts: new Date().toISOString(), event: "task_reminders", kind: "prefs_fetch_failed", userId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
-          return null;
-        })) as any;
-        const inAppEnabled = prefs ? prefs.inAppEnabled !== false : true;
-        const emailEnabled = prefs ? prefs.emailEnabled !== false : true;
+        const plan = await getNotificationDeliveryPlan({ userId, category: "taskReminders" }).catch((e: any) => {
+          console.error(
+            JSON.stringify({
+              ts: new Date().toISOString(),
+              event: "task_reminders",
+              kind: "prefs_fetch_failed",
+              userId,
+              message: String(e?.message || e),
+              code: e?.code ? String(e.code) : null,
+            }),
+          );
+          return { inApp: true, email: true } as any;
+        });
 
-        if (inAppEnabled) {
-          await storage.createUserNotification({
-            userId,
-            type: "task_overdue",
-            title: "Task overdue",
-            description: dueAt ? `${title} was due at ${dueAt.toISOString()}` : title,
-            read: false,
-            relatedId: taskId,
-            relatedType: "task",
-            createdAt: new Date(),
-          } as any);
-        }
+        await emitInAppNotification({
+          userId,
+          type: "task_overdue",
+          severity: "urgent",
+          title: "Task overdue",
+          description: dueAt ? `${title} was due at ${dueAt.toISOString()}` : title,
+          relatedType: "task",
+          relatedId: taskId,
+          linkPath: "/tasks",
+          category: "taskReminders",
+        }).catch((e: any) => {
+          console.error(JSON.stringify({ ts: new Date().toISOString(), event: "task_reminders", kind: "in_app_emit_failed", userId, taskId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
+        });
 
-        if (emailEnabled) {
+        if (plan.email) {
           try {
             const user = await storage.getUserById(userId);
             const to = String((user as any)?.email || "").trim();

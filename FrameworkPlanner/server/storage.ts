@@ -247,7 +247,12 @@ export interface IStorage {
   updateNotificationPreferences(userId: number, prefs: Partial<InsertNotificationPreference>): Promise<NotificationPreference>;
 
   // User Notifications (actual notification messages)
-  getUserNotifications(userId: number, limit?: number, offset?: number): Promise<UserNotification[]>;
+  getUserNotifications(
+    userId: number,
+    limit?: number,
+    offset?: number,
+    filters?: { read?: boolean; type?: string; severity?: string }
+  ): Promise<UserNotification[]>;
   getUserNotificationById(id: number): Promise<UserNotification | undefined>;
   createUserNotification(notification: InsertUserNotification): Promise<UserNotification>;
   markNotificationAsRead(id: number): Promise<UserNotification>;
@@ -1205,8 +1210,22 @@ export class DatabaseStorage implements IStorage {
   }
 
   // User Notifications (actual notification messages)
-  async getUserNotifications(userId: number, limit?: number, offset: number = 0): Promise<UserNotification[]> {
-    let q: any = db.select().from(userNotifications).where(eq(userNotifications.userId, userId));
+  async getUserNotifications(
+    userId: number,
+    limit?: number,
+    offset: number = 0,
+    filters?: { read?: boolean; type?: string; severity?: string }
+  ): Promise<UserNotification[]> {
+    const conditions: any[] = [eq(userNotifications.userId, userId)];
+    if (typeof filters?.read === "boolean") conditions.push(eq(userNotifications.read, filters.read));
+    if (filters?.type) conditions.push(eq(userNotifications.type, filters.type));
+    if (filters?.severity) conditions.push(eq(userNotifications.severity, filters.severity));
+
+    let q: any = db
+      .select()
+      .from(userNotifications)
+      .where(and(...conditions))
+      .orderBy(desc(userNotifications.createdAt), desc(userNotifications.id));
     if (typeof limit === "number") q = q.limit(limit).offset(offset);
     return q as unknown as Promise<UserNotification[]>;
   }
