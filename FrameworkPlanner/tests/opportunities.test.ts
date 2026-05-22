@@ -25,6 +25,7 @@ describe('Opportunity Endpoints', () => {
     storage.updateProperty = async (id: number, data: any) => ({ id, ...data, address: '123 Test St', status: 'under_contract' } as any)
     storage.deleteProperty = async (_id: number) => undefined
     storage.createGlobalActivity = async () => ({ id: 1 } as any)
+    storage.getUserById = async () => ({ id: 1, email: 'test@example.com', isSuperAdmin: true } as any)
 
     await registerRoutes(app)
   })

@@ -46,7 +46,11 @@ const XpExperiencePage = React.lazy(() => import("@/pages/xp/experience"));
 const XpAdminPage = React.lazy(() => import("@/pages/xp/admin"));
 const XpCheckoutSuccessPage = React.lazy(() => import("@/pages/xp/checkout-success"));
 const XpCheckoutCancelPage = React.lazy(() => import("@/pages/xp/checkout-cancel"));
+const CompaniesPage = React.lazy(() => import("@/pages/companies"));
+const DocumentsPage = React.lazy(() => import("@/pages/documents"));
+const AutomationsPage = React.lazy(() => import("@/pages/automations"));
 const AuditPage = React.lazy(() => import("@/pages/audit"));
+const AuditLogPage = React.lazy(() => import("@/pages/audit-log"));
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -179,6 +183,9 @@ function Router() {
         <Route path="/audit">
           {() => <ProtectedRoute component={AuditPage} />}
         </Route>
+        <Route path="/audit-log">
+          {() => <ProtectedRoute component={AuditLogPage} />}
+        </Route>
         <Route path="/buyers">
           {() => <ProtectedRoute component={Buyers} />}
         </Route>
@@ -193,6 +200,15 @@ function Router() {
         </Route>
         <Route path="/contacts">
           {() => <ProtectedRoute component={Contacts} />}
+        </Route>
+        <Route path="/companies">
+          {() => <ProtectedRoute component={CompaniesPage} />}
+        </Route>
+        <Route path="/documents">
+          {() => <ProtectedRoute component={DocumentsPage} />}
+        </Route>
+        <Route path="/automations">
+          {() => <ProtectedRoute component={AutomationsPage} />}
         </Route>
         <Route path="/search">
           {() => <ProtectedRoute component={SearchPage} />}

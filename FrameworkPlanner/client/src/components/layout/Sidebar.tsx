@@ -4,6 +4,7 @@ import {
   Users, 
   Building2, 
   FileText, 
+  FolderOpen,
   Settings, 
   PieChart, 
   LogOut,
@@ -23,7 +24,9 @@ import {
   CalendarDays,
   CalendarCheck2,
   Ticket,
-  Shield
+  Zap,
+  ScrollText,
+  Shield,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -45,9 +48,13 @@ export const navigation = [
   { name: "Phone", href: "/phone", icon: Phone },
   { name: "Dialer Workspace", href: "/dialer/workspace", icon: Phone },
   { name: "Contacts", href: "/contacts", icon: Users },
+  { name: "Companies", href: "/companies", icon: Building2 },
+  { name: "Documents", href: "/documents", icon: FolderOpen },
   { name: "Buyers", href: "/buyers", icon: UserCheck },
   { name: "Contracts", href: "/contracts", icon: FileText },
   { name: "Analytics", href: "/analytics", icon: PieChart },
+  { name: "Automations", href: "/automations", icon: Zap },
+  { name: "Audit Log", href: "/audit-log", icon: ScrollText },
   { name: "Playground", href: "/playground", icon: Lightbulb },
   { name: "Audit", href: "/audit", icon: Shield },
   { name: "Calculator", href: "/calculator", icon: Calculator },

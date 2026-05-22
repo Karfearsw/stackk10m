@@ -9,6 +9,7 @@ describe("Contacts CRUD", () => {
   let app: express.Express;
 
   beforeAll(async () => {
+    storage.getUserById = async () => ({ id: 1, email: "test@example.com", isSuperAdmin: true } as any);
     storage.getContacts = async () =>
       [
         { id: 1, name: "Alice", phone: "+15551234567", email: "a@example.com", company: "Acme", type: "seller", notes: null },
@@ -25,6 +26,10 @@ describe("Contacts CRUD", () => {
     app = express();
     app.use(express.json());
     app.use(session({ secret: "test", resave: false, saveUninitialized: false }));
+    app.use((req, _res, next) => {
+      (req.session as any).userId = 1;
+      next();
+    });
     await registerRoutes(app);
   });
 

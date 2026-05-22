@@ -4,6 +4,7 @@ import express from "express";
 import session from "express-session";
 import { registerRoutes } from "../server/routes";
 import { db } from "../server/db";
+import { storage } from "../server/storage";
 
 describe("Search result paths", () => {
   let app: express.Express;
@@ -17,6 +18,8 @@ describe("Search result paths", () => {
       if (call === 1) return { rows: [{ c: 1 }] };
       if (call === 2) return { rows: [{ c: 0 }] };
       if (call === 3) return { rows: [{ c: 0 }] };
+      if (call === 4) return { rows: [{ c: 0 }] };
+      if (call === 5) return { rows: [{ c: 0 }] };
       return {
         rows: [
           {
@@ -38,6 +41,8 @@ describe("Search result paths", () => {
       req.session.userId = 1;
       next();
     });
+    storage.getUserById = async () => ({ id: 1, email: "test@example.com", isSuperAdmin: true } as any);
+    storage.getTeamsForUser = async () => [{ id: 1 }] as any;
     await registerRoutes(app);
   });
 
@@ -53,4 +58,3 @@ describe("Search result paths", () => {
     expect(lead?.path).toContain("leadId=123");
   });
 });
-

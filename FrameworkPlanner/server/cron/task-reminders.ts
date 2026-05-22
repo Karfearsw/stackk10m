@@ -2,6 +2,7 @@ import { db } from "../db.js";
 import { sql } from "drizzle-orm";
 import { storage } from "../storage.js";
 import { sendResendEmail } from "../services/messaging/resend.js";
+import { dispatchAutomationEvent } from "../services/automations/engine.js";
 
 function parseEnvBool(v: unknown): boolean | null {
   if (v === undefined || v === null) return null;
@@ -106,6 +107,7 @@ export function startTaskReminders(intervalMs = 60_000) {
         LIMIT 200
       `);
       const overdueRows = (overdue as any).rows || [];
+      const teamIdByUserId = new Map<number, number>();
 
       for (const r of overdueRows) {
         const taskId = Number(r.id);
@@ -152,6 +154,27 @@ export function startTaskReminders(intervalMs = 60_000) {
         }
 
         await db.execute(sql`UPDATE tasks SET overdue_alert_sent_at = NOW(), updated_at = NOW() WHERE id = ${taskId}`);
+
+        try {
+          let teamId = teamIdByUserId.get(userId) || null;
+          if (!teamId) {
+            const teams = await storage.getTeamsForUser(userId);
+            const first = teams?.[0]?.id ? Number(teams[0].id) : null;
+            if (first) {
+              teamIdByUserId.set(userId, first);
+              teamId = first;
+            }
+          }
+          if (teamId) {
+            await dispatchAutomationEvent({
+              eventType: "task.overdue",
+              teamId,
+              actorUserId: null,
+              entity: { type: "task", id: taskId },
+              payload: { taskId, assignedToUserId: userId, title, dueAt: dueAt ? dueAt.toISOString() : null },
+            });
+          }
+        } catch {}
       }
     } finally {
       running = false;

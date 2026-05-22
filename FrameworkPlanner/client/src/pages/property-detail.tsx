@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -25,7 +25,10 @@ import {
   MessageSquare,
   FileText,
   Calculator,
-  Lightbulb
+  Lightbulb,
+  FolderOpen,
+  Building2,
+  Plus
 } from "lucide-react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -149,6 +152,56 @@ export default function PropertyDetail() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id] });
       toast({ title: "Photos uploaded" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Upload failed", variant: "destructive" }),
+  });
+
+  const docsKey = React.useMemo(() => (property?.id ? `/api/documents?limit=20&offset=0&entityType=opportunity&entityId=${property.id}` : null), [property?.id]);
+  const { data: docsResp } = useQuery<any>({
+    queryKey: docsKey ? [docsKey] : [""],
+    enabled: !!docsKey && !!user,
+  });
+  const linkedDocs = Array.isArray(docsResp?.items) ? docsResp.items : [];
+
+  const { data: linkedCompanies = [] } = useQuery<any[]>({
+    queryKey: property?.id ? [`/api/opportunities/${property.id}/companies`] : [""],
+    enabled: !!property?.id && !!user,
+  });
+
+  const [companyDialogOpen, setCompanyDialogOpen] = React.useState(false);
+  const [companyLinkForm, setCompanyLinkForm] = React.useState({ companyId: "", role: "" });
+
+  const linkCompanyMutation = useMutation({
+    mutationFn: async () => {
+      const companyId = parseInt(companyLinkForm.companyId, 10);
+      const payload: any = { companyId, role: companyLinkForm.role.trim() || null };
+      const res = await apiRequest("POST", `/api/opportunities/${property.id}/companies`, payload);
+      return await res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: [`/api/opportunities/${property.id}/companies`] });
+      setCompanyDialogOpen(false);
+      setCompanyLinkForm({ companyId: "", role: "" });
+      toast({ title: "Company linked" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to link company", variant: "destructive" }),
+  });
+
+  const docInputRef = React.useRef<HTMLInputElement | null>(null);
+  const uploadDocMutation = useMutation({
+    mutationFn: async (files: FileList) => {
+      const f = files.item(0);
+      if (!f) throw new Error("No file");
+      const fd = new FormData();
+      fd.set("file", f);
+      fd.set("entityType", "opportunity");
+      fd.set("entityId", String(property.id));
+      const res = await apiUpload("POST", `/api/documents/upload`, fd);
+      return await res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: [docsKey || ""] });
+      toast({ title: "Document uploaded" });
     },
     onError: (e: any) => toast({ title: e?.message || "Upload failed", variant: "destructive" }),
   });
@@ -690,6 +743,106 @@ export default function PropertyDetail() {
                     queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
                     queryClient.invalidateQueries({ queryKey: ["leads"] });
                   }} />
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <FolderOpen className="h-4 w-4" />
+                  Documents
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={docInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = e.target.files;
+                      if (files && files.length) uploadDocMutation.mutate(files);
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => docInputRef.current?.click()}
+                    disabled={!property?.id || uploadDocMutation.isPending}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Upload
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {linkedDocs.length ? (
+                  linkedDocs.map((d: any) => (
+                    <div key={d.id} className="flex items-center justify-between gap-2">
+                      <div className="text-sm truncate">{String(d.title || `Document ${d.id}`)}</div>
+                      <Button variant="outline" size="sm" onClick={() => window.open(`/api/documents/${d.id}/download`, "_blank")}>
+                        Download
+                      </Button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-muted-foreground">No documents linked</div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Building2 className="h-4 w-4" />
+                  Companies
+                </CardTitle>
+                <Dialog open={companyDialogOpen} onOpenChange={setCompanyDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm" disabled={!property?.id}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Link
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>Link company</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label>Company ID</Label>
+                        <Input value={companyLinkForm.companyId} onChange={(e) => setCompanyLinkForm((p) => ({ ...p, companyId: e.target.value }))} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Role</Label>
+                        <Input value={companyLinkForm.role} onChange={(e) => setCompanyLinkForm((p) => ({ ...p, role: e.target.value }))} placeholder="lender, title, vendor" />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        onClick={() => {
+                          const n = parseInt(companyLinkForm.companyId, 10);
+                          if (!Number.isFinite(n) || n <= 0) return toast({ title: "Company ID is required", variant: "destructive" });
+                          linkCompanyMutation.mutate();
+                        }}
+                        disabled={linkCompanyMutation.isPending}
+                      >
+                        Link
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {linkedCompanies.length ? (
+                  linkedCompanies.map((row: any) => (
+                    <div key={row.link?.id || row.company?.id} className="text-sm">
+                      {String(row.company?.name || `Company ${row.link?.companyId || ""}`)}
+                      {row.link?.role ? ` (${String(row.link.role)})` : ""}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-muted-foreground">No companies linked</div>
+                )}
               </CardContent>
             </Card>
 
