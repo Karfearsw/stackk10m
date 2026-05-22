@@ -65,6 +65,7 @@ function DialerWorkspaceInner() {
   const [tagInput, setTagInput] = useState("");
   const [powerMode, setPowerMode] = useState(false);
   const [saveLogPending, setSaveLogPending] = useState(false);
+  const [logSaved, setLogSaved] = useState(false);
 
   const [scriptId, setScriptId] = useState<number | null>(null);
   const [scriptName, setScriptName] = useState("");
@@ -98,9 +99,12 @@ function DialerWorkspaceInner() {
     setCallId(null);
     setStatus("idle");
     setStartTs(null);
+    setLogSaved(false);
     wasConnectedRef.current = false;
     lastPatchedStatusRef.current = null;
   }, [activeItem?.leadId]);
+
+  const wrapUpValid = Boolean(disposition) && (disposition !== "call_back" || Boolean(followUpAt));
 
   const { data: lead } = useQuery<any>({
     queryKey: activeItem?.leadId ? [`/api/leads/${activeItem.leadId}`] : ["lead-none"],
@@ -435,6 +439,7 @@ function DialerWorkspaceInner() {
                       });
                     } catch {}
                   }
+                  if (id && wrapUpValid) setLogSaved(true);
 
                   setStatus("ended");
                 }}
@@ -455,7 +460,7 @@ function DialerWorkspaceInner() {
                   </Button>
                 </>
               ) : null}
-              <Button variant="outline" onClick={next} disabled={!state.queue.length}>
+              <Button variant="outline" onClick={next} disabled={!state.queue.length || (callId && !logSaved) || saveLogPending}>
                 Next Lead
               </Button>
             </div>
@@ -770,6 +775,7 @@ function DialerWorkspaceInner() {
                       onClick={async () => {
                         if (!callId) return;
                         if (saveLogPending) return;
+                        if (!wrapUpValid) return;
                         setSaveLogPending(true);
                         try {
                           await patchCallLog(callId, {
@@ -778,15 +784,24 @@ function DialerWorkspaceInner() {
                             followUpAt: followUpAt ? new Date(followUpAt).toISOString() : null,
                           });
                           queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+                          setLogSaved(true);
                           if (powerMode) next();
                         } finally {
                           setSaveLogPending(false);
                         }
                       }}
-                      disabled={!callId || saveLogPending}
+                      disabled={!callId || saveLogPending || !wrapUpValid}
                     >
                       Save Log
                     </Button>
+                    {callId && !wrapUpValid ? (
+                      <div className="text-xs text-muted-foreground">
+                        {disposition ? "Follow-up date required for call_back." : "Select a disposition to save the log."}
+                      </div>
+                    ) : null}
+                    {callId && !logSaved ? (
+                      <div className="text-xs text-muted-foreground">Save the log before moving to the next lead.</div>
+                    ) : null}
                   </div>
                 </div>
 

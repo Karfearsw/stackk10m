@@ -6010,6 +6010,48 @@ export async function registerRoutes(
             description: `Follow-up scheduled: ${followUpAt.toLocaleString()}`,
             metadata: JSON.stringify({ leadId: effectiveLeadId, callLogId: updated.id }),
           } as any);
+
+          try {
+            const dueFrom = new Date(followUpAt.getTime() - 60 * 1000);
+            const dueTo = new Date(followUpAt.getTime() + 60 * 1000);
+            const existing = await storage.listTasks(
+              { userId: user.id, isManager: isManagerUser(user) },
+              {
+                relatedEntityType: "lead",
+                relatedEntityId: effectiveLeadId,
+                type: "follow_up",
+                dueFrom,
+                dueTo,
+                includeCompleted: true,
+                limit: 5,
+                offset: 0,
+              },
+            );
+            const alreadyExists = Array.isArray((existing as any)?.items) && (existing as any).items.length > 0;
+            if (!alreadyExists) {
+              const task = await createTask({
+                title: "Follow up",
+                description: `Follow up from call: ${String(updated.number || "")}`,
+                type: "follow_up",
+                relatedEntityType: "lead",
+                relatedEntityId: effectiveLeadId,
+                dueAt: followUpAt,
+                priority: "high",
+                status: "open",
+                assignedToUserId: user.id,
+                isRecurring: false,
+                recurrenceRule: null,
+                isPrivate: false,
+                createdBy: user.id,
+              });
+              await storage.createGlobalActivity({
+                userId: user.id,
+                action: "followup_task_created",
+                description: `Follow-up task created: ${followUpAt.toLocaleString()}`,
+                metadata: JSON.stringify({ leadId: effectiveLeadId, callLogId: updated.id, taskId: task.id }),
+              } as any);
+            }
+          } catch {}
         }
       }
 

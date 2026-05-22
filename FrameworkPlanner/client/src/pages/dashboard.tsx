@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Layout } from "@/components/layout/Layout";
-import { ArrowUpRight, DollarSign, Users, Briefcase, Activity, User, Building2, FileText, Clock, Trash2 } from "lucide-react";
+import { ArrowUpRight, DollarSign, Users, Briefcase, Activity, User, Building2, FileText, Clock, Trash2, Phone } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
@@ -8,6 +8,7 @@ import { MotivationalBanner } from "@/components/dashboard/MotivationalBanner";
 import { PipelineBar } from "@/components/dashboard/PipelineBar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useLocation } from "wouter";
 
 interface ActivityLog {
   id: number;
@@ -66,10 +67,26 @@ function formatTimeAgo(dateString: string | null): string {
 }
 
 export default function Dashboard() {
+  const [, setLocation] = useLocation();
   const { data: leadsResp, isLoading: leadsLoading } = useQuery<any>({
     queryKey: ['/api/leads?limit=500'],
   });
   const leads = Array.isArray(leadsResp?.items) ? leadsResp.items : [];
+
+  const tasksKey = useMemo(() => {
+    const now = new Date();
+    const p = new URLSearchParams();
+    p.set("status", "open");
+    p.set("includeCompleted", "false");
+    p.set("limit", "200");
+    p.set("dueTo", now.toISOString());
+    return `/api/tasks?${p.toString()}`;
+  }, []);
+
+  const { data: tasksResp } = useQuery<any>({
+    queryKey: [tasksKey],
+  });
+  const tasks = Array.isArray(tasksResp?.items) ? tasksResp.items : [];
 
   const { data: properties = [], isLoading: propertiesLoading } = useQuery<any[]>({
     queryKey: ['/api/properties'],
@@ -95,6 +112,42 @@ export default function Dashboard() {
   const isLoading = leadsLoading || propertiesLoading || contractsLoading;
 
   const activeTeamMembers = allUsers.filter(user => user.isActive);
+
+  const needsAttention = useMemo(() => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const staleCutoff = new Date(todayStart.getTime() - 14 * 24 * 60 * 60 * 1000);
+    const staleCutoffYmd = `${staleCutoff.getFullYear()}-${String(staleCutoff.getMonth() + 1).padStart(2, "0")}-${String(staleCutoff.getDate()).padStart(2, "0")}`;
+
+    const staleLeads = (leads || []).filter((l: any) => {
+      const lastTouch = l?.lastTouchAt ? new Date(l.lastTouchAt) : null;
+      if (!lastTouch || Number.isNaN(lastTouch.valueOf())) return true;
+      return lastTouch.getTime() < staleCutoff.getTime();
+    });
+
+    const overdueTasks = (tasks || []).filter((t: any) => {
+      if (!t?.dueAt) return false;
+      const d = new Date(t.dueAt);
+      if (Number.isNaN(d.valueOf())) return false;
+      return d.getTime() < todayStart.getTime();
+    });
+
+    const followUpsDue = (tasks || []).filter((t: any) => {
+      if (!t?.dueAt) return false;
+      const d = new Date(t.dueAt);
+      if (Number.isNaN(d.valueOf())) return false;
+      const isToday = d.getTime() >= todayStart.getTime();
+      const type = String(t?.type || "").toLowerCase();
+      return isToday && (type === "follow_up" || type === "call");
+    });
+
+    return {
+      staleCutoffYmd,
+      staleLeadsCount: staleLeads.length,
+      overdueTasksCount: overdueTasks.length,
+      followUpsDueCount: followUpsDue.length,
+    };
+  }, [leads, tasks]);
 
   const kpiData = useMemo(() => {
     const closedDocuments = contractDocuments.filter(doc => doc.status === 'closed');
@@ -262,6 +315,51 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         ))}
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <Card className="hover-elevate">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Stale leads (14+ days)</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{needsAttention.staleLeadsCount.toLocaleString()}</div>
+            <button
+              type="button"
+              className="mt-2 inline-flex items-center text-xs text-primary hover:underline"
+              onClick={() => setLocation(`/leads?lastTouchTo=${encodeURIComponent(needsAttention.staleCutoffYmd)}&sortKey=oldest_untouched&sortDir=asc`)}
+            >
+              Open segment <ArrowUpRight className="ml-1 h-3 w-3" />
+            </button>
+          </CardContent>
+        </Card>
+
+        <Card className="hover-elevate">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Overdue tasks</CardTitle>
+            <Clock className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{needsAttention.overdueTasksCount.toLocaleString()}</div>
+            <button type="button" className="mt-2 inline-flex items-center text-xs text-primary hover:underline" onClick={() => setLocation(`/today`)}>
+              Open Today <ArrowUpRight className="ml-1 h-3 w-3" />
+            </button>
+          </CardContent>
+        </Card>
+
+        <Card className="hover-elevate">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Follow-ups due</CardTitle>
+            <Phone className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{needsAttention.followUpsDueCount.toLocaleString()}</div>
+            <button type="button" className="mt-2 inline-flex items-center text-xs text-primary hover:underline" onClick={() => setLocation(`/today`)}>
+              Open Today <ArrowUpRight className="ml-1 h-3 w-3" />
+            </button>
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
