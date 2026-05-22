@@ -1,0 +1,133 @@
+diff --git a/FrameworkPlanner/server/storage.ts b/FrameworkPlanner/server/storage.ts
+index b25dac4..eb66c47 100644
+--- a/FrameworkPlanner/server/storage.ts
++++ b/FrameworkPlanner/server/storage.ts
+@@ -2,7 +2,7 @@ import { db } from "./db.js";
+ import { asc, desc, sql } from "drizzle-orm";
+ import { 
+   leads, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
+-  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
++  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, teamSettings, notificationPreferences, userGoals, userNotifications, tasks, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
+   buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches
+ } from "./shared-schema.js";
+ import { 
+@@ -26,6 +26,7 @@ import {
+   type Team, type InsertTeam,
+   type TeamMember, type InsertTeamMember,
+   type TeamActivityLog, type InsertTeamActivityLog,
++  type TeamSettings, type InsertTeamSettings,
+   type NotificationPreference, type InsertNotificationPreference,
+   type UserGoal, type InsertUserGoal,
+   type UserNotification, type InsertUserNotification,
+@@ -223,6 +224,10 @@ export interface IStorage {
+   getTeamActivityLogs(teamId: number, limit?: number): Promise<TeamActivityLog[]>;
+   createTeamActivityLog(log: InsertTeamActivityLog): Promise<TeamActivityLog>;
+ 
++  // Team Settings
++  getTeamSettings(teamId: number): Promise<TeamSettings | undefined>;
++  upsertTeamSettings(teamId: number, patch: Partial<InsertTeamSettings>): Promise<TeamSettings>;
++
+   // Notification Preferences
+   getNotificationPreferencesByUserId(userId: number): Promise<NotificationPreference | undefined>;
+   createNotificationPreferences(prefs: InsertNotificationPreference): Promise<NotificationPreference>;
+@@ -279,7 +284,7 @@ export interface IStorage {
+ 
+   // Timesheet Entries
+   getTimesheetEntries(userId: number, limit?: number, offset?: number): Promise<TimesheetEntry[]>;
+-  getTimesheetEntriesFiltered(input: { userId?: number; from?: string; to?: string; limit?: number; offset?: number }): Promise<TimesheetEntry[]>;
++  getTimesheetEntriesFiltered(input: { userId?: number; teamId?: number; status?: string; from?: string; to?: string; limit?: number; offset?: number }): Promise<TimesheetEntry[]>;
+   getTimesheetEntryById(id: number): Promise<TimesheetEntry | undefined>;
+   createTimesheetEntry(entry: InsertTimesheetEntry): Promise<TimesheetEntry>;
+   updateTimesheetEntry(id: number, entry: Partial<InsertTimesheetEntry>): Promise<TimesheetEntry>;
+@@ -303,7 +308,9 @@ export interface IStorage {
+ 
+   // Pipeline Configs
+   getPipelineConfig(userId: number, entityType: string): Promise<PipelineConfig | undefined>;
++  getPipelineConfigByTeam(teamId: number, entityType: string): Promise<PipelineConfig | undefined>;
+   upsertPipelineConfig(userId: number, entityType: string, columns: string): Promise<PipelineConfig>;
++  upsertPipelineConfigByTeam(teamId: number, userId: number, entityType: string, columns: string): Promise<PipelineConfig>;
+ 
+   getUnderwritingTemplates(userId: number): Promise<UnderwritingTemplate[]>;
+   getUnderwritingTemplateById(id: number): Promise<UnderwritingTemplate | undefined>;
+@@ -1077,6 +1084,28 @@ export class DatabaseStorage implements IStorage {
+     return result[0];
+   }
+ 
++  async getTeamSettings(teamId: number): Promise<TeamSettings | undefined> {
++    const result = await db.select().from(teamSettings).where(eq(teamSettings.teamId, teamId)).limit(1);
++    return result[0];
++  }
++
++  async upsertTeamSettings(teamId: number, patch: Partial<InsertTeamSettings>): Promise<TeamSettings> {
++    const existing = await this.getTeamSettings(teamId);
++    if (existing) {
++      const result = await db
++        .update(teamSettings)
++        .set({ ...(patch as any), updatedAt: new Date() } as any)
++        .where(eq(teamSettings.teamId, teamId))
++        .returning();
++      return result[0];
++    }
++    const result = await db
++      .insert(teamSettings)
++      .values({ teamId, ...(patch as any) } as any)
++      .returning();
++    return result[0];
++  }
++
+   // Notification Preferences
+   async getNotificationPreferencesByUserId(userId: number): Promise<NotificationPreference | undefined> {
+     const result = await db.select().from(notificationPreferences).where(eq(notificationPreferences.userId, userId)).limit(1);
+@@ -1196,9 +1225,11 @@ export class DatabaseStorage implements IStorage {
+     return q as unknown as Promise<TimesheetEntry[]>;
+   }
+ 
+-  async getTimesheetEntriesFiltered(input: { userId?: number; from?: string; to?: string; limit?: number; offset?: number }): Promise<TimesheetEntry[]> {
++  async getTimesheetEntriesFiltered(input: { userId?: number; teamId?: number; status?: string; from?: string; to?: string; limit?: number; offset?: number }): Promise<TimesheetEntry[]> {
+     const conditions: any[] = [];
+     if (typeof input.userId === "number") conditions.push(eq(timesheetEntries.userId, input.userId));
++    if (typeof input.teamId === "number") conditions.push(eq(timesheetEntries.teamId, input.teamId));
++    if (typeof input.status === "string" && input.status.trim()) conditions.push(eq(timesheetEntries.status, input.status.trim()));
+     if (input.from) conditions.push(gte(timesheetEntries.date, input.from));
+     if (input.to) conditions.push(lte(timesheetEntries.date, input.to));
+ 
+@@ -1351,6 +1382,15 @@ export class DatabaseStorage implements IStorage {
+     return result[0];
+   }
+ 
++  async getPipelineConfigByTeam(teamId: number, entityType: string): Promise<PipelineConfig | undefined> {
++    const result = await db
++      .select()
++      .from(pipelineConfigs)
++      .where(and(eq(pipelineConfigs.teamId, teamId), eq(pipelineConfigs.entityType, entityType)))
++      .limit(1);
++    return result[0];
++  }
++
+   async upsertPipelineConfig(userId: number, entityType: string, columns: string): Promise<PipelineConfig> {
+     const existing = await this.getPipelineConfig(userId, entityType);
+     if (existing) {
+@@ -1361,6 +1401,23 @@ export class DatabaseStorage implements IStorage {
+     return result[0];
+   }
+ 
++  async upsertPipelineConfigByTeam(teamId: number, userId: number, entityType: string, columns: string): Promise<PipelineConfig> {
++    const existing = await this.getPipelineConfigByTeam(teamId, entityType);
++    if (existing) {
++      const result = await db
++        .update(pipelineConfigs)
++        .set({ columns, userId, updatedAt: new Date() } as any)
++        .where(eq(pipelineConfigs.id, existing.id))
++        .returning();
++      return result[0];
++    }
++    const result = await db
++      .insert(pipelineConfigs)
++      .values({ teamId, userId, entityType, columns } as any)
++      .returning();
++    return result[0];
++  }
++
+   async getUnderwritingTemplates(userId: number): Promise<UnderwritingTemplate[]> {
+     return db.select().from(underwritingTemplates).where(eq(underwritingTemplates.userId, userId)).orderBy(desc(underwritingTemplates.updatedAt));
+   }

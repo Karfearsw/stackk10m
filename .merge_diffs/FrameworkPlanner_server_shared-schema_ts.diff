@@ -1,0 +1,63 @@
+diff --git a/FrameworkPlanner/server/shared-schema.ts b/FrameworkPlanner/server/shared-schema.ts
+index 31a8f0d..3d7bfde 100644
+--- a/FrameworkPlanner/server/shared-schema.ts
++++ b/FrameworkPlanner/server/shared-schema.ts
+@@ -629,6 +629,22 @@ export const insertTeamActivityLogSchema = createInsertSchema(teamActivityLogs).
+ export type TeamActivityLog = typeof teamActivityLogs.$inferSelect;
+ export type InsertTeamActivityLog = z.infer<typeof insertTeamActivityLogSchema>;
+ 
++export const teamSettings = pgTable("team_settings", {
++  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
++  teamId: integer("team_id").notNull(),
++  telephonyJson: jsonb("telephony_json").notNull().default(sql`'{}'::jsonb`),
++  leadScoringJson: jsonb("lead_scoring_json").notNull().default(sql`'{}'::jsonb`),
++  assignmentJson: jsonb("assignment_json").notNull().default(sql`'{}'::jsonb`),
++  compensationJson: jsonb("compensation_json").notNull().default(sql`'{}'::jsonb`),
++  documentsJson: jsonb("documents_json").notNull().default(sql`'{}'::jsonb`),
++  createdAt: timestamp("created_at").defaultNow(),
++  updatedAt: timestamp("updated_at").defaultNow(),
++});
++
++export const insertTeamSettingsSchema = createInsertSchema(teamSettings).omit({ id: true, createdAt: true, updatedAt: true } as any);
++export type TeamSettings = typeof teamSettings.$inferSelect;
++export type InsertTeamSettings = z.infer<typeof insertTeamSettingsSchema>;
++
+ // NOTIFICATION PREFERENCES TABLE
+ export const notificationPreferences = pgTable("notification_preferences", {
+   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+@@ -654,6 +670,7 @@ export type InsertNotificationPreference = z.infer<typeof insertNotificationPref
+ 
+ export const pipelineConfigs = pgTable("pipeline_configs", {
+   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
++  teamId: integer("team_id"),
+   userId: integer("user_id").notNull(),
+   entityType: varchar("entity_type", { length: 20 }).notNull(),
+   columns: text("columns").notNull(),
+@@ -765,6 +782,7 @@ export type InsertOffer = z.infer<typeof insertOfferSchema>;
+ // TIMESHEET ENTRIES TABLE
+ export const timesheetEntries = pgTable("timesheet_entries", {
+   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
++  teamId: integer("team_id"),
+   userId: integer("user_id").notNull(),
+   date: varchar("date", { length: 10 }).notNull(),
+   employee: varchar("employee", { length: 255 }).notNull(),
+@@ -773,6 +791,11 @@ export const timesheetEntries = pgTable("timesheet_entries", {
+   endTime: varchar("end_time", { length: 10 }).notNull(),
+   hours: decimal("hours", { precision: 5, scale: 2 }).notNull(),
+   hourlyRate: decimal("hourly_rate", { precision: 10, scale: 2 }).default("50"),
++  status: varchar("status", { length: 20 }).notNull().default("draft"),
++  submittedAt: timestamp("submitted_at"),
++  approvedAt: timestamp("approved_at"),
++  approvedBy: integer("approved_by"),
++  rejectedReason: text("rejected_reason"),
+   createdAt: timestamp("created_at").defaultNow(),
+   updatedAt: timestamp("updated_at").defaultNow(),
+ });
+@@ -783,6 +806,7 @@ export type InsertTimesheetEntry = z.infer<typeof insertTimesheetEntrySchema>;
+ 
+ export const timeClockSessions = pgTable("time_clock_sessions", {
+   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
++  teamId: integer("team_id"),
+   userId: integer("user_id").notNull(),
+   employee: varchar("employee", { length: 255 }).notNull(),
+   task: varchar("task", { length: 255 }).default("General").notNull(),

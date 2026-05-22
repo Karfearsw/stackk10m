@@ -1,0 +1,19 @@
+diff --git a/.env.example b/.env.example
+index e945c8f..5fa8477 100644
+--- a/.env.example
++++ b/.env.example
+@@ -3,6 +3,7 @@ SESSION_SECRET="replace-with-strong-secret"
+ EMPLOYEE_ACCESS_CODE="3911"
+ ADMIN_USERNAME=""
+ ADMIN_PASSWORD=""
++ALLOW_ADMIN_BYPASS="false"
+ SENTRY_DSN=""
+ PORT="3000"
+ 
+@@ -10,4 +11,5 @@ PORT="3000"
+ SIGNALWIRE_SPACE_URL="https://your-space.signalwire.com"
+ SIGNALWIRE_PROJECT_ID="your-project-id"
+ SIGNALWIRE_API_TOKEN="your-api-token"
+-
++SIGNALWIRE_WEBHOOK_AUTH_TOKEN=""
++DIALER_DEFAULT_FROM_NUMBER="+1xxxxxxxxxx"

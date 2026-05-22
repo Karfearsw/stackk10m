@@ -1,0 +1,35 @@
+diff --git a/FrameworkPlanner/server/app.ts b/FrameworkPlanner/server/app.ts
+index b5abed6..4ab37b1 100644
+--- a/FrameworkPlanner/server/app.ts
++++ b/FrameworkPlanner/server/app.ts
+@@ -41,9 +41,27 @@ if (!(globalThis as any).__stackk_process_handlers_installed) {
+   });
+ }
+ 
+-app.use(helmet({
+-  contentSecurityPolicy: false, // Disabled for simplicity with Vite dev server scripts
+-}));
++app.use(
++  helmet({
++    contentSecurityPolicy:
++      process.env.NODE_ENV === "production"
++        ? {
++            useDefaults: true,
++            directives: {
++              "default-src": ["'self'"],
++              "base-uri": ["'self'"],
++              "frame-ancestors": ["'none'"],
++              "object-src": ["'none'"],
++              "script-src": ["'self'"],
++              "style-src": ["'self'", "'unsafe-inline'"],
++              "img-src": ["'self'", "data:", "https:"],
++              "font-src": ["'self'", "data:"],
++              "connect-src": ["'self'", "https:", "wss:"],
++            },
++          }
++        : false,
++  }),
++);
+ 
+ declare module 'http' {
+   interface IncomingMessage {

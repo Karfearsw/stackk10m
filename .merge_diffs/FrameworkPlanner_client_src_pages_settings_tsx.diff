@@ -1,0 +1,1089 @@
+diff --git a/FrameworkPlanner/client/src/pages/settings.tsx b/FrameworkPlanner/client/src/pages/settings.tsx
+index bfc20d2..916975d 100644
+--- a/FrameworkPlanner/client/src/pages/settings.tsx
++++ b/FrameworkPlanner/client/src/pages/settings.tsx
+@@ -1,6 +1,7 @@
+ import { Layout } from "@/components/layout/Layout";
+ import { Button } from "@/components/ui/button";
+ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
++import { Checkbox } from "@/components/ui/checkbox";
+ import { Input } from "@/components/ui/input";
+ import { Label } from "@/components/ui/label";
+ import { Switch } from "@/components/ui/switch";
+@@ -12,6 +13,7 @@ import { toast } from "sonner";
+ import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock, ImageIcon, Camera, Upload, X, Trash2, Server, Database, Phone, Bot } from "lucide-react";
+ import { Progress } from "@/components/ui/progress";
+ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
++import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+ import { useAuth } from "@/contexts/AuthContext";
+ import { runSignalWireDiagnostics } from "@/debug/signalwireDiag";
+ import { useLocation } from "wouter";
+@@ -85,6 +87,96 @@ function SettingsContent() {
+ 
+   const teamLoading = myTeamsLoading || activeTeamLoading || teamMembersLoading || teamActivityLoading;
+ 
++  const { data: teamSettingsResp, isLoading: teamSettingsLoading } = useQuery<any>({
++    queryKey: ["/api/teams", activeTeamId, "settings"],
++    enabled: !!activeTeamId,
++    queryFn: async () => {
++      const res = await fetch(`/api/teams/${activeTeamId}/settings`, { credentials: "include" });
++      if (!res.ok) throw new Error("Failed to fetch team settings");
++      return res.json();
++    },
++  });
++
++  const { data: contractTemplates = [] } = useQuery<any[]>({
++    queryKey: ["/api/contract-templates"],
++  });
++
++  const { data: lois = [] } = useQuery<any[]>({
++    queryKey: ["/api/lois"],
++  });
++
++  const { data: pendingTimesheets = [], isLoading: pendingTimesheetsLoading, refetch: refetchPendingTimesheets } = useQuery<any[]>({
++    queryKey: ["/api/timesheet", "submitted"],
++    enabled: !!activeTeamId,
++    queryFn: async () => {
++      const res = await fetch(`/api/timesheet?status=submitted&limit=200`, { credentials: "include" });
++      if (!res.ok) throw new Error("Failed to fetch pending timesheets");
++      return res.json();
++    },
++  });
++
++  const [settingsSearchOpen, setSettingsSearchOpen] = useState(false);
++  useEffect(() => {
++    const onKeyDown = (e: KeyboardEvent) => {
++      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
++        e.preventDefault();
++        setSettingsSearchOpen(true);
++      }
++    };
++    window.addEventListener("keydown", onKeyDown);
++    return () => window.removeEventListener("keydown", onKeyDown);
++  }, []);
++
++  const [telephonyDraft, setTelephonyDraft] = useState<any>({
++    defaultFromNumber: "",
++    recordingPolicy: "consent",
++    voicemailDropScriptId: null,
++    compliance: { dncEnforced: true, dntEnforced: true },
++  });
++
++  const [documentsDraft, setDocumentsDraft] = useState<any>({
++    company: { legalName: "", address: "", phone: "", email: "", licenseNumber: "" },
++    defaults: { contractTemplateId: null, loiTemplateId: null },
++    signing: { enabled: false, envelopeExpiryDays: 7 },
++  });
++
++  const [compDraft, setCompDraft] = useState<any>({
++    roleRates: {},
++    approvals: { timesheet: { requireApproval: false, approverRoles: ["admin", "owner"] } },
++  });
++
++  const [leadScoringDraft, setLeadScoringDraft] = useState<any>({
++    enabled: false,
++    thresholds: { hot: 80, warm: 50 },
++    weights: [],
++  });
++
++  const [assignmentDraft, setAssignmentDraft] = useState<any>({
++    enabled: false,
++    defaultAssigneeUserId: null,
++    rules: [],
++  });
++
++  useEffect(() => {
++    const settings = teamSettingsResp || null;
++    if (!settings) return;
++    if (settings.telephony) {
++      setTelephonyDraft((prev: any) => ({ ...prev, ...settings.telephony }));
++    }
++    if (settings.documents) {
++      setDocumentsDraft((prev: any) => ({ ...prev, ...settings.documents }));
++    }
++    if (settings.compensation) {
++      setCompDraft((prev: any) => ({ ...prev, ...settings.compensation }));
++    }
++    if (settings.leadScoring) {
++      setLeadScoringDraft((prev: any) => ({ ...prev, ...settings.leadScoring }));
++    }
++    if (settings.assignment) {
++      setAssignmentDraft((prev: any) => ({ ...prev, ...settings.assignment }));
++    }
++  }, [teamSettingsResp]);
++
+   // Fetch goals
+   const { data: goals = [], isLoading: goalsLoading } = useQuery<any[]>({
+     queryKey: [`/api/users/${user!.id}/goals`],
+@@ -287,6 +379,71 @@ function SettingsContent() {
+   const myTeamRole = String(myMembership?.role || "").toLowerCase();
+   const canManageTeam = Boolean(user?.isSuperAdmin) || myTeamRole === "owner" || myTeamRole === "admin";
+ 
++  const patchTeamSettingsMutation = useMutation({
++    mutationFn: async (patch: any) => {
++      if (!activeTeamId) throw new Error("No active team");
++      const res = await fetch(`/api/teams/${activeTeamId}/settings`, {
++        method: "PATCH",
++        headers: { "Content-Type": "application/json" },
++        credentials: "include",
++        body: JSON.stringify(patch),
++      });
++      if (!res.ok) {
++        const err = await res.json().catch(() => ({}));
++        throw new Error(err?.message || "Failed to update settings");
++      }
++      return res.json();
++    },
++    onSuccess: () => {
++      if (activeTeamId) queryClient.invalidateQueries({ queryKey: ["/api/teams", activeTeamId, "settings"] });
++      toast.success("Workspace settings saved");
++    },
++    onError: (e: any) => toast.error(e?.message || "Failed to save workspace settings"),
++  });
++
++  const [rejectTimesheetOpen, setRejectTimesheetOpen] = useState(false);
++  const [rejectTimesheetId, setRejectTimesheetId] = useState<number | null>(null);
++  const [rejectTimesheetReason, setRejectTimesheetReason] = useState("");
++
++  const approveTimesheetMutation = useMutation({
++    mutationFn: async (id: number) => {
++      const res = await fetch(`/api/timesheet/${id}/approve`, { method: "POST", credentials: "include" });
++      if (!res.ok) {
++        const err = await res.json().catch(() => ({}));
++        throw new Error(err?.message || "Failed to approve");
++      }
++      return res.json();
++    },
++    onSuccess: () => {
++      queryClient.invalidateQueries({ queryKey: ["/api/timesheet", "submitted"] });
++      refetchPendingTimesheets();
++      toast.success("Timesheet approved");
++    },
++    onError: (e: any) => toast.error(e?.message || "Failed to approve timesheet"),
++  });
++
++  const rejectTimesheetMutation = useMutation({
++    mutationFn: async (input: { id: number; reason: string }) => {
++      const res = await fetch(`/api/timesheet/${input.id}/reject`, {
++        method: "POST",
++        headers: { "Content-Type": "application/json" },
++        credentials: "include",
++        body: JSON.stringify({ reason: input.reason }),
++      });
++      if (!res.ok) {
++        const err = await res.json().catch(() => ({}));
++        throw new Error(err?.message || "Failed to reject");
++      }
++      return res.json();
++    },
++    onSuccess: () => {
++      queryClient.invalidateQueries({ queryKey: ["/api/timesheet", "submitted"] });
++      refetchPendingTimesheets();
++      toast.success("Timesheet rejected");
++    },
++    onError: (e: any) => toast.error(e?.message || "Failed to reject timesheet"),
++  });
++
+   const setActiveTeamMutation = useMutation({
+     mutationFn: async (teamId: number) => {
+       const res = await fetch(`/api/teams/active`, {
+@@ -486,6 +643,33 @@ function SettingsContent() {
+     });
+   };
+ 
++  const settingsSearchItems: Array<{ id: string; label: string; tab: string; anchor?: string }> = [
++    { id: "account-profile", label: "Account: Profile", tab: "account" },
++    { id: "security-password", label: "Security: Password", tab: "security" },
++    { id: "notifications-dnd", label: "Notifications: Quiet hours", tab: "notifications" },
++    { id: "team-members", label: "Team: Members", tab: "team" },
++    { id: "team-comp", label: "Team: Compensation", tab: "team", anchor: "comp-settings" },
++    { id: "pipeline-columns", label: "Pipeline: Stages", tab: "pipeline" },
++    { id: "pipeline-scoring", label: "Pipeline: Lead scoring", tab: "pipeline", anchor: "lead-scoring" },
++    { id: "pipeline-assignment", label: "Pipeline: Auto-assignment", tab: "pipeline", anchor: "lead-assignment" },
++    { id: "system-telephony", label: "System: Telephony defaults", tab: "system", anchor: "telephony-settings" },
++    { id: "system-documents", label: "System: Documents & signing", tab: "system", anchor: "documents-settings" },
++    { id: "system-health", label: "System: Health", tab: "system" },
++  ];
++
++  const goToSetting = (item: { tab: string; anchor?: string }) => {
++    setActiveTab(item.tab);
++    setLocation(`/settings?tab=${encodeURIComponent(item.tab)}`);
++    setSettingsSearchOpen(false);
++    if (item.anchor) {
++      const anchor = item.anchor;
++      window.setTimeout(() => {
++        const el = document.getElementById(anchor);
++        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
++      }, 0);
++    }
++  };
++
+   if (userLoading) {
+     return (
+       <Layout>
+@@ -511,45 +695,53 @@ function SettingsContent() {
+         }}
+         className="w-full"
+       >
+-        <TabsList className="border-b rounded-none bg-transparent p-0 h-auto flex-wrap">
+-          <TabsTrigger value="account" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+-            <User className="w-4 h-4 mr-2" />
+-            Account
+-          </TabsTrigger>
+-          <TabsTrigger value="security" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+-            <Shield className="w-4 h-4 mr-2" />
+-            Security
+-          </TabsTrigger>
+-          <TabsTrigger value="notifications" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+-            <Bell className="w-4 h-4 mr-2" />
+-            Notifications
+-          </TabsTrigger>
+-          <TabsTrigger value="team" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+-            <Users className="w-4 h-4 mr-2" />
+-            Team
+-          </TabsTrigger>
+-          <TabsTrigger value="goals" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+-            <Target className="w-4 h-4 mr-2" />
+-            Goals
+-          </TabsTrigger>
+-          <TabsTrigger value="offers" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+-            <FileText className="w-4 h-4 mr-2" />
+-            Offers
+-          </TabsTrigger>
+-          <TabsTrigger value="pipeline" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+-            <Database className="w-4 h-4 mr-2" />
+-            Pipeline
+-          </TabsTrigger>
+-          <TabsTrigger value="appearance" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+-            <ImageIcon className="w-4 h-4 mr-2" />
+-            Appearance
+-          </TabsTrigger>
+-          <TabsTrigger value="system" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+-            <Server className="w-4 h-4 mr-2" />
+-            System
+-          </TabsTrigger>
+-        </TabsList>
+-
++        <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
++          <div className="space-y-3">
++            <Button variant="outline" className="w-full justify-start" onClick={() => setSettingsSearchOpen(true)} data-testid="button-settings-search">
++              Search settings
++            </Button>
++            <TabsList className="bg-transparent p-0 h-auto flex flex-col items-stretch gap-1">
++              <div className="px-2 pt-2 text-xs font-medium text-muted-foreground">Personal</div>
++              <TabsTrigger value="account" className="justify-start gap-2 data-[state=active]:bg-accent px-3 py-2">
++                <User className="w-4 h-4" />
++                Account
++              </TabsTrigger>
++              <TabsTrigger value="security" className="justify-start gap-2 data-[state=active]:bg-accent px-3 py-2">
++                <Shield className="w-4 h-4" />
++                Security
++              </TabsTrigger>
++              <TabsTrigger value="notifications" className="justify-start gap-2 data-[state=active]:bg-accent px-3 py-2">
++                <Bell className="w-4 h-4" />
++                Notifications
++              </TabsTrigger>
++              <TabsTrigger value="appearance" className="justify-start gap-2 data-[state=active]:bg-accent px-3 py-2">
++                <ImageIcon className="w-4 h-4" />
++                Appearance
++              </TabsTrigger>
++              <div className="px-2 pt-4 text-xs font-medium text-muted-foreground">Workspace</div>
++              <TabsTrigger value="team" className="justify-start gap-2 data-[state=active]:bg-accent px-3 py-2">
++                <Users className="w-4 h-4" />
++                Team
++              </TabsTrigger>
++              <TabsTrigger value="goals" className="justify-start gap-2 data-[state=active]:bg-accent px-3 py-2">
++                <Target className="w-4 h-4" />
++                Goals
++              </TabsTrigger>
++              <TabsTrigger value="offers" className="justify-start gap-2 data-[state=active]:bg-accent px-3 py-2">
++                <FileText className="w-4 h-4" />
++                Offers
++              </TabsTrigger>
++              <TabsTrigger value="pipeline" className="justify-start gap-2 data-[state=active]:bg-accent px-3 py-2">
++                <Database className="w-4 h-4" />
++                Pipeline
++              </TabsTrigger>
++              <TabsTrigger value="system" className="justify-start gap-2 data-[state=active]:bg-accent px-3 py-2">
++                <Server className="w-4 h-4" />
++                System
++              </TabsTrigger>
++            </TabsList>
++          </div>
++          <div className="min-w-0">
+         {/* ACCOUNT TAB */}
+         <TabsContent value="account" className="mt-6 space-y-6">
+           <form onSubmit={handleProfileSubmit}>
+@@ -1095,6 +1287,132 @@ function SettingsContent() {
+                 </CardContent>
+               </Card>
+ 
++              <Card id="comp-settings">
++                <CardHeader>
++                  <CardTitle>Compensation & Approvals</CardTitle>
++                  <CardDescription>Set role defaults and manage timesheet approvals.</CardDescription>
++                </CardHeader>
++                <CardContent className="space-y-6">
++                  {teamSettingsLoading ? (
++                    <div className="flex items-center justify-center p-6">
++                      <Loader2 className="w-6 h-6 animate-spin text-primary" />
++                    </div>
++                  ) : (
++                    <>
++                      <div className="flex items-center justify-between">
++                        <div>
++                          <p className="text-sm font-medium">Require approval</p>
++                          <p className="text-xs text-muted-foreground">Submitted entries must be approved by a manager/admin.</p>
++                        </div>
++                        <Switch
++                          checked={!!compDraft.approvals?.timesheet?.requireApproval}
++                          onCheckedChange={(v) =>
++                            setCompDraft((prev: any) => ({
++                              ...prev,
++                              approvals: { ...(prev.approvals || {}), timesheet: { ...(prev.approvals?.timesheet || {}), requireApproval: v } },
++                            }))
++                          }
++                          disabled={!canManageTeam}
++                        />
++                      </div>
++
++                      <div className="space-y-2">
++                        <Label>Hourly defaults by role</Label>
++                        <div className="grid gap-3 md:grid-cols-2">
++                          {["owner", "admin", "manager", "member", "viewer"].map((role) => (
++                            <div key={role} className="space-y-1">
++                              <div className="text-sm font-medium capitalize">{role}</div>
++                              <Input
++                                type="number"
++                                value={compDraft.roleRates?.[role]?.hourlyRate ?? ""}
++                                onChange={(e) => {
++                                  const rate = e.target.value === "" ? "" : Number(e.target.value);
++                                  setCompDraft((prev: any) => ({
++                                    ...prev,
++                                    roleRates: {
++                                      ...(prev.roleRates || {}),
++                                      [role]: { ...(prev.roleRates?.[role] || {}), hourlyRate: rate === "" ? undefined : rate },
++                                    },
++                                  }));
++                                }}
++                                placeholder="Hourly rate"
++                                disabled={!canManageTeam}
++                              />
++                            </div>
++                          ))}
++                        </div>
++                      </div>
++
++                      {canManageTeam ? (
++                        <div className="space-y-3">
++                          <div className="flex items-center justify-between">
++                            <Label>Pending approvals</Label>
++                            <Button variant="outline" size="sm" onClick={() => refetchPendingTimesheets()} disabled={pendingTimesheetsLoading}>
++                              {pendingTimesheetsLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
++                              Refresh
++                            </Button>
++                          </div>
++                          {pendingTimesheets.length ? (
++                            <div className="space-y-3">
++                              {pendingTimesheets.slice(0, 20).map((e: any) => (
++                                <div key={e.id} className="border rounded p-3 flex items-start justify-between gap-3">
++                                  <div className="min-w-0">
++                                    <div className="text-sm font-medium truncate">{String(e.employee || "Employee")}</div>
++                                    <div className="text-xs text-muted-foreground">
++                                      {String(e.date || "")} • {String(e.task || "")}
++                                    </div>
++                                    <div className="text-xs text-muted-foreground">
++                                      {String(e.hours || "")}h @ {String(e.hourlyRate || "")}
++                                    </div>
++                                  </div>
++                                  <div className="flex items-center gap-2">
++                                    <Button
++                                      size="sm"
++                                      variant="outline"
++                                      onClick={() => approveTimesheetMutation.mutate(Number(e.id))}
++                                      disabled={approveTimesheetMutation.isPending}
++                                    >
++                                      Approve
++                                    </Button>
++                                    <Button
++                                      size="sm"
++                                      variant="outline"
++                                      onClick={() => {
++                                        setRejectTimesheetId(Number(e.id));
++                                        setRejectTimesheetReason("");
++                                        setRejectTimesheetOpen(true);
++                                      }}
++                                      disabled={rejectTimesheetMutation.isPending}
++                                    >
++                                      Reject
++                                    </Button>
++                                  </div>
++                                </div>
++                              ))}
++                            </div>
++                          ) : (
++                            <div className="text-sm text-muted-foreground">No submitted entries.</div>
++                          )}
++                        </div>
++                      ) : (
++                        <div className="text-xs text-muted-foreground">Only team admins can manage compensation defaults.</div>
++                      )}
++
++                      <div className="flex justify-end">
++                        <Button
++                          type="button"
++                          className="bg-primary hover:bg-primary/90 text-white"
++                          onClick={() => patchTeamSettingsMutation.mutate({ compensation: compDraft })}
++                          disabled={!canManageTeam || patchTeamSettingsMutation.isPending}
++                        >
++                          Save compensation settings
++                        </Button>
++                      </div>
++                    </>
++                  )}
++                </CardContent>
++              </Card>
++
+               <Card>
+                 <CardHeader>
+                   <CardTitle>Team Activity</CardTitle>
+@@ -1282,6 +1600,347 @@ function SettingsContent() {
+         </TabsContent>
+ 
+         <TabsContent value="pipeline" className="mt-6 space-y-6">
++          <Card id="lead-scoring">
++            <CardHeader>
++              <CardTitle>Lead Scoring</CardTitle>
++              <CardDescription>Configure how new leads are scored across the workspace.</CardDescription>
++            </CardHeader>
++            <CardContent className="space-y-4">
++              <div className="flex items-center justify-between">
++                <div>
++                  <p className="text-sm font-medium">Enable scoring</p>
++                  <p className="text-xs text-muted-foreground">Apply a score when leads are created and when key fields change.</p>
++                </div>
++                <Switch
++                  checked={!!leadScoringDraft.enabled}
++                  onCheckedChange={(v) => setLeadScoringDraft((prev: any) => ({ ...prev, enabled: v }))}
++                  disabled={!canManageTeam || teamSettingsLoading}
++                />
++              </div>
++              <div className="grid grid-cols-2 gap-4">
++                <div className="space-y-2">
++                  <Label>Hot threshold</Label>
++                  <Input
++                    type="number"
++                    value={leadScoringDraft.thresholds?.hot ?? 80}
++                    onChange={(e) =>
++                      setLeadScoringDraft((prev: any) => ({ ...prev, thresholds: { ...(prev.thresholds || {}), hot: Number(e.target.value) } }))
++                    }
++                    disabled={!canManageTeam || teamSettingsLoading}
++                  />
++                </div>
++                <div className="space-y-2">
++                  <Label>Warm threshold</Label>
++                  <Input
++                    type="number"
++                    value={leadScoringDraft.thresholds?.warm ?? 50}
++                    onChange={(e) =>
++                      setLeadScoringDraft((prev: any) => ({ ...prev, thresholds: { ...(prev.thresholds || {}), warm: Number(e.target.value) } }))
++                    }
++                    disabled={!canManageTeam || teamSettingsLoading}
++                  />
++                </div>
++              </div>
++              <div className="space-y-2">
++                <div className="flex items-center justify-between">
++                  <Label>Weights</Label>
++                  <Button
++                    type="button"
++                    variant="secondary"
++                    onClick={() =>
++                      setLeadScoringDraft((prev: any) => ({
++                        ...prev,
++                        weights: [...(prev.weights || []), { key: "source", label: "Source match", points: 10, match: "" }],
++                      }))
++                    }
++                    disabled={!canManageTeam || teamSettingsLoading}
++                  >
++                    Add weight
++                  </Button>
++                </div>
++                <div className="space-y-3">
++                  {(leadScoringDraft.weights || []).map((w: any, idx: number) => (
++                    <div key={idx} className="grid grid-cols-12 gap-2 items-start">
++                      <div className="col-span-3 space-y-1">
++                        <Label className="sr-only">Key</Label>
++                        <Input
++                          value={w.key || ""}
++                          onChange={(e) => {
++                            const next = [...(leadScoringDraft.weights || [])];
++                            next[idx] = { ...next[idx], key: e.target.value };
++                            setLeadScoringDraft((prev: any) => ({ ...prev, weights: next }));
++                          }}
++                          placeholder="key (e.g. source, motivation, has_phone)"
++                          disabled={!canManageTeam || teamSettingsLoading}
++                        />
++                      </div>
++                      <div className="col-span-3 space-y-1">
++                        <Label className="sr-only">Label</Label>
++                        <Input
++                          value={w.label || ""}
++                          onChange={(e) => {
++                            const next = [...(leadScoringDraft.weights || [])];
++                            next[idx] = { ...next[idx], label: e.target.value };
++                            setLeadScoringDraft((prev: any) => ({ ...prev, weights: next }));
++                          }}
++                          placeholder="Label"
++                          disabled={!canManageTeam || teamSettingsLoading}
++                        />
++                      </div>
++                      <div className="col-span-3 space-y-1">
++                        <Label className="sr-only">Match</Label>
++                        <Input
++                          value={w.match || ""}
++                          onChange={(e) => {
++                            const next = [...(leadScoringDraft.weights || [])];
++                            next[idx] = { ...next[idx], match: e.target.value };
++                            setLeadScoringDraft((prev: any) => ({ ...prev, weights: next }));
++                          }}
++                          placeholder="Match (optional)"
++                          disabled={!canManageTeam || teamSettingsLoading}
++                        />
++                      </div>
++                      <div className="col-span-2 space-y-1">
++                        <Label className="sr-only">Points</Label>
++                        <Input
++                          type="number"
++                          value={w.points ?? 0}
++                          onChange={(e) => {
++                            const next = [...(leadScoringDraft.weights || [])];
++                            next[idx] = { ...next[idx], points: Number(e.target.value) };
++                            setLeadScoringDraft((prev: any) => ({ ...prev, weights: next }));
++                          }}
++                          disabled={!canManageTeam || teamSettingsLoading}
++                        />
++                      </div>
++                      <div className="col-span-1 flex justify-end pt-1">
++                        <Button
++                          type="button"
++                          variant="ghost"
++                          size="sm"
++                          className="text-destructive hover:text-destructive"
++                          onClick={() => {
++                            const next = [...(leadScoringDraft.weights || [])].filter((_: any, i: number) => i !== idx);
++                            setLeadScoringDraft((prev: any) => ({ ...prev, weights: next }));
++                          }}
++                          disabled={!canManageTeam || teamSettingsLoading}
++                        >
++                          Remove
++                        </Button>
++                      </div>
++                    </div>
++                  ))}
++                </div>
++              </div>
++              <div className="flex justify-end">
++                <Button
++                  type="button"
++                  className="bg-primary hover:bg-primary/90 text-white"
++                  disabled={!canManageTeam || teamSettingsLoading || patchTeamSettingsMutation.isPending}
++                  onClick={() => patchTeamSettingsMutation.mutate({ leadScoring: leadScoringDraft })}
++                >
++                  Save lead scoring
++                </Button>
++              </div>
++            </CardContent>
++          </Card>
++
++          <Card id="lead-assignment">
++            <CardHeader>
++              <CardTitle>Lead Auto-Assignment</CardTitle>
++              <CardDescription>Route leads by source/ZIP and apply round-robin assignment.</CardDescription>
++            </CardHeader>
++            <CardContent className="space-y-4">
++              <div className="flex items-center justify-between">
++                <div>
++                  <p className="text-sm font-medium">Enable auto-assignment</p>
++                  <p className="text-xs text-muted-foreground">If a lead is created without an assignee, the workspace routing rules apply.</p>
++                </div>
++                <Switch
++                  checked={!!assignmentDraft.enabled}
++                  onCheckedChange={(v) => setAssignmentDraft((prev: any) => ({ ...prev, enabled: v }))}
++                  disabled={!canManageTeam || teamSettingsLoading}
++                />
++              </div>
++              <div className="space-y-2">
++                <Label>Default assignee</Label>
++                <Select
++                  value={assignmentDraft.defaultAssigneeUserId ? String(assignmentDraft.defaultAssigneeUserId) : "none"}
++                  onValueChange={(v) => setAssignmentDraft((prev: any) => ({ ...prev, defaultAssigneeUserId: v === "none" ? null : Number(v) }))}
++                  disabled={!canManageTeam || teamSettingsLoading}
++                >
++                  <SelectTrigger>
++                    <SelectValue placeholder="Select user" />
++                  </SelectTrigger>
++                  <SelectContent>
++                    <SelectItem value="none">None</SelectItem>
++                    {(teamMembers || [])
++                      .filter((m: any) => String(m?.status || "").toLowerCase() === "active")
++                      .map((m: any) => {
++                        const id = Number(m?.user?.id || m?.userId || 0);
++                        const name = String(m?.user?.firstName || "").trim() || String(m?.user?.email || `User ${id}`);
++                        return (
++                          <SelectItem key={id} value={String(id)}>
++                            {name}
++                          </SelectItem>
++                        );
++                      })}
++                  </SelectContent>
++                </Select>
++              </div>
++              <div className="space-y-2">
++                <div className="flex items-center justify-between">
++                  <Label>Rules</Label>
++                  <Button
++                    type="button"
++                    variant="secondary"
++                    onClick={() =>
++                      setAssignmentDraft((prev: any) => ({
++                        ...prev,
++                        rules: [
++                          ...(prev.rules || []),
++                          { priority: (prev.rules || []).length + 1, when: { zipCodes: [], sources: [] }, strategy: "round_robin", assignToUserIds: [] },
++                        ],
++                      }))
++                    }
++                    disabled={!canManageTeam || teamSettingsLoading}
++                  >
++                    Add rule
++                  </Button>
++                </div>
++                <div className="space-y-4">
++                  {(assignmentDraft.rules || []).map((r: any, idx: number) => (
++                    <Card key={idx} className="border-dashed">
++                      <CardContent className="pt-6 space-y-4">
++                        <div className="grid grid-cols-3 gap-3">
++                          <div className="space-y-2">
++                            <Label>Priority</Label>
++                            <Input
++                              type="number"
++                              value={r.priority ?? idx + 1}
++                              onChange={(e) => {
++                                const next = [...(assignmentDraft.rules || [])];
++                                next[idx] = { ...next[idx], priority: Number(e.target.value) };
++                                setAssignmentDraft((prev: any) => ({ ...prev, rules: next }));
++                              }}
++                              disabled={!canManageTeam || teamSettingsLoading}
++                            />
++                          </div>
++                          <div className="space-y-2">
++                            <Label>ZIP codes</Label>
++                            <Input
++                              value={(r.when?.zipCodes || []).join(", ")}
++                              onChange={(e) => {
++                                const zipCodes = e.target.value
++                                  .split(",")
++                                  .map((s) => s.trim())
++                                  .filter(Boolean);
++                                const next = [...(assignmentDraft.rules || [])];
++                                next[idx] = { ...next[idx], when: { ...(next[idx].when || {}), zipCodes } };
++                                setAssignmentDraft((prev: any) => ({ ...prev, rules: next }));
++                              }}
++                              placeholder="Optional"
++                              disabled={!canManageTeam || teamSettingsLoading}
++                            />
++                          </div>
++                          <div className="space-y-2">
++                            <Label>Sources</Label>
++                            <Input
++                              value={(r.when?.sources || []).join(", ")}
++                              onChange={(e) => {
++                                const sources = e.target.value
++                                  .split(",")
++                                  .map((s) => s.trim())
++                                  .filter(Boolean);
++                                const next = [...(assignmentDraft.rules || [])];
++                                next[idx] = { ...next[idx], when: { ...(next[idx].when || {}), sources } };
++                                setAssignmentDraft((prev: any) => ({ ...prev, rules: next }));
++                              }}
++                              placeholder="Optional"
++                              disabled={!canManageTeam || teamSettingsLoading}
++                            />
++                          </div>
++                        </div>
++                        <div className="space-y-2">
++                          <Label>Strategy</Label>
++                          <Select
++                            value={String(r.strategy || "round_robin")}
++                            onValueChange={(v) => {
++                              const next = [...(assignmentDraft.rules || [])];
++                              next[idx] = { ...next[idx], strategy: v };
++                              setAssignmentDraft((prev: any) => ({ ...prev, rules: next }));
++                            }}
++                            disabled={!canManageTeam || teamSettingsLoading}
++                          >
++                            <SelectTrigger>
++                              <SelectValue />
++                            </SelectTrigger>
++                            <SelectContent>
++                              <SelectItem value="round_robin">Round robin</SelectItem>
++                              <SelectItem value="fixed">Fixed</SelectItem>
++                            </SelectContent>
++                          </Select>
++                        </div>
++                        <div className="space-y-2">
++                          <Label>Assignees</Label>
++                          <div className="grid gap-2 sm:grid-cols-2">
++                            {(teamMembers || [])
++                              .filter((m: any) => String(m?.status || "").toLowerCase() === "active")
++                              .map((m: any) => {
++                                const id = Number(m?.user?.id || m?.userId || 0);
++                                const name = String(m?.user?.firstName || "").trim() || String(m?.user?.email || `User ${id}`);
++                                const checked = Array.isArray(r.assignToUserIds) && r.assignToUserIds.includes(id);
++                                return (
++                                  <label key={id} className="flex items-center gap-2 text-sm">
++                                    <Checkbox
++                                      checked={checked}
++                                      onCheckedChange={(v: boolean | "indeterminate") => {
++                                        const next = [...(assignmentDraft.rules || [])];
++                                        const currentIds: number[] = Array.isArray(next[idx].assignToUserIds) ? [...next[idx].assignToUserIds] : [];
++                                        const nextIds = v ? Array.from(new Set([...currentIds, id])) : currentIds.filter((x) => x !== id);
++                                        next[idx] = { ...next[idx], assignToUserIds: nextIds };
++                                        setAssignmentDraft((prev: any) => ({ ...prev, rules: next }));
++                                      }}
++                                      disabled={!canManageTeam || teamSettingsLoading}
++                                    />
++                                    {name}
++                                  </label>
++                                );
++                              })}
++                          </div>
++                        </div>
++                        <div className="flex justify-end">
++                          <Button
++                            type="button"
++                            variant="ghost"
++                            className="text-destructive hover:text-destructive"
++                            disabled={!canManageTeam || teamSettingsLoading}
++                            onClick={() => {
++                              const next = [...(assignmentDraft.rules || [])].filter((_: any, i: number) => i !== idx);
++                              setAssignmentDraft((prev: any) => ({ ...prev, rules: next }));
++                            }}
++                          >
++                            Remove rule
++                          </Button>
++                        </div>
++                      </CardContent>
++                    </Card>
++                  ))}
++                </div>
++              </div>
++              <div className="flex justify-end">
++                <Button
++                  type="button"
++                  className="bg-primary hover:bg-primary/90 text-white"
++                  disabled={!canManageTeam || teamSettingsLoading || patchTeamSettingsMutation.isPending}
++                  onClick={() => patchTeamSettingsMutation.mutate({ assignment: assignmentDraft })}
++                >
++                  Save assignment rules
++                </Button>
++              </div>
++            </CardContent>
++          </Card>
++
+           <Card>
+             <CardHeader>
+               <CardTitle>Lead Pipeline Columns</CardTitle>
+@@ -1561,6 +2220,233 @@ function SettingsContent() {
+ 
+         {/* SYSTEM TAB */}
+         <TabsContent value="system" className="mt-6 space-y-6">
++          <Card id="telephony-settings">
++            <CardHeader>
++              <CardTitle>Telephony Defaults</CardTitle>
++              <CardDescription>Configure default caller ID and compliance behavior for the workspace.</CardDescription>
++            </CardHeader>
++            <CardContent className="space-y-4">
++              {!activeTeamId ? (
++                <div className="text-sm text-muted-foreground">Select an active team to configure workspace telephony defaults.</div>
++              ) : (
++                <>
++                  <div className="space-y-2">
++                    <Label>Default From number</Label>
++                    <Input
++                      value={telephonyDraft.defaultFromNumber ?? ""}
++                      onChange={(e) => setTelephonyDraft((prev: any) => ({ ...prev, defaultFromNumber: e.target.value }))}
++                      placeholder="+1xxxxxxxxxx"
++                      disabled={!canManageTeam || teamSettingsLoading}
++                    />
++                  </div>
++                  <div className="space-y-2">
++                    <Label>Recording policy</Label>
++                    <Select
++                      value={String(telephonyDraft.recordingPolicy || "consent")}
++                      onValueChange={(v) => setTelephonyDraft((prev: any) => ({ ...prev, recordingPolicy: v }))}
++                      disabled={!canManageTeam || teamSettingsLoading}
++                    >
++                      <SelectTrigger>
++                        <SelectValue />
++                      </SelectTrigger>
++                      <SelectContent>
++                        <SelectItem value="consent">Consent</SelectItem>
++                        <SelectItem value="always">Always</SelectItem>
++                        <SelectItem value="never">Never</SelectItem>
++                      </SelectContent>
++                    </Select>
++                  </div>
++                  <div className="grid gap-3 md:grid-cols-2">
++                    <label className="flex items-center gap-2 text-sm">
++                      <Checkbox
++                        checked={!!telephonyDraft.compliance?.dncEnforced}
++                        onCheckedChange={(v: boolean | "indeterminate") =>
++                          setTelephonyDraft((prev: any) => ({
++                            ...prev,
++                            compliance: { ...(prev.compliance || {}), dncEnforced: !!v },
++                          }))
++                        }
++                        disabled={!canManageTeam || teamSettingsLoading}
++                      />
++                      Enforce DNC
++                    </label>
++                    <label className="flex items-center gap-2 text-sm">
++                      <Checkbox
++                        checked={!!telephonyDraft.compliance?.dntEnforced}
++                        onCheckedChange={(v: boolean | "indeterminate") =>
++                          setTelephonyDraft((prev: any) => ({
++                            ...prev,
++                            compliance: { ...(prev.compliance || {}), dntEnforced: !!v },
++                          }))
++                        }
++                        disabled={!canManageTeam || teamSettingsLoading}
++                      />
++                      Enforce DNT
++                    </label>
++                  </div>
++                  <div className="flex justify-end">
++                    <Button
++                      type="button"
++                      className="bg-primary hover:bg-primary/90 text-white"
++                      disabled={!canManageTeam || teamSettingsLoading || patchTeamSettingsMutation.isPending}
++                      onClick={() => patchTeamSettingsMutation.mutate({ telephony: telephonyDraft })}
++                    >
++                      Save telephony defaults
++                    </Button>
++                  </div>
++                </>
++              )}
++            </CardContent>
++          </Card>
++
++          <Card id="documents-settings">
++            <CardHeader>
++              <CardTitle>Documents & Signing</CardTitle>
++              <CardDescription>Company identity, default templates, and signing defaults.</CardDescription>
++            </CardHeader>
++            <CardContent className="space-y-4">
++              {!activeTeamId ? (
++                <div className="text-sm text-muted-foreground">Select an active team to configure workspace documents.</div>
++              ) : (
++                <>
++                  <div className="grid gap-4 md:grid-cols-2">
++                    <div className="space-y-2">
++                      <Label>Legal name</Label>
++                      <Input
++                        value={documentsDraft.company?.legalName ?? ""}
++                        onChange={(e) =>
++                          setDocumentsDraft((prev: any) => ({ ...prev, company: { ...(prev.company || {}), legalName: e.target.value } }))
++                        }
++                        disabled={!canManageTeam || teamSettingsLoading}
++                      />
++                    </div>
++                    <div className="space-y-2">
++                      <Label>License number</Label>
++                      <Input
++                        value={documentsDraft.company?.licenseNumber ?? ""}
++                        onChange={(e) =>
++                          setDocumentsDraft((prev: any) => ({ ...prev, company: { ...(prev.company || {}), licenseNumber: e.target.value } }))
++                        }
++                        disabled={!canManageTeam || teamSettingsLoading}
++                      />
++                    </div>
++                    <div className="space-y-2">
++                      <Label>Email</Label>
++                      <Input
++                        value={documentsDraft.company?.email ?? ""}
++                        onChange={(e) =>
++                          setDocumentsDraft((prev: any) => ({ ...prev, company: { ...(prev.company || {}), email: e.target.value } }))
++                        }
++                        disabled={!canManageTeam || teamSettingsLoading}
++                      />
++                    </div>
++                    <div className="space-y-2">
++                      <Label>Phone</Label>
++                      <Input
++                        value={documentsDraft.company?.phone ?? ""}
++                        onChange={(e) =>
++                          setDocumentsDraft((prev: any) => ({ ...prev, company: { ...(prev.company || {}), phone: e.target.value } }))
++                        }
++                        disabled={!canManageTeam || teamSettingsLoading}
++                      />
++                    </div>
++                  </div>
++                  <div className="space-y-2">
++                    <Label>Address</Label>
++                    <Input
++                      value={documentsDraft.company?.address ?? ""}
++                      onChange={(e) =>
++                        setDocumentsDraft((prev: any) => ({ ...prev, company: { ...(prev.company || {}), address: e.target.value } }))
++                      }
++                      disabled={!canManageTeam || teamSettingsLoading}
++                    />
++                  </div>
++                  <div className="grid gap-4 md:grid-cols-2">
++                    <div className="space-y-2">
++                      <Label>Default contract template</Label>
++                      <Select
++                        value={documentsDraft.defaults?.contractTemplateId ? String(documentsDraft.defaults.contractTemplateId) : "none"}
++                        onValueChange={(v) =>
++                          setDocumentsDraft((prev: any) => ({
++                            ...prev,
++                            defaults: { ...(prev.defaults || {}), contractTemplateId: v === "none" ? null : Number(v) },
++                          }))
++                        }
++                        disabled={!canManageTeam || teamSettingsLoading}
++                      >
++                        <SelectTrigger>
++                          <SelectValue />
++                        </SelectTrigger>
++                        <SelectContent>
++                          <SelectItem value="none">None</SelectItem>
++                          {contractTemplates.map((t: any) => (
++                            <SelectItem key={t.id} value={String(t.id)}>
++                              {String(t.name || `Template ${t.id}`)}
++                            </SelectItem>
++                          ))}
++                        </SelectContent>
++                      </Select>
++                    </div>
++                    <div className="space-y-2">
++                      <Label>Default LOI template</Label>
++                      <Select
++                        value={documentsDraft.defaults?.loiTemplateId ? String(documentsDraft.defaults.loiTemplateId) : "none"}
++                        onValueChange={(v) =>
++                          setDocumentsDraft((prev: any) => ({ ...prev, defaults: { ...(prev.defaults || {}), loiTemplateId: v === "none" ? null : Number(v) } }))
++                        }
++                        disabled={!canManageTeam || teamSettingsLoading}
++                      >
++                        <SelectTrigger>
++                          <SelectValue />
++                        </SelectTrigger>
++                        <SelectContent>
++                          <SelectItem value="none">None</SelectItem>
++                          {lois.map((l: any) => (
++                            <SelectItem key={l.id} value={String(l.id)}>
++                              {String(l.title || l.name || `LOI ${l.id}`)}
++                            </SelectItem>
++                          ))}
++                        </SelectContent>
++                      </Select>
++                    </div>
++                  </div>
++                  <div className="flex items-center justify-between">
++                    <div>
++                      <p className="text-sm font-medium">Enable signing</p>
++                      <p className="text-xs text-muted-foreground">Controls whether envelope creation is allowed by default.</p>
++                    </div>
++                    <Switch
++                      checked={!!documentsDraft.signing?.enabled}
++                      onCheckedChange={(v) => setDocumentsDraft((prev: any) => ({ ...prev, signing: { ...(prev.signing || {}), enabled: v } }))}
++                      disabled={!canManageTeam || teamSettingsLoading}
++                    />
++                  </div>
++                  <div className="space-y-2">
++                    <Label>Envelope expiry (days)</Label>
++                    <Input
++                      type="number"
++                      value={documentsDraft.signing?.envelopeExpiryDays ?? 7}
++                      onChange={(e) =>
++                        setDocumentsDraft((prev: any) => ({ ...prev, signing: { ...(prev.signing || {}), envelopeExpiryDays: Number(e.target.value) } }))
++                      }
++                      disabled={!canManageTeam || teamSettingsLoading}
++                    />
++                  </div>
++                  <div className="flex justify-end">
++                    <Button
++                      type="button"
++                      className="bg-primary hover:bg-primary/90 text-white"
++                      disabled={!canManageTeam || teamSettingsLoading || patchTeamSettingsMutation.isPending}
++                      onClick={() => patchTeamSettingsMutation.mutate({ documents: documentsDraft })}
++                    >
++                      Save document settings
++                    </Button>
++                  </div>
++                </>
++              )}
++            </CardContent>
++          </Card>
++
+           <Card>
+             <CardHeader>
+               <CardTitle className="flex items-center gap-2">
+@@ -1670,6 +2556,57 @@ function SettingsContent() {
+             </Card>
+           </div>
+         </TabsContent>
++          </div>
++        </div>
++
++        <CommandDialog open={settingsSearchOpen} onOpenChange={setSettingsSearchOpen}>
++          <CommandInput placeholder="Search settings..." />
++          <CommandList>
++            <CommandEmpty>No results found.</CommandEmpty>
++            <CommandGroup heading="Settings">
++              {settingsSearchItems.map((item) => (
++                <CommandItem key={item.id} value={item.label} onSelect={() => goToSetting(item)}>
++                  {item.label}
++                </CommandItem>
++              ))}
++            </CommandGroup>
++          </CommandList>
++        </CommandDialog>
++
++        <Dialog open={rejectTimesheetOpen} onOpenChange={setRejectTimesheetOpen}>
++          <DialogContent className="sm:max-w-lg">
++            <DialogHeader>
++              <DialogTitle>Reject timesheet</DialogTitle>
++            </DialogHeader>
++            <div className="space-y-2">
++              <Label htmlFor="reject-reason">Reason</Label>
++              <Input
++                id="reject-reason"
++                value={rejectTimesheetReason}
++                onChange={(e) => setRejectTimesheetReason(e.target.value)}
++                placeholder="Explain what needs to be fixed"
++              />
++            </div>
++            <div className="flex justify-end gap-2 pt-2">
++              <Button variant="outline" onClick={() => setRejectTimesheetOpen(false)}>
++                Cancel
++              </Button>
++              <Button
++                className="bg-primary text-white hover:bg-primary/90"
++                disabled={!rejectTimesheetId || !rejectTimesheetReason.trim() || rejectTimesheetMutation.isPending}
++                onClick={() => {
++                  if (!rejectTimesheetId) return;
++                  rejectTimesheetMutation.mutate({ id: rejectTimesheetId, reason: rejectTimesheetReason.trim() });
++                  setRejectTimesheetOpen(false);
++                  setRejectTimesheetId(null);
++                  setRejectTimesheetReason("");
++                }}
++              >
++                Reject
++              </Button>
++            </div>
++          </DialogContent>
++        </Dialog>
+       </Tabs>
+     </Layout>
+   );

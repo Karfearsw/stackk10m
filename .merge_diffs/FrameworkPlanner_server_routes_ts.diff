@@ -1,0 +1,614 @@
+diff --git a/FrameworkPlanner/server/routes.ts b/FrameworkPlanner/server/routes.ts
+index 650c891..d669013 100644
+--- a/FrameworkPlanner/server/routes.ts
++++ b/FrameworkPlanner/server/routes.ts
+@@ -65,6 +65,9 @@ import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
+ import { sendSignalWireSms } from "./services/messaging/signalwire.js";
+ import { sendResendEmail } from "./services/messaging/resend.js";
+ import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
++import { getTeamSettingsModel, patchTeamSettingsModel, teamSettingsPatchSchema } from "./services/settings/teamSettings.js";
++import { computeLeadScore } from "./services/leads/score.js";
++import { chooseLeadAssignee } from "./services/leads/assign.js";
+ import { getRvmProvider } from "./services/rvm/provider.js";
+ import crypto from "node:crypto";
+ 
+@@ -342,6 +345,59 @@ function haversineMiles(a: { lat: number; lng: number }, b: { lat: number; lng:
+   return 2 * R * Math.asin(Math.sqrt(h));
+ }
+ 
++function xmlEscape(v: unknown): string {
++  return String(v ?? "")
++    .replace(/&/g, "&amp;")
++    .replace(/</g, "&lt;")
++    .replace(/>/g, "&gt;")
++    .replace(/"/g, "&quot;")
++    .replace(/'/g, "&apos;");
++}
++
++function signalWireAuthToken(): string {
++  return String(process.env.SIGNALWIRE_WEBHOOK_AUTH_TOKEN || process.env.SIGNALWIRE_API_TOKEN || "").trim();
++}
++
++function computeSignalWireSignature(authToken: string, url: string, params: Record<string, unknown>): string {
++  const keys = Object.keys(params || {}).sort();
++  let data = url;
++  for (const k of keys) {
++    const v = (params as any)[k];
++    if (Array.isArray(v)) {
++      for (const item of v) data += k + String(item ?? "");
++    } else {
++      data += k + String(v ?? "");
++    }
++  }
++  return crypto.createHmac("sha1", authToken).update(data).digest("base64");
++}
++
++function hasValidSignalWireSignature(req: any): boolean {
++  const authToken = signalWireAuthToken();
++  if (!authToken) return false;
++  const signature = String(req.headers["x-signalwire-signature"] || "").trim();
++  if (!signature) return false;
++  const url = `${req.protocol}://${req.get("host")}${req.originalUrl}`;
++  const expected = computeSignalWireSignature(authToken, url, req.body || {});
++  const a = Buffer.from(signature);
++  const b = Buffer.from(expected);
++  if (a.length !== b.length) return false;
++  return crypto.timingSafeEqual(a, b);
++}
++
++function enforceSignalWireSignature(req: any, res: any): boolean {
++  if (process.env.NODE_ENV !== "production") return true;
++  if (!signalWireAuthToken()) {
++    res.status(503).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>");
++    return false;
++  }
++  if (!hasValidSignalWireSignature(req)) {
++    res.status(403).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>");
++    return false;
++  }
++  return true;
++}
++
+ export async function registerRoutes(
+   app: Express,
+   opts?: { mode?: "server" | "serverless" },
+@@ -858,11 +914,11 @@ export async function registerRoutes(
+ 
+       // Admin Bypass / Master Key Logic
+       // Allows login using environment credentials even if DB password check fails
++      const adminBypassEnabled = String(process.env.ALLOW_ADMIN_BYPASS || "").toLowerCase() === "true";
+       const adminEmail = process.env.ADMIN_USERNAME;
+       const adminPassword = process.env.ADMIN_PASSWORD;
+       
+-      if (adminEmail && email === adminEmail && adminPassword && password === adminPassword) {
+-        console.log(`[Auth] Admin bypass used for ${email}`);
++      if (adminBypassEnabled && adminEmail && email === adminEmail && adminPassword && password === adminPassword) {
+         void writeAuthAuditLog({
+           action: "admin_bypass",
+           outcome: "attempt",
+@@ -2485,10 +2541,35 @@ export async function registerRoutes(
+         return res.status(400).json({ message: "Lead source is required" });
+       }
+ 
++      const user = await requireAuth(req, res);
++      if (!user) return;
++      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
++      if (activeTeamId) {
++        const settings = await getTeamSettingsModel(activeTeamId);
++        if (!(validated as any).assignedTo && settings.assignment?.enabled) {
++          const members = await storage.getTeamMembers(activeTeamId);
++          const eligible = Array.from(
++            new Set(
++              (members || [])
++                .filter((m: any) => String(m?.status || "").toLowerCase() === "active")
++                .map((m: any) => Number(m?.userId || 0))
++                .filter((n: number) => Number.isFinite(n) && n > 0),
++            ),
++          );
++          const picked = chooseLeadAssignee({ lead: validated as any, settings, eligibleUserIds: eligible });
++          if (picked.assigneeUserId) (validated as any).assignedTo = picked.assigneeUserId;
++          const beforeRr = settings.assignment?.rrState || {};
++          if (JSON.stringify(beforeRr) !== JSON.stringify(picked.nextRrState)) {
++            await patchTeamSettingsModel(activeTeamId, { assignment: { rrState: picked.nextRrState } } as any);
++          }
++        }
++        if (settings.leadScoring?.enabled) {
++          (validated as any).relasScore = computeLeadScore({ lead: validated as any, settings });
++        }
++      }
++
+       const assignedTo = (validated as any).assignedTo;
+       if (typeof assignedTo === "number") {
+-        const user = await requireAuth(req, res);
+-        if (!user) return;
+         const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
+         if (!ok) return;
+       }
+@@ -2551,6 +2632,20 @@ export async function registerRoutes(
+         if (merged.address && merged.city && merged.state && merged.zipCode && merged.ownerName) {
+           (partial as any).dedupeKey = computeLeadDedupeKey(merged);
+         }
++        const touchedScoreFields = ["source", "motivation", "ownerEmail", "ownerPhone", "zipCode", "tags"].some((k) =>
++          Object.prototype.hasOwnProperty.call(partial as any, k),
++        );
++        if (touchedScoreFields) {
++          const user = await requireAuth(req, res);
++          if (!user) return;
++          const activeTeamId = await getOrInitActiveTeamId(req, user.id);
++          if (activeTeamId) {
++            const settings = await getTeamSettingsModel(activeTeamId);
++            if (settings.leadScoring?.enabled) {
++              (partial as any).relasScore = computeLeadScore({ lead: merged, settings });
++            }
++          }
++        }
+       }
+       const lead = await storage.updateLead(id, partial);
+       try {
+@@ -3964,9 +4059,9 @@ export async function registerRoutes(
+         return res.status(500).json({ message: "SignalWire credentials not configured" });
+       }
+       
+-      // Generate a short-lived JWT token for WebRTC
+-      // resource must be a string identifier for the client (e.g. the phone number)
+-      const resolvedFrom = String(from ?? process.env.DIALER_DEFAULT_FROM_NUMBER ?? "").trim();
++      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
++      const teamDefaultFrom = activeTeamId ? (await getTeamSettingsModel(activeTeamId)).telephony?.defaultFromNumber ?? null : null;
++      const resolvedFrom = String(from ?? teamDefaultFrom ?? process.env.DIALER_DEFAULT_FROM_NUMBER ?? "").trim();
+       if (!resolvedFrom) {
+         return res.status(400).json({ message: "Missing from number" });
+       }
+@@ -4037,7 +4132,9 @@ export async function registerRoutes(
+ 
+       const { to, from, body, metadata } = req.body || {};
+       if (!to || !body) return res.status(400).json({ message: "Missing to/body" });
+-      const resolvedFrom = from || process.env.DIALER_DEFAULT_FROM_NUMBER || process.env.SIGNALWIRE_FROM_NUMBER || "";
++      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
++      const teamDefaultFrom = activeTeamId ? (await getTeamSettingsModel(activeTeamId)).telephony?.defaultFromNumber ?? null : null;
++      const resolvedFrom = from || teamDefaultFrom || process.env.DIALER_DEFAULT_FROM_NUMBER || process.env.SIGNALWIRE_FROM_NUMBER || "";
+       const out = await sendSignalWireSms({ to, body, from: resolvedFrom });
+       const sid = out.messageSid || null;
+       const smsStatus = "queued";
+@@ -4100,22 +4197,16 @@ export async function registerRoutes(
+   // Inbound SMS webhook with cXML auto-reply
+   app.post("/api/telephony/sms/webhook", async (req, res) => {
+     try {
+-      // Verify SignalWire signature if configured
+-      const signature = req.headers["x-signalwire-signature"] as string;
+-      const url = req.protocol + "://" + req.get("host") + req.originalUrl;
+-      
+-      if (signature && process.env.SIGNALWIRE_API_TOKEN) {
+-        // Simple signature verification (can be enhanced with crypto)
+-        // For now, we'll accept the webhook
+-      }
+-      
++      if (!enforceSignalWireSignature(req, res)) return;
+       const { To, From, Body } = req.body;
+       
+-      // Send cXML response for auto-reply
++      const routeTo = String(process.env.DIALER_DEFAULT_FROM_NUMBER || "").trim();
++      const bodyText = String(Body || "");
++
+       const cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+ <Response>
+   <Message>Thanks, we'll call you shortly.</Message>
+-  <Route to="${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}" body="${Body}" from="${To}"/>
++  ${routeTo ? `<Route to="${xmlEscape(routeTo)}" body="${xmlEscape(bodyText)}" from="${xmlEscape(To)}"/>` : ""}
+ </Response>`;
+       
+       res.set("Content-Type", "text/xml");
+@@ -4126,7 +4217,6 @@ export async function registerRoutes(
+           .then((match) => {
+             const leadId = match?.leadId || null;
+             const userId = match?.userId || 0;
+-            const bodyText = String(Body || "");
+             const normalized = bodyText.trim().toUpperCase();
+             const isOptOut = normalized === "STOP" || normalized === "UNSUBSCRIBE" || normalized === "CANCEL" || normalized === "QUIT";
+ 
+@@ -4170,6 +4260,7 @@ export async function registerRoutes(
+   // Inbound voice webhook with cXML IVR
+   app.post("/api/telephony/voice/webhook", async (req, res) => {
+     try {
++      if (!enforceSignalWireSignature(req, res)) return;
+       const { To, From, CallSid } = req.body;
+       
+       setImmediate(() => {
+@@ -4237,45 +4328,58 @@ export async function registerRoutes(
+   // Voice gather webhook for speech recognition
+   app.post("/api/telephony/voice/gather", async (req, res) => {
+     try {
++      if (!enforceSignalWireSignature(req, res)) return;
+       const { To, From, CallSid, SpeechResult, Confidence } = req.body;
+       
+-      console.log(`[Voice Gather] From: ${From}, Speech: ${SpeechResult}, Confidence: ${Confidence}`);
++      if (process.env.NODE_ENV !== "production") {
++        console.log(`[Voice Gather] CallSid: ${CallSid}, Speech present: ${Boolean(SpeechResult)}, Confidence: ${Confidence}`);
++      }
+       
++      const dialerNumber = String(process.env.DIALER_DEFAULT_FROM_NUMBER || "").trim();
+       let cxmlResponse: string;
+       
+-      if (SpeechResult && Confidence > 0.5) {
+-        const speech = SpeechResult.toLowerCase();
++      const confidence = typeof Confidence === "number" ? Confidence : Number(Confidence);
++      const speechRaw = typeof SpeechResult === "string" ? SpeechResult : "";
++
++      if (!dialerNumber) {
++        cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
++<Response>
++  <Say voice="Polly.Joanna">We are unable to route your call at this time.</Say>
++  <Hangup/>
++</Response>`;
++      } else if (speechRaw && Number.isFinite(confidence) && confidence > 0.5) {
++        const speech = speechRaw.toLowerCase();
+         
+         if (speech.includes("appointment") || speech.includes("schedule")) {
+           cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+ <Response>
+   <Say voice="Polly.Joanna">I'll connect you to our scheduling department. Please hold.</Say>
+-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
++  <Dial>${xmlEscape(dialerNumber)}</Dial>
+ </Response>`;
+         } else if (speech.includes("property") || speech.includes("inquiry")) {
+           cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+ <Response>
+   <Say voice="Polly.Joanna">I'll connect you to our property specialist. Please hold.</Say>
+-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
++  <Dial>${xmlEscape(dialerNumber)}</Dial>
+ </Response>`;
+         } else if (speech.includes("agent") || speech.includes("speak")) {
+           cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+ <Response>
+   <Say voice="Polly.Joanna">I'll connect you to the next available agent. Please hold.</Say>
+-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
++  <Dial>${xmlEscape(dialerNumber)}</Dial>
+ </Response>`;
+         } else {
+           cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+ <Response>
+   <Say voice="Polly.Joanna">I didn't understand that. Let me connect you to an agent.</Say>
+-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
++  <Dial>${xmlEscape(dialerNumber)}</Dial>
+ </Response>`;
+         }
+       } else {
+         cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
+ <Response>
+   <Say voice="Polly.Joanna">I didn't catch that. Let me connect you to an agent.</Say>
+-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
++  <Dial>${xmlEscape(dialerNumber)}</Dial>
+ </Response>`;
+       }
+       
+@@ -4291,6 +4395,7 @@ export async function registerRoutes(
+   // Voice recording webhook
+   app.post("/api/telephony/voice/recording", async (req, res) => {
+     try {
++      if (!enforceSignalWireSignature(req, res)) return;
+       const { To, From, CallSid, RecordingUrl, RecordingSid, RecordingDuration } = req.body;
+       
+       if (process.env.NODE_ENV !== "production") {
+@@ -4298,15 +4403,16 @@ export async function registerRoutes(
+       }
+       
+       // Send SMS confirmation
++      const dialerNumber = String(process.env.DIALER_DEFAULT_FROM_NUMBER || "").trim();
+       const space = process.env.SIGNALWIRE_SPACE_URL?.replace(/^https?:\/\//, "") || "";
+       const project = process.env.SIGNALWIRE_PROJECT_ID || "";
+       const token = process.env.SIGNALWIRE_API_TOKEN || "";
+       
+-      if (space && project && token) {
++      if (dialerNumber && space && project && token && From) {
+         const smsUrl = `https://${space}/api/laml/2010-04-01/Accounts/${project}/Messages.json`;
+         const smsForm = new URLSearchParams({ 
+-          From: process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943',
+-          To: From,
++          From: dialerNumber,
++          To: String(From),
+           Body: "Thank you for leaving a voicemail. We will review your message and contact you during business hours."
+         });
+         const auth = Buffer.from(`${project}:${token}`).toString("base64");
+@@ -4737,9 +4843,20 @@ export async function registerRoutes(
+       });
+       const payload = schema.parse(req.body || {});
+ 
++      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
++      if (activeTeamId) {
++        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "viewer" });
++        if (!ctx) return;
++      }
++      const settings = activeTeamId ? await getTeamSettingsModel(activeTeamId) : null;
++      if (settings && settings.documents?.signing?.enabled === false) {
++        return res.status(403).json({ message: "Signing is disabled" });
++      }
++
+       const token = crypto.randomBytes(24).toString("hex");
+       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+-      const expiresAt = new Date(Date.now() + (payload.expiresInDays ?? 30) * 24 * 60 * 60 * 1000);
++      const defaultExpiryDays = settings?.documents?.signing?.envelopeExpiryDays ?? 30;
++      const expiresAt = new Date(Date.now() + (payload.expiresInDays ?? defaultExpiryDays) * 24 * 60 * 60 * 1000);
+ 
+       const env = await storage.createContractEnvelope({
+         documentId: id,
+@@ -5287,14 +5404,28 @@ export async function registerRoutes(
+ 
+   app.get("/api/pipeline-config", async (req, res) => {
+     try {
+-      const userId = req.session.userId;
+-      if (!userId) return res.status(401).json({ message: "Unauthorized" });
++      const user = await requireAuth(req, res);
++      if (!user) return;
+ 
+       const entityType = String(req.query.entityType || "").trim();
+       const defaults = defaultPipelineColumnsByEntityType[entityType];
+       if (!defaults) return res.status(400).json({ message: "Invalid entityType" });
+ 
+-      const row = await storage.getPipelineConfig(userId, entityType);
++      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
++      if (activeTeamId) {
++        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "viewer" });
++        if (!ctx) return;
++        const row = await storage.getPipelineConfigByTeam(activeTeamId, entityType);
++        if (!row) return res.json({ entityType, columns: defaults });
++        let parsed: any = defaults;
++        try {
++          const json = JSON.parse(row.columns);
++          if (Array.isArray(json)) parsed = json;
++        } catch {}
++        return res.json({ entityType, columns: parsed });
++      }
++
++      const row = await storage.getPipelineConfig(user.id, entityType);
+       if (!row) return res.json({ entityType, columns: defaults });
+ 
+       let parsed: any = defaults;
+@@ -5311,8 +5442,8 @@ export async function registerRoutes(
+ 
+   app.put("/api/pipeline-config", async (req, res) => {
+     try {
+-      const userId = req.session.userId;
+-      if (!userId) return res.status(401).json({ message: "Unauthorized" });
++      const user = await requireAuth(req, res);
++      if (!user) return;
+ 
+       const entityType = String(req.query.entityType || "").trim();
+       const defaults = defaultPipelineColumnsByEntityType[entityType];
+@@ -5327,7 +5458,20 @@ export async function registerRoutes(
+ 
+       if (!cleaned.length) return res.status(400).json({ message: "Invalid columns" });
+ 
+-      const updated = await storage.upsertPipelineConfig(userId, entityType, JSON.stringify(cleaned));
++      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
++      if (activeTeamId) {
++        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "admin" });
++        if (!ctx) return;
++        const updated = await storage.upsertPipelineConfigByTeam(activeTeamId, user.id, entityType, JSON.stringify(cleaned));
++        let parsed: any = cleaned;
++        try {
++          const json = JSON.parse(updated.columns);
++          if (Array.isArray(json)) parsed = json;
++        } catch {}
++        return res.json({ entityType, columns: parsed });
++      }
++
++      const updated = await storage.upsertPipelineConfig(user.id, entityType, JSON.stringify(cleaned));
+       let parsed: any = cleaned;
+       try {
+         const json = JSON.parse(updated.columns);
+@@ -5705,6 +5849,39 @@ export async function registerRoutes(
+     }
+   });
+ 
++  app.get("/api/teams/:teamId/settings", async (req, res) => {
++    try {
++      const teamId = parseInt(req.params.teamId);
++      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "viewer" });
++      if (!ctx) return;
++      const row = await storage.getTeamSettings(teamId);
++      const model = await getTeamSettingsModel(teamId);
++      res.json({ teamId, ...model, updatedAt: row?.updatedAt ?? null });
++    } catch (error: any) {
++      res.status(500).json({ message: error.message });
++    }
++  });
++
++  app.patch("/api/teams/:teamId/settings", async (req, res) => {
++    try {
++      const teamId = parseInt(req.params.teamId);
++      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
++      if (!ctx) return;
++      const validated = teamSettingsPatchSchema.parse(req.body);
++      const { row, model } = await patchTeamSettingsModel(teamId, validated);
++      await storage.createTeamActivityLog({
++        teamId,
++        userId: ctx.user.id,
++        action: "settings_updated",
++        description: "Workspace settings updated",
++        metadata: JSON.stringify({ changedKeys: Object.keys(validated) }),
++      } as any);
++      res.json({ teamId, ...model, updatedAt: row?.updatedAt ?? null });
++    } catch (error: any) {
++      res.status(400).json({ message: error.message });
++    }
++  });
++
+   // NOTIFICATION PREFERENCES ENDPOINTS
+   app.get("/api/users/:userId/notification-preferences", async (req, res) => {
+     try {
+@@ -6209,12 +6386,18 @@ export async function registerRoutes(
+       if (open) return res.json(open);
+ 
+       const user = await storage.getUserById(req.session.userId);
++      const activeTeamId = user ? await getOrInitActiveTeamId(req, user.id) : null;
++      if (activeTeamId) {
++        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "viewer" });
++        if (!ctx) return;
++      }
+       const employee = user?.firstName || user?.lastName
+         ? `${user?.firstName || ""} ${user?.lastName || ""}`.trim()
+         : user?.email || "Employee";
+ 
+       try {
+         const created = await storage.createTimeClockSession({
++          teamId: activeTeamId ?? undefined,
+           userId: req.session.userId,
+           employee,
+           task: "General",
+@@ -6245,7 +6428,21 @@ export async function registerRoutes(
+ 
+       const result = await storage.closeOpenTimeClockSessionAndCreateEntry(req.session.userId, { clockOutAt, tzOffsetMinutes });
+       if (!result) return res.json({ stopped: false });
+-      res.json({ stopped: true, entry: result.entry });
++      const user = await storage.getUserById(req.session.userId);
++      const activeTeamId = user ? await getOrInitActiveTeamId(req, user.id) : null;
++      if (activeTeamId) {
++        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "viewer" });
++        if (!ctx) return;
++      }
++      const settings = activeTeamId ? await getTeamSettingsModel(activeTeamId) : null;
++      const roleKey = String((user as any)?.role || "").trim().toLowerCase();
++      const defaultRate = settings?.compensation?.roleRates?.[roleKey]?.hourlyRate;
++      const hourlyRate = typeof defaultRate === "number" && Number.isFinite(defaultRate) ? defaultRate : undefined;
++      const patched = await storage.updateTimesheetEntry(result.entry.id, {
++        teamId: activeTeamId ?? (result.entry as any).teamId ?? undefined,
++        hourlyRate: hourlyRate ?? (result.entry as any).hourlyRate,
++      } as any);
++      res.json({ stopped: true, entry: patched });
+     } catch (error: any) {
+       res.status(500).json({ message: error.message });
+     }
+@@ -6273,10 +6470,16 @@ export async function registerRoutes(
+       const from = typeof req.query.from === "string" ? req.query.from : undefined;
+       const to = typeof req.query.to === "string" ? req.query.to : undefined;
+       const userId = typeof req.query.userId === "string" ? parseInt(req.query.userId) : undefined;
++      const status = typeof req.query.status === "string" ? String(req.query.status).trim() : undefined;
+       const { limit, offset } = parseLimitOffset(req.query);
+ 
+       const effectiveUserId = manager ? userId : req.session.userId;
+-      const entries = await storage.getTimesheetEntriesFiltered({ userId: effectiveUserId, from, to, limit, offset });
++      const activeTeamId = await getOrInitActiveTeamId(req, req.session.userId);
++      if (activeTeamId) {
++        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "viewer" });
++        if (!ctx) return;
++      }
++      const entries = await storage.getTimesheetEntriesFiltered({ userId: effectiveUserId, teamId: activeTeamId ?? undefined, status, from, to, limit, offset });
+       res.json(entries);
+     } catch (error: any) {
+       res.status(500).json({ message: error.message });
+@@ -6306,7 +6509,30 @@ export async function registerRoutes(
+ 
+   app.post("/api/users/:userId/timesheet", async (req, res) => {
+     try {
+-      const validated = insertTimesheetEntrySchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
++      const user = await requireAuth(req, res);
++      if (!user) return;
++      const targetUserId = parseInt(req.params.userId);
++      if (!Number.isFinite(targetUserId)) return res.status(400).json({ message: "Invalid userId" });
++      if (!isManagerUser(user) && user.id !== targetUserId) return res.status(403).json({ message: "Forbidden" });
++
++      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
++      if (activeTeamId) {
++        const ctx = await requireTeamMembership(req, res, { teamId: activeTeamId, minRole: "viewer" });
++        if (!ctx) return;
++      }
++      const settings = activeTeamId ? await getTeamSettingsModel(activeTeamId) : null;
++      const roleKey = String((user as any)?.role || "").trim().toLowerCase();
++      const defaultRate = settings?.compensation?.roleRates?.[roleKey]?.hourlyRate;
++      const hourlyRate = typeof req.body?.hourlyRate === "undefined" || req.body?.hourlyRate === null || String(req.body?.hourlyRate).trim() === ""
++        ? (typeof defaultRate === "number" && Number.isFinite(defaultRate) ? defaultRate : undefined)
++        : req.body.hourlyRate;
++
++      const validated = insertTimesheetEntrySchema.parse({
++        ...req.body,
++        hourlyRate,
++        teamId: activeTeamId ?? undefined,
++        userId: targetUserId,
++      });
+       const entry = await storage.createTimesheetEntry(validated);
+       res.status(201).json(entry);
+     } catch (error: any) {
+@@ -6316,6 +6542,11 @@ export async function registerRoutes(
+ 
+   app.patch("/api/timesheet/:id", async (req, res) => {
+     try {
++      const user = await requireAuth(req, res);
++      if (!user) return;
++      const existing = await storage.getTimesheetEntryById(parseInt(req.params.id));
++      if (!existing) return res.status(404).json({ message: "Entry not found" });
++      if (!isManagerUser(user) && Number(existing.userId) !== Number(user.id)) return res.status(403).json({ message: "Forbidden" });
+       const partial = insertTimesheetEntrySchema.partial().parse(req.body);
+       const entry = await storage.updateTimesheetEntry(parseInt(req.params.id), partial);
+       res.json(entry);
+@@ -6324,8 +6555,72 @@ export async function registerRoutes(
+     }
+   });
+ 
++  app.post("/api/timesheet/:id/submit", async (req, res) => {
++    try {
++      const user = await requireAuth(req, res);
++      if (!user) return;
++      const id = parseInt(req.params.id);
++      const entry = await storage.getTimesheetEntryById(id);
++      if (!entry) return res.status(404).json({ message: "Entry not found" });
++      if (!isManagerUser(user) && Number(entry.userId) !== Number(user.id)) return res.status(403).json({ message: "Forbidden" });
++      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
++      if (typeof entry.teamId === "number" && activeTeamId && Number(entry.teamId) !== Number(activeTeamId)) {
++        return res.status(403).json({ message: "Forbidden" });
++      }
++      const nextTeamId = typeof entry.teamId === "number" ? entry.teamId : activeTeamId ?? null;
++      const updated = await storage.updateTimesheetEntry(id, { status: "submitted", submittedAt: new Date(), teamId: nextTeamId } as any);
++      res.json(updated);
++    } catch (error: any) {
++      res.status(400).json({ message: error.message });
++    }
++  });
++
++  app.post("/api/timesheet/:id/approve", async (req, res) => {
++    try {
++      const user = await requireAuth(req, res);
++      if (!user) return;
++      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
++      const id = parseInt(req.params.id);
++      const entry = await storage.getTimesheetEntryById(id);
++      if (!entry) return res.status(404).json({ message: "Entry not found" });
++      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
++      if (typeof entry.teamId === "number" && activeTeamId && Number(entry.teamId) !== Number(activeTeamId)) {
++        return res.status(403).json({ message: "Forbidden" });
++      }
++      const updated = await storage.updateTimesheetEntry(id, { status: "approved", approvedAt: new Date(), approvedBy: user.id } as any);
++      res.json(updated);
++    } catch (error: any) {
++      res.status(400).json({ message: error.message });
++    }
++  });
++
++  app.post("/api/timesheet/:id/reject", async (req, res) => {
++    try {
++      const user = await requireAuth(req, res);
++      if (!user) return;
++      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
++      const id = parseInt(req.params.id);
++      const entry = await storage.getTimesheetEntryById(id);
++      if (!entry) return res.status(404).json({ message: "Entry not found" });
++      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
++      if (typeof entry.teamId === "number" && activeTeamId && Number(entry.teamId) !== Number(activeTeamId)) {
++        return res.status(403).json({ message: "Forbidden" });
++      }
++      const reason = z.object({ reason: z.string().trim().min(1) }).parse(req.body || {}).reason;
++      const updated = await storage.updateTimesheetEntry(id, { status: "rejected", rejectedReason: reason, approvedBy: user.id, approvedAt: new Date() } as any);
++      res.json(updated);
++    } catch (error: any) {
++      res.status(400).json({ message: error.message });
++    }
++  });
++
+   app.delete("/api/timesheet/:id", async (req, res) => {
+     try {
++      const user = await requireAuth(req, res);
++      if (!user) return;
++      const existing = await storage.getTimesheetEntryById(parseInt(req.params.id));
++      if (!existing) return res.status(404).json({ message: "Entry not found" });
++      if (!isManagerUser(user) && Number(existing.userId) !== Number(user.id)) return res.status(403).json({ message: "Forbidden" });
+       await storage.deleteTimesheetEntry(parseInt(req.params.id));
+       res.json({ message: "Entry deleted" });
+     } catch (error: any) {

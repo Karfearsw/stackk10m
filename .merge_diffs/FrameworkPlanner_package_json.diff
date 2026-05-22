@@ -1,0 +1,24 @@
+diff --git a/FrameworkPlanner/package.json b/FrameworkPlanner/package.json
+index 70a5ec1..18c19a4 100644
+--- a/FrameworkPlanner/package.json
++++ b/FrameworkPlanner/package.json
+@@ -76,7 +76,7 @@
+     "connect-pg-simple": "^10.0.0",
+     "date-fns": "^3.6.0",
+     "dotenv": "^17.2.3",
+-    "drizzle-orm": "^0.39.1",
++    "drizzle-orm": "^0.45.2",
+     "drizzle-zod": "^0.7.0",
+     "embla-carousel-react": "^8.6.0",
+     "express": "^4.21.2",
+@@ -146,5 +146,10 @@
+   },
+   "optionalDependencies": {
+     "bufferutil": "^4.0.8"
++  },
++  "overrides": {
++    "@esbuild-kit/core-utils": {
++      "esbuild": "^0.25.0"
++    }
+   }
+ }
