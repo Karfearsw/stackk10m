@@ -2655,13 +2655,46 @@ export async function registerRoutes(
         const mao = money(uw.dealMath.mao);
         const offerMin = money(uw.dealMath.offerMin);
         const offerMax = money(uw.dealMath.offerMax);
+        const offerTarget = money((uw.dealMath as any)?.offerTarget);
         const strategy = uw.snapshot.strategy ? `Strategy: ${uw.snapshot.strategy}` : null;
 
         if (arv) uwLines.push(`ARV: ${arv}`);
         if (repairsFmt) uwLines.push(`Repairs: ${repairsFmt}`);
         if (mao) uwLines.push(`MAO: ${mao}`);
         if (offerMin || offerMax) uwLines.push(`Offer Range: ${offerMin || "?"} - ${offerMax || "?"}`);
+        if (offerTarget) uwLines.push(`Target Offer: ${offerTarget}`);
         if (strategy) uwLines.push(strategy);
+
+        const outputs = (uw as any)?.outputs || {};
+        const profit = money(outputs.profit);
+        const cashToClose = money(outputs.cashToClose);
+        const noiAnnual = money(outputs.noiAnnual);
+        const cashflowAnnual = money(outputs.cashflowAnnual);
+        const pct = (v: any): string | null => {
+          const n = safeNumber(v);
+          if (n === null) return null;
+          return `${n.toFixed(1)}%`;
+        };
+        const roiPct = pct(outputs.roiPct);
+        const capRatePct = pct(outputs.capRatePct);
+        const cocPct = pct(outputs.cashOnCashPct);
+        const dscr = (() => {
+          const n = safeNumber(outputs.dscr);
+          return n === null ? null : n.toFixed(2);
+        })();
+
+        if (uw.snapshot.strategy === "rental") {
+          if (noiAnnual) uwLines.push(`NOI (annual): ${noiAnnual}`);
+          if (capRatePct) uwLines.push(`Cap Rate: ${capRatePct}`);
+          if (cashflowAnnual) uwLines.push(`Cashflow (annual): ${cashflowAnnual}`);
+          if (cocPct) uwLines.push(`Cash-on-Cash: ${cocPct}`);
+          if (dscr) uwLines.push(`DSCR: ${dscr}`);
+          if (cashToClose) uwLines.push(`Cash to Close: ${cashToClose}`);
+        } else {
+          if (profit) uwLines.push(`Profit: ${profit}`);
+          if (roiPct) uwLines.push(`ROI: ${roiPct}`);
+          if (cashToClose) uwLines.push(`Cash to Close: ${cashToClose}`);
+        }
       } else {
         const arv = money(underwriting.arv);
         const repairs = money(underwriting.repairEstimate);
