@@ -3,7 +3,8 @@ import { asc, desc, sql } from "drizzle-orm";
 import { 
   leads, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
-  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches
+  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches,
+  companies, companyPeople, companyLinks, documents, documentLinks, vaultDocumentVersions, automations, automationTriggers, automationConditions, automationActions, automationRuns, auditEvents
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -52,7 +53,19 @@ import {
   type CampaignDelivery, type InsertCampaignDelivery,
   type RvmAudioAsset, type InsertRvmAudioAsset,
   type RvmCampaign, type InsertRvmCampaign,
-  type RvmDrop, type InsertRvmDrop
+  type RvmDrop, type InsertRvmDrop,
+  type Company, type InsertCompany,
+  type CompanyPerson, type InsertCompanyPerson,
+  type CompanyLink, type InsertCompanyLink,
+  type Document, type InsertDocument,
+  type DocumentLink, type InsertDocumentLink,
+  type VaultDocumentVersion, type InsertVaultDocumentVersion,
+  type Automation, type InsertAutomation,
+  type AutomationTrigger, type InsertAutomationTrigger,
+  type AutomationCondition, type InsertAutomationCondition,
+  type AutomationAction, type InsertAutomationAction,
+  type AutomationRun, type InsertAutomationRun,
+  type AuditEvent, type InsertAuditEvent
 } from "./shared-schema.js";
 import { eq, and, gte, lte, isNull, inArray, or, ne, isNotNull } from "drizzle-orm";
 
@@ -118,6 +131,64 @@ export interface IStorage {
   createContact(contact: InsertContact): Promise<Contact>;
   updateContact(id: number, contact: Partial<InsertContact>): Promise<Contact>;
   deleteContact(id: number): Promise<void>;
+
+  // Companies
+  listCompanies(input: { teamId: number; q?: string; companyType?: string; limit?: number; offset?: number }): Promise<{ items: Company[]; total: number }>;
+  getCompanyById(id: number): Promise<Company | undefined>;
+  createCompany(company: InsertCompany): Promise<Company>;
+  updateCompany(id: number, patch: Partial<InsertCompany>): Promise<Company>;
+  deleteCompany(id: number): Promise<void>;
+  getCompanyPeople(companyId: number): Promise<Array<{ companyPerson: CompanyPerson; contact: Contact }>>;
+  createCompanyPerson(input: InsertCompanyPerson): Promise<CompanyPerson>;
+  deleteCompanyPerson(id: number): Promise<void>;
+  listCompanyLinksForEntity(input: { teamId: number; entityType: string; entityId: number }): Promise<Array<{ link: CompanyLink; company: Company }>>;
+  createCompanyLink(input: InsertCompanyLink): Promise<CompanyLink>;
+  deleteCompanyLinkForTeam(teamId: number, id: number): Promise<void>;
+
+  // Document Vault
+  listDocuments(input: {
+    teamId: number;
+    q?: string;
+    tag?: string;
+    entityType?: string;
+    entityId?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: Document[]; total: number }>;
+  getDocumentById(id: number): Promise<Document | undefined>;
+  createDocument(input: InsertDocument): Promise<Document>;
+  updateDocument(id: number, patch: Partial<InsertDocument>): Promise<Document>;
+  deleteDocument(id: number): Promise<void>;
+  getDocumentLinksByDocumentId(documentId: number): Promise<DocumentLink[]>;
+  getDocumentLinkById(id: number): Promise<DocumentLink | undefined>;
+  createDocumentLink(input: InsertDocumentLink): Promise<DocumentLink>;
+  deleteDocumentLink(id: number): Promise<void>;
+  deleteDocumentLinkForTeam(teamId: number, id: number): Promise<void>;
+  getVaultDocumentVersions(documentId: number): Promise<VaultDocumentVersion[]>;
+  createVaultDocumentVersion(input: InsertVaultDocumentVersion): Promise<VaultDocumentVersion>;
+
+  // Automations
+  listAutomations(teamId: number, limit?: number, offset?: number): Promise<Automation[]>;
+  getAutomationById(id: number): Promise<Automation | undefined>;
+  createAutomation(input: InsertAutomation): Promise<Automation>;
+  updateAutomation(id: number, patch: Partial<InsertAutomation>): Promise<Automation>;
+  deleteAutomation(id: number): Promise<void>;
+  getAutomationTriggers(automationId: number): Promise<AutomationTrigger[]>;
+  replaceAutomationTriggers(teamId: number, automationId: number, triggers: Array<{ eventType: string; configJson: string }>): Promise<AutomationTrigger[]>;
+  getAutomationCondition(automationId: number): Promise<AutomationCondition | undefined>;
+  upsertAutomationCondition(teamId: number, automationId: number, configJson: string): Promise<AutomationCondition>;
+  getAutomationActions(automationId: number): Promise<AutomationAction[]>;
+  replaceAutomationActions(
+    teamId: number,
+    automationId: number,
+    actions: Array<{ actionType: string; configJson: string; sortOrder: number }>,
+  ): Promise<AutomationAction[]>;
+  createAutomationRun(input: InsertAutomationRun): Promise<AutomationRun>;
+  updateAutomationRun(id: number, patch: Partial<InsertAutomationRun>): Promise<AutomationRun>;
+  listAutomationRuns(teamId: number, automationId: number, limit?: number, offset?: number): Promise<AutomationRun[]>;
+  getEnabledAutomationsForEvent(teamId: number, eventType: string): Promise<
+    Array<{ automation: Automation; triggers: AutomationTrigger[]; condition: AutomationCondition | null; actions: AutomationAction[] }>
+  >;
 
   // Contracts
   getContracts(limit?: number, offset?: number): Promise<Contract[]>;
@@ -672,6 +743,386 @@ export class DatabaseStorage implements IStorage {
 
   async deleteContact(id: number): Promise<void> {
     await db.delete(contacts).where(eq(contacts.id, id));
+  }
+
+  // Companies
+  async listCompanies(input: { teamId: number; q?: string; companyType?: string; limit?: number; offset?: number }): Promise<{ items: Company[]; total: number }> {
+    const limit = typeof input.limit === "number" ? input.limit : 50;
+    const offset = typeof input.offset === "number" ? input.offset : 0;
+
+    const whereParts: any[] = [eq(companies.teamId, input.teamId)];
+
+    const companyType = String(input.companyType || "").trim();
+    if (companyType && companyType !== "all") whereParts.push(eq(companies.companyType, companyType));
+
+    const qRaw = String(input.q || "").trim().toLowerCase();
+    if (qRaw) {
+      const needle = `%${qRaw}%`;
+      whereParts.push(or(sql`lower(${companies.name}) LIKE ${needle}`, sql`lower(${companies.email}) LIKE ${needle}`));
+    }
+
+    const whereClause = and(...whereParts);
+
+    const items = (await db
+      .select()
+      .from(companies)
+      .where(whereClause)
+      .orderBy(asc(companies.name), asc(companies.id))
+      .limit(limit)
+      .offset(offset)) as unknown as Company[];
+
+    const countRows = await db.select({ count: sql<number>`count(*)::int` }).from(companies).where(whereClause);
+    const total = Number((countRows as any)?.[0]?.count || 0);
+
+    return { items, total };
+  }
+
+  async getCompanyById(id: number): Promise<Company | undefined> {
+    const result = await db.select().from(companies).where(eq(companies.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createCompany(company: InsertCompany): Promise<Company> {
+    const result = await db.insert(companies).values(company as any).returning();
+    return result[0];
+  }
+
+  async updateCompany(id: number, patch: Partial<InsertCompany>): Promise<Company> {
+    const result = await db.update(companies).set(patch as any).where(eq(companies.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteCompany(id: number): Promise<void> {
+    await db.delete(companies).where(eq(companies.id, id));
+  }
+
+  async getCompanyPeople(companyId: number): Promise<Array<{ companyPerson: CompanyPerson; contact: Contact }>> {
+    const rows = await db
+      .select({ companyPerson: companyPeople, contact: contacts })
+      .from(companyPeople)
+      .innerJoin(contacts, eq(companyPeople.contactId, contacts.id))
+      .where(eq(companyPeople.companyId, companyId))
+      .orderBy(desc(companyPeople.isPrimary), asc(companyPeople.id));
+    return rows as any;
+  }
+
+  async createCompanyPerson(input: InsertCompanyPerson): Promise<CompanyPerson> {
+    const result = await db.insert(companyPeople).values(input as any).returning();
+    return result[0];
+  }
+
+  async deleteCompanyPerson(id: number): Promise<void> {
+    await db.delete(companyPeople).where(eq(companyPeople.id, id));
+  }
+
+  async listCompanyLinksForEntity(input: { teamId: number; entityType: string; entityId: number }): Promise<Array<{ link: CompanyLink; company: Company }>> {
+    const rows = await db
+      .select({ link: companyLinks, company: companies })
+      .from(companyLinks)
+      .innerJoin(companies, eq(companyLinks.companyId, companies.id))
+      .where(and(eq(companyLinks.teamId, input.teamId), eq(companyLinks.entityType, input.entityType), eq(companyLinks.entityId, input.entityId)))
+      .orderBy(asc(companies.name), asc(companyLinks.id));
+    return rows as any;
+  }
+
+  async createCompanyLink(input: InsertCompanyLink): Promise<CompanyLink> {
+    const rows = await db.insert(companyLinks).values(input as any).returning();
+    return rows[0];
+  }
+
+  async deleteCompanyLinkForTeam(teamId: number, id: number): Promise<void> {
+    await db.delete(companyLinks).where(and(eq(companyLinks.id, id), eq(companyLinks.teamId, teamId)));
+  }
+
+  // Document Vault
+  async listDocuments(input: {
+    teamId: number;
+    q?: string;
+    tag?: string;
+    entityType?: string;
+    entityId?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: Document[]; total: number }> {
+    const limit = typeof input.limit === "number" ? input.limit : 50;
+    const offset = typeof input.offset === "number" ? input.offset : 0;
+
+    const whereParts: any[] = [eq(documents.teamId, input.teamId)];
+
+    const qRaw = String(input.q || "").trim().toLowerCase();
+    if (qRaw) {
+      const needle = `%${qRaw}%`;
+      whereParts.push(or(sql`lower(${documents.title}) LIKE ${needle}`, sql`lower(${documents.kind}) LIKE ${needle}`));
+    }
+
+    const tag = String(input.tag || "").trim();
+    if (tag) {
+      whereParts.push(sql`coalesce(${documents.tags}, ARRAY[]::text[]) @> ARRAY[${tag}]::text[]`);
+    }
+
+    const entityType = String(input.entityType || "").trim();
+    const entityId = typeof input.entityId === "number" ? input.entityId : undefined;
+
+    const whereDocs = whereParts.length ? and(...whereParts) : undefined;
+
+    if (entityType && typeof entityId === "number" && Number.isFinite(entityId)) {
+      const whereLinks = and(eq(documentLinks.teamId, input.teamId), eq(documentLinks.entityType, entityType), eq(documentLinks.entityId, entityId));
+      const joinWhere = whereDocs ? and(whereDocs, whereLinks) : whereLinks;
+
+      const idRows = await db
+        .select({ id: documents.id })
+        .from(documents)
+        .innerJoin(documentLinks, eq(documentLinks.documentId, documents.id))
+        .where(joinWhere)
+        .groupBy(documents.id)
+        .orderBy(desc(documents.createdAt), desc(documents.id))
+        .limit(limit)
+        .offset(offset);
+
+      const ids = (idRows as any[]).map((r) => Number(r.id)).filter((n) => Number.isFinite(n) && n > 0);
+      const items =
+        ids.length > 0
+          ? ((await db
+              .select()
+              .from(documents)
+              .where(inArray(documents.id, ids))
+              .orderBy(desc(documents.createdAt), desc(documents.id))) as unknown as Document[])
+          : [];
+
+      const countRows = await db
+        .select({ count: sql<number>`count(distinct ${documents.id})::int` })
+        .from(documents)
+        .innerJoin(documentLinks, eq(documentLinks.documentId, documents.id))
+        .where(joinWhere);
+      const total = Number((countRows as any)?.[0]?.count || 0);
+
+      return { items, total };
+    }
+
+    let q: any = db.select().from(documents);
+    if (whereDocs) q = q.where(whereDocs);
+    q = q.orderBy(desc(documents.createdAt), desc(documents.id)).limit(limit).offset(offset);
+    const items = (await q) as unknown as Document[];
+
+    let cq: any = db.select({ count: sql<number>`count(*)::int` }).from(documents);
+    if (whereDocs) cq = cq.where(whereDocs);
+    const countRows = await cq;
+    const total = Number((countRows as any)?.[0]?.count || 0);
+
+    return { items, total };
+  }
+
+  async getDocumentById(id: number): Promise<Document | undefined> {
+    const result = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createDocument(input: InsertDocument): Promise<Document> {
+    const result = await db.insert(documents).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateDocument(id: number, patch: Partial<InsertDocument>): Promise<Document> {
+    const result = await db.update(documents).set(patch as any).where(eq(documents.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteDocument(id: number): Promise<void> {
+    await db.delete(documents).where(eq(documents.id, id));
+  }
+
+  async getDocumentLinksByDocumentId(documentId: number): Promise<DocumentLink[]> {
+    const rows = await db
+      .select()
+      .from(documentLinks)
+      .where(eq(documentLinks.documentId, documentId))
+      .orderBy(desc(documentLinks.createdAt), desc(documentLinks.id));
+    return rows as any;
+  }
+
+  async getDocumentLinkById(id: number): Promise<DocumentLink | undefined> {
+    const rows = await db.select().from(documentLinks).where(eq(documentLinks.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async createDocumentLink(input: InsertDocumentLink): Promise<DocumentLink> {
+    const result = await db.insert(documentLinks).values(input as any).returning();
+    return result[0];
+  }
+
+  async deleteDocumentLink(id: number): Promise<void> {
+    await db.delete(documentLinks).where(eq(documentLinks.id, id));
+  }
+
+  async deleteDocumentLinkForTeam(teamId: number, id: number): Promise<void> {
+    await db.delete(documentLinks).where(and(eq(documentLinks.id, id), eq(documentLinks.teamId, teamId)));
+  }
+
+  async getVaultDocumentVersions(documentId: number): Promise<VaultDocumentVersion[]> {
+    const rows = await db
+      .select()
+      .from(vaultDocumentVersions)
+      .where(eq(vaultDocumentVersions.documentId, documentId))
+      .orderBy(desc(vaultDocumentVersions.version), desc(vaultDocumentVersions.id));
+    return rows as any;
+  }
+
+  async createVaultDocumentVersion(input: InsertVaultDocumentVersion): Promise<VaultDocumentVersion> {
+    const result = await db.insert(vaultDocumentVersions).values(input as any).returning();
+    return result[0];
+  }
+
+  // Automations
+  async listAutomations(teamId: number, limit?: number, offset: number = 0): Promise<Automation[]> {
+    let q: any = db.select().from(automations).where(eq(automations.teamId, teamId)).orderBy(desc(automations.updatedAt), desc(automations.id));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q as unknown as Promise<Automation[]>;
+  }
+
+  async getAutomationById(id: number): Promise<Automation | undefined> {
+    const rows = await db.select().from(automations).where(eq(automations.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async createAutomation(input: InsertAutomation): Promise<Automation> {
+    const rows = await db.insert(automations).values(input as any).returning();
+    return rows[0];
+  }
+
+  async updateAutomation(id: number, patch: Partial<InsertAutomation>): Promise<Automation> {
+    const rows = await db.update(automations).set(patch as any).where(eq(automations.id, id)).returning();
+    return rows[0];
+  }
+
+  async deleteAutomation(id: number): Promise<void> {
+    await db.delete(automations).where(eq(automations.id, id));
+  }
+
+  async getAutomationTriggers(automationId: number): Promise<AutomationTrigger[]> {
+    const rows = await db
+      .select()
+      .from(automationTriggers)
+      .where(eq(automationTriggers.automationId, automationId))
+      .orderBy(asc(automationTriggers.id));
+    return rows as any;
+  }
+
+  async replaceAutomationTriggers(teamId: number, automationId: number, triggers: Array<{ eventType: string; configJson: string }>): Promise<AutomationTrigger[]> {
+    await db.delete(automationTriggers).where(eq(automationTriggers.automationId, automationId));
+    if (!triggers.length) return [];
+    const rows = await db
+      .insert(automationTriggers)
+      .values(
+        triggers.map((t) => ({
+          teamId,
+          automationId,
+          eventType: String(t.eventType || "").trim(),
+          configJson: String(t.configJson || "{}"),
+        })) as any,
+      )
+      .returning();
+    return rows as any;
+  }
+
+  async getAutomationCondition(automationId: number): Promise<AutomationCondition | undefined> {
+    const rows = await db.select().from(automationConditions).where(eq(automationConditions.automationId, automationId)).limit(1);
+    return rows[0];
+  }
+
+  async upsertAutomationCondition(teamId: number, automationId: number, configJson: string): Promise<AutomationCondition> {
+    const existing = await this.getAutomationCondition(automationId);
+    if (existing) {
+      const rows = await db
+        .update(automationConditions)
+        .set({ configJson: String(configJson || "{}") } as any)
+        .where(eq(automationConditions.id, existing.id))
+        .returning();
+      return rows[0];
+    }
+    const rows = await db
+      .insert(automationConditions)
+      .values({ teamId, automationId, configJson: String(configJson || "{}") } as any)
+      .returning();
+    return rows[0];
+  }
+
+  async getAutomationActions(automationId: number): Promise<AutomationAction[]> {
+    const rows = await db
+      .select()
+      .from(automationActions)
+      .where(eq(automationActions.automationId, automationId))
+      .orderBy(asc(automationActions.sortOrder), asc(automationActions.id));
+    return rows as any;
+  }
+
+  async replaceAutomationActions(
+    teamId: number,
+    automationId: number,
+    actions: Array<{ actionType: string; configJson: string; sortOrder: number }>,
+  ): Promise<AutomationAction[]> {
+    await db.delete(automationActions).where(eq(automationActions.automationId, automationId));
+    if (!actions.length) return [];
+    const rows = await db
+      .insert(automationActions)
+      .values(
+        actions.map((a) => ({
+          teamId,
+          automationId,
+          actionType: String(a.actionType || "").trim(),
+          configJson: String(a.configJson || "{}"),
+          sortOrder: typeof a.sortOrder === "number" ? a.sortOrder : 0,
+        })) as any,
+      )
+      .returning();
+    return rows as any;
+  }
+
+  async createAutomationRun(input: InsertAutomationRun): Promise<AutomationRun> {
+    const rows = await db.insert(automationRuns).values(input as any).returning();
+    return rows[0];
+  }
+
+  async updateAutomationRun(id: number, patch: Partial<InsertAutomationRun>): Promise<AutomationRun> {
+    const rows = await db.update(automationRuns).set(patch as any).where(eq(automationRuns.id, id)).returning();
+    return rows[0];
+  }
+
+  async listAutomationRuns(teamId: number, automationId: number, limit?: number, offset: number = 0): Promise<AutomationRun[]> {
+    let q: any = db
+      .select()
+      .from(automationRuns)
+      .where(and(eq(automationRuns.teamId, teamId), eq(automationRuns.automationId, automationId)))
+      .orderBy(desc(automationRuns.createdAt), desc(automationRuns.id));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q as unknown as Promise<AutomationRun[]>;
+  }
+
+  async getEnabledAutomationsForEvent(teamId: number, eventType: string): Promise<
+    Array<{ automation: Automation; triggers: AutomationTrigger[]; condition: AutomationCondition | null; actions: AutomationAction[] }>
+  > {
+    const rows = await db
+      .select({ automation: automations, trigger: automationTriggers })
+      .from(automations)
+      .innerJoin(automationTriggers, eq(automationTriggers.automationId, automations.id))
+      .where(and(eq(automations.teamId, teamId), eq(automations.enabled, true as any), eq(automationTriggers.eventType, eventType)));
+
+    const byAutomationId = new Map<number, { automation: Automation; triggers: AutomationTrigger[] }>();
+    for (const r of rows as any[]) {
+      const a = r.automation as Automation;
+      const t = r.trigger as AutomationTrigger;
+      const id = Number((a as any).id);
+      const existing = byAutomationId.get(id);
+      if (existing) existing.triggers.push(t);
+      else byAutomationId.set(id, { automation: a, triggers: [t] });
+    }
+
+    const out: Array<{ automation: Automation; triggers: AutomationTrigger[]; condition: AutomationCondition | null; actions: AutomationAction[] }> = [];
+    for (const [id, bundle] of byAutomationId.entries()) {
+      const condition = (await this.getAutomationCondition(id)) || null;
+      const actions = await this.getAutomationActions(id);
+      out.push({ automation: bundle.automation, triggers: bundle.triggers, condition, actions });
+    }
+    return out;
   }
 
   // Contracts

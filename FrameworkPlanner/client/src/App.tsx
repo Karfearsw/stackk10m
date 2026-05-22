@@ -36,6 +36,10 @@ const FieldModePage = React.lazy(() => import("@/pages/field"));
 const PhoneWorkspace = React.lazy(() => import("@/pages/phone"));
 const DialerWorkspace = React.lazy(() => import("@/pages/dialer-workspace"));
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
+const CompaniesPage = React.lazy(() => import("@/pages/companies"));
+const DocumentsPage = React.lazy(() => import("@/pages/documents"));
+const AutomationsPage = React.lazy(() => import("@/pages/automations"));
+const AuditPage = React.lazy(() => import("@/pages/audit"));
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -161,6 +165,18 @@ function Router() {
       </Route>
       <Route path="/contacts">
         {() => <ProtectedRoute component={Contacts} />}
+      </Route>
+      <Route path="/companies">
+        {() => <ProtectedRoute component={CompaniesPage} />}
+      </Route>
+      <Route path="/documents">
+        {() => <ProtectedRoute component={DocumentsPage} />}
+      </Route>
+      <Route path="/automations">
+        {() => <ProtectedRoute component={AutomationsPage} />}
+      </Route>
+      <Route path="/audit">
+        {() => <ProtectedRoute component={AuditPage} />}
       </Route>
       <Route path="/history">
         {() => <Redirect to="/phone?tab=history" />}

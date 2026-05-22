@@ -6,7 +6,7 @@ import multer from "multer";
 import { createRequire } from "node:module";
 import { storage } from "./storage.js";
 import { db } from "./db.js";
-import { desc, eq, sql, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
 import { publishTelephonyEvent } from "./telephony/pubsub.js";
 import { getTelephonyMediaSignedUrl, uploadTelephonyMediaFromUrl } from "./telephony/objectStorage.js";
@@ -55,8 +55,20 @@ import {
   insertPlaygroundPropertySessionSchema,
   insertUnderwritingTemplateSchema,
   insertTaskSchema,
+  insertCompanySchema,
+  insertCompanyPersonSchema,
+  insertCompanyLinkSchema,
+  insertDocumentSchema,
+  insertDocumentLinkSchema,
+  insertVaultDocumentVersionSchema,
+  insertAutomationSchema,
+  insertAutomationTriggerSchema,
+  insertAutomationConditionSchema,
+  insertAutomationActionSchema,
+  insertAutomationRunSchema,
   crmExportFiles,
   crmImportJobs,
+  auditEvents,
   users,
 } from "./shared-schema.js";
 import { z } from "zod";
@@ -67,6 +79,8 @@ import { sendResendEmail } from "./services/messaging/resend.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
 import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
+import { writeAuditEvent } from "./services/audit/writeAuditEvent.js";
+import { dispatchAutomationEvent } from "./services/automations/engine.js";
 
 const require = createRequire(import.meta.url);
 const packageJson: any = (() => {
@@ -79,6 +93,7 @@ const packageJson: any = (() => {
 import { mergeTemplate } from "./services/esign/merge.js";
 import { generateSignedPdfBase64 } from "./services/esign/pdf.js";
 import { getPropertyPhotoSignedUrl, uploadPropertyPhoto, isPropertyPhotoStorageConfigured } from "./media/propertyPhotos.js";
+import { getDocumentSignedUrl, isDocumentVaultConfigured, makeDocumentStorageKey, sha256Hex, uploadDocumentObject } from "./media/documentVault.js";
 
 function authJwtSecret() {
   const secret = process.env.AUTH_JWT_SECRET || process.env.SESSION_SECRET;
@@ -194,6 +209,28 @@ async function getOrInitActiveTeamId(req: any, userId: number): Promise<number |
   } catch {
     return null;
   }
+}
+
+async function requireActiveTeam(req: any, res: any, input?: { minRole?: "viewer" | "member" | "admin" | "owner" }) {
+  const user = await requireAuth(req, res);
+  if (!user) return null;
+  const teamId = await getOrInitActiveTeamId(req, user.id);
+  if (!teamId) {
+    res.status(400).json({ message: "No active team selected" });
+    return null;
+  }
+  if (user.isSuperAdmin) return { user, membership: { role: "owner" } as any, teamId };
+  const membership = await storage.getTeamMemberByTeamAndUser(teamId, user.id);
+  if (!membership || String(membership.status || "").toLowerCase() !== "active") {
+    res.status(403).json({ message: "Forbidden" });
+    return null;
+  }
+  const min = input?.minRole ? teamRoleRank(input.minRole) : 1;
+  if (teamRoleRank(membership.role) < min) {
+    res.status(403).json({ message: "Forbidden" });
+    return null;
+  }
+  return { user, membership, teamId };
 }
 
 function makeInviteCode() {
@@ -750,13 +787,17 @@ export async function registerRoutes(
   app.get("/api/search", async (req, res) => {
     const startedAt = Date.now();
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
       const qRaw = (req.query.q as string) || "";
       const q = qRaw.trim();
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
       const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
-      if (!q) return res.json({ q: qRaw, results: [], counts: { leads: 0, properties: 0, contacts: 0, total: 0 } });
+      if (!q) return res.json({ q: qRaw, results: [], counts: { leads: 0, properties: 0, contacts: 0, companies: 0, documents: 0, total: 0 } });
 
       const term = `%${q}%`;
+      const canViewPrivateDocs = isManagerUser(user);
 
       const countsPromises = [
         db.execute(sql`SELECT COUNT(*)::int AS c FROM leads l WHERE 
@@ -770,12 +811,24 @@ export async function registerRoutes(
         db.execute(sql`SELECT COUNT(*)::int AS c FROM contacts c WHERE 
           lower(c.name) LIKE lower(${term}) OR lower(c.email) LIKE lower(${term}) OR lower(c.phone) LIKE lower(${term})
         `),
+        activeTeamId
+          ? db.execute(sql`SELECT COUNT(*)::int AS c FROM companies co WHERE co.team_id = ${activeTeamId} AND (
+              lower(co.name) LIKE lower(${term}) OR lower(co.email) LIKE lower(${term}) OR lower(co.phone) LIKE lower(${term})
+            )`)
+          : Promise.resolve({ rows: [{ c: 0 }] } as any),
+        activeTeamId
+          ? db.execute(sql`SELECT COUNT(*)::int AS c FROM documents d WHERE d.team_id = ${activeTeamId} AND (
+              lower(d.title) LIKE lower(${term}) OR lower(COALESCE(d.kind, '')) LIKE lower(${term})
+            ) AND (${canViewPrivateDocs} OR d.is_private = false OR d.created_by = ${user.id})`)
+          : Promise.resolve({ rows: [{ c: 0 }] } as any),
       ];
 
-      const [leadCountRow, propertyCountRow, contactCountRow] = await Promise.all(countsPromises);
+      const [leadCountRow, propertyCountRow, contactCountRow, companyCountRow, documentCountRow] = await Promise.all(countsPromises);
       const leadCount = (leadCountRow as any).rows?.[0]?.c ?? 0;
       const propertyCount = (propertyCountRow as any).rows?.[0]?.c ?? 0;
       const contactCount = (contactCountRow as any).rows?.[0]?.c ?? 0;
+      const companyCount = (companyCountRow as any).rows?.[0]?.c ?? 0;
+      const documentCount = (documentCountRow as any).rows?.[0]?.c ?? 0;
 
       const resultsQuery = sql`(
         SELECT 'lead' AS type, l.id AS id, l.address AS title, (l.city || ', ' || l.state) AS subtitle,
@@ -813,17 +866,45 @@ export async function registerRoutes(
         FROM contacts c
         WHERE lower(c.name) LIKE lower(${term}) OR lower(c.email) LIKE lower(${term}) OR lower(c.phone) LIKE lower(${term})
       )
+      UNION ALL
+      (
+        SELECT 'company' AS type, co.id AS id, co.name AS title, COALESCE(co.company_type, '') AS subtitle,
+               ('/companies?companyId=' || co.id)::text AS path,
+               CASE 
+                 WHEN lower(co.name) LIKE lower(${term}) THEN 1
+                 ELSE 3
+               END AS rank
+        FROM companies co
+        WHERE ${activeTeamId ? sql`co.team_id = ${activeTeamId}` : sql`1=0`} AND (
+          lower(co.name) LIKE lower(${term}) OR lower(co.email) LIKE lower(${term}) OR lower(co.phone) LIKE lower(${term})
+        )
+      )
+      UNION ALL
+      (
+        SELECT 'document' AS type, d.id AS id, d.title AS title, COALESCE(d.kind, '') AS subtitle,
+               ('/documents?documentId=' || d.id)::text AS path,
+               CASE 
+                 WHEN lower(d.title) LIKE lower(${term}) THEN 1
+                 ELSE 3
+               END AS rank
+        FROM documents d
+        WHERE ${activeTeamId ? sql`d.team_id = ${activeTeamId}` : sql`1=0`} AND (
+          lower(d.title) LIKE lower(${term}) OR lower(COALESCE(d.kind, '')) LIKE lower(${term})
+        ) AND (${canViewPrivateDocs} OR d.is_private = false OR d.created_by = ${user.id})
+      )
       ORDER BY rank ASC, title ASC
       LIMIT ${limit} OFFSET ${offset}`;
 
       const resultsRows: any = await db.execute(resultsQuery as any);
       const results = (resultsRows as any).rows ?? [];
 
-      const total = leadCount + propertyCount + contactCount;
+      const total = leadCount + propertyCount + contactCount + companyCount + documentCount;
 
       const elapsedMs = Date.now() - startedAt;
-      console.log(`[search] q="${qRaw}" results=${results.length}/${total} leads=${leadCount} properties=${propertyCount} contacts=${contactCount} in ${elapsedMs}ms`);
-      res.json({ q: qRaw, results, counts: { leads: leadCount, properties: propertyCount, contacts: contactCount, total } });
+      console.log(
+        `[search] q="${qRaw}" results=${results.length}/${total} leads=${leadCount} properties=${propertyCount} contacts=${contactCount} companies=${companyCount} documents=${documentCount} in ${elapsedMs}ms`,
+      );
+      res.json({ q: qRaw, results, counts: { leads: leadCount, properties: propertyCount, contacts: contactCount, companies: companyCount, documents: documentCount, total } });
     } catch (error: any) {
       console.error('[search] error', error);
       res.status(500).json({ message: error.message });
@@ -1652,6 +1733,8 @@ export async function registerRoutes(
   // LEADS ENDPOINTS
   app.get("/api/leads", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const { limit, offset } = parseLimitOffset(req.query);
       const q = typeof req.query?.q === "string" ? req.query.q : "";
       const status = typeof req.query?.status === "string" ? req.query.status : "";
@@ -2498,6 +2581,8 @@ export async function registerRoutes(
 
   app.post("/api/leads", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const validated = insertLeadSchema.parse(req.body) as InsertLead;
       const source = String((validated as any).source || "").trim();
       if (!source || source === "__custom__") {
@@ -2506,8 +2591,6 @@ export async function registerRoutes(
 
       const assignedTo = (validated as any).assignedTo;
       if (typeof assignedTo === "number") {
-        const user = await requireAuth(req, res);
-        if (!user) return;
         const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
         if (!ok) return;
       }
@@ -2545,6 +2628,19 @@ export async function registerRoutes(
           createdBy: Number(req.session.userId || 0),
         });
       } catch {}
+
+      try {
+        const teamId = await getOrInitActiveTeamId(req, user.id);
+        if (teamId) {
+          await dispatchAutomationEvent({
+            eventType: "lead.created",
+            teamId,
+            actorUserId: user.id,
+            entity: { type: "lead", id: lead.id },
+            payload: { lead },
+          });
+        }
+      } catch {}
       
       res.status(201).json(lead);
     } catch (error: any) {
@@ -2554,13 +2650,13 @@ export async function registerRoutes(
 
   app.patch("/api/leads/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const partial = insertLeadSchema.partial().parse(req.body) as Partial<InsertLead>;
       const id = parseInt(req.params.id);
 
       const assignedTo = (partial as any).assignedTo;
       if (typeof assignedTo === "number") {
-        const user = await requireAuth(req, res);
-        if (!user) return;
         const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
         if (!ok) return;
       }
@@ -2609,6 +2705,38 @@ export async function registerRoutes(
           actorUserId: Number(req.session.userId || 0),
         });
       } catch {}
+
+      try {
+        const beforeStatus = String((before as any)?.status || "");
+        const afterStatus = String((lead as any)?.status || "");
+        if (beforeStatus !== afterStatus) {
+          const teamId = await getOrInitActiveTeamId(req, user.id);
+          if (teamId) {
+            await dispatchAutomationEvent({
+              eventType: "lead.status_changed",
+              teamId,
+              actorUserId: user.id,
+              entity: { type: "lead", id: lead.id },
+              payload: { leadId: lead.id, beforeStatus: beforeStatus || null, afterStatus: afterStatus || null, lead },
+            });
+            try {
+              await writeAuditEvent({
+                teamId,
+                actorUserId: user.id,
+                entityType: "lead",
+                entityId: lead.id,
+                action: "lead_status_changed",
+                before: { status: beforeStatus || null },
+                after: { status: afterStatus || null },
+                kind: "update",
+                ip: req.ip,
+                userAgent: String(req.headers["user-agent"] || ""),
+                requestId: (res.locals as any)?.requestId || null,
+              });
+            } catch {}
+          }
+        }
+      } catch {}
       
       res.json(lead);
     } catch (error: any) {
@@ -2618,6 +2746,8 @@ export async function registerRoutes(
 
   app.delete("/api/leads/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const lead = await storage.getLeadById(parseInt(req.params.id));
       await storage.deleteLead(parseInt(req.params.id));
       
@@ -2639,6 +2769,8 @@ export async function registerRoutes(
   // Convert lead to property (lead must be under_contract status)
   app.post("/api/leads/:id/convert-to-property", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const leadId = parseInt(req.params.id);
       const lead = await storage.getLeadById(leadId);
       
@@ -2691,6 +2823,34 @@ export async function registerRoutes(
           }),
         });
       }
+
+      try {
+        const teamId = await getOrInitActiveTeamId(req, user.id);
+        if (teamId) {
+          await dispatchAutomationEvent({
+            eventType: "opportunity.created",
+            teamId,
+            actorUserId: user.id,
+            entity: { type: "opportunity", id: property.id },
+            payload: { opportunity: property, source: "lead.convert_to_property", leadId: lead.id },
+          });
+          try {
+            await writeAuditEvent({
+              teamId,
+              actorUserId: user.id,
+              entityType: "opportunity",
+              entityId: property.id,
+              action: "opportunity_created",
+              before: null,
+              after: property,
+              kind: "create",
+              ip: req.ip,
+              userAgent: String(req.headers["user-agent"] || ""),
+              requestId: (res.locals as any)?.requestId || null,
+            });
+          } catch {}
+        }
+      } catch {}
       
       res.status(201).json({ 
         message: "Lead successfully converted to property",
@@ -2708,6 +2868,8 @@ export async function registerRoutes(
   // OPPORTUNITIES ENDPOINTS (New Terminology)
   app.get("/api/opportunities", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const { limit, offset } = parseLimitOffset(req.query);
       const assignedToRaw = typeof req.query?.assignedTo === "string" ? req.query.assignedTo : "";
       const assignedTo = assignedToRaw ? parseInt(assignedToRaw, 10) : undefined;
@@ -2729,6 +2891,8 @@ export async function registerRoutes(
 
   app.get("/api/opportunities/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const id = parseInt(req.params.id);
       const property = await storage.getPropertyById(id);
       if (!property) return res.status(404).json({ message: "Opportunity not found" });
@@ -2741,6 +2905,93 @@ export async function registerRoutes(
       }
 
       res.json({ property: { ...(property as any), images: resolvePropertyImages((property as any).images) }, lead });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/opportunities/:id/companies", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
+      if (!ctx) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const links = await storage.listCompanyLinksForEntity({ teamId: ctx.teamId, entityType: "opportunity", entityId: opportunityId });
+      res.json(links);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/opportunities/:id/companies", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
+      if (!ctx) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const schema = insertCompanyLinkSchema.omit({ teamId: true, entityType: true, entityId: true } as any);
+      const validated: any = schema.parse(req.body || {});
+
+      const companyId = Number(validated.companyId);
+      const company = await storage.getCompanyById(companyId);
+      if (!company || company.teamId !== ctx.teamId) return res.status(404).json({ message: "Company not found" });
+
+      const link = await storage.createCompanyLink({
+        teamId: ctx.teamId,
+        companyId,
+        entityType: "opportunity",
+        entityId: opportunityId,
+        role: typeof validated.role === "string" ? validated.role : null,
+      } as any);
+
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "opportunity",
+          entityId: opportunityId,
+          action: "opportunity_company_link_added",
+          before: null,
+          after: link,
+          kind: "update",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+
+      res.status(201).json(link);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/opportunities/:id/companies/:linkId", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
+      if (!ctx) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const linkId = parseInt(req.params.linkId, 10);
+      const existing = await storage.listCompanyLinksForEntity({ teamId: ctx.teamId, entityType: "opportunity", entityId: opportunityId });
+      const target = existing.find((r: any) => Number(r.link?.id) === linkId);
+      if (!target) return res.status(404).json({ message: "Not found" });
+      await storage.deleteCompanyLinkForTeam(ctx.teamId, linkId);
+
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "opportunity",
+          entityId: opportunityId,
+          action: "opportunity_company_link_removed",
+          before: target.link,
+          after: null,
+          kind: "update",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+
+      res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -3243,13 +3494,13 @@ export async function registerRoutes(
 
   app.post("/api/opportunities", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const validated = insertPropertySchema.parse(req.body);
       const dedupeKey = computeOpportunityDedupeKey(validated as any);
 
       const assignedTo = (validated as any).assignedTo;
       if (typeof assignedTo === "number") {
-        const user = await requireAuth(req, res);
-        if (!user) return;
         const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
         if (!ok) return;
       }
@@ -3276,6 +3527,34 @@ export async function registerRoutes(
           metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
         });
       }
+
+      try {
+        const teamId = await getOrInitActiveTeamId(req, user.id);
+        if (teamId) {
+          await dispatchAutomationEvent({
+            eventType: "opportunity.created",
+            teamId,
+            actorUserId: user.id,
+            entity: { type: "opportunity", id: property.id },
+            payload: { opportunity: property },
+          });
+          try {
+            await writeAuditEvent({
+              teamId,
+              actorUserId: user.id,
+              entityType: "opportunity",
+              entityId: property.id,
+              action: "opportunity_created",
+              before: null,
+              after: property,
+              kind: "create",
+              ip: req.ip,
+              userAgent: String(req.headers["user-agent"] || ""),
+              requestId: (res.locals as any)?.requestId || null,
+            });
+          } catch {}
+        }
+      } catch {}
       
       res.status(201).json(property);
     } catch (error: any) {
@@ -3285,13 +3564,13 @@ export async function registerRoutes(
 
   app.patch("/api/opportunities/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const partial = insertPropertySchema.partial().parse(req.body);
       const id = parseInt(req.params.id);
 
       const assignedTo = (partial as any).assignedTo;
       if (typeof assignedTo === "number") {
-        const user = await requireAuth(req, res);
-        if (!user) return;
         const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
         if (!ok) return;
       }
@@ -3315,6 +3594,38 @@ export async function registerRoutes(
           metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
         });
       }
+
+      try {
+        const beforeStatus = String((before as any)?.status || "");
+        const afterStatus = String((property as any)?.status || "");
+        if (beforeStatus !== afterStatus) {
+          const teamId = await getOrInitActiveTeamId(req, user.id);
+          if (teamId) {
+            await dispatchAutomationEvent({
+              eventType: "opportunity.status_changed",
+              teamId,
+              actorUserId: user.id,
+              entity: { type: "opportunity", id: property.id },
+              payload: { opportunityId: property.id, beforeStatus: beforeStatus || null, afterStatus: afterStatus || null, opportunity: property },
+            });
+            try {
+              await writeAuditEvent({
+                teamId,
+                actorUserId: user.id,
+                entityType: "opportunity",
+                entityId: property.id,
+                action: "opportunity_status_changed",
+                before: { status: beforeStatus || null },
+                after: { status: afterStatus || null },
+                kind: "update",
+                ip: req.ip,
+                userAgent: String(req.headers["user-agent"] || ""),
+                requestId: (res.locals as any)?.requestId || null,
+              });
+            } catch {}
+          }
+        }
+      } catch {}
       
       res.json(property);
     } catch (error: any) {
@@ -3324,6 +3635,8 @@ export async function registerRoutes(
 
   app.delete("/api/opportunities/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const property = await storage.getPropertyById(parseInt(req.params.id));
       await storage.deleteProperty(parseInt(req.params.id));
       
@@ -3345,6 +3658,8 @@ export async function registerRoutes(
   // PROPERTIES ENDPOINTS (Legacy Proxies)
   app.get("/api/properties", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const { limit, offset } = parseLimitOffset(req.query);
       const allProperties = await storage.getProperties(limit, offset);
       res.json(allProperties);
@@ -4564,6 +4879,8 @@ export async function registerRoutes(
   // CONTACTS ENDPOINTS
   app.get("/api/contacts", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const { limit, offset } = parseLimitOffset(req.query);
       const query = String((req.query as any).query || "").trim().toLowerCase();
       const allContacts = await storage.getContacts(limit, offset);
@@ -4590,6 +4907,8 @@ export async function registerRoutes(
 
   app.get("/api/contacts/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const contact = await storage.getContactById(parseInt(req.params.id));
       if (!contact) return res.status(404).json({ message: "Contact not found" });
       res.json(contact);
@@ -4600,6 +4919,8 @@ export async function registerRoutes(
 
   app.post("/api/contacts", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const validated = insertContactSchema.parse(req.body);
       const contact = await storage.createContact(validated);
       res.status(201).json(contact);
@@ -4610,6 +4931,8 @@ export async function registerRoutes(
 
   app.patch("/api/contacts/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const partial = insertContactSchema.partial().parse(req.body);
       const contact = await storage.updateContact(parseInt(req.params.id), partial);
       res.json(contact);
@@ -4620,8 +4943,733 @@ export async function registerRoutes(
 
   app.delete("/api/contacts/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       await storage.deleteContact(parseInt(req.params.id));
       res.json({ message: "Contact deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/companies", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
+      if (!ctx) return;
+      const { limit, offset } = parseLimitOffset(req.query);
+      const q = typeof req.query?.q === "string" ? req.query.q : "";
+      const companyType = typeof req.query?.type === "string" ? req.query.type : "";
+      const out = await storage.listCompanies({ teamId: ctx.teamId, q, companyType, limit, offset });
+      res.json(out);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/companies", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
+      if (!ctx) return;
+      const schema = insertCompanySchema.omit({ teamId: true } as any);
+      const validated: any = schema.parse(req.body || {});
+      const company = await storage.createCompany({ ...validated, teamId: ctx.teamId } as any);
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "company",
+          entityId: company.id,
+          action: "company_created",
+          before: null,
+          after: company,
+          kind: "create",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+      res.status(201).json(company);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/companies/:id", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
+      if (!ctx) return;
+      const id = parseInt(req.params.id, 10);
+      const company = await storage.getCompanyById(id);
+      if (!company || company.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      res.json(company);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/companies/:id", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
+      if (!ctx) return;
+      const id = parseInt(req.params.id, 10);
+      const before = await storage.getCompanyById(id);
+      if (!before || before.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      const patchSchema = insertCompanySchema.partial().omit({ teamId: true } as any);
+      const patch: any = patchSchema.parse(req.body || {});
+      const updated = await storage.updateCompany(id, patch);
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "company",
+          entityId: id,
+          action: "company_updated",
+          before,
+          after: updated,
+          kind: "update",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/companies/:id", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
+      if (!ctx) return;
+      const id = parseInt(req.params.id, 10);
+      const before = await storage.getCompanyById(id);
+      if (!before || before.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      await storage.deleteCompany(id);
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "company",
+          entityId: id,
+          action: "company_deleted",
+          before,
+          after: null,
+          kind: "delete",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/companies/:id/people", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
+      if (!ctx) return;
+      const companyId = parseInt(req.params.id, 10);
+      const company = await storage.getCompanyById(companyId);
+      if (!company || company.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      const people = await storage.getCompanyPeople(companyId);
+      res.json(people);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/companies/:id/people", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
+      if (!ctx) return;
+      const companyId = parseInt(req.params.id, 10);
+      const company = await storage.getCompanyById(companyId);
+      if (!company || company.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      const schema = insertCompanyPersonSchema.omit({ teamId: true, companyId: true } as any);
+      const validated: any = schema.parse(req.body || {});
+      const contactId = Number(validated.contactId);
+      const contact = await storage.getContactById(contactId);
+      if (!contact) return res.status(404).json({ message: "Contact not found" });
+      const row = await storage.createCompanyPerson({ ...validated, teamId: ctx.teamId, companyId } as any);
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "company",
+          entityId: companyId,
+          action: "company_person_added",
+          before: null,
+          after: { companyPerson: row, contactId },
+          kind: "update",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+      res.status(201).json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/companies/:companyId/people/:companyPersonId", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
+      if (!ctx) return;
+      const companyId = parseInt(req.params.companyId, 10);
+      const company = await storage.getCompanyById(companyId);
+      if (!company || company.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      const companyPersonId = parseInt(req.params.companyPersonId, 10);
+      await storage.deleteCompanyPerson(companyPersonId);
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "company",
+          entityId: companyId,
+          action: "company_person_removed",
+          before: { companyPersonId },
+          after: null,
+          kind: "update",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/documents", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
+      if (!ctx) return;
+
+      const { limit, offset } = parseLimitOffset(req.query);
+      const q = typeof req.query?.q === "string" ? req.query.q : "";
+      const tag = typeof req.query?.tag === "string" ? req.query.tag : "";
+      const entityType = typeof req.query?.entityType === "string" ? req.query.entityType : "";
+      const entityIdRaw = typeof req.query?.entityId === "string" ? req.query.entityId : "";
+      const entityId = entityIdRaw ? parseInt(entityIdRaw, 10) : undefined;
+
+      const out = await storage.listDocuments({
+        teamId: ctx.teamId,
+        q,
+        tag,
+        entityType,
+        entityId,
+        limit,
+        offset,
+      });
+      res.json(out);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  function canViewVaultDocument(ctx: { user: any; membership: any }, document: any) {
+    if (!document) return false;
+    if (!document.isPrivate) return true;
+    if (Number(document.createdBy) === Number(ctx.user.id)) return true;
+    return teamRoleRank(ctx.membership?.role) >= teamRoleRank("admin") || isManagerUser(ctx.user);
+  }
+
+  app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
+      if (!ctx) return;
+      if (!isDocumentVaultConfigured()) {
+        return res.status(503).json({ code: "document_vault_not_configured", message: "Document vault is not configured" });
+      }
+      const file: any = (req as any).file;
+      if (!file) return res.status(400).json({ message: "Missing file" });
+
+      const titleRaw = typeof req.body?.title === "string" ? req.body.title : "";
+      const title = titleRaw.trim() || String(file.originalname || "Document");
+      const kind = typeof req.body?.kind === "string" ? req.body.kind.trim() : null;
+
+      const isPrivateRaw = (req.body as any)?.isPrivate;
+      const isPrivate =
+        isPrivateRaw === true || String(isPrivateRaw || "").trim().toLowerCase() === "true" || String(isPrivateRaw || "").trim() === "1";
+
+      const tagsRaw = (req.body as any)?.tags;
+      let tags: string[] | null = null;
+      if (Array.isArray(tagsRaw)) {
+        tags = tagsRaw.map((t) => String(t || "").trim()).filter(Boolean);
+      } else if (typeof tagsRaw === "string" && tagsRaw.trim()) {
+        try {
+          const parsed = JSON.parse(tagsRaw);
+          if (Array.isArray(parsed)) tags = parsed.map((t) => String(t || "").trim()).filter(Boolean);
+          else tags = tagsRaw.split(",").map((t) => t.trim()).filter(Boolean);
+        } catch {
+          tags = tagsRaw.split(",").map((t) => t.trim()).filter(Boolean);
+        }
+      }
+
+      const buf = Buffer.from(file.buffer);
+      const storageKey = makeDocumentStorageKey({ teamId: ctx.teamId, originalName: String(file.originalname || "file") });
+      const sha = sha256Hex(buf);
+      await uploadDocumentObject({ storageKey, contentType: String(file.mimetype || "application/octet-stream"), body: buf });
+
+      const doc = await storage.createDocument({
+        teamId: ctx.teamId,
+        title,
+        kind,
+        mimeType: String(file.mimetype || "application/octet-stream"),
+        sizeBytes: typeof file.size === "number" ? file.size : buf.length,
+        storageKey,
+        sha256: sha,
+        tags: tags && tags.length ? tags : null,
+        isPrivate,
+        createdBy: ctx.user.id,
+      } as any);
+
+      const v1 = await storage.createVaultDocumentVersion({
+        teamId: ctx.teamId,
+        documentId: doc.id,
+        version: 1,
+        storageKey,
+        mimeType: String(file.mimetype || "application/octet-stream"),
+        sizeBytes: typeof file.size === "number" ? file.size : buf.length,
+        sha256: sha,
+        createdBy: ctx.user.id,
+      } as any);
+
+      const entityType = typeof req.body?.entityType === "string" ? req.body.entityType.trim() : "";
+      const entityIdRaw = typeof req.body?.entityId === "string" ? req.body.entityId.trim() : "";
+      const entityId = entityIdRaw ? parseInt(entityIdRaw, 10) : NaN;
+      const relation = typeof req.body?.relation === "string" ? req.body.relation.trim() : null;
+
+      const links: any[] = [];
+      if (entityType && Number.isFinite(entityId) && entityId > 0) {
+        const link = await storage.createDocumentLink({
+          teamId: ctx.teamId,
+          documentId: doc.id,
+          entityType,
+          entityId,
+          relation,
+        } as any);
+        links.push(link);
+      }
+
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "document",
+          entityId: doc.id,
+          action: "document_uploaded",
+          before: null,
+          after: doc,
+          kind: "create",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+
+      res.status(201).json({ document: doc, links, versions: [v1] });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/documents/:id", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
+      if (!ctx) return;
+      const id = parseInt(req.params.id, 10);
+      const doc = await storage.getDocumentById(id);
+      if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      if (!canViewVaultDocument(ctx, doc)) return res.status(403).json({ message: "Forbidden" });
+      const links = await storage.getDocumentLinksByDocumentId(id);
+      const versions = await storage.getVaultDocumentVersions(id);
+      res.json({ document: doc, links, versions });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/documents/:id/download", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
+      if (!ctx) return;
+      const id = parseInt(req.params.id, 10);
+      const doc = await storage.getDocumentById(id);
+      if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      if (!canViewVaultDocument(ctx, doc)) return res.status(403).json({ message: "Forbidden" });
+      const url = await getDocumentSignedUrl({ storageKey: String(doc.storageKey), expiresInSeconds: 60 * 10 });
+      if (!url) return res.status(503).json({ message: "Document vault is not configured" });
+      res.redirect(url);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/documents/:id/link", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
+      if (!ctx) return;
+      const documentId = parseInt(req.params.id, 10);
+      const doc = await storage.getDocumentById(documentId);
+      if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+
+      const schema = insertDocumentLinkSchema.omit({ id: true, createdAt: true, teamId: true, documentId: true } as any);
+      const validated: any = schema.parse(req.body || {});
+
+      const link = await storage.createDocumentLink({
+        teamId: ctx.teamId,
+        documentId,
+        entityType: validated.entityType,
+        entityId: validated.entityId,
+        relation: typeof validated.relation === "string" ? validated.relation : null,
+      } as any);
+
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "document",
+          entityId: documentId,
+          action: "document_link_added",
+          before: null,
+          after: link,
+          kind: "update",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+
+      res.status(201).json(link);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/documents/:id/link/:linkId", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
+      if (!ctx) return;
+      const documentId = parseInt(req.params.id, 10);
+      const doc = await storage.getDocumentById(documentId);
+      if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+
+      const linkId = parseInt(req.params.linkId, 10);
+      const link = await storage.getDocumentLinkById(linkId);
+      if (!link || link.teamId !== ctx.teamId || link.documentId !== documentId) return res.status(404).json({ message: "Not found" });
+      await storage.deleteDocumentLinkForTeam(ctx.teamId, linkId);
+
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "document",
+          entityId: documentId,
+          action: "document_link_removed",
+          before: link,
+          after: null,
+          kind: "update",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/documents/:id/versions", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
+      if (!ctx) return;
+      const documentId = parseInt(req.params.id, 10);
+      const doc = await storage.getDocumentById(documentId);
+      if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      if (!canViewVaultDocument(ctx, doc)) return res.status(403).json({ message: "Forbidden" });
+      const versions = await storage.getVaultDocumentVersions(documentId);
+      res.json(versions);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/documents/:id/versions", upload.single("file"), async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
+      if (!ctx) return;
+      if (!isDocumentVaultConfigured()) {
+        return res.status(503).json({ code: "document_vault_not_configured", message: "Document vault is not configured" });
+      }
+      const documentId = parseInt(req.params.id, 10);
+      const doc = await storage.getDocumentById(documentId);
+      if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      if (!canViewVaultDocument(ctx, doc)) return res.status(403).json({ message: "Forbidden" });
+
+      const file: any = (req as any).file;
+      if (!file) return res.status(400).json({ message: "Missing file" });
+
+      const versions = await storage.getVaultDocumentVersions(documentId);
+      const nextVersion = versions.length ? Math.max(...versions.map((v: any) => Number(v.version) || 0)) + 1 : 1;
+
+      const buf = Buffer.from(file.buffer);
+      const storageKey = makeDocumentStorageKey({ teamId: ctx.teamId, originalName: String(file.originalname || "file") });
+      const sha = sha256Hex(buf);
+      await uploadDocumentObject({ storageKey, contentType: String(file.mimetype || "application/octet-stream"), body: buf });
+
+      const v = await storage.createVaultDocumentVersion({
+        teamId: ctx.teamId,
+        documentId,
+        version: nextVersion,
+        storageKey,
+        mimeType: String(file.mimetype || "application/octet-stream"),
+        sizeBytes: typeof file.size === "number" ? file.size : buf.length,
+        sha256: sha,
+        createdBy: ctx.user.id,
+      } as any);
+
+      const updated = await storage.updateDocument(documentId, {
+        storageKey,
+        mimeType: String(file.mimetype || "application/octet-stream"),
+        sizeBytes: typeof file.size === "number" ? file.size : buf.length,
+        sha256: sha,
+        updatedAt: new Date(),
+      } as any);
+
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "document",
+          entityId: documentId,
+          action: "document_version_uploaded",
+          before: doc,
+          after: updated,
+          kind: "update",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+
+      res.status(201).json({ document: updated, version: v });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/automations", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
+      if (!ctx) return;
+      const { limit, offset } = parseLimitOffset(req.query);
+      const items = await storage.listAutomations(ctx.teamId, limit, offset);
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/automations", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
+      if (!ctx) return;
+
+      const baseSchema = insertAutomationSchema.omit({ teamId: true } as any);
+      const base: any = baseSchema.parse(req.body || {});
+      const automation = await storage.createAutomation({ ...base, teamId: ctx.teamId } as any);
+
+      const triggersRaw = Array.isArray(req.body?.triggers) ? req.body.triggers : [];
+      const triggers = triggersRaw
+        .map((t: any) => ({
+          eventType: String(t?.eventType || "").trim(),
+          configJson: typeof t?.configJson === "string" ? t.configJson : JSON.stringify(t?.config || {}),
+        }))
+        .filter((t: any) => t.eventType);
+      await storage.replaceAutomationTriggers(ctx.teamId, automation.id, triggers);
+
+      const conditionRaw = req.body?.condition;
+      const conditionJson =
+        typeof conditionRaw?.configJson === "string"
+          ? String(conditionRaw.configJson)
+          : typeof conditionRaw === "object" && conditionRaw
+            ? JSON.stringify(conditionRaw)
+            : "{}";
+      await storage.upsertAutomationCondition(ctx.teamId, automation.id, conditionJson);
+
+      const actionsRaw = Array.isArray(req.body?.actions) ? req.body.actions : [];
+      const actions = actionsRaw
+        .map((a: any, idx: number) => ({
+          actionType: String(a?.actionType || "").trim(),
+          configJson: typeof a?.configJson === "string" ? a.configJson : JSON.stringify(a?.config || {}),
+          sortOrder: typeof a?.sortOrder === "number" ? a.sortOrder : idx,
+        }))
+        .filter((a: any) => a.actionType);
+      await storage.replaceAutomationActions(ctx.teamId, automation.id, actions);
+
+      const out = {
+        automation,
+        triggers: await storage.getAutomationTriggers(automation.id),
+        condition: await storage.getAutomationCondition(automation.id),
+        actions: await storage.getAutomationActions(automation.id),
+      };
+
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "automation",
+          entityId: automation.id,
+          action: "automation_created",
+          before: null,
+          after: out,
+          kind: "create",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+
+      res.status(201).json(out);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/automations/:id", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
+      if (!ctx) return;
+      const id = parseInt(req.params.id, 10);
+      const automation = await storage.getAutomationById(id);
+      if (!automation || automation.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      res.json({
+        automation,
+        triggers: await storage.getAutomationTriggers(id),
+        condition: await storage.getAutomationCondition(id),
+        actions: await storage.getAutomationActions(id),
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/automations/:id", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
+      if (!ctx) return;
+      const id = parseInt(req.params.id, 10);
+      const before = await storage.getAutomationById(id);
+      if (!before || before.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+
+      const baseSchema = insertAutomationSchema.partial().omit({ teamId: true } as any);
+      const patch: any = baseSchema.parse(req.body || {});
+      const updated = await storage.updateAutomation(id, { ...patch, updatedAt: new Date() } as any);
+
+      if (Array.isArray(req.body?.triggers)) {
+        const triggers = (req.body.triggers as any[])
+          .map((t: any) => ({
+            eventType: String(t?.eventType || "").trim(),
+            configJson: typeof t?.configJson === "string" ? t.configJson : JSON.stringify(t?.config || {}),
+          }))
+          .filter((t: any) => t.eventType);
+        await storage.replaceAutomationTriggers(ctx.teamId, id, triggers);
+      }
+
+      if (typeof req.body?.condition !== "undefined") {
+        const c = req.body.condition;
+        const conditionJson =
+          typeof c?.configJson === "string" ? String(c.configJson) : typeof c === "object" && c ? JSON.stringify(c) : "{}";
+        await storage.upsertAutomationCondition(ctx.teamId, id, conditionJson);
+      }
+
+      if (Array.isArray(req.body?.actions)) {
+        const actions = (req.body.actions as any[])
+          .map((a: any, idx: number) => ({
+            actionType: String(a?.actionType || "").trim(),
+            configJson: typeof a?.configJson === "string" ? a.configJson : JSON.stringify(a?.config || {}),
+            sortOrder: typeof a?.sortOrder === "number" ? a.sortOrder : idx,
+          }))
+          .filter((a: any) => a.actionType);
+        await storage.replaceAutomationActions(ctx.teamId, id, actions);
+      }
+
+      const out = {
+        automation: updated,
+        triggers: await storage.getAutomationTriggers(id),
+        condition: await storage.getAutomationCondition(id),
+        actions: await storage.getAutomationActions(id),
+      };
+
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "automation",
+          entityId: id,
+          action: "automation_updated",
+          before,
+          after: out,
+          kind: "update",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+
+      res.json(out);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/automations/:id", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
+      if (!ctx) return;
+      const id = parseInt(req.params.id, 10);
+      const before = await storage.getAutomationById(id);
+      if (!before || before.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      await storage.deleteAutomation(id);
+      try {
+        await writeAuditEvent({
+          teamId: ctx.teamId,
+          actorUserId: ctx.user.id,
+          entityType: "automation",
+          entityId: id,
+          action: "automation_deleted",
+          before,
+          after: null,
+          kind: "delete",
+          ip: req.ip,
+          userAgent: String(req.headers["user-agent"] || ""),
+          requestId: (res.locals as any)?.requestId || null,
+        });
+      } catch {}
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/automations/:id/runs", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
+      if (!ctx) return;
+      const id = parseInt(req.params.id, 10);
+      const automation = await storage.getAutomationById(id);
+      if (!automation || automation.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      const { limit, offset } = parseLimitOffset(req.query);
+      const items = await storage.listAutomationRuns(ctx.teamId, id, limit, offset);
+      res.json(items);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -5446,6 +6494,86 @@ export async function registerRoutes(
       res.status(201).json(log);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/audit", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
+      if (!ctx) return;
+
+      const { limit, offset } = parseLimitOffset(req.query);
+      const schema = z.object({
+        entityType: z.string().trim().min(1).optional(),
+        entityId: z.coerce.number().int().positive().optional(),
+        actorUserId: z.coerce.number().int().positive().optional(),
+        action: z.string().trim().min(1).optional(),
+        from: z.coerce.date().optional(),
+        to: z.coerce.date().optional(),
+      });
+      const q = schema.parse(req.query || {});
+
+      const whereParts: any[] = [eq(auditEvents.teamId, ctx.teamId)];
+      if (q.entityType) whereParts.push(eq(auditEvents.entityType, q.entityType));
+      if (typeof q.entityId === "number") whereParts.push(eq(auditEvents.entityId, q.entityId));
+      if (typeof q.actorUserId === "number") whereParts.push(eq(auditEvents.actorUserId, q.actorUserId));
+      if (q.action) whereParts.push(eq(auditEvents.action, q.action));
+      if (q.from) whereParts.push(gte(auditEvents.createdAt, q.from));
+      if (q.to) whereParts.push(lte(auditEvents.createdAt, q.to));
+
+      const whereClause = and(...whereParts);
+
+      const rows: any[] = await db
+        .select()
+        .from(auditEvents)
+        .where(whereClause)
+        .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
+        .limit(limit)
+        .offset(offset);
+
+      const countRows = await db.select({ count: sql<number>`count(*)::int` }).from(auditEvents).where(whereClause);
+      const total = Number((countRows as any)?.[0]?.count || 0);
+
+      const actorIds = Array.from(
+        new Set(
+          rows
+            .map((r: any) => (typeof r.actorUserId === "number" ? r.actorUserId : null))
+            .filter((id: any) => typeof id === "number" && Number.isFinite(id)),
+        ),
+      ) as number[];
+
+      const actorRows =
+        actorIds.length > 0
+          ? await db
+              .select({
+                id: users.id,
+                firstName: users.firstName,
+                lastName: users.lastName,
+                email: users.email,
+                profilePicture: users.profilePicture,
+              })
+              .from(users)
+              .where(inArray(users.id, actorIds))
+          : [];
+
+      const actorsById = new Map<number, any>((actorRows as any[]).map((u) => [u.id, u]));
+
+      const items = rows.map((r: any) => {
+        const parsed: any = { ...r, actor: r.actorUserId ? actorsById.get(r.actorUserId) || null : null };
+        for (const key of ["beforeJson", "afterJson", "diffJson"] as const) {
+          try {
+            const raw = (parsed as any)[key];
+            (parsed as any)[`${key}Parsed`] = raw ? JSON.parse(raw) : null;
+          } catch {
+            (parsed as any)[`${key}Parsed`] = null;
+          }
+        }
+        return parsed;
+      });
+
+      res.json({ items, total });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
     }
   });
 

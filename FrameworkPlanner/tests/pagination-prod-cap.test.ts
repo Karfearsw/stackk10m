@@ -15,10 +15,15 @@ describe("Pagination caps in production", () => {
   beforeAll(async () => {
     process.env.NODE_ENV = "production";
     process.env.DATABASE_URL = "postgresql://user:pass@db.invalid/db?sslmode=require";
+    storage.getUserById = async () => ({ id: 1, email: "test@example.com", isSuperAdmin: true } as any);
 
     app = express();
     app.use(express.json());
     app.use(session({ secret: "test", resave: false, saveUninitialized: false }));
+    app.use((req: any, _res, next) => {
+      req.session.userId = 1;
+      next();
+    });
     await registerRoutes(app);
   });
 
@@ -50,4 +55,3 @@ describe("Pagination caps in production", () => {
     expect(received).toEqual({ limit: 100, offset: 0 });
   });
 });
-
