@@ -175,6 +175,17 @@ export default function PropertyDetail() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!lead?.id) return;
+                setLocation(`/leads?leadId=${encodeURIComponent(String(lead.id))}`);
+              }}
+              disabled={!lead?.id}
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Open Lead
+            </Button>
             <Button variant="outline" onClick={() => property?.id && setLocation(`/playground?propertyId=${property.id}`)} disabled={!property?.id}>
               <Lightbulb className="mr-2 h-4 w-4" />
               Underwrite Deal
@@ -190,7 +201,11 @@ export default function PropertyDetail() {
             <Button
               onClick={() => {
                 if (!lead?.ownerPhone) return;
-                setLocation(`/dialer?number=${encodeURIComponent(lead.ownerPhone)}`);
+                const qs = new URLSearchParams();
+                qs.set("number", String(lead.ownerPhone));
+                if (lead?.id) qs.set("leadId", String(lead.id));
+                if (property?.id) qs.set("propertyId", String(property.id));
+                setLocation(`/dialer?${qs.toString()}`);
               }}
               disabled={!lead?.ownerPhone}
             >
@@ -351,8 +366,32 @@ export default function PropertyDetail() {
                         </div>
                       </div>
                       <div className="flex gap-2">
-                        <Button variant="ghost" size="sm"><Phone className="h-4 w-4" /></Button>
-                        <Button variant="ghost" size="sm"><Mail className="h-4 w-4" /></Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            if (!lead?.ownerPhone) return;
+                            const qs = new URLSearchParams();
+                            qs.set("number", String(lead.ownerPhone));
+                            if (lead?.id) qs.set("leadId", String(lead.id));
+                            if (property?.id) qs.set("propertyId", String(property.id));
+                            setLocation(`/dialer?${qs.toString()}`);
+                          }}
+                          disabled={!lead?.ownerPhone}
+                        >
+                          <Phone className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            if (!lead?.ownerEmail) return;
+                            window.location.href = `mailto:${encodeURIComponent(String(lead.ownerEmail))}`;
+                          }}
+                          disabled={!lead?.ownerEmail}
+                        >
+                          <Mail className="h-4 w-4" />
+                        </Button>
                       </div>
                     </div>
                     <Separator />
