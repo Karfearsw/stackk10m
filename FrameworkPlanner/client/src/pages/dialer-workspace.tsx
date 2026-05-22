@@ -13,6 +13,7 @@ import { useSignalWire } from "@/hooks/useSignalWire";
 import { EntityActivity } from "@/components/activity/EntityActivity";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import type { DialerQueueItem } from "@/lib/dialerTypes";
 
 function formatE164(raw: string) {
   const digits = raw.replace(/[^\d+]/g, "");
@@ -74,17 +75,53 @@ function DialerWorkspaceInner() {
   const [scriptSaving, setScriptSaving] = useState(false);
 
   const initial = useMemo(() => {
-    if (typeof window === "undefined") return { leadId: null as number | null, number: "" };
+    if (typeof window === "undefined") return { leadId: null as number | null, propertyId: null as number | null, number: "" };
     const params = new URLSearchParams(window.location.search);
     const leadIdRaw = params.get("leadId");
+    const propertyIdRaw = params.get("propertyId") || params.get("opportunityId");
     const n = params.get("number") || params.get("to") || "";
     const leadId = leadIdRaw ? parseInt(leadIdRaw, 10) : NaN;
-    return { leadId: Number.isFinite(leadId) ? leadId : null, number: n };
+    const propertyId = propertyIdRaw ? parseInt(propertyIdRaw, 10) : NaN;
+    return {
+      leadId: Number.isFinite(leadId) && leadId > 0 ? leadId : null,
+      propertyId: Number.isFinite(propertyId) && propertyId > 0 ? propertyId : null,
+      number: n,
+    };
   }, []);
 
   useEffect(() => {
     if (initial.number) setNumber(initial.number);
   }, [initial.number]);
+
+  useEffect(() => {
+    if (!initial.leadId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiRequest("GET", `/api/leads/${initial.leadId}`);
+        const json = await res.json();
+        if (cancelled) return;
+        const lead = json?.lead || json;
+        const item: DialerQueueItem = {
+          leadId: Number(lead?.id || initial.leadId),
+          ownerName: String(lead?.ownerName || ""),
+          ownerPhone: String(lead?.ownerPhone || ""),
+          address: String(lead?.address || ""),
+          city: String(lead?.city || ""),
+          state: String(lead?.state || ""),
+          status: lead?.status ?? null,
+          nextFollowUpAt: lead?.nextFollowUpAt ? new Date(lead.nextFollowUpAt).toISOString() : null,
+          lastCallAt: null,
+        };
+        setQueue([item]);
+        setActiveIndex(0);
+        if (!initial.number && item.ownerPhone) setNumber(item.ownerPhone);
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initial.leadId, initial.number, setActiveIndex, setQueue]);
 
   useEffect(() => {
     if (activeItem?.ownerPhone) setNumber(activeItem.ownerPhone);
@@ -182,7 +219,8 @@ function DialerWorkspaceInner() {
 
   const createCallLog = useMutation({
     mutationFn: async () => {
-      if (!activeItem?.leadId) throw new Error("Select a lead");
+      const effectiveLeadId = activeItem?.leadId ?? initial.leadId;
+      if (!effectiveLeadId) throw new Error("Select a lead");
       const res = await fetch(`/api/telephony/calls`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -191,8 +229,8 @@ function DialerWorkspaceInner() {
           number: formatted,
           status: "dialing",
           startedAt: new Date().toISOString(),
-          leadId: activeItem.leadId,
-          metadata: { leadId: activeItem.leadId },
+          leadId: effectiveLeadId,
+          metadata: { leadId: effectiveLeadId, propertyId: initial.propertyId || undefined },
         }),
         credentials: "include",
       });
@@ -210,12 +248,14 @@ function DialerWorkspaceInner() {
 
   const sendSms = useMutation({
     mutationFn: async () => {
-      if (!activeItem?.leadId) throw new Error("Select a lead");
-      const to = formatE164(activeItem.ownerPhone || "");
+      const effectiveLeadId = activeItem?.leadId ?? initial.leadId;
+      if (!effectiveLeadId) throw new Error("Select a lead");
+      const to = formatE164(String(activeItem?.ownerPhone || number || ""));
+      if (!to) throw new Error("Missing phone number");
       const res = await fetch(`/api/telephony/sms`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, body: smsBody, metadata: { leadId: activeItem.leadId } }),
+        body: JSON.stringify({ to, body: smsBody, metadata: { leadId: effectiveLeadId, propertyId: initial.propertyId || undefined } }),
         credentials: "include",
       });
       if (!res.ok) throw new Error(await res.text());

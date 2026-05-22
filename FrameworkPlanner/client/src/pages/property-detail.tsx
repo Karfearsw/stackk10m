@@ -35,6 +35,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiUpload } from "@/lib/queryClient";
+import { calendarUrl, dialerUrl, leadUrl, playgroundUrl, tasksUrl } from "@/lib/deepLinks";
 
 export default function PropertyDetail() {
   const [, params] = useRoute("/opportunities/:id");
@@ -179,14 +180,21 @@ export default function PropertyDetail() {
               variant="outline"
               onClick={() => {
                 if (!lead?.id) return;
-                setLocation(`/leads?leadId=${encodeURIComponent(String(lead.id))}`);
+                setLocation(leadUrl(lead.id));
               }}
               disabled={!lead?.id}
             >
               <ArrowLeft className="mr-2 h-4 w-4" />
               Open Lead
             </Button>
-            <Button variant="outline" onClick={() => property?.id && setLocation(`/playground?propertyId=${property.id}`)} disabled={!property?.id}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!property?.id) return;
+                setLocation(playgroundUrl({ propertyId: property.id, leadId: lead?.id ?? null }));
+              }}
+              disabled={!property?.id}
+            >
               <Lightbulb className="mr-2 h-4 w-4" />
               Underwrite Deal
             </Button>
@@ -201,16 +209,34 @@ export default function PropertyDetail() {
             <Button
               onClick={() => {
                 if (!lead?.ownerPhone) return;
-                const qs = new URLSearchParams();
-                qs.set("number", String(lead.ownerPhone));
-                if (lead?.id) qs.set("leadId", String(lead.id));
-                if (property?.id) qs.set("propertyId", String(property.id));
-                setLocation(`/dialer?${qs.toString()}`);
+                setLocation(dialerUrl({ number: String(lead.ownerPhone), leadId: lead?.id ?? null, propertyId: property?.id ?? null }));
               }}
               disabled={!lead?.ownerPhone}
             >
               <Phone className="mr-2 h-4 w-4" />
               Call Owner
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!property?.id) return;
+                setLocation(tasksUrl({ relatedEntityType: "opportunity", relatedEntityId: property.id }));
+              }}
+              disabled={!property?.id}
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Tasks
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!property?.id) return;
+                setLocation(calendarUrl({ relatedEntityType: "opportunity", relatedEntityId: property.id }));
+              }}
+              disabled={!property?.id}
+            >
+              <Calendar className="mr-2 h-4 w-4" />
+              Calendar
             </Button>
           </div>
         </div>
@@ -371,11 +397,9 @@ export default function PropertyDetail() {
                           size="sm"
                           onClick={() => {
                             if (!lead?.ownerPhone) return;
-                            const qs = new URLSearchParams();
-                            qs.set("number", String(lead.ownerPhone));
-                            if (lead?.id) qs.set("leadId", String(lead.id));
-                            if (property?.id) qs.set("propertyId", String(property.id));
-                            setLocation(`/dialer?${qs.toString()}`);
+                            setLocation(
+                              dialerUrl({ number: String(lead.ownerPhone), leadId: lead?.id ?? null, propertyId: property?.id ?? null }),
+                            );
                           }}
                           disabled={!lead?.ownerPhone}
                         >
@@ -627,7 +651,7 @@ export default function PropertyDetail() {
                   className="w-full justify-start"
                   onClick={() => {
                     if (!property?.id) return;
-                    setLocation(`/playground?propertyId=${property.id}`);
+                    setLocation(playgroundUrl({ propertyId: property.id, leadId: lead?.id ?? null }));
                   }}
                   disabled={!property?.id}
                 >
@@ -639,7 +663,9 @@ export default function PropertyDetail() {
                   className="w-full justify-start"
                   onClick={() => {
                     if (!lead?.ownerPhone) return;
-                    setLocation(`/dialer?number=${encodeURIComponent(lead.ownerPhone)}`);
+                    setLocation(
+                      dialerUrl({ number: String(lead.ownerPhone), leadId: lead?.id ?? null, propertyId: property?.id ?? null }),
+                    );
                   }}
                   disabled={!lead?.ownerPhone}
                 >

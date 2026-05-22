@@ -3,9 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PipelineColumn } from "./types";
 import { Clock, Mail, MessageSquare, Phone, StickyNote, Lightbulb } from "lucide-react";
+import { playgroundUrl } from "@/lib/deepLinks";
 
 type LeadLike = {
   id: number;
+  linkedPropertyId?: number | null;
   address?: string | null;
   city?: string | null;
   state?: string | null;
@@ -15,7 +17,8 @@ type LeadLike = {
   ownerEmail?: string | null;
   estimatedValue?: string | number | null;
   status?: string | null;
-  notes?: string | null;
+  notesCount?: number | null;
+  lastNotePreview?: string | null;
 };
 
 export function LeadPipelineCard({
@@ -41,7 +44,8 @@ export function LeadPipelineCard({
   const email = String(lead.ownerEmail || "").trim();
   const status = String(lead.status || "").trim();
   const addressLine = [lead.address, lead.city, lead.state, lead.zipCode].filter(Boolean).join(", ");
-  const notePreview = String(lead.notes || "").trim().split("\n").filter(Boolean).slice(-1)[0] || "";
+  const notePreview = String(lead.lastNotePreview || "").trim();
+  const notesCount = Number(lead.notesCount || 0);
   const playgroundAddress = addressLine || String(lead.address || "").trim();
 
   return (
@@ -91,6 +95,7 @@ export function LeadPipelineCard({
           </div>
         </div>
 
+        {notesCount ? <div className="text-xs text-muted-foreground">{notesCount.toLocaleString()} note{notesCount === 1 ? "" : "s"}</div> : null}
         {notePreview ? <div className="text-xs text-muted-foreground line-clamp-2">{notePreview}</div> : null}
 
         <div className="flex flex-wrap gap-2 pt-1">
@@ -100,7 +105,11 @@ export function LeadPipelineCard({
             className="h-8 px-2"
             onClick={() => {
               if (!playgroundAddress) return;
-              window.location.href = `/playground?address=${encodeURIComponent(playgroundAddress)}&leadId=${lead.id}`;
+              window.location.href = playgroundUrl({
+                address: playgroundAddress,
+                leadId: lead.id,
+                propertyId: typeof lead.linkedPropertyId === "number" ? lead.linkedPropertyId : null,
+              });
             }}
             disabled={!playgroundAddress}
           >

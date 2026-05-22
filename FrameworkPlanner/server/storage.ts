@@ -495,6 +495,46 @@ export interface IStorage {
   updateCallLog(id: number, patch: Partial<InsertCallLog & { status?: string; endedAt?: Date; durationMs?: number; errorCode?: string; errorMessage?: string }>): Promise<CallLog>;
 }
 
+function normalizeGlobalActivityAction(action: string) {
+  const a = String(action || "").trim();
+  if (!a) return a;
+  const map: Record<string, string> = {
+    call_started: "telephony.call.started",
+    call_answered: "telephony.call.answered",
+    call_missed: "telephony.call.missed",
+    call_failed: "telephony.call.failed",
+    call_inbound: "telephony.call.inbound",
+    call_dispositioned: "telephony.call.dispositioned",
+    followup_scheduled: "telephony.followup.scheduled",
+    followup_task_created: "telephony.followup.task_created",
+    sms_sent: "telephony.sms.sent",
+    sms_received: "telephony.sms.received",
+    voicemail_received: "telephony.voicemail.received",
+    created_lead: "lead.created",
+    deleted_lead: "lead.deleted",
+    converted_lead_to_property: "lead.converted_to_opportunity",
+    auto_converted_lead: "lead.auto_converted_to_opportunity",
+    created_opportunity: "opportunity.created",
+    deleted_opportunity: "opportunity.deleted",
+    created_property: "opportunity.created",
+    updated_property: "opportunity.updated",
+    deleted_property: "opportunity.deleted",
+    added_note: "note.added",
+    playground_open_session: "playground.session.opened",
+    playground_send_to_crm: "playground.sent_to_crm",
+    playground_voice_append_note: "playground.note.appended_by_voice",
+    lead_voice_add_note: "lead.note.added_by_voice",
+    campaign_enrolled: "campaign.enrolled",
+    rvm_campaign_launched: "rvm.campaign.launched",
+    campaign_opt_out: "campaign.opt_out",
+    skip_trace_cached: "skip_trace.cached",
+    skip_trace_requested: "skip_trace.requested",
+    skip_trace_success: "skip_trace.success",
+    skip_trace_failed: "skip_trace.failed",
+  };
+  return map[a] || a;
+}
+
 export class DatabaseStorage implements IStorage {
   // Leads
   async getLeads(limit?: number, offset: number = 0): Promise<Lead[]> {
@@ -1855,11 +1895,13 @@ export class DatabaseStorage implements IStorage {
 
   // Global Activity Logs
   async getGlobalActivityLogs(limit: number = 50, offset: number = 0): Promise<GlobalActivityLog[]> {
-    return db.select().from(globalActivityLogs).orderBy(desc(globalActivityLogs.createdAt)).offset(offset).limit(limit);
+    const rows = await db.select().from(globalActivityLogs).orderBy(desc(globalActivityLogs.createdAt)).offset(offset).limit(limit);
+    return rows.map((r: any) => ({ ...r, action: normalizeGlobalActivityAction(r.action) })) as any;
   }
 
   async createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog> {
-    const result = await db.insert(globalActivityLogs).values(log as any).returning();
+    const normalized = { ...(log as any), action: normalizeGlobalActivityAction((log as any).action) };
+    const result = await db.insert(globalActivityLogs).values(normalized).returning();
     return result[0];
   }
 

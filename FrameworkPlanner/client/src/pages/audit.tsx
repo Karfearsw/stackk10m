@@ -63,6 +63,14 @@ export default function AuditPage() {
 
   const findings = useMemo(() => (Array.isArray(findingsResp?.items) ? findingsResp!.items : []), [findingsResp]);
 
+  const { data: releaseGateResp } = useQuery<{ ok: boolean; blockingCount: number; blockingItems: any[] }>({
+    queryKey: ["/api/audit/release-gate"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/audit/release-gate");
+      return await res.json();
+    },
+  });
+
   const createRun = useMutation({
     mutationFn: async () => {
       let scopeJson: any = {};
@@ -92,6 +100,23 @@ export default function AuditPage() {
     prdSection: "",
   });
 
+  const parsedAffectedPages = useMemo(() => {
+    return newFinding.affectedPages
+      ? newFinding.affectedPages
+          .split(",")
+          .map((p) => p.trim())
+          .filter(Boolean)
+      : [];
+  }, [newFinding.affectedPages]);
+
+  const canCreateFinding =
+    !!activeRunId &&
+    newFinding.area.trim().length > 0 &&
+    newFinding.title.trim().length > 0 &&
+    newFinding.description.trim().length > 0 &&
+    parsedAffectedPages.length > 0 &&
+    newFinding.fixPlan.trim().length > 0;
+
   const createFinding = useMutation({
     mutationFn: async () => {
       if (!activeRunId) throw new Error("Select a run");
@@ -102,13 +127,8 @@ export default function AuditPage() {
         description: newFinding.description,
         recommendation: newFinding.recommendation || null,
         technicalNotes: newFinding.technicalNotes || null,
-        affectedPages: newFinding.affectedPages
-          ? newFinding.affectedPages
-              .split(",")
-              .map((p) => p.trim())
-              .filter(Boolean)
-          : [],
-        fixPlan: newFinding.fixPlan || null,
+        affectedPages: parsedAffectedPages,
+        fixPlan: newFinding.fixPlan.trim(),
         prdSection: newFinding.prdSection || null,
       });
       return await res.json();
@@ -147,6 +167,27 @@ export default function AuditPage() {
           <h1 className="text-2xl font-bold">Audit</h1>
           <p className="text-sm text-muted-foreground">Runs and findings to track app issues and fixes.</p>
         </div>
+      </div>
+
+      <div className="mt-6">
+        <Card>
+          <CardHeader>
+            <CardTitle>Release Gate</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            {releaseGateResp?.ok ? (
+              <div className="flex items-center justify-between">
+                <div className="font-medium">Clear to ship</div>
+                <Badge variant="secondary">No open Critical findings</Badge>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <div className="font-medium">Blocked</div>
+                <Badge variant="destructive">{releaseGateResp?.blockingCount ?? 0} open Critical</Badge>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -249,7 +290,7 @@ export default function AuditPage() {
                 <Input value={newFinding.prdSection} onChange={(e) => setNewFinding((s) => ({ ...s, prdSection: e.target.value }))} placeholder="e.g. Leads PRD / Key upgrades" />
               </div>
               <div className="md:col-span-2">
-                <Button onClick={() => createFinding.mutate()} disabled={!activeRunId || createFinding.isPending}>
+                <Button onClick={() => createFinding.mutate()} disabled={!canCreateFinding || createFinding.isPending}>
                   Add Finding
                 </Button>
               </div>

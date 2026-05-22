@@ -12,6 +12,7 @@ import { CalendarCheck2, Loader2 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
+import { getEntityFilterFromLocation, leadUrl, opportunityUrl } from "@/lib/deepLinks";
 
 type Task = {
   id: number;
@@ -28,8 +29,8 @@ type Task = {
 type TaskListResponse = { items: Task[]; total: number };
 
 function taskLink(t: Task) {
-  if (t.relatedEntityType === "lead" && t.relatedEntityId) return `/leads?leadId=${t.relatedEntityId}`;
-  if (t.relatedEntityType === "opportunity" && t.relatedEntityId) return `/opportunities/${t.relatedEntityId}`;
+  if (t.relatedEntityType === "lead" && t.relatedEntityId) return leadUrl(t.relatedEntityId);
+  if (t.relatedEntityType === "opportunity" && t.relatedEntityId) return opportunityUrl(t.relatedEntityId);
   if (t.relatedEntityType === "buyer" && t.relatedEntityId) return `/buyers?buyerId=${t.relatedEntityId}`;
   if (t.relatedEntityType === "campaign" && t.relatedEntityId) return `/campaigns?campaignId=${t.relatedEntityId}`;
   return null;
@@ -107,6 +108,7 @@ export default function TodayPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const [, setLocation] = useLocation();
+  const entityFilter = useMemo(() => getEntityFilterFromLocation(), []);
 
   const todayStart = useMemo(() => startOfDay(new Date()), []);
   const todayEnd = useMemo(() => endOfDay(new Date()), []);
@@ -116,8 +118,12 @@ export default function TodayPage() {
     p.set("includeCompleted", "false");
     p.set("limit", "200");
     p.set("dueTo", todayEnd.toISOString());
+    if (entityFilter.relatedEntityType && entityFilter.relatedEntityId) {
+      p.set("relatedEntityType", entityFilter.relatedEntityType);
+      p.set("relatedEntityId", String(entityFilter.relatedEntityId));
+    }
     return `/api/tasks?${p.toString()}`;
-  }, [todayEnd]);
+  }, [entityFilter.relatedEntityId, entityFilter.relatedEntityType, todayEnd]);
 
   const { data, isLoading } = useQuery<TaskListResponse>({
     queryKey: [listKey],

@@ -53,6 +53,7 @@ import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 import { SkipTraceJobPanel } from "@/components/skipTrace/SkipTraceJobPanel";
 import { VoiceActionDialog } from "@/components/leads/VoiceActionDialog";
 import { apiRequest } from "@/lib/queryClient";
+import { calendarUrl, dialerUrl, opportunityUrl, playgroundUrl, tasksUrl } from "@/lib/deepLinks";
 
 const statusOptions = [
   { value: "new", label: "New" },
@@ -72,6 +73,14 @@ type LeadViewConfig = {
   columns?: Record<string, boolean>;
   density?: "luxury" | "dense";
 };
+
+function hashString(input: string) {
+  let h = 5381;
+  for (let i = 0; i < input.length; i += 1) {
+    h = (h * 33) ^ input.charCodeAt(i);
+  }
+  return h >>> 0;
+}
 
 function parseLeadViewConfig(input: any): LeadViewConfig {
   if (!input || typeof input !== "object") return { filters: {} };
@@ -179,15 +188,22 @@ export default function Leads() {
   });
   const [selectedView, setSelectedView] = useState<any | null>(null);
   const [saveViewOpen, setSaveViewOpen] = useState(false);
+  const [saveViewMode, setSaveViewMode] = useState<"create" | "update">("create");
   const [saveViewName, setSaveViewName] = useState("");
   const [saveViewVisibility, setSaveViewVisibility] = useState<"private" | "team" | "link">("private");
   const [selectionMode, setSelectionMode] = useState<"explicit" | "all_filtered">("explicit");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [excludedIds, setExcludedIds] = useState<Set<number>>(new Set());
+  const [selectAllConfirmOpen, setSelectAllConfirmOpen] = useState(false);
+  const [selectAllConfirmText, setSelectAllConfirmText] = useState("");
   const selectionSignature = useMemo(() => {
     const { viewToken, ...rest } = appliedFilters as any;
     return JSON.stringify(rest || {});
   }, [appliedFilters]);
+  const selectionSigLabel = useMemo(() => {
+    const h = hashString(selectionSignature);
+    return `SIG-${h.toString(16).padStart(8, "0").slice(-8).toUpperCase()}`;
+  }, [selectionSignature]);
   useEffect(() => {
     const id = setTimeout(() => setAppliedFilters(filters), 250);
     return () => clearTimeout(id);
@@ -337,15 +353,23 @@ export default function Leads() {
 
   useEffect(() => {
     try {
-      localStorage.setItem("leads.columns", JSON.stringify(visibleColumns));
+      if (selectedView?.id) {
+        localStorage.setItem(`leads.columns.view.${String(selectedView.id)}`, JSON.stringify(visibleColumns));
+      } else {
+        localStorage.setItem("leads.columns", JSON.stringify(visibleColumns));
+      }
     } catch {}
-  }, [visibleColumns]);
+  }, [selectedView?.id, visibleColumns]);
 
   useEffect(() => {
     try {
-      localStorage.setItem("leads.density", density);
+      if (selectedView?.id) {
+        localStorage.setItem(`leads.density.view.${String(selectedView.id)}`, density);
+      } else {
+        localStorage.setItem("leads.density", density);
+      }
     } catch {}
-  }, [density]);
+  }, [selectedView?.id, density]);
 
   const { data: savedViewsResp, refetch: refetchSavedViews } = useQuery<any>({
     queryKey: ["/api/leads/views"],
@@ -365,6 +389,21 @@ export default function Leads() {
     onSuccess: async (row: any) => {
       await refetchSavedViews();
       setSelectedView(row);
+    },
+  });
+
+  const updateSavedViewMutation = useMutation({
+    mutationFn: async (input: { id: number; name?: string; visibility?: "private" | "team" | "link"; configJson?: any }) => {
+      const { id, ...rest } = input;
+      const res = await apiRequest("PATCH", `/api/leads/views/${id}`, rest);
+      return await res.json();
+    },
+    onSuccess: async (row: any) => {
+      await refetchSavedViews();
+      setSelectedView(row);
+    },
+    onError: (error: any) => {
+      toast({ title: "View update failed", description: String(error?.message || error), variant: "destructive" });
     },
   });
 
@@ -441,6 +480,19 @@ export default function Leads() {
     const left = [address, city].filter(Boolean).join(city ? ", " : "");
     const right = [state, zip].filter(Boolean).join(" ");
     return [left, right].filter(Boolean).join(right ? " " : "").trim();
+  };
+
+  const openVoiceForLeadId = (leadId: number) => {
+    const id = Number(leadId);
+    if (!Number.isFinite(id) || id <= 0) return;
+    setSelectionMode("explicit");
+    setSelectedIds(new Set([id]));
+    setExcludedIds(new Set());
+    setVoiceTranscript("");
+    setVoiceParsed(null);
+    setVoicePreview(null);
+    setVoiceActionLogId(null);
+    setVoiceOpen(true);
   };
 
   const voiceParseMutation = useMutation({
@@ -534,6 +586,26 @@ export default function Leads() {
     },
   });
 
+  const [didToastBulkJob, setDidToastBulkJob] = useState<number | null>(null);
+  useEffect(() => {
+    const id = Number(bulkJob?.id || bulkJobId || 0);
+    if (!id) return;
+    if (didToastBulkJob === id) return;
+    const status = String(bulkJob?.status || "");
+    if (status !== "completed" && status !== "failed") return;
+    setDidToastBulkJob(id);
+    if (status === "failed") {
+      toast({ title: "Bulk job failed", description: String(bulkJob?.resultJson?.error || "Something went wrong"), variant: "destructive" });
+      return;
+    }
+    if (String(bulkJob?.action || "") !== "export") {
+      toast({ title: "Bulk job completed", description: `${Number(bulkJob?.succeeded || 0).toLocaleString()} updated` });
+      queryClient.invalidateQueries({ queryKey: leadsQueryKey });
+    } else {
+      toast({ title: "Export ready", description: "Your export is downloading." });
+    }
+  }, [bulkJob, bulkJobId, didToastBulkJob, leadsQueryKey, queryClient, toast]);
+
   useEffect(() => {
     if (!bulkJob) return;
     if (String(bulkJob.status) !== "completed") return;
@@ -561,10 +633,47 @@ export default function Leads() {
     const cfg = parseLeadViewConfig((tokenViewResp as any).configJson);
     setFilters((prev: any) => ({ ...prev, ...(cfg.filters || {}), viewToken: savedViewToken }));
     if (cfg.sort?.key) setFilters((prev: any) => ({ ...prev, sortKey: cfg.sort?.key, sortDir: cfg.sort?.dir || "desc" }));
-    if (cfg.columns) setVisibleColumns(cfg.columns);
-    if (cfg.density) setDensity(cfg.density);
+    if (cfg.columns) {
+      setVisibleColumns(cfg.columns);
+    } else if ((tokenViewResp as any)?.id) {
+      try {
+        const colsRaw = localStorage.getItem(`leads.columns.view.${String((tokenViewResp as any).id)}`);
+        if (colsRaw) {
+          const parsed = JSON.parse(colsRaw);
+          if (parsed && typeof parsed === "object") setVisibleColumns(parsed);
+        }
+      } catch {}
+    }
+    if (cfg.density) {
+      setDensity(cfg.density);
+    } else if ((tokenViewResp as any)?.id) {
+      try {
+        const d = localStorage.getItem(`leads.density.view.${String((tokenViewResp as any).id)}`);
+        if (d === "dense" || d === "luxury") setDensity(d);
+      } catch {}
+    }
     setSelectedView(tokenViewResp);
   }, [savedViewToken, tokenViewResp]);
+
+  const [autosaveViewConfigKey, setAutosaveViewConfigKey] = useState<string>("");
+  useEffect(() => {
+    if (!selectedView?.id) return;
+    const id = Number(selectedView.id);
+    if (!id) return;
+    const baseCfg = parseLeadViewConfig(selectedView.configJson);
+    const nextCfg: LeadViewConfig = { ...baseCfg, columns: visibleColumns, density };
+    const key = JSON.stringify(nextCfg);
+    if (key === autosaveViewConfigKey) return;
+    const t = setTimeout(async () => {
+      try {
+        const res = await apiRequest("PATCH", `/api/leads/views/${id}`, { configJson: nextCfg });
+        const row = await res.json();
+        setSelectedView((prev: any) => (prev && Number(prev.id) === id ? row : prev));
+        setAutosaveViewConfigKey(key);
+      } catch {}
+    }, 750);
+    return () => clearTimeout(t);
+  }, [autosaveViewConfigKey, density, selectedView?.configJson, selectedView?.id, visibleColumns]);
 
   const { data: leadPipelineConfig } = useQuery({
     queryKey: ["/api/pipeline-config", "lead"],
@@ -725,8 +834,13 @@ export default function Leads() {
       const res = await apiRequest("POST", `/api/leads/${leadId}/notes`, { body });
       return await res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["leads"] });
+    onSuccess: async (_note: any, vars: any) => {
+      await queryClient.invalidateQueries({ queryKey: ["leads"] });
+      await queryClient.invalidateQueries({ queryKey: leadsQueryKey });
+      if (vars?.leadId) {
+        await queryClient.invalidateQueries({ queryKey: ["/api/leads", vars.leadId] });
+        await queryClient.invalidateQueries({ queryKey: ["/api/leads/notes", vars.leadId] });
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
     },
   });
@@ -1041,6 +1155,7 @@ export default function Leads() {
               <DropdownMenuItem
                 onClick={() => {
                   setSelectedView(null);
+                  setAutosaveViewConfigKey("");
                   setFilters((prev: any) => ({ ...prev, viewToken: "" }));
                 }}
               >
@@ -1059,9 +1174,27 @@ export default function Leads() {
                       sortDir: cfg.sort?.dir || prev.sortDir,
                       viewToken: v.visibility === "link" ? String(v.shareToken || "") : "",
                     }));
-                    if (cfg.columns) setVisibleColumns(cfg.columns);
-                    if (cfg.density) setDensity(cfg.density);
+                    if (cfg.columns) {
+                      setVisibleColumns(cfg.columns);
+                    } else {
+                      try {
+                        const colsRaw = localStorage.getItem(`leads.columns.view.${String(v.id)}`);
+                        if (colsRaw) {
+                          const parsed = JSON.parse(colsRaw);
+                          if (parsed && typeof parsed === "object") setVisibleColumns(parsed);
+                        }
+                      } catch {}
+                    }
+                    if (cfg.density) {
+                      setDensity(cfg.density);
+                    } else {
+                      try {
+                        const d = localStorage.getItem(`leads.density.view.${String(v.id)}`);
+                        if (d === "dense" || d === "luxury") setDensity(d);
+                      } catch {}
+                    }
                     setSelectedView(v);
+                    setAutosaveViewConfigKey("");
                   }}
                 >
                   {v.name}
@@ -1070,13 +1203,26 @@ export default function Leads() {
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={() => {
+                  setSaveViewMode("create");
                   setSaveViewName("");
                   setSaveViewVisibility("private");
                   setSaveViewOpen(true);
                 }}
               >
-                Save current view…
+                Save as new view…
               </DropdownMenuItem>
+              {selectedView?.id ? (
+                <DropdownMenuItem
+                  onClick={() => {
+                    setSaveViewMode("update");
+                    setSaveViewName(String(selectedView?.name || ""));
+                    setSaveViewVisibility((selectedView?.visibility as any) || "private");
+                    setSaveViewOpen(true);
+                  }}
+                >
+                  Update this view…
+                </DropdownMenuItem>
+              ) : null}
               {selectedView?.shareToken ? (
                 <DropdownMenuItem
                   onClick={async () => {
@@ -1351,7 +1497,7 @@ export default function Leads() {
           <Dialog open={saveViewOpen} onOpenChange={setSaveViewOpen}>
             <DialogContent className="sm:max-w-[420px]">
               <DialogHeader>
-                <DialogTitle>Save View</DialogTitle>
+                <DialogTitle>{saveViewMode === "update" ? "Update View" : "Save View"}</DialogTitle>
                 <DialogDescription>Save filters, sorting, columns, and density.</DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
@@ -1387,15 +1533,27 @@ export default function Leads() {
                       columns: visibleColumns,
                       density,
                     };
-                    const row = await createSavedViewMutation.mutateAsync({ name, visibility: saveViewVisibility, configJson: cfg });
+                    const row =
+                      saveViewMode === "update" && selectedView?.id
+                        ? await updateSavedViewMutation.mutateAsync({
+                            id: Number(selectedView.id),
+                            name,
+                            visibility: saveViewVisibility,
+                            configJson: cfg,
+                          })
+                        : await createSavedViewMutation.mutateAsync({ name, visibility: saveViewVisibility, configJson: cfg });
                     if (saveViewVisibility === "link") {
                       setFilters((prev: any) => ({ ...prev, viewToken: String(row?.shareToken || "") }));
+                    } else {
+                      setFilters((prev: any) => ({ ...prev, viewToken: "" }));
                     }
+                    setSelectedView(row);
+                    setAutosaveViewConfigKey("");
                     setSaveViewOpen(false);
                   }}
-                  disabled={createSavedViewMutation.isPending}
+                  disabled={createSavedViewMutation.isPending || updateSavedViewMutation.isPending}
                 >
-                  {createSavedViewMutation.isPending ? "Saving..." : "Save"}
+                  {createSavedViewMutation.isPending || updateSavedViewMutation.isPending ? "Saving..." : "Save"}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -1642,9 +1800,8 @@ export default function Leads() {
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  setSelectionMode("all_filtered");
-                  setSelectedIds(new Set());
-                  setExcludedIds(new Set());
+                  setSelectAllConfirmText("");
+                  setSelectAllConfirmOpen(true);
                 }}
               >
                 Select all filtered ({leadsTotal.toLocaleString()})
@@ -1691,6 +1848,43 @@ export default function Leads() {
           </div>
         </div>
       ) : null}
+
+      <Dialog open={selectAllConfirmOpen} onOpenChange={setSelectAllConfirmOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Select all filtered leads</DialogTitle>
+            <DialogDescription>
+              This will target all leads matching the current filters. Type {selectionSigLabel} to confirm.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="select-all-confirm">Confirmation</Label>
+            <Input
+              id="select-all-confirm"
+              value={selectAllConfirmText}
+              onChange={(e) => setSelectAllConfirmText(e.target.value)}
+              placeholder={selectionSigLabel}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSelectAllConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-primary hover:bg-primary/90 text-white"
+              disabled={selectAllConfirmText.trim().toUpperCase() !== selectionSigLabel}
+              onClick={() => {
+                setSelectionMode("all_filtered");
+                setSelectedIds(new Set());
+                setExcludedIds(new Set());
+                setSelectAllConfirmOpen(false);
+              }}
+            >
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <VoiceActionDialog
         open={voiceOpen}
@@ -1814,7 +2008,7 @@ export default function Leads() {
                             className="border-primary text-primary hover:bg-primary hover:text-white"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setLocation(`/opportunities/${lead.linkedPropertyId}`);
+                              setLocation(opportunityUrl(lead.linkedPropertyId));
                             }}
                             data-testid={`button-view-opportunity-${lead.id}`}
                           >
@@ -1854,14 +2048,38 @@ export default function Leads() {
                               <Pencil className="mr-2 h-4 w-4" />
                               Edit
                             </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openVoiceForLeadId(lead.id)}>
+                              <Mic className="mr-2 h-4 w-4" />
+                              Voice
+                            </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => {
                                 const full = `${lead.address || ""}${lead.city ? `, ${lead.city}` : ""}${lead.state ? ` ${lead.state}` : ""}${lead.zipCode ? ` ${lead.zipCode}` : ""}`.trim();
-                                setLocation(`/playground?leadId=${lead.id}&address=${encodeURIComponent(full || String(lead.address || "").trim())}`);
+                                setLocation(
+                                  playgroundUrl({
+                                    leadId: lead.id,
+                                    propertyId: lead.linkedPropertyId ?? null,
+                                    address: full || String(lead.address || "").trim(),
+                                  }),
+                                );
                               }}
                             >
                               <Lightbulb className="mr-2 h-4 w-4" />
                               Open in Playground
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setLocation(tasksUrl({ relatedEntityType: "lead", relatedEntityId: lead.id }));
+                              }}
+                            >
+                              View Tasks
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setLocation(calendarUrl({ relatedEntityType: "lead", relatedEntityId: lead.id }));
+                              }}
+                            >
+                              View Calendar
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -1906,7 +2124,15 @@ export default function Leads() {
                   setActivityLeadId(l.id);
                   setIsActivityDialogOpen(true);
                 }}
-                onCall={(l) => setLocation(`/dialer?number=${encodeURIComponent(String(l.ownerPhone || ""))}&leadId=${l.id}`)}
+                onCall={(l) =>
+                  setLocation(
+                    dialerUrl({
+                      number: String(l.ownerPhone || ""),
+                      leadId: l.id,
+                      propertyId: typeof (l as any).linkedPropertyId === "number" ? (l as any).linkedPropertyId : null,
+                    }),
+                  )
+                }
                 onSms={(l) => {
                   setSmsLead(l);
                   setSmsBody("");
@@ -1932,11 +2158,17 @@ export default function Leads() {
           </SheetHeader>
           {selectedLead ? (
             <div className="mt-6 flex-1 min-h-0 space-y-4 pr-2 scroll-y-container">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <Badge variant="outline" className={getStatusBadgeColor(selectedLead.status)}>
                   {pipelineColumnsWithMissing.find((s) => s.value === selectedLead.status)?.label || selectedLead.status}
                 </Badge>
-                <div className="text-sm text-muted-foreground">Score: {selectedLead.relasScore || "—"}</div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => openVoiceForLeadId(selectedLead.id)}>
+                    <Mic className="mr-2 h-4 w-4" />
+                    Voice
+                  </Button>
+                  <div className="text-sm text-muted-foreground">Score: {selectedLead.relasScore || "—"}</div>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3 text-sm">

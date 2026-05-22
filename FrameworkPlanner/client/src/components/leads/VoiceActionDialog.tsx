@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { useMemo } from "react";
+import { Mic, MicOff } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type SelectionMode = "explicit" | "all_filtered";
 
@@ -30,9 +31,11 @@ type VoicePreview = {
 export function VoiceActionDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  mode?: "leads" | "playground";
   selectionMode: SelectionMode;
   selectedIds: number[];
   selectedLead: SelectedLeadLite | null;
+  playgroundContext?: { address?: string | null; sessionId?: number | null; leadId?: number | null; propertyId?: number | null } | null;
   voiceTranscript: string;
   setVoiceTranscript: (v: string) => void;
   voiceParsed: VoiceParsed | null;
@@ -48,14 +51,18 @@ export function VoiceActionDialog(props: {
     undo: { mutate: () => void; isPending: boolean };
   };
 }) {
+  const mode = props.mode === "playground" ? "playground" : "leads";
   const action = String(props.voiceParsed?.action || "").trim();
   const params = (props.voiceParsed?.params || {}) as Record<string, any>;
 
-  const isAllFiltered = props.selectionMode === "all_filtered";
-  const selectedCount = props.selectedIds.length;
-  const isOverLimit = selectedCount > 200;
+  const isAllFiltered = mode === "leads" && props.selectionMode === "all_filtered";
+  const selectedCount = mode === "playground" ? 1 : props.selectedIds.length;
+  const isOverLimit = mode === "leads" && props.selectedIds.length > 200;
   const isPlaygroundAction = action === "playground_append_note";
-  const isPlaygroundSelectionInvalid = isPlaygroundAction && selectedCount !== 1;
+  const isPlaygroundSelectionInvalid = mode === "leads" && isPlaygroundAction && props.selectedIds.length !== 1;
+  const isPlaygroundContextMissing =
+    mode === "playground" && isPlaygroundAction && !Number(props.playgroundContext?.sessionId || 0) && !String(props.playgroundContext?.address || "").trim();
+  const isUnsupportedInPlayground = mode === "playground" && !!action && action !== "playground_append_note";
 
   const canParse = props.voiceTranscript.trim().length > 0 && !props.mutations.parse.isPending;
   const canPreview =
@@ -63,6 +70,8 @@ export function VoiceActionDialog(props: {
     !isAllFiltered &&
     !isOverLimit &&
     !isPlaygroundSelectionInvalid &&
+    !isPlaygroundContextMissing &&
+    !isUnsupportedInPlayground &&
     !props.mutations.preview.isPending &&
     !props.mutations.parse.isPending;
   const canApply =
@@ -70,15 +79,114 @@ export function VoiceActionDialog(props: {
     !isAllFiltered &&
     !isOverLimit &&
     !isPlaygroundSelectionInvalid &&
+    !isPlaygroundContextMissing &&
+    !isUnsupportedInPlayground &&
     !props.mutations.apply.isPending;
   const canUndo = !!props.voiceActionLogId && !props.mutations.undo.isPending;
+
+  const speech = useRef<any>(null);
+  const transcriptRef = useRef(props.voiceTranscript);
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const [speechListening, setSpeechListening] = useState(false);
+  const [speechInterim, setSpeechInterim] = useState("");
+  const [speechError, setSpeechError] = useState<string | null>(null);
+
+  useEffect(() => {
+    transcriptRef.current = props.voiceTranscript;
+  }, [props.voiceTranscript]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    setSpeechSupported(!!SpeechRecognition);
+  }, []);
+
+  useEffect(() => {
+    if (!props.open) {
+      try {
+        speech.current?.stop?.();
+      } catch {}
+      setSpeechListening(false);
+      setSpeechInterim("");
+      setSpeechError(null);
+    }
+  }, [props.open]);
+
+  const toggleSpeech = () => {
+    if (typeof window === "undefined") return;
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setSpeechSupported(false);
+      setSpeechError("Speech recognition is not supported in this browser.");
+      return;
+    }
+
+    if (speechListening) {
+      try {
+        speech.current?.stop?.();
+      } catch {}
+      setSpeechListening(false);
+      setSpeechInterim("");
+      return;
+    }
+
+    setSpeechError(null);
+    setSpeechInterim("");
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.interimResults = true;
+    recognition.continuous = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event: any) => {
+      let interim = "";
+      let finalText = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const r = event.results[i];
+        const text = String(r?.[0]?.transcript || "").trim();
+        if (!text) continue;
+        if (r.isFinal) finalText += `${text} `;
+        else interim += `${text} `;
+      }
+      setSpeechInterim(interim.trim());
+      if (finalText.trim()) {
+        const prev = String(transcriptRef.current || "").trim();
+        props.setVoiceTranscript([prev, finalText.trim()].filter(Boolean).join("\n"));
+        setSpeechInterim("");
+      }
+    };
+
+    recognition.onerror = (e: any) => {
+      const msg = String(e?.error || e?.message || "Speech recognition error");
+      setSpeechError(msg);
+      setSpeechListening(false);
+      setSpeechInterim("");
+    };
+
+    recognition.onend = () => {
+      setSpeechListening(false);
+      setSpeechInterim("");
+    };
+
+    speech.current = recognition;
+    try {
+      recognition.start();
+      setSpeechListening(true);
+    } catch (e: any) {
+      setSpeechError(String(e?.message || e || "Could not start speech recognition"));
+      setSpeechListening(false);
+      setSpeechInterim("");
+    }
+  };
 
   const selectionWarning = useMemo(() => {
     if (isAllFiltered) return "Voice actions can’t run on “all filtered”. Select specific leads.";
     if (isOverLimit) return "Voice actions are limited to 200 selected leads.";
     if (isPlaygroundSelectionInvalid) return "Playground notes require exactly 1 selected lead.";
+    if (isPlaygroundContextMissing) return "Missing playground context (address or session).";
+    if (isUnsupportedInPlayground) return "Only Playground notes are supported from the Playground page.";
     return "";
-  }, [isAllFiltered, isOverLimit, isPlaygroundSelectionInvalid]);
+  }, [isAllFiltered, isOverLimit, isPlaygroundSelectionInvalid, isPlaygroundContextMissing, isUnsupportedInPlayground]);
 
   const parsedSummary = useMemo(() => {
     if (!action) return null;
@@ -127,10 +235,21 @@ export function VoiceActionDialog(props: {
             <div className="rounded-md border px-3 py-2 text-sm text-muted-foreground">{selectionWarning}</div>
           ) : (
             <div className="rounded-md border px-3 py-2 text-sm text-muted-foreground">
-              Selected: <span className="font-medium text-foreground">{selectedCount}</span>
-              {selectedCount === 1 && props.selectedLead?.address ? (
-                <span className="ml-2">{String(props.selectedLead.address)}</span>
-              ) : null}
+              {mode === "playground" ? (
+                <>
+                  Playground:{" "}
+                  <span className="font-medium text-foreground">
+                    {String(props.playgroundContext?.address || "").trim() || (props.playgroundContext?.sessionId ? `Session ${props.playgroundContext.sessionId}` : "—")}
+                  </span>
+                </>
+              ) : (
+                <>
+                  Selected: <span className="font-medium text-foreground">{selectedCount}</span>
+                  {selectedCount === 1 && props.selectedLead?.address ? (
+                    <span className="ml-2">{String(props.selectedLead.address)}</span>
+                  ) : null}
+                </>
+              )}
             </div>
           )}
 
@@ -141,10 +260,26 @@ export function VoiceActionDialog(props: {
               placeholder='Try: "Add note: left voicemail" or "Playground note: offer range 320-340k"'
               className="min-h-[120px]"
             />
+            {speechSupported ? (
+              <div className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs text-muted-foreground">
+                <div className="truncate">
+                  {speechListening ? "Listening…" : "Tap Record to dictate. Review the transcript before parsing."}
+                  {speechInterim ? <span className="ml-2 text-foreground">{speechInterim}</span> : null}
+                </div>
+                <Button variant="outline" size="sm" onClick={toggleSpeech} type="button">
+                  {speechListening ? <MicOff className="mr-2 h-4 w-4" /> : <Mic className="mr-2 h-4 w-4" />}
+                  {speechListening ? "Stop" : "Record"}
+                </Button>
+              </div>
+            ) : (
+              <div className="rounded-md border px-3 py-2 text-xs text-muted-foreground">Paste or type your transcript (voice capture isn’t available in this browser).</div>
+            )}
+            {speechError ? <div className="rounded-md border px-3 py-2 text-xs text-destructive">{speechError}</div> : null}
             <div className="flex items-center justify-end gap-2">
               <Button
                 variant="secondary"
                 onClick={() => {
+                  if (speechListening) toggleSpeech();
                   props.setVoiceTranscript("");
                   props.setVoiceParsed(null);
                   props.setVoicePreview(null);
@@ -230,4 +365,3 @@ export function VoiceActionDialog(props: {
     </Dialog>
   );
 }
-

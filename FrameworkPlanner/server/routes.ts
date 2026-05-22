@@ -71,6 +71,7 @@ import { isEmailNotConfiguredError, sendAuthError } from "./auth/errors.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
 import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
+import { createIsFeatureEnabled } from "./featureFlags.js";
 
 const require = createRequire(import.meta.url);
 const packageJson: any = (() => {
@@ -234,37 +235,7 @@ async function requireAssigneeInActiveTeam(req: any, res: any, user: any, assign
   return true;
 }
 
-function parseEnvBool(v: unknown): boolean | null {
-  if (v === undefined || v === null) return null;
-  const s = String(v).trim().toLowerCase();
-  if (!s) return null;
-  if (s === "1" || s === "true" || s === "yes" || s === "on") return true;
-  if (s === "0" || s === "false" || s === "no" || s === "off") return false;
-  return null;
-}
-
-const featureEnvVars: Record<string, string> = {
-  skip_trace: "FEATURE_SKIP_TRACE",
-  campaigns: "FEATURE_CAMPAIGNS",
-  rvm: "FEATURE_RVM",
-  esign: "FEATURE_ESIGN",
-  field_mode: "FEATURE_FIELD_MODE",
-  comps: "FEATURE_COMPS",
-  buyer_match: "FEATURE_BUYER_MATCH",
-  voice_playground: "FEATURE_VOICE_PLAYGROUND",
-};
-
-async function isFeatureEnabled(userId: number, flag: keyof typeof featureEnvVars): Promise<boolean> {
-  const envKey = featureEnvVars[flag];
-  const envDecision = parseEnvBool(process.env[envKey]);
-  if (envDecision !== null) return envDecision;
-  try {
-    const row = await storage.getUserFeatureFlag(userId, flag);
-    return !!row?.enabled;
-  } catch {
-    return false;
-  }
-}
+const isFeatureEnabled = createIsFeatureEnabled(storage.getUserFeatureFlag.bind(storage));
 
 function isImportExportEntityType(entityType: string) {
   return entityType === "lead" || entityType === "opportunity" || entityType === "contact" || entityType === "buyer";
@@ -3934,8 +3905,8 @@ export async function registerRoutes(
           description: z.string().trim().min(1).max(20_000),
           recommendation: z.string().trim().max(20_000).optional().nullable(),
           technicalNotes: z.string().trim().max(20_000).optional().nullable(),
-          affectedPages: z.array(z.string().trim().min(1).max(120)).max(50).optional().nullable(),
-          fixPlan: z.string().trim().max(20_000).optional().nullable(),
+          affectedPages: z.array(z.string().trim().min(1).max(120)).min(1).max(50),
+          fixPlan: z.string().trim().min(1).max(20_000),
           ownerUserId: z.coerce.number().int().positive().optional().nullable(),
           prdSection: z.string().trim().max(500).optional().nullable(),
         })
@@ -3949,8 +3920,8 @@ export async function registerRoutes(
         description: payload.description,
         recommendation: payload.recommendation ?? null,
         technicalNotes: payload.technicalNotes ?? null,
-        affectedPages: payload.affectedPages ?? [],
-        fixPlan: payload.fixPlan ?? null,
+        affectedPages: payload.affectedPages,
+        fixPlan: payload.fixPlan,
         ownerUserId: payload.ownerUserId ?? null,
         prdSection: payload.prdSection ?? null,
         status: "open",
@@ -4163,8 +4134,8 @@ export async function registerRoutes(
           description: z.string().trim().min(1).max(20_000).optional(),
           recommendation: z.string().trim().max(20_000).optional().nullable(),
           technicalNotes: z.string().trim().max(20_000).optional().nullable(),
-          affectedPages: z.array(z.string().trim().min(1).max(120)).max(50).optional(),
-          fixPlan: z.string().trim().max(20_000).optional().nullable(),
+          affectedPages: z.array(z.string().trim().min(1).max(120)).min(1).max(50).optional(),
+          fixPlan: z.string().trim().min(1).max(20_000).optional(),
           ownerUserId: z.coerce.number().int().positive().optional().nullable(),
           prdSection: z.string().trim().max(500).optional().nullable(),
           status: z.enum(["open", "in_progress", "resolved", "ignored"]).optional(),
@@ -4175,6 +4146,41 @@ export async function registerRoutes(
       res.json(row);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/audit/release-gate", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+
+      const rows: any = await db.execute(sql`
+        SELECT 
+          f.id as "id",
+          f.run_id as "runId",
+          f.severity as "severity",
+          f.area as "area",
+          f.title as "title",
+          f.status as "status",
+          f.updated_at as "updatedAt"
+        FROM app_audit_findings f
+        JOIN app_audit_runs r ON r.id = f.run_id
+        WHERE r.created_by = ${user.id}
+          AND f.severity = 'critical'
+          AND f.status IN ('open', 'in_progress')
+        ORDER BY f.updated_at DESC, f.id DESC
+        LIMIT 50
+      `);
+
+      const blockingItems = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
+
+      res.json({
+        ok: blockingItems.length === 0,
+        blockingCount: blockingItems.length,
+        blockingItems,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
 
@@ -6294,6 +6300,20 @@ export async function registerRoutes(
       if (dbStatus !== "connected") nextSteps.push("Verify DATABASE_URL and Neon availability");
       if (!process.env.DIALER_DEFAULT_FROM_NUMBER) nextSteps.push("Set DIALER_DEFAULT_FROM_NUMBER for outbound caller ID");
 
+      let releaseGate: { ok: boolean; blockingCritical: number } = { ok: true, blockingCritical: 0 };
+      try {
+        const gateRows: any = await db.execute(sql`
+          SELECT COUNT(*)::int as "count"
+          FROM app_audit_findings
+          WHERE severity = 'critical'
+            AND status IN ('open', 'in_progress')
+        `);
+        const n = Number((gateRows as any).rows?.[0]?.count ?? 0);
+        releaseGate = { ok: n === 0, blockingCritical: Number.isFinite(n) ? n : 0 };
+      } catch {}
+
+      if (!releaseGate.ok) nextSteps.push(`Release gate blocked: ${releaseGate.blockingCritical} Critical findings are still open`);
+
       res.json({
         status: missing.length === 0 && dbStatus === "connected" && signalwireStatus === "reachable" ? "ok" : "warn",
         env: { nodeEnv: process.env.NODE_ENV || "", missing },
@@ -6302,6 +6322,7 @@ export async function registerRoutes(
         numbers: process.env.DIALER_NUMBERS_JSON ? JSON.parse(process.env.DIALER_NUMBERS_JSON) : [],
         defaultFrom: process.env.DIALER_DEFAULT_FROM_NUMBER || null,
         sessions: { ok: sessionsOk },
+        releaseGate,
         nextSteps,
         timestamp: new Date().toISOString(),
       });
@@ -7710,7 +7731,8 @@ export async function registerRoutes(
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
       const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
       const leadId = req.query.leadId ? parseInt(req.query.leadId as string) : undefined;
-      const playgroundSessionId = req.query.playgroundSessionId ? parseInt(req.query.playgroundSessionId as string) : undefined;
+      const playgroundSessionIdRaw = req.query.playgroundSessionId ?? req.query.sessionId;
+      const playgroundSessionId = playgroundSessionIdRaw ? parseInt(playgroundSessionIdRaw as string) : undefined;
       const logs = await storage.getGlobalActivityLogs(limit);
 
       const parsed = logs.map((log) => {

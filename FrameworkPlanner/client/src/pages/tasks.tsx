@@ -15,6 +15,7 @@ import { CheckSquare, Loader2, Plus, RefreshCw, UserPlus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
+import { getEntityFilterFromLocation, leadUrl, opportunityUrl } from "@/lib/deepLinks";
 
 type Task = {
   id: number;
@@ -72,8 +73,8 @@ async function runWithConcurrency<T>(items: T[], limit: number, fn: (item: T) =>
 }
 
 function taskLink(t: Task) {
-  if (t.relatedEntityType === "lead" && t.relatedEntityId) return `/leads?leadId=${t.relatedEntityId}`;
-  if (t.relatedEntityType === "opportunity" && t.relatedEntityId) return `/opportunities/${t.relatedEntityId}`;
+  if (t.relatedEntityType === "lead" && t.relatedEntityId) return leadUrl(t.relatedEntityId);
+  if (t.relatedEntityType === "opportunity" && t.relatedEntityId) return opportunityUrl(t.relatedEntityId);
   if (t.relatedEntityType === "buyer" && t.relatedEntityId) return `/buyers?buyerId=${t.relatedEntityId}`;
   if (t.relatedEntityType === "campaign" && t.relatedEntityId) return `/campaigns?campaignId=${t.relatedEntityId}`;
   return null;
@@ -84,6 +85,7 @@ export default function TasksPage() {
   const qc = useQueryClient();
   const canBulkAssign = isManager(user);
   const [, setLocation] = useLocation();
+  const entityFilter = useMemo(() => getEntityFilterFromLocation(), []);
 
   const [assignee, setAssignee] = useState<string>("all");
   const [status, setStatus] = useState<string>("open");
@@ -103,8 +105,12 @@ export default function TasksPage() {
     if (priority !== "all") p.set("priority", priority);
     if (dueFrom) p.set("dueFrom", new Date(`${dueFrom}T00:00:00`).toISOString());
     if (dueTo) p.set("dueTo", new Date(`${dueTo}T23:59:59`).toISOString());
+    if (entityFilter.relatedEntityType && entityFilter.relatedEntityId) {
+      p.set("relatedEntityType", entityFilter.relatedEntityType);
+      p.set("relatedEntityId", String(entityFilter.relatedEntityId));
+    }
     return p;
-  }, [assignee, dueFrom, dueTo, priority, status, type]);
+  }, [assignee, dueFrom, dueTo, entityFilter.relatedEntityId, entityFilter.relatedEntityType, priority, status, type]);
 
   const listKey = useMemo(() => `/api/tasks?${params.toString()}`, [params]);
 

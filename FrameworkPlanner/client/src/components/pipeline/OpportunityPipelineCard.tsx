@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PipelineColumn } from "./types";
 import { Clock, StickyNote, Lightbulb } from "lucide-react";
+import { playgroundUrl } from "@/lib/deepLinks";
 
 type OpportunityLike = {
   id: number;
@@ -71,7 +72,7 @@ export function OpportunityPipelineCard({
             className="h-8 px-2"
             onClick={() => {
               if (!playgroundAddress) return;
-              window.location.href = `/playground?address=${encodeURIComponent(playgroundAddress)}&propertyId=${opportunity.id}`;
+              window.location.href = playgroundUrl({ address: playgroundAddress, propertyId: opportunity.id });
             }}
             disabled={!playgroundAddress}
           >
