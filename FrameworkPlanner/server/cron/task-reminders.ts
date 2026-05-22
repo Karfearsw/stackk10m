@@ -36,7 +36,7 @@ export function startTaskReminders(intervalMs = 60_000) {
       const dueSoon: any = await db.execute(sql`
         SELECT id, title, description, due_at, assigned_to_user_id
         FROM tasks
-        WHERE status = 'open'
+        WHERE status IN ('open','in_progress','waiting')
           AND assigned_to_user_id IS NOT NULL
           AND due_at IS NOT NULL
           AND due_at > NOW()
@@ -97,7 +97,7 @@ export function startTaskReminders(intervalMs = 60_000) {
       const overdue: any = await db.execute(sql`
         SELECT id, title, description, due_at, assigned_to_user_id
         FROM tasks
-        WHERE status = 'open'
+        WHERE status IN ('open','in_progress','waiting')
           AND assigned_to_user_id IS NOT NULL
           AND due_at IS NOT NULL
           AND due_at < NOW()
