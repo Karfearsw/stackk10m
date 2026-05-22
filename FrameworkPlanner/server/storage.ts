@@ -2195,6 +2195,44 @@ export class DatabaseStorage implements IStorage {
     return result[0] as any;
   }
 
+  async rescheduleTask(
+    auth: { userId: number; isManager: boolean },
+    id: number,
+    input: { dueAt: Date; reason?: string | null },
+  ): Promise<Task | undefined> {
+    const task = await this.getTaskById(id);
+    if (!task) return undefined;
+
+    const snoozeCount = Number((task as any).snoozeCount || 0);
+    if (!auth.isManager && snoozeCount >= 5) {
+      const e: any = new Error("Snooze limit reached");
+      e.code = "SNOOZE_LIMIT";
+      throw e;
+    }
+
+    const now = new Date();
+    const prevDue = (task as any).dueAt ? new Date((task as any).dueAt as any) : null;
+    const nextDue = input.dueAt;
+    const increments = prevDue && nextDue.getTime() > prevDue.getTime();
+    const nextSnoozeCount = snoozeCount + (increments ? 1 : 0);
+
+    const updates: any = {
+      dueAt: nextDue,
+      status: "open",
+      updatedAt: now,
+      reminderSentAt: null,
+      overdueAlertSentAt: null,
+    };
+    if (increments) {
+      updates.snoozeCount = nextSnoozeCount;
+      updates.lastSnoozedAt = now;
+      updates.lastSnoozeReason = input.reason ? String(input.reason).trim().slice(0, 500) : null;
+    }
+
+    const result = await db.update(tasks).set(updates).where(eq(tasks.id, id)).returning();
+    return result[0] as any;
+  }
+
   async deleteTask(id: number): Promise<void> {
     await db.delete(tasks).where(eq(tasks.id, id));
   }

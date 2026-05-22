@@ -69,6 +69,7 @@ import { sendResendEmail } from "./services/messaging/resend.js";
 import { getAuthStatusSnapshot, getEmailProviderMissing } from "./auth/config.js";
 import { isEmailNotConfiguredError, sendAuthError } from "./auth/errors.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
+import { buildTodayQueue } from "./services/tasks/today-queue.js";
 import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
 import { createIsFeatureEnabled } from "./featureFlags.js";
@@ -8245,6 +8246,31 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/today-queue", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+
+      const schema = z.object({
+        start: z.coerce.date(),
+        end: z.coerce.date(),
+        limit: z.coerce.number().int().min(1).max(500).optional(),
+        relatedEntityType: z.string().trim().min(1).optional(),
+        relatedEntityId: z.coerce.number().int().positive().optional(),
+      });
+      const q = schema.parse(req.query || {});
+      if (q.end.getTime() <= q.start.getTime()) return res.status(400).json({ message: "Invalid date range" });
+
+      const out = await buildTodayQueue(
+        { userId: user.id, isManager: isManagerUser(user) },
+        { start: q.start, end: q.end, limit: q.limit, relatedEntityType: q.relatedEntityType, relatedEntityId: q.relatedEntityId },
+      );
+      return res.json(out);
+    } catch (error: any) {
+      return res.status(400).json({ message: error.message });
+    }
+  });
+
   app.post("/api/tasks", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -8288,10 +8314,62 @@ export async function registerRoutes(
         const ok = await requireAssigneeInActiveTeam(req, res, user, patch.assignedToUserId);
         if (!ok) return;
       }
+      if (patch.dueAt) {
+        const out = await storage.rescheduleTask(
+          { userId: user.id, isManager: isManagerUser(user) },
+          id,
+          { dueAt: patch.dueAt, reason: null },
+        );
+        if (!out) return res.status(404).json({ message: "Task not found" });
+        const rest: any = { ...(patch as any) };
+        delete rest.dueAt;
+        delete rest.status;
+        if (Object.keys(rest).length) {
+          const updated = await storage.updateTask(id, rest);
+          return res.json(updated);
+        }
+        return res.json(out);
+      }
+
       const updated = await storage.updateTask(id, patch);
-      res.json(updated);
+      return res.json(updated);
     } catch (error: any) {
-      res.status(400).json({ message: error.message });
+      if (String(error?.code || "") === "SNOOZE_LIMIT") {
+        return res.status(409).json({ message: error.message });
+      }
+      return res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/tasks/:id/reschedule", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+
+      const id = parseInt(req.params.id);
+      const task = await storage.getTaskById(id);
+      if (!task) return res.status(404).json({ message: "Task not found" });
+      if (!canViewTask(user, task)) return res.status(404).json({ message: "Task not found" });
+      if (!canMutateTask(user, task)) return res.status(403).json({ message: "Forbidden" });
+
+      const bodySchema = z.object({
+        dueAt: z.coerce.date(),
+        reason: z.string().trim().min(1).max(500).optional(),
+      });
+      const body = bodySchema.parse(req.body || {});
+
+      const out = await storage.rescheduleTask(
+        { userId: user.id, isManager: isManagerUser(user) },
+        id,
+        { dueAt: body.dueAt, reason: body.reason ?? null },
+      );
+      if (!out) return res.status(404).json({ message: "Task not found" });
+      return res.json(out);
+    } catch (error: any) {
+      if (String(error?.code || "") === "SNOOZE_LIMIT") {
+        return res.status(409).json({ message: error.message });
+      }
+      return res.status(400).json({ message: error.message });
     }
   });
 
