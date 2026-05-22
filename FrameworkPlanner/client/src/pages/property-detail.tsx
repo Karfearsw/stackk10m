@@ -499,8 +499,9 @@ export default function PropertyDetail() {
                 <DealCalculator
                   initialValues={{
                     arv: num(property?.arv),
-                    purchasePrice: num(property?.price),
-                    repairCosts: num(property?.repairCost),
+                    offerTarget: num(property?.price),
+                    repairs: num(property?.repairCost),
+                    rentPerMonth: num(property?.rentPerMonth),
                   }}
                   showActions={false}
                 />
