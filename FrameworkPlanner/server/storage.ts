@@ -2,7 +2,7 @@ import { db } from "./db.js";
 import { asc, desc, sql } from "drizzle-orm";
 import { 
   leads, leadNotes, savedViews, leadBulkActionJobs, aiActionLogs, aiActionUndo, appAuditRuns, appAuditFindings, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
-  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
+  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, workCategories, timesheetEntries, timeClockSessions, workerProfiles, categoryRateOverrides, payPeriods, approvalEvents, commissionEvents, dealParticipants, commissionLedgerEntries, globalActivityLogs,
   buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents
 } from "./shared-schema.js";
 import { 
@@ -38,8 +38,16 @@ import {
   type UserNotification, type InsertUserNotification,
   type Task, type InsertTask,
   type Offer, type InsertOffer,
+  type WorkCategory, type InsertWorkCategory,
   type TimesheetEntry, type InsertTimesheetEntry,
   type TimeClockSession, type InsertTimeClockSession,
+  type WorkerProfile, type InsertWorkerProfile,
+  type CategoryRateOverride, type InsertCategoryRateOverride,
+  type PayPeriod, type InsertPayPeriod,
+  type ApprovalEvent, type InsertApprovalEvent,
+  type CommissionEvent, type InsertCommissionEvent,
+  type DealParticipant, type InsertDealParticipant,
+  type CommissionLedgerEntry, type InsertCommissionLedgerEntry,
   type GlobalActivityLog, type InsertGlobalActivityLog,
   type Buyer, type InsertBuyer,
   type BuyerCommunication, type InsertBuyerCommunication,
@@ -387,6 +395,39 @@ export interface IStorage {
   updateOpenTimeClockSession(userId: number, partial: Partial<InsertTimeClockSession>): Promise<TimeClockSession | undefined>;
   closeOpenTimeClockSessionAndCreateEntry(userId: number, input: { clockOutAt: Date; tzOffsetMinutes: number }): Promise<{ session: TimeClockSession; entry: TimesheetEntry } | undefined>;
 
+  // Work Categories
+  getWorkCategories(input?: { includeInactive?: boolean }): Promise<WorkCategory[]>;
+  createWorkCategory(input: InsertWorkCategory): Promise<WorkCategory>;
+  updateWorkCategory(id: number, patch: Partial<InsertWorkCategory>): Promise<WorkCategory>;
+
+  // Worker Profiles
+  listWorkerProfiles(): Promise<WorkerProfile[]>;
+  upsertWorkerProfile(userId: number, patch: Partial<InsertWorkerProfile>): Promise<WorkerProfile>;
+
+  // Category Rate Overrides
+  getCategoryRateOverridesByUser(userId: number): Promise<CategoryRateOverride[]>;
+  upsertCategoryRateOverride(userId: number, categoryId: number, patch: Partial<InsertCategoryRateOverride>): Promise<CategoryRateOverride>;
+  deleteCategoryRateOverride(userId: number, categoryId: number): Promise<void>;
+
+  // Pay Periods
+  upsertPayPeriod(input: InsertPayPeriod): Promise<PayPeriod>;
+
+  // Approval Events
+  createApprovalEvent(input: InsertApprovalEvent): Promise<ApprovalEvent>;
+
+  // Commissions
+  upsertCommissionEvent(input: InsertCommissionEvent): Promise<CommissionEvent>;
+  listCommissionEvents(input: { from?: Date; to?: Date; sourceType?: string; sourceId?: number; limit?: number; offset?: number }): Promise<CommissionEvent[]>;
+  listDealParticipants(input: { sourceType: string; sourceId: number }): Promise<DealParticipant[]>;
+  upsertDealParticipant(input: InsertDealParticipant): Promise<DealParticipant>;
+  deleteDealParticipant(id: number): Promise<void>;
+  listCommissionLedgerEntries(input: { userId?: number; status?: string; eventId?: number; limit?: number; offset?: number }): Promise<CommissionLedgerEntry[]>;
+  upsertCommissionLedgerEntry(input: InsertCommissionLedgerEntry): Promise<CommissionLedgerEntry>;
+  updateCommissionLedgerEntry(id: number, patch: Partial<InsertCommissionLedgerEntry>): Promise<CommissionLedgerEntry>;
+
+  // Payroll
+  getPayrollSummary(input: { from: string; to: string; userId?: number }): Promise<any>;
+
   // Global Activity Logs
   getGlobalActivityLogs(limit?: number, offset?: number): Promise<GlobalActivityLog[]>;
   createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog>;
@@ -533,6 +574,59 @@ function normalizeGlobalActivityAction(action: string) {
     skip_trace_failed: "skip_trace.failed",
   };
   return map[a] || a;
+}
+
+const MAX_TIME_ENTRY_HOURS = 16;
+const MIN_TIME_ENTRY_MINUTES = 5;
+
+function parseTimeHm(raw: string) {
+  const s = String(raw || "").trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number.parseInt(m[1], 10);
+  const min = Number.parseInt(m[2], 10);
+  if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
+  if (h < 0 || h > 23) return null;
+  if (min < 0 || min > 59) return null;
+  return { h, m: min };
+}
+
+function computeTimeEntryDuration(input: { date: string; startTime: string; endTime: string }) {
+  const start = parseTimeHm(input.startTime);
+  const end = parseTimeHm(input.endTime);
+  if (!start || !end) {
+    return { ok: false as const, error: "Invalid startTime/endTime" };
+  }
+
+  const startMinutes = start.h * 60 + start.m;
+  const endMinutes = end.h * 60 + end.m;
+  let durationMinutes = endMinutes - startMinutes;
+  let overnight = false;
+  if (durationMinutes < 0) {
+    durationMinutes += 24 * 60;
+    overnight = true;
+  }
+
+  if (durationMinutes === 0) {
+    return { ok: false as const, error: "Start and end times are the same" };
+  }
+
+  const hours = durationMinutes / 60;
+  const flags: string[] = [];
+  let status: string = "draft";
+  let payableHours: number | null = null;
+
+  if (durationMinutes > MAX_TIME_ENTRY_HOURS * 60) {
+    flags.push("duration_over_max");
+    status = "disputed";
+    payableHours = 0;
+  } else if (durationMinutes < MIN_TIME_ENTRY_MINUTES) {
+    flags.push("too_short");
+    status = "disputed";
+    payableHours = 0;
+  }
+
+  return { ok: true as const, hours, durationMinutes, overnight, status, payableHours, flags };
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1802,6 +1896,7 @@ export class DatabaseStorage implements IStorage {
 
     let q: any = db.select().from(timesheetEntries);
     if (conditions.length > 0) q = q.where(and(...conditions));
+    q = q.orderBy(desc(timesheetEntries.date), desc(timesheetEntries.id));
     if (typeof input.limit === "number") q = q.limit(input.limit).offset(input.offset || 0);
     return q as unknown as Promise<TimesheetEntry[]>;
   }
@@ -1857,9 +1952,29 @@ export class DatabaseStorage implements IStorage {
     const open = await this.getOpenTimeClockSession(userId);
     if (!open) return undefined;
 
+    const msRaw = input.clockOutAt.getTime() - new Date(open.clockInAt as any).getTime();
+    const hoursRaw = msRaw > 0 ? msRaw / 3_600_000 : 0;
+    const flags: string[] = [];
+    let status: string = "draft";
+    let payableHours: number | null = null;
+    let autoClosed = false;
+    let autoClosedReason: string | null = null;
+
+    if (hoursRaw > MAX_TIME_ENTRY_HOURS) {
+      flags.push("duration_over_max");
+      status = "disputed";
+      payableHours = 0;
+      autoClosed = true;
+      autoClosedReason = "duration_over_max";
+    } else if (msRaw > 0 && msRaw < MIN_TIME_ENTRY_MINUTES * 60_000) {
+      flags.push("too_short");
+      status = "disputed";
+      payableHours = 0;
+    }
+
     const closedRows = await db
       .update(timeClockSessions)
-      .set({ clockOutAt: input.clockOutAt, updatedAt: new Date() } as any)
+      .set({ clockOutAt: input.clockOutAt, updatedAt: new Date(), autoClosed, autoClosedReason } as any)
       .where(eq(timeClockSessions.id, open.id))
       .returning();
     const session = closedRows[0];
@@ -1888,9 +2003,251 @@ export class DatabaseStorage implements IStorage {
       startTime,
       endTime,
       hours: hours.toFixed(2) as any,
+      status: status as any,
+      payableHours: payableHours === null ? null : (Number(payableHours.toFixed(2)) as any),
+      anomalyFlags: flags.length ? (flags as any) : null,
     } as any);
 
     return { session, entry };
+  }
+
+  async getWorkCategories(input?: { includeInactive?: boolean }): Promise<WorkCategory[]> {
+    const includeInactive = !!input?.includeInactive;
+    let q: any = db.select().from(workCategories);
+    if (!includeInactive) q = q.where(eq(workCategories.isActive, true));
+    q = q.orderBy(asc(workCategories.name));
+    return q as unknown as Promise<WorkCategory[]>;
+  }
+
+  async createWorkCategory(input: InsertWorkCategory): Promise<WorkCategory> {
+    const now = new Date();
+    const result = await db.insert(workCategories).values({ ...(input as any), updatedAt: now } as any).returning();
+    return result[0];
+  }
+
+  async updateWorkCategory(id: number, patch: Partial<InsertWorkCategory>): Promise<WorkCategory> {
+    const result = await db.update(workCategories).set({ ...(patch as any), updatedAt: new Date() } as any).where(eq(workCategories.id, id)).returning();
+    return result[0];
+  }
+
+  async listWorkerProfiles(): Promise<WorkerProfile[]> {
+    return db.select().from(workerProfiles).orderBy(asc(workerProfiles.userId)) as unknown as Promise<WorkerProfile[]>;
+  }
+
+  async upsertWorkerProfile(userId: number, patch: Partial<InsertWorkerProfile>): Promise<WorkerProfile> {
+    const now = new Date();
+    const v: any = patch as any;
+    const result = await db
+      .insert(workerProfiles)
+      .values({ userId, ...(patch as any), updatedAt: now } as any)
+      .onConflictDoUpdate({
+        target: [workerProfiles.userId] as any,
+        set: { ...(v as any), updatedAt: now } as any,
+      })
+      .returning();
+    return result[0];
+  }
+
+  async getCategoryRateOverridesByUser(userId: number): Promise<CategoryRateOverride[]> {
+    return db
+      .select()
+      .from(categoryRateOverrides)
+      .where(eq(categoryRateOverrides.userId, userId))
+      .orderBy(asc(categoryRateOverrides.categoryId)) as unknown as Promise<CategoryRateOverride[]>;
+  }
+
+  async upsertCategoryRateOverride(userId: number, categoryId: number, patch: Partial<InsertCategoryRateOverride>): Promise<CategoryRateOverride> {
+    const now = new Date();
+    const v: any = patch as any;
+    const result = await db
+      .insert(categoryRateOverrides)
+      .values({ userId, categoryId, ...(patch as any), updatedAt: now } as any)
+      .onConflictDoUpdate({
+        target: [categoryRateOverrides.userId, categoryRateOverrides.categoryId] as any,
+        set: { ...(v as any), updatedAt: now } as any,
+      })
+      .returning();
+    return result[0];
+  }
+
+  async deleteCategoryRateOverride(userId: number, categoryId: number): Promise<void> {
+    await db.delete(categoryRateOverrides).where(and(eq(categoryRateOverrides.userId, userId), eq(categoryRateOverrides.categoryId, categoryId)));
+  }
+
+  async upsertPayPeriod(input: InsertPayPeriod): Promise<PayPeriod> {
+    const now = new Date();
+    const v: any = input as any;
+    const result = await db
+      .insert(payPeriods)
+      .values({ ...(input as any), updatedAt: now } as any)
+      .onConflictDoUpdate({
+        target: [payPeriods.startDate, payPeriods.endDate] as any,
+        set: { status: v.status as any, createdByUserId: v.createdByUserId as any, updatedAt: now } as any,
+      })
+      .returning();
+    return result[0];
+  }
+
+  async createApprovalEvent(input: InsertApprovalEvent): Promise<ApprovalEvent> {
+    const result = await db.insert(approvalEvents).values(input as any).returning();
+    return result[0];
+  }
+
+  async upsertCommissionEvent(input: InsertCommissionEvent): Promise<CommissionEvent> {
+    const now = new Date();
+    const v: any = input as any;
+    const result = await db
+      .insert(commissionEvents)
+      .values({ ...(input as any), updatedAt: now } as any)
+      .onConflictDoUpdate({
+        target: [commissionEvents.sourceType, commissionEvents.sourceId, commissionEvents.milestone] as any,
+        set: { eventDate: v.eventDate as any, grossAmount: v.grossAmount as any, currency: v.currency as any, metadata: v.metadata as any, updatedAt: now } as any,
+      })
+      .returning();
+    return result[0];
+  }
+
+  async listCommissionEvents(input: { from?: Date; to?: Date; sourceType?: string; sourceId?: number; limit?: number; offset?: number }): Promise<CommissionEvent[]> {
+    const whereParts: any[] = [];
+    if (input.sourceType) whereParts.push(eq(commissionEvents.sourceType, input.sourceType));
+    if (typeof input.sourceId === "number") whereParts.push(eq(commissionEvents.sourceId, input.sourceId));
+    if (input.from) whereParts.push(gte(commissionEvents.eventDate as any, input.from as any));
+    if (input.to) whereParts.push(lte(commissionEvents.eventDate as any, input.to as any));
+    let q: any = db.select().from(commissionEvents);
+    if (whereParts.length) q = q.where(and(...whereParts));
+    q = q.orderBy(desc(commissionEvents.eventDate), desc(commissionEvents.id));
+    if (typeof input.limit === "number") q = q.limit(input.limit).offset(input.offset || 0);
+    return q as unknown as Promise<CommissionEvent[]>;
+  }
+
+  async listDealParticipants(input: { sourceType: string; sourceId: number }): Promise<DealParticipant[]> {
+    return db
+      .select()
+      .from(dealParticipants)
+      .where(and(eq(dealParticipants.sourceType, input.sourceType), eq(dealParticipants.sourceId, input.sourceId)))
+      .orderBy(asc(dealParticipants.id)) as unknown as Promise<DealParticipant[]>;
+  }
+
+  async upsertDealParticipant(input: InsertDealParticipant): Promise<DealParticipant> {
+    const now = new Date();
+    const v: any = input as any;
+    const result = await db
+      .insert(dealParticipants)
+      .values({ ...(input as any), updatedAt: now } as any)
+      .onConflictDoUpdate({
+        target: [dealParticipants.sourceType, dealParticipants.sourceId, dealParticipants.userId, dealParticipants.role] as any,
+        set: { splitPct: v.splitPct as any, updatedAt: now } as any,
+      })
+      .returning();
+    return result[0];
+  }
+
+  async deleteDealParticipant(id: number): Promise<void> {
+    await db.delete(dealParticipants).where(eq(dealParticipants.id, id));
+  }
+
+  async listCommissionLedgerEntries(input: { userId?: number; status?: string; eventId?: number; limit?: number; offset?: number }): Promise<CommissionLedgerEntry[]> {
+    const whereParts: any[] = [];
+    if (typeof input.userId === "number") whereParts.push(eq(commissionLedgerEntries.userId, input.userId));
+    if (typeof input.eventId === "number") whereParts.push(eq(commissionLedgerEntries.eventId, input.eventId));
+    if (input.status) whereParts.push(eq(commissionLedgerEntries.status, input.status));
+    let q: any = db.select().from(commissionLedgerEntries);
+    if (whereParts.length) q = q.where(and(...whereParts));
+    q = q.orderBy(desc(commissionLedgerEntries.updatedAt), desc(commissionLedgerEntries.id));
+    if (typeof input.limit === "number") q = q.limit(input.limit).offset(input.offset || 0);
+    return q as unknown as Promise<CommissionLedgerEntry[]>;
+  }
+
+  async upsertCommissionLedgerEntry(input: InsertCommissionLedgerEntry): Promise<CommissionLedgerEntry> {
+    const now = new Date();
+    const v: any = input as any;
+    const result = await db
+      .insert(commissionLedgerEntries)
+      .values({ ...(input as any), updatedAt: now } as any)
+      .onConflictDoUpdate({
+        target: [commissionLedgerEntries.eventId, commissionLedgerEntries.userId] as any,
+        set: { amount: v.amount as any, status: v.status as any, ruleSnapshot: v.ruleSnapshot as any, updatedAt: now } as any,
+      })
+      .returning();
+    return result[0];
+  }
+
+  async updateCommissionLedgerEntry(id: number, patch: Partial<InsertCommissionLedgerEntry>): Promise<CommissionLedgerEntry> {
+    const result = await db
+      .update(commissionLedgerEntries)
+      .set({ ...(patch as any), updatedAt: new Date() } as any)
+      .where(eq(commissionLedgerEntries.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getPayrollSummary(input: { from: string; to: string; userId?: number }): Promise<any> {
+    const conditions: any[] = [gte(timesheetEntries.date, input.from), lte(timesheetEntries.date, input.to)];
+    if (typeof input.userId === "number") conditions.push(eq(timesheetEntries.userId, input.userId));
+    const entries: any[] = await db.select().from(timesheetEntries).where(and(...conditions));
+    const profiles: any[] = await db.select().from(workerProfiles);
+    const overrides: any[] = await db.select().from(categoryRateOverrides);
+    const categories: any[] = await db.select().from(workCategories);
+
+    const profileByUserId = new Map<number, any>();
+    for (const p of profiles) profileByUserId.set(p.userId, p);
+
+    const overrideByUserCategory = new Map<string, any>();
+    for (const o of overrides) overrideByUserCategory.set(`${o.userId}:${o.categoryId}`, o);
+
+    const categoryById = new Map<number, any>();
+    for (const c of categories) categoryById.set(c.id, c);
+
+    const agg = new Map<number, any>();
+    for (const e of entries) {
+      const uid = Number(e.userId);
+      if (!agg.has(uid)) {
+        agg.set(uid, {
+          userId: uid,
+          trackedHours: 0,
+          payableHours: 0,
+          approvedPayableHours: 0,
+          hourlyAmount: 0,
+          hourlyApprovedAmount: 0,
+          disputedHours: 0,
+          pendingHours: 0,
+        });
+      }
+      const row = agg.get(uid);
+      const tracked = Number.parseFloat(String(e.hours || 0));
+      const payable = e.payableHours === null || typeof e.payableHours === "undefined" ? tracked : Number.parseFloat(String(e.payableHours || 0));
+      const status = String(e.status || "draft");
+      row.trackedHours += tracked;
+      row.payableHours += payable;
+      if (status === "approved" || status === "paid") row.approvedPayableHours += payable;
+      if (status === "disputed") row.disputedHours += payable;
+      if (status === "submitted" || status === "draft") row.pendingHours += payable;
+
+      const profile = profileByUserId.get(uid);
+      const payType = String(profile?.payType || "hourly");
+      const baseRate = profile?.defaultHourlyRate !== null && typeof profile?.defaultHourlyRate !== "undefined"
+        ? Number.parseFloat(String(profile.defaultHourlyRate))
+        : null;
+      const categoryId = e.categoryId ? Number(e.categoryId) : null;
+      const override = categoryId ? overrideByUserCategory.get(`${uid}:${categoryId}`) : null;
+      const category = categoryId ? categoryById.get(categoryId) : null;
+      const categoryRate = override?.hourlyRate !== null && typeof override?.hourlyRate !== "undefined"
+        ? Number.parseFloat(String(override.hourlyRate))
+        : category?.defaultHourlyRate !== null && typeof category?.defaultHourlyRate !== "undefined"
+          ? Number.parseFloat(String(category.defaultHourlyRate))
+          : null;
+      const rate = categoryRate !== null && typeof categoryRate !== "undefined" ? categoryRate : baseRate;
+      const payoutRate = payType === "salary_shadow" || payType === "commission" ? 0 : (rate || 0);
+      const amt = payable * payoutRate;
+      row.hourlyAmount += amt;
+      if (status === "approved" || status === "paid") row.hourlyApprovedAmount += amt;
+    }
+
+    return {
+      from: input.from,
+      to: input.to,
+      rows: Array.from(agg.values()).sort((a, b) => a.userId - b.userId),
+    };
   }
 
   // Global Activity Logs

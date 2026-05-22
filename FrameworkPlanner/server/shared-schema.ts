@@ -1121,6 +1121,20 @@ export const insertOfferSchema = createInsertSchema(offers).omit({ id: true, cre
 export type Offer = typeof offers.$inferSelect;
 export type InsertOffer = z.infer<typeof insertOfferSchema>;
 
+export const workCategories = pgTable("work_categories", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  code: varchar("code", { length: 64 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  defaultHourlyRate: decimal("default_hourly_rate", { precision: 10, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertWorkCategorySchema = createInsertSchema(workCategories).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type WorkCategory = typeof workCategories.$inferSelect;
+export type InsertWorkCategory = z.infer<typeof insertWorkCategorySchema>;
+
 // TIMESHEET ENTRIES TABLE
 export const timesheetEntries = pgTable("timesheet_entries", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -1128,10 +1142,19 @@ export const timesheetEntries = pgTable("timesheet_entries", {
   date: varchar("date", { length: 10 }).notNull(),
   employee: varchar("employee", { length: 255 }).notNull(),
   task: varchar("task", { length: 255 }).notNull(),
+  categoryId: integer("category_id"),
+  linkedEntityType: varchar("linked_entity_type", { length: 32 }),
+  linkedEntityId: integer("linked_entity_id"),
   startTime: varchar("start_time", { length: 10 }).notNull(),
   endTime: varchar("end_time", { length: 10 }).notNull(),
   hours: decimal("hours", { precision: 5, scale: 2 }).notNull(),
+  payableHours: decimal("payable_hours", { precision: 5, scale: 2 }),
   hourlyRate: decimal("hourly_rate", { precision: 10, scale: 2 }).default("50"),
+  status: varchar("status", { length: 20 }).notNull().default("draft"),
+  approvedByUserId: integer("approved_by_user_id"),
+  approvedAt: timestamp("approved_at"),
+  paidAt: timestamp("paid_at"),
+  anomalyFlags: text("anomaly_flags").array(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1149,6 +1172,8 @@ export const timeClockSessions = pgTable("time_clock_sessions", {
   clockOutAt: timestamp("clock_out_at"),
   tzOffsetMinutes: integer("tz_offset_minutes").notNull(),
   autoStarted: boolean("auto_started").default(true),
+  autoClosed: boolean("auto_closed").notNull().default(false),
+  autoClosedReason: text("auto_closed_reason"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1156,6 +1181,116 @@ export const timeClockSessions = pgTable("time_clock_sessions", {
 export const insertTimeClockSessionSchema = createInsertSchema(timeClockSessions).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type TimeClockSession = typeof timeClockSessions.$inferSelect;
 export type InsertTimeClockSession = z.infer<typeof insertTimeClockSessionSchema>;
+
+export const workerProfiles = pgTable("worker_profiles", {
+  userId: integer("user_id").primaryKey(),
+  workerType: varchar("worker_type", { length: 20 }).notNull().default("employee"),
+  payType: varchar("pay_type", { length: 20 }).notNull().default("hourly"),
+  defaultHourlyRate: decimal("default_hourly_rate", { precision: 10, scale: 2 }),
+  salaryAmount: decimal("salary_amount", { precision: 12, scale: 2 }),
+  isActive: boolean("is_active").notNull().default(true),
+  effectiveFrom: date("effective_from"),
+  effectiveTo: date("effective_to"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertWorkerProfileSchema = createInsertSchema(workerProfiles).omit({ createdAt: true, updatedAt: true } as any);
+export type WorkerProfile = typeof workerProfiles.$inferSelect;
+export type InsertWorkerProfile = z.infer<typeof insertWorkerProfileSchema>;
+
+export const categoryRateOverrides = pgTable("category_rate_overrides", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  categoryId: integer("category_id").notNull(),
+  hourlyRate: decimal("hourly_rate", { precision: 10, scale: 2 }),
+  costRate: decimal("cost_rate", { precision: 10, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCategoryRateOverrideSchema = createInsertSchema(categoryRateOverrides).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type CategoryRateOverride = typeof categoryRateOverrides.$inferSelect;
+export type InsertCategoryRateOverride = z.infer<typeof insertCategoryRateOverrideSchema>;
+
+export const payPeriods = pgTable("pay_periods", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("open"),
+  createdByUserId: integer("created_by_user_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPayPeriodSchema = createInsertSchema(payPeriods).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type PayPeriod = typeof payPeriods.$inferSelect;
+export type InsertPayPeriod = z.infer<typeof insertPayPeriodSchema>;
+
+export const approvalEvents = pgTable("approval_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 32 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  action: varchar("action", { length: 32 }).notNull(),
+  byUserId: integer("by_user_id"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertApprovalEventSchema = createInsertSchema(approvalEvents).omit({ id: true, createdAt: true } as any);
+export type ApprovalEvent = typeof approvalEvents.$inferSelect;
+export type InsertApprovalEvent = z.infer<typeof insertApprovalEventSchema>;
+
+export const commissionEvents = pgTable("commission_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  sourceType: varchar("source_type", { length: 20 }).notNull(),
+  sourceId: integer("source_id").notNull(),
+  milestone: varchar("milestone", { length: 40 }).notNull(),
+  eventDate: date("event_date").notNull(),
+  grossAmount: decimal("gross_amount", { precision: 12, scale: 2 }),
+  currency: varchar("currency", { length: 8 }).notNull().default("USD"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCommissionEventSchema = createInsertSchema(commissionEvents).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type CommissionEvent = typeof commissionEvents.$inferSelect;
+export type InsertCommissionEvent = z.infer<typeof insertCommissionEventSchema>;
+
+export const dealParticipants = pgTable("deal_participants", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  sourceType: varchar("source_type", { length: 20 }).notNull(),
+  sourceId: integer("source_id").notNull(),
+  userId: integer("user_id").notNull(),
+  role: varchar("role", { length: 32 }).notNull(),
+  splitPct: decimal("split_pct", { precision: 5, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertDealParticipantSchema = createInsertSchema(dealParticipants).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type DealParticipant = typeof dealParticipants.$inferSelect;
+export type InsertDealParticipant = z.infer<typeof insertDealParticipantSchema>;
+
+export const commissionLedgerEntries = pgTable("commission_ledger_entries", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  eventId: integer("event_id").notNull(),
+  userId: integer("user_id").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  status: varchar("status", { length: 20 }).notNull().default("draft"),
+  ruleSnapshot: jsonb("rule_snapshot"),
+  approvedByUserId: integer("approved_by_user_id"),
+  approvedAt: timestamp("approved_at"),
+  paidAt: timestamp("paid_at"),
+  disputedReason: text("disputed_reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCommissionLedgerEntrySchema = createInsertSchema(commissionLedgerEntries).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type CommissionLedgerEntry = typeof commissionLedgerEntries.$inferSelect;
+export type InsertCommissionLedgerEntry = z.infer<typeof insertCommissionLedgerEntrySchema>;
 
 // GLOBAL ACTIVITY LOG TABLE (company-wide activity visible to all team members)
 export const globalActivityLogs = pgTable("global_activity_logs", {

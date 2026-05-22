@@ -5,6 +5,7 @@ import { SignJWT, jwtVerify } from "jose";
 import multer from "multer";
 import { createRequire } from "node:module";
 import { storage } from "./storage.js";
+import { computeManualTimeEntry, MAX_TIME_ENTRY_HOURS } from "./lib/time-entry-math.js";
 import { db } from "./db.js";
 import { desc, eq, sql, inArray } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
@@ -48,10 +49,14 @@ import {
   insertUserNotificationSchema,
   insertUserGoalSchema,
   insertOfferSchema,
+  insertWorkCategorySchema,
   insertTimesheetEntrySchema,
+  insertWorkerProfileSchema,
+  insertCategoryRateOverrideSchema,
   insertBuyerSchema,
   insertBuyerCommunicationSchema,
   insertDealAssignmentSchema,
+  insertDealParticipantSchema,
   insertPlaygroundPropertySessionSchema,
   insertUnderwritingTemplateSchema,
   insertTaskSchema,
@@ -148,6 +153,116 @@ function isManagerUser(user: any) {
 
 function isAdminUser(user: any) {
   return isManagerUser(user);
+}
+
+function isoDateOnly(input: unknown) {
+  if (!input) return null;
+  const d = input instanceof Date ? input : new Date(String(input));
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 10);
+}
+
+function parseMoney(input: unknown) {
+  const n = Number.parseFloat(String(input ?? ""));
+  if (!Number.isFinite(n)) return null;
+  return n;
+}
+
+async function ensureCommissionLedgerForEvent(event: any) {
+  const sourceType = String(event?.sourceType || "");
+  const sourceId = Number(event?.sourceId);
+  if (!sourceType || !Number.isFinite(sourceId)) return;
+
+  let participants = await storage.listDealParticipants({ sourceType, sourceId });
+  if (!participants.length) {
+    let derivedUserId: number | null = null;
+    if (sourceType === "contract") {
+      const contract = await storage.getContractById(sourceId);
+      const propertyId = contract?.propertyId ? Number(contract.propertyId) : null;
+      if (propertyId) {
+        const property = await storage.getPropertyById(propertyId);
+        if (property?.assignedTo) derivedUserId = Number(property.assignedTo);
+      }
+    } else if (sourceType === "deal_assignment") {
+      const assignment = await storage.getDealAssignmentById(sourceId);
+      const propertyId = assignment?.propertyId ? Number(assignment.propertyId) : null;
+      if (propertyId) {
+        const property = await storage.getPropertyById(propertyId);
+        if (property?.assignedTo) derivedUserId = Number(property.assignedTo);
+      }
+    }
+    if (derivedUserId) {
+      await storage.upsertDealParticipant({ sourceType, sourceId, userId: derivedUserId, role: "primary" } as any);
+      participants = await storage.listDealParticipants({ sourceType, sourceId });
+    }
+  }
+
+  if (!participants.length) return;
+
+  const gross = parseMoney(event?.grossAmount);
+  for (const p of participants) {
+    const pct = parseMoney((p as any).splitPct);
+    const amount = gross !== null && pct !== null ? gross * (pct / 100) : 0;
+    await storage.upsertCommissionLedgerEntry({
+      eventId: event.id,
+      userId: p.userId,
+      amount: amount.toFixed(2) as any,
+      status: "draft" as any,
+      ruleSnapshot: { grossAmount: gross, splitPct: pct, method: pct !== null ? "pct_of_gross" : "manual" } as any,
+    } as any);
+  }
+}
+
+async function syncCommissionEventsForContract(contract: any) {
+  const contractId = Number(contract?.id);
+  if (!Number.isFinite(contractId)) return;
+  const signDate = isoDateOnly(contract?.signDate);
+  const closeDate = isoDateOnly(contract?.closeDate);
+  const grossAmount = parseMoney(contract?.amount);
+
+  if (signDate) {
+    const ev = await storage.upsertCommissionEvent({
+      sourceType: "contract",
+      sourceId: contractId,
+      milestone: "contract_signed",
+      eventDate: signDate as any,
+      grossAmount: grossAmount === null ? null : (grossAmount.toFixed(2) as any),
+      metadata: { contractId } as any,
+    } as any);
+    await ensureCommissionLedgerForEvent(ev);
+  }
+
+  if (closeDate) {
+    const ev = await storage.upsertCommissionEvent({
+      sourceType: "contract",
+      sourceId: contractId,
+      milestone: "contract_closed",
+      eventDate: closeDate as any,
+      grossAmount: grossAmount === null ? null : (grossAmount.toFixed(2) as any),
+      metadata: { contractId } as any,
+    } as any);
+    await ensureCommissionLedgerForEvent(ev);
+  }
+}
+
+async function syncCommissionEventsForDealAssignment(assignment: any) {
+  const id = Number(assignment?.id);
+  if (!Number.isFinite(id)) return;
+  const payoutReceived = Boolean((assignment as any).payoutReceived);
+  const payoutAmount = parseMoney((assignment as any).payoutAmount);
+  const closingDate = isoDateOnly((assignment as any).closingDate) || isoDateOnly(new Date());
+
+  if (payoutReceived) {
+    const ev = await storage.upsertCommissionEvent({
+      sourceType: "deal_assignment",
+      sourceId: id,
+      milestone: "assignment_payout_received",
+      eventDate: closingDate as any,
+      grossAmount: payoutAmount === null ? null : (payoutAmount.toFixed(2) as any),
+      metadata: { dealAssignmentId: id } as any,
+    } as any);
+    await ensureCommissionLedgerForEvent(ev);
+  }
 }
 
 function isConciergeUser(user: any) {
@@ -6903,6 +7018,9 @@ export async function registerRoutes(
     try {
       const validated = insertContractSchema.parse(req.body);
       const contract = await storage.createContract(validated);
+      try {
+        await syncCommissionEventsForContract(contract);
+      } catch {}
       res.status(201).json(contract);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -6913,6 +7031,9 @@ export async function registerRoutes(
     try {
       const partial = insertContractSchema.partial().parse(req.body);
       const contract = await storage.updateContract(parseInt(req.params.id), partial);
+      try {
+        await syncCommissionEventsForContract(contract);
+      } catch {}
       res.json(contract);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -8572,11 +8693,74 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/work-categories", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const includeInactive = String(req.query.includeInactive || "").trim() === "true";
+      const rows = await storage.getWorkCategories({ includeInactive });
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/work-categories", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const validated = insertWorkCategorySchema.parse(req.body);
+      const created = await storage.createWorkCategory(validated);
+      res.status(201).json(created);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/work-categories/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const id = parseInt(req.params.id);
+      const patch = insertWorkCategorySchema.partial().parse(req.body);
+      const updated = await storage.updateWorkCategory(id, patch);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/work-categories/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const id = parseInt(req.params.id);
+      const updated = await storage.updateWorkCategory(id, { isActive: false } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
   app.get("/api/timeclock/current", async (req, res) => {
     try {
       if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
       const session = await storage.getOpenTimeClockSession(req.session.userId);
-      res.json(session || null);
+      if (!session?.id) return res.json(null);
+      const clockInMs = new Date(session.clockInAt as any).getTime();
+      const ageHours = (Date.now() - clockInMs) / 3_600_000;
+      if (ageHours > MAX_TIME_ENTRY_HOURS) {
+        try {
+          const result = await storage.closeOpenTimeClockSessionAndCreateEntry(req.session.userId, { clockOutAt: new Date(), tzOffsetMinutes: Number(session.tzOffsetMinutes || 0) });
+          return res.json(result?.session ? null : session);
+        } catch {
+          return res.json(session);
+        }
+      }
+      res.json(session);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -8693,8 +8877,27 @@ export async function registerRoutes(
 
   app.post("/api/users/:userId/timesheet", async (req, res) => {
     try {
-      const validated = insertTimesheetEntrySchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
-      const entry = await storage.createTimesheetEntry(validated);
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetUserId = parseInt(req.params.userId);
+      if (!Number.isFinite(targetUserId)) return res.status(400).json({ message: "Invalid userId" });
+      if (!isManagerUser(user) && user.id !== targetUserId) return res.status(403).json({ message: "Forbidden" });
+
+      const raw = { ...(req.body || {}), userId: targetUserId };
+      const validated: any = insertTimesheetEntrySchema.parse(raw);
+      const computed = computeManualTimeEntry({ date: validated.date, startTime: validated.startTime, endTime: validated.endTime });
+      if (!computed.ok) return res.status(400).json({ message: computed.error });
+
+      const entry = await storage.createTimesheetEntry({
+        ...validated,
+        hours: computed.hours.toFixed(2) as any,
+        status: computed.status as any,
+        payableHours: computed.payableHours === null ? null : (Number(computed.payableHours.toFixed(2)) as any),
+        anomalyFlags: computed.flags.length ? (computed.flags as any) : null,
+        approvedByUserId: null,
+        approvedAt: null,
+        paidAt: null,
+      } as any);
       res.status(201).json(entry);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -8717,6 +8920,290 @@ export async function registerRoutes(
       res.json({ message: "Entry deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/timesheet/:id/submit", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const entry = await storage.getTimesheetEntryById(id);
+      if (!entry) return res.status(404).json({ message: "Entry not found" });
+      if (!isManagerUser(user) && Number(entry.userId) !== user.id) return res.status(403).json({ message: "Forbidden" });
+      const updated = await storage.updateTimesheetEntry(id, { status: "submitted" } as any);
+      await storage.createApprovalEvent({ entityType: "timesheet_entry", entityId: id, action: "submitted", byUserId: user.id } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/timesheet/:id/approve", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const id = parseInt(req.params.id);
+      const updated = await storage.updateTimesheetEntry(id, { status: "approved", approvedByUserId: user.id, approvedAt: new Date() } as any);
+      await storage.createApprovalEvent({ entityType: "timesheet_entry", entityId: id, action: "approved", byUserId: user.id } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/timesheet/:id/dispute", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const id = parseInt(req.params.id);
+      const { reason } = req.body || {};
+      const updated = await storage.updateTimesheetEntry(id, { status: "disputed", anomalyFlags: ["manager_disputed"], payableHours: 0 } as any);
+      await storage.createApprovalEvent({ entityType: "timesheet_entry", entityId: id, action: "disputed", byUserId: user.id, notes: typeof reason === "string" ? reason : null } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/timesheet/:id/mark-paid", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const id = parseInt(req.params.id);
+      const updated = await storage.updateTimesheetEntry(id, { status: "paid", paidAt: new Date() } as any);
+      await storage.createApprovalEvent({ entityType: "timesheet_entry", entityId: id, action: "paid", byUserId: user.id } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/approvals/timesheet", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const from = typeof req.query.from === "string" ? req.query.from : undefined;
+      const to = typeof req.query.to === "string" ? req.query.to : undefined;
+      if (!from || !to) return res.status(400).json({ message: "from and to are required" });
+      const statuses = typeof req.query.status === "string" && req.query.status.trim()
+        ? req.query.status.split(",").map((s: string) => s.trim()).filter(Boolean)
+        : ["submitted", "disputed"];
+      const rows = await storage.getTimesheetEntriesFiltered({ from, to, limit: 500, offset: 0 });
+      res.json(rows.filter((r) => statuses.includes(String((r as any).status || "draft"))));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/payroll/summary", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const from = typeof req.query.from === "string" ? req.query.from : undefined;
+      const to = typeof req.query.to === "string" ? req.query.to : undefined;
+      if (!from || !to) return res.status(400).json({ message: "from and to are required" });
+      const userId = typeof req.query.userId === "string" ? parseInt(req.query.userId) : undefined;
+      const summary = await storage.getPayrollSummary({ from, to, userId });
+      res.json(summary);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/worker-profiles", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const usersRows = await storage.getUsers(500, 0);
+      const profiles = await storage.listWorkerProfiles();
+      const byUserId = new Map<number, any>();
+      for (const p of profiles) byUserId.set(Number(p.userId), p);
+      res.json(usersRows.map((u) => ({ user: u, profile: byUserId.get(Number(u.id)) || null })));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.put("/api/worker-profiles/:userId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const targetUserId = parseInt(req.params.userId);
+      if (!Number.isFinite(targetUserId)) return res.status(400).json({ message: "Invalid userId" });
+      const patch = insertWorkerProfileSchema.partial().parse(req.body);
+      const upserted = await storage.upsertWorkerProfile(targetUserId, patch);
+      res.json(upserted);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/category-rate-overrides", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const userId = typeof req.query.userId === "string" ? parseInt(req.query.userId) : undefined;
+      if (!userId) return res.status(400).json({ message: "userId is required" });
+      const rows = await storage.getCategoryRateOverridesByUser(userId);
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.put("/api/category-rate-overrides/:userId/:categoryId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const userId = parseInt(req.params.userId);
+      const categoryId = parseInt(req.params.categoryId);
+      if (!userId || !categoryId) return res.status(400).json({ message: "Invalid userId/categoryId" });
+      const patch = insertCategoryRateOverrideSchema.partial().parse(req.body);
+      const upserted = await storage.upsertCategoryRateOverride(userId, categoryId, patch);
+      res.json(upserted);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/category-rate-overrides/:userId/:categoryId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const userId = parseInt(req.params.userId);
+      const categoryId = parseInt(req.params.categoryId);
+      if (!userId || !categoryId) return res.status(400).json({ message: "Invalid userId/categoryId" });
+      await storage.deleteCategoryRateOverride(userId, categoryId);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/commissions/events", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const from = typeof req.query.from === "string" ? new Date(req.query.from) : undefined;
+      const to = typeof req.query.to === "string" ? new Date(req.query.to) : undefined;
+      const sourceType = typeof req.query.sourceType === "string" ? req.query.sourceType : undefined;
+      const sourceId = typeof req.query.sourceId === "string" ? parseInt(req.query.sourceId) : undefined;
+      const { limit, offset } = parseLimitOffset(req.query);
+      const events = await storage.listCommissionEvents({ from, to, sourceType, sourceId, limit, offset });
+      res.json(events);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/commissions/participants", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const sourceType = typeof req.query.sourceType === "string" ? req.query.sourceType : "";
+      const sourceId = typeof req.query.sourceId === "string" ? parseInt(req.query.sourceId) : NaN;
+      if (!sourceType || !Number.isFinite(sourceId)) return res.status(400).json({ message: "sourceType and sourceId are required" });
+      const rows = await storage.listDealParticipants({ sourceType, sourceId });
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/commissions/participants", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const validated = insertDealParticipantSchema.parse(req.body);
+      const row = await storage.upsertDealParticipant(validated);
+      res.status(201).json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/commissions/participants/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      await storage.deleteDealParticipant(parseInt(req.params.id));
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/commissions/ledger", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const userId = typeof req.query.userId === "string" ? parseInt(req.query.userId) : undefined;
+      const status = typeof req.query.status === "string" ? req.query.status : undefined;
+      const eventId = typeof req.query.eventId === "string" ? parseInt(req.query.eventId) : undefined;
+      const { limit, offset } = parseLimitOffset(req.query);
+      const rows = await storage.listCommissionLedgerEntries({ userId, status, eventId, limit, offset });
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/commissions/ledger/:id/approve", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const id = parseInt(req.params.id);
+      const updated = await storage.updateCommissionLedgerEntry(id, { status: "approved", approvedByUserId: user.id, approvedAt: new Date() } as any);
+      await storage.createApprovalEvent({ entityType: "commission_ledger_entry", entityId: id, action: "approved", byUserId: user.id } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/commissions/ledger/:id/dispute", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const id = parseInt(req.params.id);
+      const { reason } = req.body || {};
+      const updated = await storage.updateCommissionLedgerEntry(id, { status: "disputed", disputedReason: typeof reason === "string" ? reason : null } as any);
+      await storage.createApprovalEvent({ entityType: "commission_ledger_entry", entityId: id, action: "disputed", byUserId: user.id, notes: typeof reason === "string" ? reason : null } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/commissions/ledger/:id/mark-paid", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const id = parseInt(req.params.id);
+      const updated = await storage.updateCommissionLedgerEntry(id, { status: "paid", paidAt: new Date() } as any);
+      await storage.createApprovalEvent({ entityType: "commission_ledger_entry", entityId: id, action: "paid", byUserId: user.id } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
     }
   });
 
@@ -8861,6 +9348,9 @@ export async function registerRoutes(
     try {
       const validated = insertDealAssignmentSchema.parse(req.body);
       const assignment = await storage.createDealAssignment(validated);
+      try {
+        await syncCommissionEventsForDealAssignment(assignment);
+      } catch {}
       res.status(201).json(assignment);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -8871,6 +9361,9 @@ export async function registerRoutes(
     try {
       const partial = insertDealAssignmentSchema.partial().parse(req.body);
       const assignment = await storage.updateDealAssignment(parseInt(req.params.id), partial);
+      try {
+        await syncCommissionEventsForDealAssignment(assignment);
+      } catch {}
       res.json(assignment);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
