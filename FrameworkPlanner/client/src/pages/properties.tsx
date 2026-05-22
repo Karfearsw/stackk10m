@@ -495,11 +495,39 @@ export default function Opportunities() {
   const [editingProperty, setEditingProperty] = useState<Property | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [statusInFilter, setStatusInFilter] = useState<string[]>([]);
   const [noteOpportunity, setNoteOpportunity] = useState<Property | null>(null);
   const [noteText, setNoteText] = useState("");
   const [isNoteDialogOpen, setIsNoteDialogOpen] = useState(false);
   const [activityPropertyId, setActivityPropertyId] = useState<number | null>(null);
   const [isActivityDialogOpen, setIsActivityDialogOpen] = useState(false);
+
+  const clearUrlStatusParams = () => {
+    const params = new URLSearchParams(window.location.search);
+    params.delete("status");
+    params.delete("statusIn");
+    const nextQs = params.toString();
+    window.history.replaceState({}, "", `/opportunities${nextQs ? `?${nextQs}` : ""}`);
+  };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const statusInRaw = String(params.get("statusIn") || "").trim();
+    const statusRaw = String(params.get("status") || "").trim();
+    if (statusInRaw) {
+      const list = statusInRaw
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .slice(0, 10);
+      setStatusInFilter(list);
+      setStatusFilter("all");
+      return;
+    }
+    if (statusRaw) {
+      setStatusFilter(statusRaw);
+    }
+  }, []);
 
   const { data: properties = [], isLoading } = useQuery<Property[]>({
     queryKey: ["/api/opportunities"],
@@ -650,7 +678,9 @@ export default function Opportunities() {
       prop.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
       prop.city.toLowerCase().includes(searchQuery.toLowerCase()) ||
       prop.state.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesStatus = statusFilter === "all" || prop.status === statusFilter;
+    const matchesStatus = statusInFilter.length
+      ? statusInFilter.includes(String(prop.status || "active"))
+      : (statusFilter === "all" || prop.status === statusFilter);
     return matchesSearch && matchesStatus;
   });
 
@@ -692,7 +722,14 @@ export default function Opportunities() {
               data-testid="input-search-opportunities"
             />
           </div>
-          <Select value={statusFilter} onValueChange={setStatusFilter}>
+          <Select
+            value={statusFilter}
+            onValueChange={(v) => {
+              setStatusFilter(v);
+              setStatusInFilter([]);
+              clearUrlStatusParams();
+            }}
+          >
             <SelectTrigger className="w-full sm:w-[140px]" data-testid="select-filter-status">
               <Filter className="mr-2 h-4 w-4" />
               <SelectValue placeholder="Filter" />
@@ -706,6 +743,22 @@ export default function Opportunities() {
               ))}
             </SelectContent>
           </Select>
+          {statusInFilter.length ? (
+            <div className="flex items-center gap-2 text-xs">
+              <Badge variant="outline">Filtered: {statusInFilter.join(", ")}</Badge>
+              <button
+                type="button"
+                className="text-primary hover:underline"
+                onClick={() => {
+                  setStatusInFilter([]);
+                  setStatusFilter("all");
+                  clearUrlStatusParams();
+                }}
+              >
+                Clear
+              </button>
+            </div>
+          ) : null}
           <Dialog open={isDialogOpen} onOpenChange={(open) => {
             setIsDialogOpen(open);
             if (!open) setEditingProperty(null);

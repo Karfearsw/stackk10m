@@ -546,6 +546,7 @@ export class DatabaseStorage implements IStorage {
   async listLeads(input: {
     q?: string;
     status?: string;
+    statusIn?: string[];
     owner?: string;
     zip?: string;
     state?: string;
@@ -597,8 +598,17 @@ export class DatabaseStorage implements IStorage {
     if (archivedMode === "exclude") whereParts.push(isNull(leads.archivedAt));
     if (archivedMode === "only") whereParts.push(isNotNull(leads.archivedAt));
 
-    const status = String(input.status || "").trim();
-    if (status && status !== "all") whereParts.push(eq(leads.status, status));
+    const statusInRaw = Array.isArray(input.statusIn) ? input.statusIn : [];
+    const statusIn = statusInRaw
+      .map((s) => String(s || "").trim())
+      .filter(Boolean)
+      .slice(0, 10);
+    if (statusIn.length) {
+      whereParts.push(inArray(leads.status, statusIn as any));
+    } else {
+      const status = String(input.status || "").trim();
+      if (status && status !== "all") whereParts.push(eq(leads.status, status));
+    }
 
     const zip = String(input.zip || "").trim();
     if (zip) whereParts.push(eq(leads.zipCode, zip));
