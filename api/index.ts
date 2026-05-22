@@ -1,3 +1,6 @@
-import app from "../FrameworkPlanner/dist-server/vercel.js";
+import { createRequire } from "node:module";
 
-export default app;
+const require = createRequire(import.meta.url);
+const mod = require("../FrameworkPlanner/dist-server/vercel.js") as any;
+
+export default mod?.default ?? mod;
