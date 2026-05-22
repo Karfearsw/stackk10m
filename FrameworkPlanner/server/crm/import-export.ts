@@ -38,6 +38,7 @@ export type ExportFilters = {
   createdTo?: string;
   status?: string;
   assignedTo?: number;
+  ids?: number[];
 };
 
 export type FieldDef = {
@@ -53,15 +54,19 @@ const leadFields: FieldDef[] = [
   { key: "city", label: "City", required: true, type: "string" },
   { key: "state", label: "State", required: true, type: "string" },
   { key: "zipCode", label: "Zip Code", required: true, type: "string" },
+  { key: "county", label: "County", type: "string" },
   { key: "ownerName", label: "Owner Name", required: true, type: "string" },
   { key: "ownerPhone", label: "Owner Phone", type: "string" },
   { key: "ownerEmail", label: "Owner Email", type: "email" },
+  { key: "ownerOccupied", label: "Owner Occupied", type: "bool" },
   { key: "estimatedValue", label: "Estimated Value", type: "decimal" },
   { key: "relasScore", label: "Relas Score", type: "int" },
   { key: "motivation", label: "Motivation", type: "string" },
+  { key: "leadType", label: "Lead Type", type: "string" },
   { key: "status", label: "Status", type: "string" },
   { key: "source", label: "Source", required: true, type: "string" },
   { key: "assignedTo", label: "Assigned To (User ID)", type: "int" },
+  { key: "tags", label: "Tags", type: "string_array" },
   { key: "notes", label: "Notes", type: "string" },
 ];
 
@@ -121,15 +126,19 @@ const leadSynonyms: Record<string, string[]> = {
   city: ["city", "town"],
   state: ["state", "st"],
   zipCode: ["zip", "zip code", "zipcode", "postal", "postal code"],
+  county: ["county"],
   ownerName: ["owner", "owner name", "name", "seller", "seller name"],
   ownerPhone: ["phone", "owner phone", "seller phone", "mobile"],
   ownerEmail: ["email", "owner email", "seller email"],
+  ownerOccupied: ["owner occupied", "owner occupancy", "occupied by owner", "occupancy owner"],
   estimatedValue: ["estimated value", "est value", "value", "estimated"],
   relasScore: ["relas", "relas score", "score"],
   motivation: ["motivation"],
+  leadType: ["lead type", "type"],
   status: ["status", "stage"],
   source: ["source", "lead source"],
   assignedTo: ["assigned to", "assigned", "assignee", "assigned user", "assigned user id"],
+  tags: ["tags", "tag"],
   notes: ["notes", "note", "comments", "comment"],
 };
 
@@ -963,6 +972,7 @@ export async function processExportJob(exportId: number) {
     const createdTo = filters.createdTo ? new Date(filters.createdTo) : null;
     const status = filters.status ? String(filters.status) : null;
     const assignedTo = typeof filters.assignedTo === "number" ? filters.assignedTo : null;
+    const ids = Array.isArray(filters.ids) ? filters.ids.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0) : null;
 
     const table: any =
       entityType === "lead"
@@ -978,6 +988,7 @@ export async function processExportJob(exportId: number) {
     if (createdTo) where.push(lte(table.createdAt, createdTo));
     if (status && (entityType === "lead" || entityType === "opportunity" || entityType === "buyer")) where.push(eq(table.status, status));
     if (assignedTo !== null && (entityType === "lead" || entityType === "opportunity")) where.push(eq(table.assignedTo, assignedTo));
+    if (ids && ids.length) where.push(inArray(table.id, ids));
 
     const rows: any[] = where.length ? await db.select().from(table).where(and(...where)) : await db.select().from(table);
 

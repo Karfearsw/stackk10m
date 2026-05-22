@@ -190,6 +190,7 @@ const featureEnvVars: Record<string, string> = {
   field_mode: "FEATURE_FIELD_MODE",
   comps: "FEATURE_COMPS",
   buyer_match: "FEATURE_BUYER_MATCH",
+  voice_playground: "FEATURE_VOICE_PLAYGROUND",
 };
 
 async function isFeatureEnabled(userId: number, flag: keyof typeof featureEnvVars): Promise<boolean> {
@@ -2465,6 +2466,26 @@ export async function registerRoutes(
       const q = typeof req.query?.q === "string" ? req.query.q : "";
       const status = typeof req.query?.status === "string" ? req.query.status : "";
       const owner = typeof req.query?.owner === "string" ? req.query.owner : "";
+      const zip = typeof req.query?.zip === "string" ? req.query.zip : "";
+      const state = typeof req.query?.state === "string" ? req.query.state : "";
+      const city = typeof req.query?.city === "string" ? req.query.city : "";
+      const county = typeof req.query?.county === "string" ? req.query.county : "";
+      const leadType = typeof req.query?.leadType === "string" ? req.query.leadType : "";
+      const tagsRaw = typeof req.query?.tags === "string" ? req.query.tags : "";
+      const tagsModeRaw = typeof req.query?.tagsMode === "string" ? req.query.tagsMode : "";
+      const contactPresence = typeof req.query?.contactPresence === "string" ? req.query.contactPresence : "";
+      const archived = typeof req.query?.archived === "string" ? req.query.archived : "";
+      const hasNotesRaw = typeof req.query?.hasNotes === "string" ? req.query.hasNotes : "";
+      const noteUpdatedWithinDaysRaw = typeof req.query?.noteUpdatedWithinDays === "string" ? req.query.noteUpdatedWithinDays : "";
+      const scoreMinRaw = typeof req.query?.scoreMin === "string" ? req.query.scoreMin : "";
+      const scoreMaxRaw = typeof req.query?.scoreMax === "string" ? req.query.scoreMax : "";
+      const lastTouchFromRaw = typeof req.query?.lastTouchFrom === "string" ? req.query.lastTouchFrom : "";
+      const lastTouchToRaw = typeof req.query?.lastTouchTo === "string" ? req.query.lastTouchTo : "";
+      const nextFollowUpFromRaw = typeof req.query?.nextFollowUpFrom === "string" ? req.query.nextFollowUpFrom : "";
+      const nextFollowUpToRaw = typeof req.query?.nextFollowUpTo === "string" ? req.query.nextFollowUpTo : "";
+      const sortKey = typeof req.query?.sortKey === "string" ? req.query.sortKey : "";
+      const sortDir = typeof req.query?.sortDir === "string" ? req.query.sortDir : "";
+      const assignedToRaw = typeof req.query?.assignedTo === "string" ? req.query.assignedTo : "";
 
       let createdFrom: Date | undefined = undefined;
       let createdTo: Date | undefined = undefined;
@@ -2480,7 +2501,87 @@ export async function registerRoutes(
       }
 
       const allowedAssignedToUserIds = isAdminUser(user) ? undefined : await allowedLeadAssigneeUserIds(user.id);
-      const { items, total } = await storage.listLeads({ q, status, owner, createdFrom, createdTo, limit, offset, allowedAssignedToUserIds });
+      const tags = tagsRaw
+        ? tagsRaw
+            .split(",")
+            .map((t) => String(t || "").trim())
+            .filter(Boolean)
+        : undefined;
+      const tagsMode = tagsModeRaw === "all" ? "all" : tagsModeRaw === "any" ? "any" : undefined;
+
+      let assignedTo: number | "unassigned" | undefined = undefined;
+      if (assignedToRaw === "me") assignedTo = user.id;
+      else if (assignedToRaw === "unassigned") assignedTo = "unassigned";
+      else if (assignedToRaw) {
+        const n = parseInt(assignedToRaw, 10);
+        if (Number.isFinite(n)) assignedTo = n;
+      }
+
+      const hasNotes = hasNotesRaw === "true" ? true : hasNotesRaw === "false" ? false : undefined;
+      const noteUpdatedWithinDays = noteUpdatedWithinDaysRaw ? parseInt(noteUpdatedWithinDaysRaw, 10) : undefined;
+      const scoreMin = scoreMinRaw ? parseInt(scoreMinRaw, 10) : undefined;
+      const scoreMax = scoreMaxRaw ? parseInt(scoreMaxRaw, 10) : undefined;
+
+      const parseDate = (raw: string) => {
+        if (!raw) return undefined;
+        const d = new Date(raw);
+        return Number.isFinite(d.getTime()) ? d : undefined;
+      };
+      const lastTouchFrom = parseDate(lastTouchFromRaw);
+      const lastTouchTo = parseDate(lastTouchToRaw);
+      const nextFollowUpFrom = parseDate(nextFollowUpFromRaw);
+      const nextFollowUpTo = parseDate(nextFollowUpToRaw);
+
+      const archivedMode = archived === "include" ? "include" : archived === "only" ? "only" : archived === "exclude" ? "exclude" : undefined;
+      const contactPresenceMode =
+        contactPresence === "phone_only" || contactPresence === "email_only" || contactPresence === "both" || contactPresence === "none"
+          ? contactPresence
+          : undefined;
+      const sortKeyMode =
+        sortKey === "newest_imported" ||
+        sortKey === "oldest_imported" ||
+        sortKey === "highest_score" ||
+        sortKey === "lowest_score" ||
+        sortKey === "highest_value" ||
+        sortKey === "recently_updated" ||
+        sortKey === "oldest_untouched" ||
+        sortKey === "most_recent_contact" ||
+        sortKey === "status_age" ||
+        sortKey === "assigned_user"
+          ? sortKey
+          : undefined;
+      const sortDirMode = sortDir === "asc" ? "asc" : sortDir === "desc" ? "desc" : undefined;
+
+      const { items, total } = await storage.listLeads({
+        q,
+        status,
+        owner,
+        zip,
+        state,
+        city,
+        county,
+        leadType,
+        assignedTo,
+        tags,
+        tagsMode,
+        contactPresence: contactPresenceMode as any,
+        scoreMin: typeof scoreMin === "number" && Number.isFinite(scoreMin) ? scoreMin : undefined,
+        scoreMax: typeof scoreMax === "number" && Number.isFinite(scoreMax) ? scoreMax : undefined,
+        archived: archivedMode as any,
+        hasNotes: typeof hasNotes === "boolean" ? hasNotes : undefined,
+        noteUpdatedWithinDays: typeof noteUpdatedWithinDays === "number" && Number.isFinite(noteUpdatedWithinDays) ? noteUpdatedWithinDays : undefined,
+        lastTouchFrom,
+        lastTouchTo,
+        nextFollowUpFrom,
+        nextFollowUpTo,
+        sortKey: sortKeyMode as any,
+        sortDir: sortDirMode as any,
+        createdFrom,
+        createdTo,
+        limit,
+        offset,
+        allowedAssignedToUserIds,
+      });
       const leadIds = items.map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n) && n > 0);
       const propertyLinks = await storage.getPropertiesBySourceLeadIds(leadIds);
       const bySourceLeadId = new Map<number, number>();
@@ -2489,9 +2590,32 @@ export async function registerRoutes(
         const pid = Number((row as any).id);
         if (Number.isFinite(sid) && Number.isFinite(pid)) bySourceLeadId.set(sid, pid);
       }
+      let notesAgg: any[] = [];
+      try {
+        notesAgg = await storage.getLeadNotesAggByLeadIds(leadIds);
+      } catch {
+        notesAgg = [];
+      }
+      const notesByLeadId = new Map<number, any>();
+      for (const r of notesAgg) {
+        notesByLeadId.set(Number(r.leadId), {
+          notesCount: r.notesCount,
+          lastNoteAt: r.lastNoteAt ? new Date(r.lastNoteAt).toISOString() : null,
+          lastNotePreview: r.lastNotePreview ?? null,
+        });
+      }
 
       res.json({
-        items: items.map((l: any) => ({ ...l, linkedPropertyId: bySourceLeadId.get(Number(l.id)) ?? null })),
+        items: items.map((l: any) => {
+          const n = notesByLeadId.get(Number(l.id)) || null;
+          return {
+            ...l,
+            linkedPropertyId: bySourceLeadId.get(Number(l.id)) ?? null,
+            notesCount: n?.notesCount ?? 0,
+            lastNoteAt: n?.lastNoteAt ?? null,
+            lastNotePreview: n?.lastNotePreview ?? null,
+          };
+        }),
         total,
       });
     } catch (error: any) {
@@ -2517,6 +2641,861 @@ export async function registerRoutes(
       res.json(lead);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/leads/:id/notes", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const leadId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(leadId)) return res.status(400).json({ message: "Invalid id" });
+      const lead = await storage.getLeadById(leadId);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+      if (!isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((lead as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) return res.status(404).json({ message: "Lead not found" });
+      }
+      const rawLimit = typeof req.query?.limit === "string" ? parseInt(req.query.limit, 10) : 50;
+      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(500, rawLimit)) : 50;
+      const items = await storage.listLeadNotes(leadId, limit);
+      res.json({ items });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/leads/:id/notes", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const leadId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(leadId)) return res.status(400).json({ message: "Invalid id" });
+      const lead = await storage.getLeadById(leadId);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+      if (!isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((lead as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) return res.status(404).json({ message: "Lead not found" });
+      }
+      const body = typeof req.body?.body === "string" ? String(req.body.body).trim() : "";
+      if (!body) return res.status(400).json({ message: "Missing body" });
+      if (body.length > 50_000) return res.status(400).json({ message: "Body too long" });
+
+      const note = await storage.createLeadNote({ leadId, createdBy: user.id, body } as any);
+      const mergedNotes = String((lead as any).notes || "").trim();
+      const legacyNext = mergedNotes ? `${mergedNotes}\n${body}` : body;
+      await storage.updateLead(leadId, { notes: legacyNext, lastTouchAt: new Date() } as any);
+
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "added_note",
+        description: `Added note to lead: ${String((lead as any).address || "")}`,
+        metadata: JSON.stringify({ leadId, noteId: (note as any).id }),
+      } as any);
+
+      res.status(201).json(note);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/leads/views", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const teamIds = await storage.getUserTeamIds(user.id);
+      const rows = await storage.listSavedViews({ entityType: "lead", userId: user.id, teamIds });
+      res.json({ items: rows });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/leads/views/by-token/:token", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const token = String(req.params.token || "").trim();
+      if (!token) return res.status(400).json({ message: "Missing token" });
+      const row = await storage.getSavedViewByShareToken(token);
+      if (!row) return res.status(404).json({ message: "Not found" });
+      res.json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/leads/views", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const name = typeof req.body?.name === "string" ? String(req.body.name).trim() : "";
+      const visibility = typeof req.body?.visibility === "string" ? String(req.body.visibility).trim() : "private";
+      const configJson = req.body?.configJson;
+      const teamIdRaw = req.body?.teamId;
+      const teamId = teamIdRaw == null ? null : Number(teamIdRaw);
+      if (!name) return res.status(400).json({ message: "Missing name" });
+      if (name.length > 120) return res.status(400).json({ message: "Name too long" });
+      if (!configJson || typeof configJson !== "object") return res.status(400).json({ message: "Missing configJson" });
+
+      const vis = visibility === "team" || visibility === "link" || visibility === "private" ? visibility : "private";
+      const shareToken = vis === "link" ? crypto.randomBytes(24).toString("hex") : null;
+
+      let effectiveTeamId: number | null = null;
+      if (vis === "team") {
+        const tids = await storage.getUserTeamIds(user.id);
+        const candidate = Number.isFinite(teamId as any) ? Number(teamId) : tids[0];
+        if (!candidate) return res.status(400).json({ message: "Missing teamId" });
+        if (!isAdminUser(user) && !tids.includes(candidate)) return res.status(403).json({ message: "Forbidden" });
+        effectiveTeamId = candidate;
+      }
+
+      const row = await storage.createSavedView({
+        entityType: "lead",
+        name,
+        ownerUserId: user.id,
+        teamId: effectiveTeamId,
+        visibility: vis,
+        shareToken,
+        configJson,
+      } as any);
+      res.status(201).json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/leads/views/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const existing = await storage.getSavedViewById(id);
+      if (!existing) return res.status(404).json({ message: "Not found" });
+      if (!isAdminUser(user) && Number((existing as any).ownerUserId) !== Number(user.id)) return res.status(403).json({ message: "Forbidden" });
+
+      const patch: any = {};
+      if (typeof req.body?.name === "string") {
+        const name = String(req.body.name).trim();
+        if (!name) return res.status(400).json({ message: "Missing name" });
+        if (name.length > 120) return res.status(400).json({ message: "Name too long" });
+        patch.name = name;
+      }
+      if (typeof req.body?.visibility === "string") {
+        const vis = String(req.body.visibility).trim();
+        if (vis !== "private" && vis !== "team" && vis !== "link") return res.status(400).json({ message: "Invalid visibility" });
+        patch.visibility = vis;
+        if (vis === "link" && !(existing as any).shareToken) patch.shareToken = crypto.randomBytes(24).toString("hex");
+        if (vis !== "link") patch.shareToken = null;
+      }
+      if (typeof req.body?.configJson === "object" && req.body.configJson) patch.configJson = req.body.configJson;
+
+      const row = await storage.updateSavedView(id, patch);
+      res.json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/leads/views/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const existing = await storage.getSavedViewById(id);
+      if (!existing) return res.status(404).json({ message: "Not found" });
+      if (!isAdminUser(user) && Number((existing as any).ownerUserId) !== Number(user.id)) return res.status(403).json({ message: "Forbidden" });
+      await storage.deleteSavedView(id);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  async function resolveBulkLeadIds(input: {
+    user: any;
+    selectionScope: "explicit" | "all_filtered";
+    leadIds?: number[];
+    query?: any;
+  }): Promise<{ leadIds: number[]; total: number }> {
+    if (input.selectionScope === "explicit") {
+      const ids = (input.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      if (!ids.length) return { leadIds: [], total: 0 };
+      const inIds = sql.join(ids.map((id) => sql`${id}`), sql`,`);
+      if (isAdminUser(input.user)) {
+        const rows: any = await db.execute(sql`SELECT id FROM leads WHERE id IN (${inIds})`);
+        const out = ((rows as any).rows || []).map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n) && n > 0);
+        return { leadIds: out, total: out.length };
+      }
+      const allowed = await allowedLeadAssigneeUserIds(input.user.id);
+      if (!allowed.length) return { leadIds: [], total: 0 };
+      const inAllowed = sql.join(allowed.map((id) => sql`${id}`), sql`,`);
+      const rows: any = await db.execute(sql`SELECT id FROM leads WHERE id IN (${inIds}) AND assigned_to IN (${inAllowed})`);
+      const out = ((rows as any).rows || []).map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n) && n > 0);
+      return { leadIds: out, total: out.length };
+    }
+
+    const q: any = { ...(input.query || {}) };
+    const normalizeDate = (v: any) => {
+      if (!v) return undefined;
+      const d = new Date(String(v));
+      return Number.isFinite(d.getTime()) ? d : undefined;
+    };
+    if (typeof q.assignedTo === "string") {
+      const raw = String(q.assignedTo);
+      if (raw === "me") q.assignedTo = input.user.id;
+      else if (raw === "unassigned") q.assignedTo = "unassigned";
+      else {
+        const n = parseInt(raw, 10);
+        if (Number.isFinite(n)) q.assignedTo = n;
+      }
+    }
+    if (typeof q.hasNotes === "string") {
+      if (q.hasNotes === "true") q.hasNotes = true;
+      if (q.hasNotes === "false") q.hasNotes = false;
+    }
+    if (typeof q.createdFrom === "string") q.createdFrom = normalizeDate(q.createdFrom);
+    if (typeof q.createdTo === "string") q.createdTo = normalizeDate(q.createdTo);
+    const allowedAssignedToUserIds = isAdminUser(input.user) ? undefined : await allowedLeadAssigneeUserIds(input.user.id);
+    const first = await storage.listLeads({ ...(q as any), limit: 1, offset: 0, allowedAssignedToUserIds } as any);
+    const sample = await storage.listLeads({ ...(q as any), limit: 25, offset: 0, allowedAssignedToUserIds } as any);
+    return { leadIds: sample.items.map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n) && n > 0), total: first.total };
+  }
+
+  async function processLeadBulkActionJob(jobId: number) {
+    const job = await storage.getLeadBulkActionJobById(jobId);
+    if (!job) return;
+    if (String((job as any).status || "") !== "queued") return;
+    await storage.updateLeadBulkActionJob(jobId, { status: "running", startedAt: new Date() } as any);
+
+    const actor = await storage.getUserById(Number((job as any).createdBy));
+    if (!actor) {
+      await storage.updateLeadBulkActionJob(jobId, { status: "failed", finishedAt: new Date(), resultJson: { error: "Actor not found" } } as any);
+      return;
+    }
+
+    const action = String((job as any).action || "").trim();
+    const selectionScope = String((job as any).selectionScope || "").trim() as any;
+    const leadIdsJson = (job as any).leadIds;
+    const filterJson = (job as any).filterJson;
+    const params = (filterJson as any)?.params || {};
+
+    const allowedAssignedToUserIds = isAdminUser(actor) ? undefined : await allowedLeadAssigneeUserIds(actor.id);
+
+    const collectAllFilteredIds = async () => {
+      const q = typeof filterJson === "object" && filterJson ? { ...(filterJson as any) } : {};
+      delete (q as any).params;
+      const normalizeDate = (v: any) => {
+        if (!v) return undefined;
+        const d = new Date(String(v));
+        return Number.isFinite(d.getTime()) ? d : undefined;
+      };
+      if (typeof (q as any).assignedTo === "string") {
+        const raw = String((q as any).assignedTo);
+        if (raw === "me") (q as any).assignedTo = actor.id;
+        else if (raw === "unassigned") (q as any).assignedTo = "unassigned";
+        else {
+          const n = parseInt(raw, 10);
+          if (Number.isFinite(n)) (q as any).assignedTo = n;
+        }
+      }
+      if (typeof (q as any).hasNotes === "string") {
+        if ((q as any).hasNotes === "true") (q as any).hasNotes = true;
+        if ((q as any).hasNotes === "false") (q as any).hasNotes = false;
+      }
+      if (typeof (q as any).createdFrom === "string") (q as any).createdFrom = normalizeDate((q as any).createdFrom);
+      if (typeof (q as any).createdTo === "string") (q as any).createdTo = normalizeDate((q as any).createdTo);
+      if (typeof (q as any).lastTouchFrom === "string") (q as any).lastTouchFrom = normalizeDate((q as any).lastTouchFrom);
+      if (typeof (q as any).lastTouchTo === "string") (q as any).lastTouchTo = normalizeDate((q as any).lastTouchTo);
+      if (typeof (q as any).nextFollowUpFrom === "string") (q as any).nextFollowUpFrom = normalizeDate((q as any).nextFollowUpFrom);
+      if (typeof (q as any).nextFollowUpTo === "string") (q as any).nextFollowUpTo = normalizeDate((q as any).nextFollowUpTo);
+      let off = 0;
+      const pageSize = 500;
+      const out: number[] = [];
+      while (true) {
+        const page = await storage.listLeads({ ...(q as any), limit: pageSize, offset: off, allowedAssignedToUserIds } as any);
+        for (const l of page.items) {
+          const id = Number((l as any).id);
+          if (Number.isFinite(id) && id > 0) out.push(id);
+        }
+        off += page.items.length;
+        if (page.items.length < pageSize) break;
+      }
+      return out;
+    };
+
+    const ids =
+      selectionScope === "all_filtered"
+        ? await collectAllFilteredIds()
+        : Array.isArray(leadIdsJson)
+          ? (leadIdsJson as any[]).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0)
+          : [];
+
+    if (!ids.length) {
+      await storage.updateLeadBulkActionJob(jobId, { status: "completed", finishedAt: new Date(), totalTargets: 0, processed: 0, succeeded: 0, failed: 0, resultJson: { message: "No targets" } } as any);
+      return;
+    }
+
+    let processed = 0;
+    let succeeded = 0;
+    let failed = 0;
+    const failures: any[] = [];
+    const now = new Date();
+
+    const chunks = (arr: number[], size: number) => {
+      const out: number[][] = [];
+      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+      return out;
+    };
+
+    try {
+      if (action === "assign") {
+        const nextAssignedToRaw = Number(params?.assignedTo);
+        if (!Number.isFinite(nextAssignedToRaw)) throw new Error("Invalid assignedTo");
+        const nextAssignedTo = nextAssignedToRaw;
+        if (!isAdminUser(actor)) {
+          const allowed = await allowedLeadAssigneeUserIds(actor.id);
+          if (!allowed.includes(nextAssignedTo)) throw new Error("Forbidden assignedTo");
+        }
+        for (const c of chunks(ids, 500)) {
+          await db.execute(sql`UPDATE leads SET assigned_to = ${nextAssignedTo}, updated_at = NOW() WHERE id IN (${sql.join(c.map((id) => sql`${id}`), sql`,`)})`);
+          processed += c.length;
+          succeeded += c.length;
+        }
+      } else if (action === "set_status") {
+        const nextStatus = String(params?.status || "").trim();
+        if (!nextStatus) throw new Error("Invalid status");
+        for (const c of chunks(ids, 500)) {
+          await db.execute(sql`UPDATE leads SET status = ${nextStatus}, status_changed_at = NOW(), updated_at = NOW() WHERE id IN (${sql.join(c.map((id) => sql`${id}`), sql`,`)})`);
+          processed += c.length;
+          succeeded += c.length;
+        }
+      } else if (action === "archive") {
+        for (const c of chunks(ids, 500)) {
+          await db.execute(sql`UPDATE leads SET archived_at = ${now}, updated_at = NOW() WHERE id IN (${sql.join(c.map((id) => sql`${id}`), sql`,`)})`);
+          processed += c.length;
+          succeeded += c.length;
+        }
+      } else if (action === "unarchive") {
+        for (const c of chunks(ids, 500)) {
+          await db.execute(sql`UPDATE leads SET archived_at = NULL, updated_at = NOW() WHERE id IN (${sql.join(c.map((id) => sql`${id}`), sql`,`)})`);
+          processed += c.length;
+          succeeded += c.length;
+        }
+      } else if (action === "add_tags" || action === "remove_tags") {
+        const tags = Array.isArray(params?.tags) ? params.tags : typeof params?.tags === "string" ? String(params.tags).split(",") : [];
+        const cleaned = tags.map((t: any) => String(t || "").trim()).filter(Boolean);
+        if (!cleaned.length) throw new Error("Missing tags");
+        for (const id of ids) {
+          processed += 1;
+          try {
+            const lead = await storage.getLeadById(id);
+            if (!lead) throw new Error("Lead not found");
+            const current = Array.isArray((lead as any).tags) ? (lead as any).tags.map((t: any) => String(t)) : [];
+            const next =
+              action === "add_tags"
+                ? Array.from(new Set([...current, ...cleaned])).filter(Boolean)
+                : current.filter((t: string) => !new Set(cleaned).has(t));
+            await storage.updateLead(id, { tags: next } as any);
+            succeeded += 1;
+          } catch (e: any) {
+            failed += 1;
+            if (failures.length < 50) failures.push({ id, error: String(e?.message || e) });
+          }
+        }
+      } else if (action === "export") {
+        const format = String(params?.format || "csv") === "xlsx" ? "xlsx" : "csv";
+        const columns = Array.isArray(params?.columns) ? params.columns : [];
+        const filters = { ids };
+        const { job: exportJob, token } = await createExportJob({ entityType: "lead" as any, createdBy: actor.id, format: format as any, filters, columns } as any);
+        setImmediate(() => {
+          processExportJob(exportJob.id).catch(() => {});
+        });
+        processed = ids.length;
+        succeeded = ids.length;
+        await storage.updateLeadBulkActionJob(jobId, {
+          status: "completed",
+          finishedAt: new Date(),
+          totalTargets: ids.length,
+          processed,
+          succeeded,
+          failed,
+          resultJson: {
+            exportJobId: exportJob.id,
+            downloadUrl: `/api/crm/export/files/${exportJob.id}/download?token=${encodeURIComponent(token)}`,
+          },
+        } as any);
+        return;
+      } else {
+        throw new Error("Unsupported action");
+      }
+    } catch (e: any) {
+      failed = Math.max(failed, 1);
+      failures.push({ error: String(e?.message || e) });
+    }
+
+    await storage.updateLeadBulkActionJob(jobId, {
+      status: failed ? "completed" : "completed",
+      finishedAt: new Date(),
+      totalTargets: ids.length,
+      processed,
+      succeeded,
+      failed,
+      resultJson: { failures },
+    } as any);
+  }
+
+  app.post("/api/leads/bulk/preview", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const action = typeof req.body?.action === "string" ? String(req.body.action).trim() : "";
+      const selectionScope = typeof req.body?.selectionScope === "string" ? String(req.body.selectionScope).trim() : "";
+      const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds : [];
+      const query = typeof req.body?.query === "object" && req.body.query ? req.body.query : {};
+      if (!action) return res.status(400).json({ message: "Missing action" });
+      if (selectionScope !== "explicit" && selectionScope !== "all_filtered") return res.status(400).json({ message: "Invalid selectionScope" });
+      const resolved = await resolveBulkLeadIds({ user, selectionScope: selectionScope as any, leadIds, query });
+      res.json({ action, selectionScope, totalTargets: resolved.total, sampleLeadIds: resolved.leadIds });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/leads/bulk/jobs", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const action = typeof req.body?.action === "string" ? String(req.body.action).trim() : "";
+      const selectionScope = typeof req.body?.selectionScope === "string" ? String(req.body.selectionScope).trim() : "";
+      const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds : [];
+      const query = typeof req.body?.query === "object" && req.body.query ? req.body.query : null;
+      const params = typeof req.body?.params === "object" && req.body.params ? req.body.params : {};
+      if (!action) return res.status(400).json({ message: "Missing action" });
+      if (selectionScope !== "explicit" && selectionScope !== "all_filtered") return res.status(400).json({ message: "Invalid selectionScope" });
+
+      const preview = await resolveBulkLeadIds({ user, selectionScope: selectionScope as any, leadIds, query: query || {} });
+      const job = await storage.createLeadBulkActionJob({
+        createdBy: user.id,
+        status: "queued",
+        action,
+        selectionScope,
+        leadIds: selectionScope === "explicit" ? leadIds : null,
+        filterJson: selectionScope === "all_filtered" ? { ...(query || {}), params } : { params },
+        totalTargets: preview.total,
+      } as any);
+
+      setImmediate(() => {
+        processLeadBulkActionJob(job.id).catch(() => {});
+      });
+
+      res.status(201).json({ jobId: job.id });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/leads/bulk/jobs/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const job = await storage.getLeadBulkActionJobById(id);
+      if (!job) return res.status(404).json({ message: "Not found" });
+      if (!isAdminUser(user) && Number((job as any).createdBy) !== Number(user.id)) return res.status(403).json({ message: "Forbidden" });
+      res.json(job);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  function parseVoiceAction(transcriptRaw: string, user: any) {
+    const transcript = String(transcriptRaw || "").trim();
+    const t = transcript.toLowerCase();
+    const out: any = {
+      intent: "",
+      entities: {},
+      target_records: { selection_scope: "selected_rows", lead_ids: [] as string[] },
+      proposed_updates: [] as Array<{ field: string; value: any }>,
+      confidence: 0.4,
+      clarifications_needed: [] as string[],
+    };
+
+    const statusMatch = t.match(/\b(status|stage)\b.*\b(new|contacted|qualified|negotiation|under_contract|closed|lost|hot|warm|cold)\b/);
+    if (statusMatch) {
+      out.intent = "update_leads";
+      out.entities.status = statusMatch[2];
+      out.proposed_updates.push({ field: "status", value: statusMatch[2] });
+      out.confidence = Math.max(out.confidence, 0.85);
+    }
+
+    if (/\bassign\b/.test(t)) {
+      out.intent = out.intent || "update_leads";
+      if (/\bto me\b/.test(t) || /\bassign me\b/.test(t)) {
+        out.entities.assignee = "current_user";
+        out.proposed_updates.push({ field: "assigned_to", value: "current_user" });
+        out.confidence = Math.max(out.confidence, 0.85);
+      } else {
+        out.clarifications_needed.push("Which user should this be assigned to?");
+        out.confidence = Math.min(out.confidence, 0.6);
+      }
+    }
+
+    const addTagMatch = t.match(/\badd tag(s)?\b(.+)$/);
+    if (addTagMatch) {
+      out.intent = out.intent || "update_leads";
+      const tags = addTagMatch[2]
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (tags.length) {
+        out.entities.add_tags = tags;
+        out.proposed_updates.push({ field: "add_tags", value: tags });
+        out.confidence = Math.max(out.confidence, 0.8);
+      }
+    }
+
+    const removeTagMatch = t.match(/\bremove tag(s)?\b(.+)$/);
+    if (removeTagMatch) {
+      out.intent = out.intent || "update_leads";
+      const tags = removeTagMatch[2]
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (tags.length) {
+        out.entities.remove_tags = tags;
+        out.proposed_updates.push({ field: "remove_tags", value: tags });
+        out.confidence = Math.max(out.confidence, 0.8);
+      }
+    }
+
+    const noteMatch = t.match(/\badd note\b(.+)$/);
+    if (noteMatch) {
+      out.intent = out.intent || "add_note";
+      const body = String(noteMatch[1] || "").trim();
+      if (body) {
+        out.entities.note = body;
+        out.proposed_updates.push({ field: "note", value: body });
+        out.confidence = Math.max(out.confidence, 0.75);
+      } else {
+        out.clarifications_needed.push("What note should I add?");
+      }
+    }
+
+    if (!out.intent) {
+      out.intent = "unknown";
+      out.clarifications_needed.push("I couldn't understand the request. Try: “set status to warm”, “assign to me”, “add tag follow-up”.");
+    }
+
+    out.entities.user_id = user?.id ?? null;
+    return { transcript, parsed: out };
+  }
+
+  app.post("/api/ai/voice/parse", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
+      const transcript = typeof req.body?.transcript === "string" ? String(req.body.transcript) : "";
+      const parsed = parseVoiceAction(transcript, user);
+      res.json(parsed);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/ai/voice/preview", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
+      const proposal = req.body?.proposal;
+      const selectionScope = typeof req.body?.selectionScope === "string" ? String(req.body.selectionScope).trim() : "explicit";
+      const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds : [];
+      const query = typeof req.body?.query === "object" && req.body.query ? req.body.query : {};
+      if (!proposal || typeof proposal !== "object") return res.status(400).json({ message: "Missing proposal" });
+      if (selectionScope !== "explicit" && selectionScope !== "all_filtered") return res.status(400).json({ message: "Invalid selectionScope" });
+      const resolved = await resolveBulkLeadIds({ user, selectionScope: selectionScope as any, leadIds, query });
+      res.json({
+        proposal,
+        selectionScope,
+        totalTargets: resolved.total,
+        sampleLeadIds: resolved.leadIds,
+        warnings: resolved.total > 200 && selectionScope === "explicit" ? ["Large selection: voice apply is limited to 200 leads in v1."] : [],
+      });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/ai/voice/apply", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
+      const proposal = req.body?.proposal;
+      const selectionScope = typeof req.body?.selectionScope === "string" ? String(req.body.selectionScope).trim() : "explicit";
+      const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds : [];
+      if (!proposal || typeof proposal !== "object") return res.status(400).json({ message: "Missing proposal" });
+      if (selectionScope !== "explicit") return res.status(400).json({ message: "Voice apply supports selected rows only in v1" });
+
+      const ids = leadIds.map((x: any) => Number(x)).filter((n: any) => Number.isFinite(n) && n > 0);
+      if (!ids.length) return res.status(400).json({ message: "No leadIds" });
+      if (ids.length > 200) return res.status(400).json({ message: "Too many leads for voice apply" });
+
+      const allowedAssignedToUserIds = isAdminUser(user) ? undefined : await allowedLeadAssigneeUserIds(user.id);
+
+      const updates: any = {};
+      for (const u of (proposal as any).proposed_updates || []) {
+        if (!u || typeof u !== "object") continue;
+        if (u.field === "status") updates.status = String(u.value || "").trim();
+        if (u.field === "assigned_to" && u.value === "current_user") updates.assignedTo = user.id;
+        if (u.field === "add_tags") updates.addTags = Array.isArray(u.value) ? u.value : [];
+        if (u.field === "remove_tags") updates.removeTags = Array.isArray(u.value) ? u.value : [];
+        if (u.field === "note") updates.note = String(u.value || "").trim();
+      }
+
+      if (!updates.status && !updates.assignedTo && !updates.addTags && !updates.removeTags && !updates.note) {
+        return res.status(400).json({ message: "No supported updates found" });
+      }
+
+      const undoItems: any[] = [];
+      const now = new Date();
+      let succeeded = 0;
+      let failed = 0;
+      const failures: any[] = [];
+
+      for (const id of ids) {
+        try {
+          const lead = await storage.getLeadById(id);
+          if (!lead) throw new Error("Lead not found");
+          if (Array.isArray(allowedAssignedToUserIds)) {
+            const assignedTo = Number((lead as any).assignedTo);
+            if (!Number.isFinite(assignedTo) || !allowedAssignedToUserIds.includes(assignedTo)) throw new Error("Forbidden");
+          }
+
+          const before = { status: (lead as any).status ?? null, assignedTo: (lead as any).assignedTo ?? null, tags: (lead as any).tags ?? null };
+          const patch: any = {};
+          if (updates.status) {
+            patch.status = updates.status;
+            patch.statusChangedAt = now;
+          }
+          if (updates.assignedTo) patch.assignedTo = updates.assignedTo;
+          if (updates.addTags || updates.removeTags) {
+            const current = Array.isArray((lead as any).tags) ? (lead as any).tags.map((t: any) => String(t)) : [];
+            const add = Array.isArray(updates.addTags) ? updates.addTags.map((t: any) => String(t || "").trim()).filter(Boolean) : [];
+            const remove = Array.isArray(updates.removeTags) ? updates.removeTags.map((t: any) => String(t || "").trim()).filter(Boolean) : [];
+            const removedSet = new Set(remove);
+            const next = Array.from(new Set([...current, ...add])).filter((t) => !removedSet.has(t));
+            patch.tags = next;
+          }
+          if (updates.note) {
+            await storage.createLeadNote({ leadId: id, createdBy: user.id, body: updates.note } as any);
+            patch.lastTouchAt = now;
+            const merged = String((lead as any).notes || "").trim();
+            patch.notes = merged ? `${merged}\n${updates.note}` : updates.note;
+          }
+
+          if (Object.keys(patch).length) await storage.updateLead(id, patch);
+          undoItems.push({ id, before });
+          succeeded += 1;
+        } catch (e: any) {
+          failed += 1;
+          if (failures.length < 50) failures.push({ id, error: String(e?.message || e) });
+        }
+      }
+
+      const aiLog = await storage.createAiActionLog({
+        createdBy: user.id,
+        entityType: "lead",
+        transcript: String((proposal as any)?.transcript || req.body?.transcript || ""),
+        parsedJson: proposal,
+        selectionJson: { selectionScope, leadIds: ids },
+        appliedJson: { updates, succeeded, failed },
+      } as any);
+
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+      await storage.createAiActionUndo({
+        aiActionLogId: aiLog.id,
+        undoJson: { items: undoItems, updates },
+        expiresAt,
+      } as any);
+
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "ai_voice_action_applied",
+        description: `Applied AI voice action to ${succeeded} lead(s)`,
+        metadata: JSON.stringify({ aiActionLogId: aiLog.id, succeeded, failed }),
+      } as any);
+
+      res.json({ aiActionLogId: aiLog.id, succeeded, failed, failures });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/ai/voice/undo", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
+      const aiActionLogId = typeof req.body?.aiActionLogId === "number" ? req.body.aiActionLogId : parseInt(String(req.body?.aiActionLogId || ""), 10);
+      if (!Number.isFinite(aiActionLogId)) return res.status(400).json({ message: "Invalid aiActionLogId" });
+      const undo = await storage.getAiActionUndoByActionId(aiActionLogId);
+      if (!undo) return res.status(404).json({ message: "Not found" });
+      if ((undo as any).undoneAt) return res.status(409).json({ message: "Already undone" });
+      const exp = (undo as any).expiresAt ? new Date((undo as any).expiresAt) : null;
+      if (exp && exp.getTime() < Date.now()) return res.status(409).json({ message: "Undo expired" });
+
+      const undoJson = (undo as any).undoJson;
+      const items = Array.isArray(undoJson?.items) ? undoJson.items : [];
+      const allowedAssignedToUserIds = isAdminUser(user) ? undefined : await allowedLeadAssigneeUserIds(user.id);
+      let restored = 0;
+      for (const it of items) {
+        const id = Number(it?.id);
+        if (!Number.isFinite(id) || id <= 0) continue;
+        const lead = await storage.getLeadById(id);
+        if (!lead) continue;
+        if (Array.isArray(allowedAssignedToUserIds)) {
+          const assignedTo = Number((lead as any).assignedTo);
+          if (!Number.isFinite(assignedTo) || !allowedAssignedToUserIds.includes(assignedTo)) continue;
+        }
+        await storage.updateLead(id, { ...(it.before || {}) } as any);
+        restored += 1;
+      }
+
+      await storage.updateAiActionUndo(undo.id, { undoneAt: new Date() } as any);
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "ai_voice_action_undone",
+        description: `Undid AI action for ${restored} lead(s)`,
+        metadata: JSON.stringify({ aiActionLogId, restored }),
+      } as any);
+      res.json({ restored });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/audit/runs", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const rawLimit = typeof req.query?.limit === "string" ? parseInt(req.query.limit, 10) : 50;
+      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, rawLimit)) : 50;
+      const rows = await storage.listAppAuditRuns({ createdBy: user.id, limit });
+      res.json({ items: rows });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/audit/runs", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const scopeJson = typeof req.body?.scopeJson === "object" && req.body.scopeJson ? req.body.scopeJson : null;
+      if (!scopeJson) return res.status(400).json({ message: "Missing scopeJson" });
+      const row = await storage.createAppAuditRun({ createdBy: user.id, scopeJson } as any);
+      res.status(201).json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/audit/runs/:id/findings", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const runId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(runId)) return res.status(400).json({ message: "Invalid id" });
+      const runs = await storage.listAppAuditRuns({ createdBy: user.id, limit: 200 });
+      if (!runs.find((r: any) => Number(r.id) === runId)) return res.status(404).json({ message: "Not found" });
+      const rows = await storage.listAppAuditFindings({ runId, limit: 500 });
+      res.json({ items: rows });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/audit/runs/:id/findings", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const runId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(runId)) return res.status(400).json({ message: "Invalid id" });
+      const runs = await storage.listAppAuditRuns({ createdBy: user.id, limit: 200 });
+      if (!runs.find((r: any) => Number(r.id) === runId)) return res.status(404).json({ message: "Not found" });
+
+      const schema = z.object({
+        severity: z.enum(["critical", "major", "minor", "polish"]),
+        area: z.string().trim().min(1).max(80),
+        title: z.string().trim().min(1).max(160),
+        description: z.string().trim().min(1),
+        recommendation: z.string().optional().nullable(),
+        technicalNotes: z.string().optional().nullable(),
+      });
+      const payload = schema.parse(req.body || {});
+      const row = await storage.createAppAuditFinding({
+        runId,
+        severity: payload.severity,
+        area: payload.area,
+        title: payload.title,
+        description: payload.description,
+        recommendation: payload.recommendation || null,
+        technicalNotes: payload.technicalNotes || null,
+        status: "open",
+      } as any);
+      res.status(201).json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/audit/findings/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      if (!isAdminUser(user)) {
+        const ownerCheck: any = await db.execute(sql`
+          SELECT r.created_by as "createdBy"
+          FROM app_audit_findings f
+          JOIN app_audit_runs r ON r.id = f.run_id
+          WHERE f.id = ${id}
+          LIMIT 1
+        `);
+        const createdBy = (ownerCheck as any).rows?.[0]?.createdBy ? Number((ownerCheck as any).rows[0].createdBy) : null;
+        if (!createdBy) return res.status(404).json({ message: "Not found" });
+        if (createdBy !== Number(user.id)) return res.status(404).json({ message: "Not found" });
+      }
+      const patch: any = {};
+      if (typeof req.body?.status === "string") {
+        const s = String(req.body.status).trim();
+        if (s !== "open" && s !== "accepted" && s !== "fixed" && s !== "wontfix") return res.status(400).json({ message: "Invalid status" });
+        patch.status = s;
+      }
+      if (typeof req.body?.severity === "string") {
+        const s = String(req.body.severity).trim();
+        if (s !== "critical" && s !== "major" && s !== "minor" && s !== "polish") return res.status(400).json({ message: "Invalid severity" });
+        patch.severity = s;
+      }
+      if (typeof req.body?.recommendation === "string" || req.body?.recommendation === null) patch.recommendation = req.body.recommendation;
+      if (typeof req.body?.technicalNotes === "string" || req.body?.technicalNotes === null) patch.technicalNotes = req.body.technicalNotes;
+      if (typeof req.body?.title === "string") patch.title = String(req.body.title).trim();
+      if (typeof req.body?.description === "string") patch.description = String(req.body.description);
+
+      if (!Object.keys(patch).length) return res.status(400).json({ message: "No changes" });
+      const row = await storage.updateAppAuditFinding(id, patch as any);
+      res.json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
     }
   });
 
@@ -3387,6 +4366,13 @@ export async function registerRoutes(
         if (merged.address && merged.city && merged.state && merged.zipCode && merged.ownerName) {
           (partial as any).dedupeKey = computeLeadDedupeKey(merged);
         }
+      }
+      const now = new Date();
+      if (before && typeof (partial as any).status !== "undefined" && String((partial as any).status || "") !== String((before as any).status || "")) {
+        (partial as any).statusChangedAt = now;
+      }
+      if (before && typeof (partial as any).notes !== "undefined" && String((partial as any).notes || "") !== String((before as any).notes || "")) {
+        (partial as any).lastTouchAt = now;
       }
       const lead = await storage.updateLead(id, partial);
       try {

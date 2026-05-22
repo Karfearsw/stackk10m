@@ -18,6 +18,11 @@ export const leads = pgTable("leads", {
   relasScore: integer("relas_score"),
   motivation: varchar("motivation", { length: 50 }),
   status: varchar("status", { length: 50 }).default("new"),
+  archivedAt: timestamp("archived_at"),
+  statusChangedAt: timestamp("status_changed_at"),
+  leadType: varchar("lead_type", { length: 50 }),
+  county: varchar("county", { length: 100 }),
+  ownerOccupied: boolean("owner_occupied"),
   notes: text("notes"),
   source: varchar("source", { length: 100 }),
   assignedTo: integer("assigned_to"),
@@ -135,6 +140,114 @@ export const crmExportFiles = pgTable("crm_export_files", {
 export const insertCrmExportFileSchema = createInsertSchema(crmExportFiles).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type CrmExportFile = typeof crmExportFiles.$inferSelect;
 export type InsertCrmExportFile = Omit<typeof crmExportFiles.$inferInsert, "id" | "createdAt" | "updatedAt">;
+
+export const leadNotes = pgTable("lead_notes", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  leadId: integer("lead_id").notNull(),
+  createdBy: integer("created_by"),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertLeadNoteSchema = createInsertSchema(leadNotes).omit({ id: true, createdAt: true } as any);
+export type LeadNote = typeof leadNotes.$inferSelect;
+export type InsertLeadNote = z.infer<typeof insertLeadNoteSchema>;
+
+export const savedViews = pgTable("saved_views", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 32 }).notNull(),
+  name: varchar("name", { length: 120 }).notNull(),
+  ownerUserId: integer("owner_user_id").notNull(),
+  teamId: integer("team_id"),
+  visibility: varchar("visibility", { length: 20 }).notNull().default("private"),
+  shareToken: varchar("share_token", { length: 64 }),
+  configJson: jsonb("config_json").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertSavedViewSchema = createInsertSchema(savedViews).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type SavedView = typeof savedViews.$inferSelect;
+export type InsertSavedView = z.infer<typeof insertSavedViewSchema>;
+
+export const leadBulkActionJobs = pgTable("lead_bulk_action_jobs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  createdBy: integer("created_by").notNull(),
+  status: varchar("status", { length: 32 }).notNull().default("queued"),
+  action: varchar("action", { length: 50 }).notNull(),
+  selectionScope: varchar("selection_scope", { length: 32 }).notNull(),
+  leadIds: jsonb("lead_ids"),
+  filterJson: jsonb("filter_json"),
+  totalTargets: integer("total_targets").default(0),
+  processed: integer("processed").default(0),
+  succeeded: integer("succeeded").default(0),
+  failed: integer("failed").default(0),
+  resultJson: jsonb("result_json"),
+  startedAt: timestamp("started_at"),
+  finishedAt: timestamp("finished_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertLeadBulkActionJobSchema = createInsertSchema(leadBulkActionJobs).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type LeadBulkActionJob = typeof leadBulkActionJobs.$inferSelect;
+export type InsertLeadBulkActionJob = z.infer<typeof insertLeadBulkActionJobSchema>;
+
+export const aiActionLogs = pgTable("ai_action_logs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  createdBy: integer("created_by").notNull(),
+  entityType: varchar("entity_type", { length: 32 }).notNull(),
+  transcript: text("transcript").notNull(),
+  parsedJson: jsonb("parsed_json").notNull(),
+  selectionJson: jsonb("selection_json").notNull(),
+  appliedJson: jsonb("applied_json"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAiActionLogSchema = createInsertSchema(aiActionLogs).omit({ id: true, createdAt: true } as any);
+export type AiActionLog = typeof aiActionLogs.$inferSelect;
+export type InsertAiActionLog = z.infer<typeof insertAiActionLogSchema>;
+
+export const aiActionUndo = pgTable("ai_action_undo", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  aiActionLogId: integer("ai_action_log_id").notNull(),
+  undoJson: jsonb("undo_json").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  undoneAt: timestamp("undone_at"),
+});
+
+export const insertAiActionUndoSchema = createInsertSchema(aiActionUndo).omit({ id: true } as any);
+export type AiActionUndo = typeof aiActionUndo.$inferSelect;
+export type InsertAiActionUndo = z.infer<typeof insertAiActionUndoSchema>;
+
+export const appAuditRuns = pgTable("app_audit_runs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  createdBy: integer("created_by").notNull(),
+  scopeJson: jsonb("scope_json").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAppAuditRunSchema = createInsertSchema(appAuditRuns).omit({ id: true, createdAt: true } as any);
+export type AppAuditRun = typeof appAuditRuns.$inferSelect;
+export type InsertAppAuditRun = z.infer<typeof insertAppAuditRunSchema>;
+
+export const appAuditFindings = pgTable("app_audit_findings", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  runId: integer("run_id").notNull(),
+  severity: varchar("severity", { length: 20 }).notNull(),
+  area: varchar("area", { length: 80 }).notNull(),
+  title: varchar("title", { length: 160 }).notNull(),
+  description: text("description").notNull(),
+  recommendation: text("recommendation"),
+  technicalNotes: text("technical_notes"),
+  status: varchar("status", { length: 20 }).notNull().default("open"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAppAuditFindingSchema = createInsertSchema(appAuditFindings).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type AppAuditFinding = typeof appAuditFindings.$inferSelect;
+export type InsertAppAuditFinding = z.infer<typeof insertAppAuditFindingSchema>;
 
 export const insertPropertySchema = createInsertSchema(properties).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type Property = typeof properties.$inferSelect;

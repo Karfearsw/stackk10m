@@ -38,6 +38,7 @@ const FieldModePage = React.lazy(() => import("@/pages/field"));
 const PhoneWorkspace = React.lazy(() => import("@/pages/phone"));
 const DialerWorkspace = React.lazy(() => import("@/pages/dialer-workspace"));
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
+const AuditPage = React.lazy(() => import("@/pages/audit"));
 const TeamsPage = React.lazy(() => import("@/pages/teams"));
 const XpLandingPage = React.lazy(() => import("@/pages/xp/index"));
 const XpExperiencePage = React.lazy(() => import("@/pages/xp/experience"));
@@ -129,6 +130,9 @@ function Router() {
       </Route>
       <Route path="/leads">
         {() => <ProtectedRoute component={Leads} />}
+      </Route>
+      <Route path="/audit">
+        {() => <ProtectedRoute component={AuditPage} />}
       </Route>
       <Route path="/campaigns">
         {() => <ProtectedRoute component={Campaigns} />}
