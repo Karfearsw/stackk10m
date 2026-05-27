@@ -436,6 +436,7 @@ export interface IStorage {
   deleteDealAssignment(id: number): Promise<void>;
 
   listXpExperiences(input?: { activeOnly?: boolean }): Promise<XpExperience[]>;
+  listXpExperiencesWithDestinations(input?: { activeOnly?: boolean }): Promise<Array<XpExperience & { destination?: XpLocation | null }>>;
   getXpExperienceBySlug(slug: string): Promise<XpExperience | undefined>;
   getXpExperienceById(id: number): Promise<XpExperience | undefined>;
   createXpExperience(input: InsertXpExperience): Promise<XpExperience>;
@@ -452,6 +453,8 @@ export interface IStorage {
   deleteXpBlackout(id: number): Promise<void>;
 
   listXpLocations(input?: { activeOnly?: boolean }): Promise<XpLocation[]>;
+  listXpDestinations(input?: { activeOnly?: boolean }): Promise<XpLocation[]>;
+  getXpDestinationBySlug(slug: string): Promise<XpLocation | undefined>;
   createXpLocation(input: InsertXpLocation): Promise<XpLocation>;
   updateXpLocation(id: number, patch: Partial<InsertXpLocation>): Promise<XpLocation>;
   deactivateXpLocation(id: number): Promise<XpLocation>;
@@ -2254,6 +2257,24 @@ export class DatabaseStorage implements IStorage {
     return q as unknown as Promise<XpExperience[]>;
   }
 
+  async listXpExperiencesWithDestinations(input?: { activeOnly?: boolean }): Promise<Array<XpExperience & { destination?: XpLocation | null }>> {
+    const activeOnly = !!input?.activeOnly;
+    const whereParts: any[] = [];
+    if (activeOnly) whereParts.push(eq(xpExperiences.active, true));
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+    let q: any = db
+      .select({
+        experience: xpExperiences,
+        destination: xpLocations,
+      })
+      .from(xpExperiences)
+      .leftJoin(xpLocations, eq(xpLocations.id, xpExperiences.locationId));
+    if (whereClause) q = q.where(whereClause);
+    q = q.orderBy(asc(xpExperiences.title));
+    const rows: any[] = await q;
+    return rows.map((r: any) => ({ ...(r.experience as any), destination: r.destination || null }));
+  }
+
   async getXpExperienceBySlug(slug: string): Promise<XpExperience | undefined> {
     const s = String(slug || "").trim();
     if (!s) return undefined;
@@ -2338,6 +2359,20 @@ export class DatabaseStorage implements IStorage {
     if (whereClause) q = q.where(whereClause);
     q = q.orderBy(asc(xpLocations.name));
     return q as unknown as Promise<XpLocation[]>;
+  }
+
+  async listXpDestinations(input?: { activeOnly?: boolean }): Promise<XpLocation[]> {
+    const whereParts: any[] = [eq(xpLocations.type, "resort")];
+    if (input?.activeOnly) whereParts.push(eq(xpLocations.active, true));
+    const q: any = db.select().from(xpLocations).where(and(...whereParts)).orderBy(asc(xpLocations.name));
+    return q as unknown as Promise<XpLocation[]>;
+  }
+
+  async getXpDestinationBySlug(slug: string): Promise<XpLocation | undefined> {
+    const s = String(slug || "").trim();
+    if (!s) return undefined;
+    const result = await db.select().from(xpLocations).where(eq(xpLocations.slug, s)).limit(1);
+    return result[0];
   }
 
   async createXpLocation(input: InsertXpLocation): Promise<XpLocation> {
