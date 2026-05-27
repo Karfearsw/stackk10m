@@ -14,6 +14,7 @@ import { EntityActivity } from "@/components/activity/EntityActivity";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import type { DialerQueueItem } from "@/lib/dialerTypes";
+import { useToast } from "@/hooks/use-toast";
 
 function formatE164(raw: string) {
   const digits = raw.replace(/[^\d+]/g, "");
@@ -49,6 +50,7 @@ function DialerWorkspaceInner() {
   const { state, activeItem, setListId, setQueue, setActiveIndex, next } = useDialer();
   const { ready, connectionState, error, call: activeCall, makeCall, endCall, toggleMute, toggleHold } = useSignalWire();
   const queryClient = useQueryClient();
+  const { toast } = useToast();
 
   const [number, setNumber] = useState("");
   const [status, setStatus] = useState<"idle" | "dialing" | "ringing" | "connected" | "ended" | "failed">("idle");
@@ -519,9 +521,15 @@ function DialerWorkspaceInner() {
                         note: note || null,
                         followUpAt: followUpAt ? new Date(followUpAt).toISOString() : null,
                       });
-                    } catch {}
+                      if (wrapUpValid) setLogSaved(true);
+                    } catch (e: any) {
+                      toast({
+                        variant: "destructive",
+                        title: "Failed to update call log",
+                        description: String(e?.message || e || "Update failed"),
+                      });
+                    }
                   }
-                  if (id && wrapUpValid) setLogSaved(true);
 
                   setStatus("ended");
                 }}
@@ -631,7 +639,9 @@ function DialerWorkspaceInner() {
                     <Button
                       variant="secondary"
                       onClick={async () => {
+                        if (!activeItem?.leadId) return;
                         if (saveLogPending) return;
+                        if (!wrapUpValid) return;
                         setSaveLogPending(true);
                         try {
                           let id: number | null = callId;
@@ -647,6 +657,7 @@ function DialerWorkspaceInner() {
                                 status: "ended",
                                 startedAt,
                                 leadId: activeItem.leadId,
+                                metadata: { leadId: activeItem.leadId, propertyId: initial.propertyId || undefined },
                               }),
                             });
                             if (!res.ok) throw new Error(await res.text());
@@ -657,7 +668,6 @@ function DialerWorkspaceInner() {
                             setCallId(nextId);
                           }
                           if (!id) throw new Error("Failed to create call log");
-
                           await patchCallLog(id, {
                             status: "ended",
                             disposition: disposition || null,
@@ -665,15 +675,31 @@ function DialerWorkspaceInner() {
                             followUpAt: followUpAt ? new Date(followUpAt).toISOString() : null,
                           });
                           queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+                          setLogSaved(true);
+                          toast({ title: "Log saved" });
                           if (powerMode) next();
+                        } catch (e: any) {
+                          toast({
+                            variant: "destructive",
+                            title: "Failed to save log",
+                            description: String(e?.message || e || "Save failed"),
+                          });
                         } finally {
                           setSaveLogPending(false);
                         }
                       }}
-                      disabled={!activeItem?.leadId || saveLogPending}
+                      disabled={!activeItem?.leadId || saveLogPending || !wrapUpValid}
                     >
                       Save Log
                     </Button>
+                    {!wrapUpValid ? (
+                      <div className="text-xs text-muted-foreground">
+                        {disposition ? "Follow-up date required for call_back." : "Select a disposition to save the log."}
+                      </div>
+                    ) : null}
+                    {callId && !logSaved ? (
+                      <div className="text-xs text-muted-foreground">Save the log before moving to the next lead.</div>
+                    ) : null}
                   </div>
 
                   <div className="rounded-lg border border-border/70 bg-background/60 p-3 space-y-2">
@@ -917,62 +943,6 @@ function DialerWorkspaceInner() {
                       Send SMS
                     </Button>
                   </div>
-<<<<<<< HEAD
-
-                  <div className="grid gap-2">
-                    <Label>Call Log</Label>
-                    <select
-                      className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                      value={disposition}
-                      onChange={(e) => setDisposition(e.target.value)}
-                    >
-                      <option value="">Select disposition</option>
-                      {["answered", "no_answer", "wrong_number", "call_back", "do_not_call"].map((d) => (
-                        <option key={d} value={d}>
-                          {d}
-                        </option>
-                      ))}
-                    </select>
-                    <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notes (optional)" />
-                    <div className="grid gap-1">
-                      <Label>Follow-up date</Label>
-                      <Input type="date" value={followUpAt} onChange={(e) => setFollowUpAt(e.target.value)} />
-                    </div>
-                    <Button
-                      variant="secondary"
-                      onClick={async () => {
-                        if (!callId) return;
-                        if (saveLogPending) return;
-                        if (!wrapUpValid) return;
-                        setSaveLogPending(true);
-                        try {
-                          await patchCallLog(callId, {
-                            disposition: disposition || null,
-                            note: note || null,
-                            followUpAt: followUpAt ? new Date(followUpAt).toISOString() : null,
-                          });
-                          queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
-                          setLogSaved(true);
-                          if (powerMode) next();
-                        } finally {
-                          setSaveLogPending(false);
-                        }
-                      }}
-                      disabled={!callId || saveLogPending || !wrapUpValid}
-                    >
-                      Save Log
-                    </Button>
-                    {callId && !wrapUpValid ? (
-                      <div className="text-xs text-muted-foreground">
-                        {disposition ? "Follow-up date required for call_back." : "Select a disposition to save the log."}
-                      </div>
-                    ) : null}
-                    {callId && !logSaved ? (
-                      <div className="text-xs text-muted-foreground">Save the log before moving to the next lead.</div>
-                    ) : null}
-                  </div>
-=======
->>>>>>> origin/trae/solo-agent-iVByoU
                 </div>
 
                 <div className="rounded-lg border border-border/70 bg-background/60 p-3">

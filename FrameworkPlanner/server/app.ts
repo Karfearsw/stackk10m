@@ -31,6 +31,37 @@ log(`[Startup] Server initializing... (Commit: 90e785a)`);
 initSentry();
 // Sentry v8+ auto-instruments Express; request handler is no longer required
 
+export function installErrorHandling(target: Express) {
+  if (process.env.SENTRY_DSN) {
+    Sentry.setupExpressErrorHandler(target);
+  }
+  target.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+    const status = err.status || err.statusCode || 500;
+    const message = err.message || "Internal Server Error";
+    const requestId = (res.locals as any).requestId || (req.headers["x-request-id"] as string) || null;
+
+    if (process.env.NODE_ENV === "production") {
+      console.error(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "http_error",
+          requestId,
+          method: req.method,
+          path: req.path,
+          message: String(message),
+          code: err?.code ? String(err.code) : null,
+          status,
+        }),
+      );
+    } else {
+      console.error(err);
+    }
+
+    const clientMessage = process.env.NODE_ENV === "production" && status >= 500 ? "Internal Server Error" : message;
+    res.status(status).json({ message: clientMessage, requestId });
+  });
+}
+
 app.disable("x-powered-by");
 
 if (!(globalThis as any).__stackk_process_handlers_installed) {
@@ -354,40 +385,7 @@ export default async function runApp(
     res.send(text);
   });
 
-  if (process.env.SENTRY_DSN) {
-    Sentry.setupExpressErrorHandler(app);
-  }
-  app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-    const requestId =
-      (res.locals as any).requestId ||
-      (req.headers["x-request-id"] as string) ||
-      null;
-
-    if (process.env.NODE_ENV === "production") {
-      console.error(
-        JSON.stringify({
-          ts: new Date().toISOString(),
-          event: "http_error",
-          requestId,
-          method: req.method,
-          path: req.path,
-          message: String(message),
-          code: err?.code ? String(err.code) : null,
-          status,
-        }),
-      );
-    } else {
-      console.error(err);
-    }
-
-    const clientMessage =
-      process.env.NODE_ENV === "production" && status >= 500
-        ? "Internal Server Error"
-        : message;
-    res.status(status).json({ message: clientMessage, requestId });
-  });
+  installErrorHandling(app);
 
   // importantly run the final setup after setting up all the other routes so
   // the catch-all route doesn't interfere with the other routes

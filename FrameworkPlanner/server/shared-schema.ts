@@ -249,6 +249,96 @@ export const insertAppAuditFindingSchema = createInsertSchema(appAuditFindings).
 export type AppAuditFinding = typeof appAuditFindings.$inferSelect;
 export type InsertAppAuditFinding = z.infer<typeof insertAppAuditFindingSchema>;
 
+export const auditEvents = pgTable("audit_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  actorUserId: integer("actor_user_id"),
+  entityType: varchar("entity_type", { length: 50 }).notNull(),
+  entityId: integer("entity_id"),
+  action: varchar("action", { length: 80 }).notNull(),
+  beforeJson: text("before_json"),
+  afterJson: text("after_json"),
+  diffJson: text("diff_json"),
+  ip: varchar("ip", { length: 64 }),
+  userAgent: text("user_agent"),
+  requestId: varchar("request_id", { length: 64 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAuditEventSchema = createInsertSchema(auditEvents).omit({ id: true, createdAt: true } as any);
+export type AuditEvent = typeof auditEvents.$inferSelect;
+export type InsertAuditEvent = z.infer<typeof insertAuditEventSchema>;
+
+export const automations = pgTable("automations", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  name: varchar("name", { length: 120 }).notNull(),
+  description: text("description"),
+  enabled: boolean("enabled").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAutomationSchema = createInsertSchema(automations).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type Automation = typeof automations.$inferSelect;
+export type InsertAutomation = z.infer<typeof insertAutomationSchema>;
+
+export const automationTriggers = pgTable("automation_triggers", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  automationId: integer("automation_id").notNull(),
+  eventType: varchar("event_type", { length: 80 }).notNull(),
+  configJson: text("config_json").notNull().default("{}"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAutomationTriggerSchema = createInsertSchema(automationTriggers).omit({ id: true, createdAt: true } as any);
+export type AutomationTrigger = typeof automationTriggers.$inferSelect;
+export type InsertAutomationTrigger = z.infer<typeof insertAutomationTriggerSchema>;
+
+export const automationConditions = pgTable("automation_conditions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  automationId: integer("automation_id").notNull(),
+  configJson: text("config_json").notNull().default("{}"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAutomationConditionSchema = createInsertSchema(automationConditions).omit({ id: true, createdAt: true } as any);
+export type AutomationCondition = typeof automationConditions.$inferSelect;
+export type InsertAutomationCondition = z.infer<typeof insertAutomationConditionSchema>;
+
+export const automationActions = pgTable("automation_actions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  automationId: integer("automation_id").notNull(),
+  actionType: varchar("action_type", { length: 80 }).notNull(),
+  configJson: text("config_json").notNull().default("{}"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAutomationActionSchema = createInsertSchema(automationActions).omit({ id: true, createdAt: true } as any);
+export type AutomationAction = typeof automationActions.$inferSelect;
+export type InsertAutomationAction = z.infer<typeof insertAutomationActionSchema>;
+
+export const automationRuns = pgTable("automation_runs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  automationId: integer("automation_id").notNull(),
+  eventType: varchar("event_type", { length: 80 }).notNull(),
+  eventJson: text("event_json").notNull(),
+  status: varchar("status", { length: 20 }).notNull(),
+  error: text("error"),
+  deliveryId: varchar("delivery_id", { length: 36 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  finishedAt: timestamp("finished_at"),
+});
+
+export const insertAutomationRunSchema = createInsertSchema(automationRuns).omit({ id: true, createdAt: true } as any);
+export type AutomationRun = typeof automationRuns.$inferSelect;
+export type InsertAutomationRun = z.infer<typeof insertAutomationRunSchema>;
+
 export const insertPropertySchema = createInsertSchema(properties).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type Property = typeof properties.$inferSelect;
 export type InsertProperty = z.infer<typeof insertPropertySchema>;
@@ -257,6 +347,7 @@ export const skipTraceResults = pgTable("skip_trace_results", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   leadId: integer("lead_id"),
   propertyId: integer("property_id"),
+  jobId: integer("job_id"),
   providerName: varchar("provider_name", { length: 100 }).notNull(),
   status: varchar("status", { length: 20 }).notNull().default("pending"),
   phonesJson: text("phones_json").notNull().default("[]"),
@@ -272,6 +363,73 @@ export const skipTraceResults = pgTable("skip_trace_results", {
 export const insertSkipTraceResultSchema = createInsertSchema(skipTraceResults).omit({ id: true, createdAt: true } as any);
 export type SkipTraceResult = typeof skipTraceResults.$inferSelect;
 export type InsertSkipTraceResult = z.infer<typeof insertSkipTraceResultSchema>;
+
+export const skipTraceJobs = pgTable("skip_trace_jobs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 20 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  requestedByUserId: integer("requested_by_user_id"),
+  mode: varchar("mode", { length: 20 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("queued"),
+  providerName: varchar("provider_name", { length: 100 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  errorMessage: text("error_message"),
+  idempotencyKey: varchar("idempotency_key", { length: 400 }),
+});
+
+export const insertSkipTraceJobSchema = createInsertSchema(skipTraceJobs).omit({ id: true, createdAt: true } as any);
+export type SkipTraceJob = typeof skipTraceJobs.$inferSelect;
+export type InsertSkipTraceJob = z.infer<typeof insertSkipTraceJobSchema>;
+
+export const skipTraceJobEvents = pgTable("skip_trace_job_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  jobId: integer("job_id").notNull(),
+  status: varchar("status", { length: 20 }).notNull(),
+  message: text("message"),
+  metadataJson: jsonb("metadata_json").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertSkipTraceJobEventSchema = createInsertSchema(skipTraceJobEvents).omit({ id: true, createdAt: true } as any);
+export type SkipTraceJobEvent = typeof skipTraceJobEvents.$inferSelect;
+export type InsertSkipTraceJobEvent = z.infer<typeof insertSkipTraceJobEventSchema>;
+
+export const skipTraceEvidence = pgTable("skip_trace_evidence", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  jobId: integer("job_id").notNull(),
+  entityType: varchar("entity_type", { length: 20 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  sourceType: varchar("source_type", { length: 50 }).notNull(),
+  sourceUrl: text("source_url"),
+  collectedAt: timestamp("collected_at").notNull().defaultNow(),
+  extractedJson: jsonb("extracted_json").notNull().default(sql`'{}'::jsonb`),
+  confidenceJson: jsonb("confidence_json").notNull().default(sql`'{}'::jsonb`),
+  notes: text("notes"),
+  screenshotRef: text("screenshot_ref"),
+});
+
+export const insertSkipTraceEvidenceSchema = createInsertSchema(skipTraceEvidence).omit({ id: true } as any);
+export type SkipTraceEvidence = typeof skipTraceEvidence.$inferSelect;
+export type InsertSkipTraceEvidence = z.infer<typeof insertSkipTraceEvidenceSchema>;
+
+export const leadScoreSnapshots = pgTable("lead_score_snapshots", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 20 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  jobId: integer("job_id"),
+  scoreTotal: integer("score_total").notNull(),
+  confidence: varchar("confidence", { length: 20 }),
+  urgencyTier: varchar("urgency_tier", { length: 20 }),
+  reasonSummary: text("reason_summary"),
+  factorsJson: jsonb("factors_json").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertLeadScoreSnapshotSchema = createInsertSchema(leadScoreSnapshots).omit({ id: true, createdAt: true } as any);
+export type LeadScoreSnapshot = typeof leadScoreSnapshots.$inferSelect;
+export type InsertLeadScoreSnapshot = z.infer<typeof insertLeadScoreSnapshotSchema>;
 
 export const leadSourceOptions = pgTable("lead_source_options", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),

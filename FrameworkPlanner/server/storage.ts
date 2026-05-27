@@ -5,6 +5,8 @@ import {
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
   buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, leadSourceOptions,
   leadNotes, savedViews, leadBulkActionJobs, aiActionLogs, aiActionUndo, appAuditRuns, appAuditFindings,
+  automations, automationTriggers, automationConditions, automationActions, automationRuns,
+  skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots,
   campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents
 } from "./shared-schema.js";
 import { 
@@ -55,6 +57,15 @@ import {
   type AiActionUndo, type InsertAiActionUndo,
   type AppAuditRun, type InsertAppAuditRun,
   type AppAuditFinding, type InsertAppAuditFinding,
+  type Automation, type InsertAutomation,
+  type AutomationTrigger, type InsertAutomationTrigger,
+  type AutomationCondition, type InsertAutomationCondition,
+  type AutomationAction, type InsertAutomationAction,
+  type AutomationRun, type InsertAutomationRun,
+  type SkipTraceJob, type InsertSkipTraceJob,
+  type SkipTraceJobEvent, type InsertSkipTraceJobEvent,
+  type SkipTraceEvidence, type InsertSkipTraceEvidence,
+  type LeadScoreSnapshot, type InsertLeadScoreSnapshot,
   type Campaign, type InsertCampaign,
   type CampaignStep, type InsertCampaignStep,
   type CampaignEnrollment, type InsertCampaignEnrollment,
@@ -157,6 +168,20 @@ export interface IStorage {
   getLatestSkipTraceByCacheKey(cacheKey: string): Promise<SkipTraceResult | undefined>;
   createSkipTraceResult(input: InsertSkipTraceResult): Promise<SkipTraceResult>;
   updateSkipTraceResult(id: number, patch: Partial<InsertSkipTraceResult>): Promise<SkipTraceResult>;
+
+  createSkipTraceJob(input: InsertSkipTraceJob): Promise<SkipTraceJob>;
+  updateSkipTraceJob(id: number, patch: Partial<InsertSkipTraceJob>): Promise<SkipTraceJob>;
+  getSkipTraceJobById(id: number): Promise<SkipTraceJob | undefined>;
+  listQueuedSkipTraceJobs(limit?: number): Promise<SkipTraceJob[]>;
+  claimSkipTraceJobForRun(id: number, startedAt: Date): Promise<SkipTraceJob | null>;
+  createSkipTraceJobEvent(input: InsertSkipTraceJobEvent): Promise<SkipTraceJobEvent>;
+  createSkipTraceEvidence(input: InsertSkipTraceEvidence): Promise<SkipTraceEvidence>;
+  createLeadScoreSnapshot(input: InsertLeadScoreSnapshot): Promise<LeadScoreSnapshot>;
+  listLeadScoreSnapshotsByJobId(jobId: number, limit?: number): Promise<LeadScoreSnapshot[]>;
+
+  getEnabledAutomationsForEvent(teamId: number, eventType: string): Promise<Array<{ automation: Automation; condition: AutomationCondition | null; actions: AutomationAction[] }>>;
+  createAutomationRun(input: InsertAutomationRun): Promise<AutomationRun>;
+  updateAutomationRun(id: number, patch: Partial<InsertAutomationRun>): Promise<AutomationRun>;
 
   getLeadSourceOptions(userId: number): Promise<LeadSourceOption[]>;
   upsertLeadSourceOption(input: InsertLeadSourceOption): Promise<LeadSourceOption>;
@@ -901,6 +926,127 @@ export class DatabaseStorage implements IStorage {
 
   async updateSkipTraceResult(id: number, patch: Partial<InsertSkipTraceResult>): Promise<SkipTraceResult> {
     const result = await db.update(skipTraceResults).set(patch as any).where(eq(skipTraceResults.id, id)).returning();
+    return result[0];
+  }
+
+  async createSkipTraceJob(input: InsertSkipTraceJob): Promise<SkipTraceJob> {
+    const result = await db.insert(skipTraceJobs).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateSkipTraceJob(id: number, patch: Partial<InsertSkipTraceJob>): Promise<SkipTraceJob> {
+    const result = await db.update(skipTraceJobs).set(patch as any).where(eq(skipTraceJobs.id, id)).returning();
+    return result[0];
+  }
+
+  async getSkipTraceJobById(id: number): Promise<SkipTraceJob | undefined> {
+    const result = await db.select().from(skipTraceJobs).where(eq(skipTraceJobs.id, id)).limit(1);
+    return result[0];
+  }
+
+  async listQueuedSkipTraceJobs(limit?: number): Promise<SkipTraceJob[]> {
+    const n = typeof limit === "number" ? Math.max(1, Math.min(200, limit)) : 50;
+    return db
+      .select()
+      .from(skipTraceJobs)
+      .where(eq(skipTraceJobs.status, "queued"))
+      .orderBy(asc(skipTraceJobs.createdAt), asc(skipTraceJobs.id))
+      .limit(n);
+  }
+
+  async claimSkipTraceJobForRun(id: number, startedAt: Date): Promise<SkipTraceJob | null> {
+    const result = await db
+      .update(skipTraceJobs)
+      .set({ status: "running", startedAt } as any)
+      .where(and(eq(skipTraceJobs.id, id), eq(skipTraceJobs.status, "queued")))
+      .returning();
+    return result[0] || null;
+  }
+
+  async createSkipTraceJobEvent(input: InsertSkipTraceJobEvent): Promise<SkipTraceJobEvent> {
+    const result = await db.insert(skipTraceJobEvents).values(input as any).returning();
+    return result[0];
+  }
+
+  async createSkipTraceEvidence(input: InsertSkipTraceEvidence): Promise<SkipTraceEvidence> {
+    const result = await db.insert(skipTraceEvidence).values(input as any).returning();
+    return result[0];
+  }
+
+  async createLeadScoreSnapshot(input: InsertLeadScoreSnapshot): Promise<LeadScoreSnapshot> {
+    const result = await db.insert(leadScoreSnapshots).values(input as any).returning();
+    return result[0];
+  }
+
+  async listLeadScoreSnapshotsByJobId(jobId: number, limit?: number): Promise<LeadScoreSnapshot[]> {
+    const n = typeof limit === "number" ? Math.max(1, Math.min(500, limit)) : 50;
+    return db
+      .select()
+      .from(leadScoreSnapshots)
+      .where(eq(leadScoreSnapshots.jobId, jobId))
+      .orderBy(desc(leadScoreSnapshots.createdAt), desc(leadScoreSnapshots.id))
+      .limit(n);
+  }
+
+  async getEnabledAutomationsForEvent(teamId: number, eventType: string): Promise<Array<{ automation: Automation; condition: AutomationCondition | null; actions: AutomationAction[] }>> {
+    const joined = await db
+      .select()
+      .from(automationTriggers)
+      .innerJoin(automations, and(eq(automations.id, automationTriggers.automationId), eq(automations.teamId, teamId)))
+      .where(and(eq(automationTriggers.teamId, teamId), eq(automationTriggers.eventType, eventType), eq(automations.enabled, true)));
+
+    const byAutomationId = new Map<number, Automation>();
+    for (const row of joined as any[]) {
+      const a = row.automations as Automation;
+      const id = Number((a as any).id);
+      if (!Number.isFinite(id)) continue;
+      if (!byAutomationId.has(id)) byAutomationId.set(id, a);
+    }
+
+    const automationIds = Array.from(byAutomationId.keys());
+    if (!automationIds.length) return [];
+
+    const conditions = await db
+      .select()
+      .from(automationConditions)
+      .where(and(eq(automationConditions.teamId, teamId), inArray(automationConditions.automationId, automationIds)));
+
+    const actions = await db
+      .select()
+      .from(automationActions)
+      .where(and(eq(automationActions.teamId, teamId), inArray(automationActions.automationId, automationIds)))
+      .orderBy(asc(automationActions.sortOrder), asc(automationActions.id));
+
+    const conditionByAutomationId = new Map<number, AutomationCondition>();
+    for (const c of conditions) {
+      const id = Number((c as any).automationId);
+      if (!Number.isFinite(id)) continue;
+      if (!conditionByAutomationId.has(id)) conditionByAutomationId.set(id, c as any);
+    }
+
+    const actionsByAutomationId = new Map<number, AutomationAction[]>();
+    for (const a of actions) {
+      const id = Number((a as any).automationId);
+      if (!Number.isFinite(id)) continue;
+      const list = actionsByAutomationId.get(id) || [];
+      list.push(a as any);
+      actionsByAutomationId.set(id, list);
+    }
+
+    return automationIds.map((id) => ({
+      automation: byAutomationId.get(id)!,
+      condition: conditionByAutomationId.get(id) || null,
+      actions: actionsByAutomationId.get(id) || [],
+    }));
+  }
+
+  async createAutomationRun(input: InsertAutomationRun): Promise<AutomationRun> {
+    const result = await db.insert(automationRuns).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateAutomationRun(id: number, patch: Partial<InsertAutomationRun>): Promise<AutomationRun> {
+    const result = await db.update(automationRuns).set(patch as any).where(eq(automationRuns.id, id)).returning();
     return result[0];
   }
 
