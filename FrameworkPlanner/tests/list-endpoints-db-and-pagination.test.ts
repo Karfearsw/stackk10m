@@ -14,10 +14,21 @@ describe("List endpoints DB and pagination handling", () => {
 
   beforeAll(async () => {
     process.env.DATABASE_URL = "postgresql://user:pass@db.invalid/db?sslmode=require";
+<<<<<<< HEAD
+=======
+    storage.getUserById = async () => ({ id: 1, email: "test@example.com", isSuperAdmin: true } as any);
+>>>>>>> origin/main
 
     app = express();
     app.use(express.json());
     app.use(session({ secret: "test", resave: false, saveUninitialized: false }));
+<<<<<<< HEAD
+=======
+    app.use((req, _res, next) => {
+      (req.session as any).userId = 1;
+      next();
+    });
+>>>>>>> origin/main
 
     await registerRoutes(app);
   });

@@ -4,6 +4,10 @@ import {
   Users, 
   Building2, 
   FileText, 
+<<<<<<< HEAD
+=======
+  FolderOpen,
+>>>>>>> origin/main
   Settings, 
   PieChart, 
   LogOut,
@@ -21,7 +25,15 @@ import {
   MapPin,
   CheckSquare,
   CalendarDays,
+<<<<<<< HEAD
   CalendarCheck2
+=======
+  CalendarCheck2,
+  Ticket,
+  Zap,
+  ScrollText,
+  Shield,
+>>>>>>> origin/main
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -34,6 +46,10 @@ export const navigation = [
   { name: "Today", href: "/today", icon: CalendarCheck2 },
   { name: "Tasks", href: "/tasks", icon: CheckSquare },
   { name: "Calendar", href: "/calendar", icon: CalendarDays },
+<<<<<<< HEAD
+=======
+  { name: "XP Booking", href: "/xp", icon: Ticket },
+>>>>>>> origin/main
   { name: "Leads Pipeline", href: "/leads", icon: Users },
   { name: "Campaigns", href: "/campaigns", icon: Send },
   { name: "RVM", href: "/rvm", icon: Voicemail },
@@ -42,10 +58,22 @@ export const navigation = [
   { name: "Phone", href: "/phone", icon: Phone },
   { name: "Dialer Workspace", href: "/dialer/workspace", icon: Phone },
   { name: "Contacts", href: "/contacts", icon: Users },
+<<<<<<< HEAD
   { name: "Buyers", href: "/buyers", icon: UserCheck },
   { name: "Contracts", href: "/contracts", icon: FileText },
   { name: "Analytics", href: "/analytics", icon: PieChart },
   { name: "Playground", href: "/playground", icon: Lightbulb },
+=======
+  { name: "Companies", href: "/companies", icon: Building2 },
+  { name: "Documents", href: "/documents", icon: FolderOpen },
+  { name: "Buyers", href: "/buyers", icon: UserCheck },
+  { name: "Contracts", href: "/contracts", icon: FileText },
+  { name: "Analytics", href: "/analytics", icon: PieChart },
+  { name: "Automations", href: "/automations", icon: Zap },
+  { name: "Audit Log", href: "/audit-log", icon: ScrollText },
+  { name: "Playground", href: "/playground", icon: Lightbulb },
+  { name: "Audit", href: "/audit", icon: Shield },
+>>>>>>> origin/main
   { name: "Calculator", href: "/calculator", icon: Calculator },
   { name: "Timesheet", href: "/timesheet", icon: Clock },
   { name: "Notifications", href: "/notifications", icon: Bell },

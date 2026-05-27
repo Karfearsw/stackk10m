@@ -21,6 +21,14 @@ export const leads = pgTable("leads", {
   notes: text("notes"),
   source: varchar("source", { length: 100 }),
   assignedTo: integer("assigned_to"),
+<<<<<<< HEAD
+=======
+  archivedAt: timestamp("archived_at"),
+  statusChangedAt: timestamp("status_changed_at"),
+  leadType: varchar("lead_type", { length: 50 }),
+  county: varchar("county", { length: 100 }),
+  ownerOccupied: boolean("owner_occupied"),
+>>>>>>> origin/main
   doNotCall: boolean("do_not_call").notNull().default(false),
   doNotText: boolean("do_not_text").notNull().default(false),
   doNotEmail: boolean("do_not_email").notNull().default(false),
@@ -37,6 +45,121 @@ export const insertLeadSchema = createInsertSchema(leads).omit({ id: true, creat
 export type Lead = typeof leads.$inferSelect;
 export type InsertLead = Omit<typeof leads.$inferInsert, "id" | "createdAt" | "updatedAt">;
 
+<<<<<<< HEAD
+=======
+export const leadNotes = pgTable("lead_notes", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  leadId: integer("lead_id").notNull(),
+  createdBy: integer("created_by"),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertLeadNoteSchema = createInsertSchema(leadNotes).omit({ id: true, createdAt: true } as any);
+export type LeadNote = typeof leadNotes.$inferSelect;
+export type InsertLeadNote = Omit<typeof leadNotes.$inferInsert, "id" | "createdAt">;
+
+export const savedViews = pgTable("saved_views", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 32 }).notNull(),
+  name: varchar("name", { length: 120 }).notNull(),
+  ownerUserId: integer("owner_user_id").notNull(),
+  teamId: integer("team_id"),
+  visibility: varchar("visibility", { length: 20 }).notNull().default("private"),
+  shareToken: varchar("share_token", { length: 64 }),
+  configJson: jsonb("config_json").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertSavedViewSchema = createInsertSchema(savedViews).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type SavedView = typeof savedViews.$inferSelect;
+export type InsertSavedView = Omit<typeof savedViews.$inferInsert, "id" | "createdAt" | "updatedAt">;
+
+export const leadBulkActionJobs = pgTable("lead_bulk_action_jobs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  createdBy: integer("created_by").notNull(),
+  status: varchar("status", { length: 32 }).notNull().default("queued"),
+  action: varchar("action", { length: 50 }).notNull(),
+  selectionScope: varchar("selection_scope", { length: 32 }).notNull(),
+  leadIds: jsonb("lead_ids"),
+  filterJson: jsonb("filter_json"),
+  totalTargets: integer("total_targets").default(0),
+  processed: integer("processed").default(0),
+  succeeded: integer("succeeded").default(0),
+  failed: integer("failed").default(0),
+  resultJson: jsonb("result_json"),
+  startedAt: timestamp("started_at"),
+  finishedAt: timestamp("finished_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertLeadBulkActionJobSchema = createInsertSchema(leadBulkActionJobs).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type LeadBulkActionJob = typeof leadBulkActionJobs.$inferSelect;
+export type InsertLeadBulkActionJob = Omit<typeof leadBulkActionJobs.$inferInsert, "id" | "createdAt" | "updatedAt">;
+
+export const aiActionLogs = pgTable("ai_action_logs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  createdBy: integer("created_by").notNull(),
+  entityType: varchar("entity_type", { length: 32 }).notNull(),
+  transcript: text("transcript").notNull(),
+  parsedJson: jsonb("parsed_json").notNull(),
+  selectionJson: jsonb("selection_json").notNull(),
+  appliedJson: jsonb("applied_json"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAiActionLogSchema = createInsertSchema(aiActionLogs).omit({ id: true, createdAt: true } as any);
+export type AiActionLog = typeof aiActionLogs.$inferSelect;
+export type InsertAiActionLog = Omit<typeof aiActionLogs.$inferInsert, "id" | "createdAt">;
+
+export const aiActionUndo = pgTable("ai_action_undo", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  aiActionLogId: integer("ai_action_log_id").notNull(),
+  undoJson: jsonb("undo_json").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  undoneAt: timestamp("undone_at"),
+});
+
+export const insertAiActionUndoSchema = createInsertSchema(aiActionUndo).omit({ id: true } as any);
+export type AiActionUndo = typeof aiActionUndo.$inferSelect;
+export type InsertAiActionUndo = Omit<typeof aiActionUndo.$inferInsert, "id">;
+
+export const appAuditRuns = pgTable("app_audit_runs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  createdBy: integer("created_by").notNull(),
+  scopeJson: jsonb("scope_json").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAppAuditRunSchema = createInsertSchema(appAuditRuns).omit({ id: true, createdAt: true } as any);
+export type AppAuditRun = typeof appAuditRuns.$inferSelect;
+export type InsertAppAuditRun = Omit<typeof appAuditRuns.$inferInsert, "id" | "createdAt">;
+
+export const appAuditFindings = pgTable("app_audit_findings", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  runId: integer("run_id").notNull(),
+  severity: varchar("severity", { length: 20 }).notNull(),
+  area: varchar("area", { length: 80 }).notNull(),
+  title: varchar("title", { length: 160 }).notNull(),
+  description: text("description").notNull(),
+  recommendation: text("recommendation"),
+  technicalNotes: text("technical_notes"),
+  affectedPages: jsonb("affected_pages").notNull().default(sql`'[]'::jsonb`),
+  fixPlan: text("fix_plan"),
+  ownerUserId: integer("owner_user_id"),
+  prdSection: text("prd_section"),
+  status: varchar("status", { length: 20 }).notNull().default("open"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAppAuditFindingSchema = createInsertSchema(appAuditFindings).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type AppAuditFinding = typeof appAuditFindings.$inferSelect;
+export type InsertAppAuditFinding = Omit<typeof appAuditFindings.$inferInsert, "id" | "createdAt" | "updatedAt">;
+
+>>>>>>> origin/main
 // PROPERTIES TABLE
 export const properties = pgTable("properties", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -142,6 +265,10 @@ export type InsertProperty = z.infer<typeof insertPropertySchema>;
 
 export const skipTraceResults = pgTable("skip_trace_results", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+<<<<<<< HEAD
+=======
+  jobId: integer("job_id"),
+>>>>>>> origin/main
   leadId: integer("lead_id"),
   propertyId: integer("property_id"),
   providerName: varchar("provider_name", { length: 100 }).notNull(),
@@ -160,6 +287,78 @@ export const insertSkipTraceResultSchema = createInsertSchema(skipTraceResults).
 export type SkipTraceResult = typeof skipTraceResults.$inferSelect;
 export type InsertSkipTraceResult = z.infer<typeof insertSkipTraceResultSchema>;
 
+<<<<<<< HEAD
+=======
+export const skipTraceJobs = pgTable("skip_trace_jobs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 20 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  requestedByUserId: integer("requested_by_user_id"),
+  mode: varchar("mode", { length: 20 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("queued"),
+  providerName: varchar("provider_name", { length: 100 }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  errorMessage: text("error_message"),
+  idempotencyKey: varchar("idempotency_key", { length: 400 }),
+});
+
+export const insertSkipTraceJobSchema = createInsertSchema(skipTraceJobs).omit(
+  { id: true, createdAt: true, startedAt: true, completedAt: true } as any,
+);
+export type SkipTraceJob = typeof skipTraceJobs.$inferSelect;
+export type InsertSkipTraceJob = z.infer<typeof insertSkipTraceJobSchema>;
+
+export const skipTraceJobEvents = pgTable("skip_trace_job_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  jobId: integer("job_id").notNull(),
+  status: varchar("status", { length: 20 }).notNull(),
+  message: text("message"),
+  metadataJson: jsonb("metadata_json").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertSkipTraceJobEventSchema = createInsertSchema(skipTraceJobEvents).omit({ id: true, createdAt: true } as any);
+export type SkipTraceJobEvent = typeof skipTraceJobEvents.$inferSelect;
+export type InsertSkipTraceJobEvent = z.infer<typeof insertSkipTraceJobEventSchema>;
+
+export const skipTraceEvidence = pgTable("skip_trace_evidence", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  jobId: integer("job_id").notNull(),
+  entityType: varchar("entity_type", { length: 20 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  sourceType: varchar("source_type", { length: 50 }).notNull(),
+  sourceUrl: text("source_url"),
+  collectedAt: timestamp("collected_at").notNull().defaultNow(),
+  extractedJson: jsonb("extracted_json").notNull().default(sql`'{}'::jsonb`),
+  confidenceJson: jsonb("confidence_json").notNull().default(sql`'{}'::jsonb`),
+  notes: text("notes"),
+  screenshotRef: text("screenshot_ref"),
+});
+
+export const insertSkipTraceEvidenceSchema = createInsertSchema(skipTraceEvidence).omit({ id: true, collectedAt: true } as any);
+export type SkipTraceEvidence = typeof skipTraceEvidence.$inferSelect;
+export type InsertSkipTraceEvidence = z.infer<typeof insertSkipTraceEvidenceSchema>;
+
+export const leadScoreSnapshots = pgTable("lead_score_snapshots", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 20 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  jobId: integer("job_id"),
+  scoreTotal: integer("score_total").notNull(),
+  confidence: varchar("confidence", { length: 20 }),
+  urgencyTier: varchar("urgency_tier", { length: 20 }),
+  reasonSummary: text("reason_summary"),
+  factorsJson: jsonb("factors_json").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertLeadScoreSnapshotSchema = createInsertSchema(leadScoreSnapshots).omit({ id: true, createdAt: true } as any);
+export type LeadScoreSnapshot = typeof leadScoreSnapshots.$inferSelect;
+export type InsertLeadScoreSnapshot = z.infer<typeof insertLeadScoreSnapshotSchema>;
+
+>>>>>>> origin/main
 export const leadSourceOptions = pgTable("lead_source_options", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   userId: integer("user_id"),
@@ -528,6 +727,10 @@ export const users = pgTable("users", {
   profilePicture: text("profile_picture"),
   showBannerQuotes: boolean("show_banner_quotes").default(true),
   customBannerImages: text("custom_banner_images").array(),
+<<<<<<< HEAD
+=======
+  skipTraceDefaultMode: varchar("skip_trace_default_mode", { length: 30 }).notNull().default("both"),
+>>>>>>> origin/main
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -567,6 +770,31 @@ export const insertTwoFactorAuthSchema = createInsertSchema(twoFactorAuth).omit(
 export type TwoFactorAuth = typeof twoFactorAuth.$inferSelect;
 export type InsertTwoFactorAuth = z.infer<typeof insertTwoFactorAuthSchema>;
 
+<<<<<<< HEAD
+=======
+export const passwordResetTokens = pgTable("password_reset_tokens", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  tokenHash: varchar("token_hash", { length: 64 }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  requestIp: varchar("request_ip", { length: 64 }),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+export const authMagicLinks = pgTable("auth_magic_links", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  tokenHash: varchar("token_hash", { length: 64 }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  requestIp: varchar("request_ip", { length: 64 }),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+>>>>>>> origin/main
 // BACKUP CODES TABLE
 export const backupCodes = pgTable("backup_codes", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -629,6 +857,7 @@ export const insertTeamActivityLogSchema = createInsertSchema(teamActivityLogs).
 export type TeamActivityLog = typeof teamActivityLogs.$inferSelect;
 export type InsertTeamActivityLog = z.infer<typeof insertTeamActivityLogSchema>;
 
+<<<<<<< HEAD
 export const teamSettings = pgTable("team_settings", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   teamId: integer("team_id").notNull(),
@@ -637,13 +866,162 @@ export const teamSettings = pgTable("team_settings", {
   assignmentJson: jsonb("assignment_json").notNull().default(sql`'{}'::jsonb`),
   compensationJson: jsonb("compensation_json").notNull().default(sql`'{}'::jsonb`),
   documentsJson: jsonb("documents_json").notNull().default(sql`'{}'::jsonb`),
+=======
+export const xpExperiences = pgTable("xp_experiences", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  slug: varchar("slug", { length: 80 }).notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  mode: varchar("mode", { length: 20 }).notNull().default("time_slot"),
+  paymentMode: varchar("payment_mode", { length: 20 }).notNull().default("deposit"),
+  currency: varchar("currency", { length: 10 }).notNull().default("USD"),
+  priceTotal: decimal("price_total", { precision: 12, scale: 2 }),
+  depositAmount: decimal("deposit_amount", { precision: 12, scale: 2 }).notNull(),
+  capacity: integer("capacity").notNull().default(1),
+  active: boolean("active").notNull().default(true),
+  images: text("images").array(),
+  itinerary: jsonb("itinerary"),
+  location: text("location"),
+  durationMinutes: integer("duration_minutes"),
+  highlights: text("highlights").array(),
+  inclusions: text("inclusions").array(),
+  cancellationPolicy: text("cancellation_policy"),
+>>>>>>> origin/main
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+<<<<<<< HEAD
 export const insertTeamSettingsSchema = createInsertSchema(teamSettings).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type TeamSettings = typeof teamSettings.$inferSelect;
 export type InsertTeamSettings = z.infer<typeof insertTeamSettingsSchema>;
+=======
+export const insertXpExperienceSchema = createInsertSchema(xpExperiences).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type XpExperience = typeof xpExperiences.$inferSelect;
+export type InsertXpExperience = z.infer<typeof insertXpExperienceSchema>;
+
+export const xpTimeSlots = pgTable("xp_time_slots", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  experienceId: integer("experience_id").notNull(),
+  startAt: timestamp("start_at").notNull(),
+  endAt: timestamp("end_at").notNull(),
+  capacity: integer("capacity").notNull().default(1),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXpTimeSlotSchema = createInsertSchema(xpTimeSlots).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type XpTimeSlot = typeof xpTimeSlots.$inferSelect;
+export type InsertXpTimeSlot = z.infer<typeof insertXpTimeSlotSchema>;
+
+export const xpBlackouts = pgTable("xp_blackouts", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  experienceId: integer("experience_id").notNull(),
+  startAt: timestamp("start_at").notNull(),
+  endAt: timestamp("end_at").notNull(),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXpBlackoutSchema = createInsertSchema(xpBlackouts).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type XpBlackout = typeof xpBlackouts.$inferSelect;
+export type InsertXpBlackout = z.infer<typeof insertXpBlackoutSchema>;
+
+export const xpBookings = pgTable("xp_bookings", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  experienceId: integer("experience_id").notNull(),
+  kind: varchar("kind", { length: 20 }).notNull(),
+  customerName: varchar("customer_name", { length: 255 }).notNull(),
+  customerEmail: varchar("customer_email", { length: 255 }).notNull(),
+  customerPhone: varchar("customer_phone", { length: 40 }),
+  startAt: timestamp("start_at").notNull(),
+  endAt: timestamp("end_at").notNull(),
+  status: varchar("status", { length: 40 }).notNull().default("pending_payment"),
+  currency: varchar("currency", { length: 10 }).notNull().default("USD"),
+  depositAmount: decimal("deposit_amount", { precision: 12, scale: 2 }).notNull(),
+  stripeCheckoutSessionId: varchar("stripe_checkout_session_id", { length: 255 }),
+  stripePaymentIntentId: varchar("stripe_payment_intent_id", { length: 255 }),
+  stripeCustomerId: varchar("stripe_customer_id", { length: 255 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXpBookingSchema = createInsertSchema(xpBookings).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type XpBooking = typeof xpBookings.$inferSelect;
+export type InsertXpBooking = z.infer<typeof insertXpBookingSchema>;
+
+export const xpStripeEvents = pgTable("xp_stripe_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  eventId: varchar("event_id", { length: 255 }).notNull(),
+  type: varchar("type", { length: 120 }).notNull(),
+  payload: jsonb("payload"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertXpStripeEventSchema = createInsertSchema(xpStripeEvents).omit({ id: true, createdAt: true } as any);
+export type XpStripeEvent = typeof xpStripeEvents.$inferSelect;
+export type InsertXpStripeEvent = z.infer<typeof insertXpStripeEventSchema>;
+
+export const xpLocations = pgTable("xp_locations", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: varchar("type", { length: 40 }).notNull().default("resort"),
+  address1: varchar("address1", { length: 255 }),
+  address2: varchar("address2", { length: 255 }),
+  city: varchar("city", { length: 120 }),
+  state: varchar("state", { length: 40 }),
+  zip: varchar("zip", { length: 20 }),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXpLocationSchema = createInsertSchema(xpLocations).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type XpLocation = typeof xpLocations.$inferSelect;
+export type InsertXpLocation = z.infer<typeof insertXpLocationSchema>;
+
+export const xpVehicles = pgTable("xp_vehicles", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 255 }).notNull(),
+  type: varchar("type", { length: 40 }).notNull().default("tesla"),
+  licensePlate: varchar("license_plate", { length: 40 }),
+  locationId: integer("location_id"),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXpVehicleSchema = createInsertSchema(xpVehicles).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type XpVehicle = typeof xpVehicles.$inferSelect;
+export type InsertXpVehicle = z.infer<typeof insertXpVehicleSchema>;
+
+export const xpBookingAssignments = pgTable("xp_booking_assignments", {
+  bookingId: integer("booking_id").primaryKey(),
+  locationId: integer("location_id"),
+  vehicleId: integer("vehicle_id"),
+  conciergeUserId: integer("concierge_user_id"),
+  assignedAt: timestamp("assigned_at"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertXpBookingAssignmentSchema = createInsertSchema(xpBookingAssignments);
+export type XpBookingAssignment = typeof xpBookingAssignments.$inferSelect;
+export type InsertXpBookingAssignment = z.infer<typeof insertXpBookingAssignmentSchema>;
+
+export const xpBookingNotes = pgTable("xp_booking_notes", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  bookingId: integer("booking_id").notNull(),
+  authorUserId: integer("author_user_id"),
+  body: text("body").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertXpBookingNoteSchema = createInsertSchema(xpBookingNotes).omit({ id: true, createdAt: true } as any);
+export type XpBookingNote = typeof xpBookingNotes.$inferSelect;
+export type InsertXpBookingNote = z.infer<typeof insertXpBookingNoteSchema>;
+>>>>>>> origin/main
 
 // NOTIFICATION PREFERENCES TABLE
 export const notificationPreferences = pgTable("notification_preferences", {
@@ -670,7 +1048,10 @@ export type InsertNotificationPreference = z.infer<typeof insertNotificationPref
 
 export const pipelineConfigs = pgTable("pipeline_configs", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+<<<<<<< HEAD
   teamId: integer("team_id"),
+=======
+>>>>>>> origin/main
   userId: integer("user_id").notNull(),
   entityType: varchar("entity_type", { length: 20 }).notNull(),
   columns: text("columns").notNull(),
@@ -779,14 +1160,35 @@ export const insertOfferSchema = createInsertSchema(offers).omit({ id: true, cre
 export type Offer = typeof offers.$inferSelect;
 export type InsertOffer = z.infer<typeof insertOfferSchema>;
 
+<<<<<<< HEAD
 // TIMESHEET ENTRIES TABLE
 export const timesheetEntries = pgTable("timesheet_entries", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   teamId: integer("team_id"),
+=======
+export const workCategories = pgTable("work_categories", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  code: varchar("code", { length: 64 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  defaultHourlyRate: decimal("default_hourly_rate", { precision: 10, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertWorkCategorySchema = createInsertSchema(workCategories).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type WorkCategory = typeof workCategories.$inferSelect;
+export type InsertWorkCategory = z.infer<typeof insertWorkCategorySchema>;
+
+// TIMESHEET ENTRIES TABLE
+export const timesheetEntries = pgTable("timesheet_entries", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+>>>>>>> origin/main
   userId: integer("user_id").notNull(),
   date: varchar("date", { length: 10 }).notNull(),
   employee: varchar("employee", { length: 255 }).notNull(),
   task: varchar("task", { length: 255 }).notNull(),
+<<<<<<< HEAD
   startTime: varchar("start_time", { length: 10 }).notNull(),
   endTime: varchar("end_time", { length: 10 }).notNull(),
   hours: decimal("hours", { precision: 5, scale: 2 }).notNull(),
@@ -796,6 +1198,21 @@ export const timesheetEntries = pgTable("timesheet_entries", {
   approvedAt: timestamp("approved_at"),
   approvedBy: integer("approved_by"),
   rejectedReason: text("rejected_reason"),
+=======
+  categoryId: integer("category_id"),
+  linkedEntityType: varchar("linked_entity_type", { length: 32 }),
+  linkedEntityId: integer("linked_entity_id"),
+  startTime: varchar("start_time", { length: 10 }).notNull(),
+  endTime: varchar("end_time", { length: 10 }).notNull(),
+  hours: decimal("hours", { precision: 5, scale: 2 }).notNull(),
+  payableHours: decimal("payable_hours", { precision: 5, scale: 2 }),
+  hourlyRate: decimal("hourly_rate", { precision: 10, scale: 2 }).default("50"),
+  status: varchar("status", { length: 20 }).notNull().default("draft"),
+  approvedByUserId: integer("approved_by_user_id"),
+  approvedAt: timestamp("approved_at"),
+  paidAt: timestamp("paid_at"),
+  anomalyFlags: text("anomaly_flags").array(),
+>>>>>>> origin/main
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -806,7 +1223,10 @@ export type InsertTimesheetEntry = z.infer<typeof insertTimesheetEntrySchema>;
 
 export const timeClockSessions = pgTable("time_clock_sessions", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+<<<<<<< HEAD
   teamId: integer("team_id"),
+=======
+>>>>>>> origin/main
   userId: integer("user_id").notNull(),
   employee: varchar("employee", { length: 255 }).notNull(),
   task: varchar("task", { length: 255 }).default("General").notNull(),
@@ -814,6 +1234,11 @@ export const timeClockSessions = pgTable("time_clock_sessions", {
   clockOutAt: timestamp("clock_out_at"),
   tzOffsetMinutes: integer("tz_offset_minutes").notNull(),
   autoStarted: boolean("auto_started").default(true),
+<<<<<<< HEAD
+=======
+  autoClosed: boolean("auto_closed").notNull().default(false),
+  autoClosedReason: text("auto_closed_reason"),
+>>>>>>> origin/main
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -822,6 +1247,119 @@ export const insertTimeClockSessionSchema = createInsertSchema(timeClockSessions
 export type TimeClockSession = typeof timeClockSessions.$inferSelect;
 export type InsertTimeClockSession = z.infer<typeof insertTimeClockSessionSchema>;
 
+<<<<<<< HEAD
+=======
+export const workerProfiles = pgTable("worker_profiles", {
+  userId: integer("user_id").primaryKey(),
+  workerType: varchar("worker_type", { length: 20 }).notNull().default("employee"),
+  payType: varchar("pay_type", { length: 20 }).notNull().default("hourly"),
+  defaultHourlyRate: decimal("default_hourly_rate", { precision: 10, scale: 2 }),
+  salaryAmount: decimal("salary_amount", { precision: 12, scale: 2 }),
+  isActive: boolean("is_active").notNull().default(true),
+  effectiveFrom: date("effective_from"),
+  effectiveTo: date("effective_to"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertWorkerProfileSchema = createInsertSchema(workerProfiles).omit({ createdAt: true, updatedAt: true } as any);
+export type WorkerProfile = typeof workerProfiles.$inferSelect;
+export type InsertWorkerProfile = z.infer<typeof insertWorkerProfileSchema>;
+
+export const categoryRateOverrides = pgTable("category_rate_overrides", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  categoryId: integer("category_id").notNull(),
+  hourlyRate: decimal("hourly_rate", { precision: 10, scale: 2 }),
+  costRate: decimal("cost_rate", { precision: 10, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCategoryRateOverrideSchema = createInsertSchema(categoryRateOverrides).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type CategoryRateOverride = typeof categoryRateOverrides.$inferSelect;
+export type InsertCategoryRateOverride = z.infer<typeof insertCategoryRateOverrideSchema>;
+
+export const payPeriods = pgTable("pay_periods", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("open"),
+  createdByUserId: integer("created_by_user_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPayPeriodSchema = createInsertSchema(payPeriods).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type PayPeriod = typeof payPeriods.$inferSelect;
+export type InsertPayPeriod = z.infer<typeof insertPayPeriodSchema>;
+
+export const approvalEvents = pgTable("approval_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 32 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  action: varchar("action", { length: 32 }).notNull(),
+  byUserId: integer("by_user_id"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertApprovalEventSchema = createInsertSchema(approvalEvents).omit({ id: true, createdAt: true } as any);
+export type ApprovalEvent = typeof approvalEvents.$inferSelect;
+export type InsertApprovalEvent = z.infer<typeof insertApprovalEventSchema>;
+
+export const commissionEvents = pgTable("commission_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  sourceType: varchar("source_type", { length: 20 }).notNull(),
+  sourceId: integer("source_id").notNull(),
+  milestone: varchar("milestone", { length: 40 }).notNull(),
+  eventDate: date("event_date").notNull(),
+  grossAmount: decimal("gross_amount", { precision: 12, scale: 2 }),
+  currency: varchar("currency", { length: 8 }).notNull().default("USD"),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCommissionEventSchema = createInsertSchema(commissionEvents).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type CommissionEvent = typeof commissionEvents.$inferSelect;
+export type InsertCommissionEvent = z.infer<typeof insertCommissionEventSchema>;
+
+export const dealParticipants = pgTable("deal_participants", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  sourceType: varchar("source_type", { length: 20 }).notNull(),
+  sourceId: integer("source_id").notNull(),
+  userId: integer("user_id").notNull(),
+  role: varchar("role", { length: 32 }).notNull(),
+  splitPct: decimal("split_pct", { precision: 5, scale: 2 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertDealParticipantSchema = createInsertSchema(dealParticipants).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type DealParticipant = typeof dealParticipants.$inferSelect;
+export type InsertDealParticipant = z.infer<typeof insertDealParticipantSchema>;
+
+export const commissionLedgerEntries = pgTable("commission_ledger_entries", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  eventId: integer("event_id").notNull(),
+  userId: integer("user_id").notNull(),
+  amount: decimal("amount", { precision: 12, scale: 2 }).notNull().default("0"),
+  status: varchar("status", { length: 20 }).notNull().default("draft"),
+  ruleSnapshot: jsonb("rule_snapshot"),
+  approvedByUserId: integer("approved_by_user_id"),
+  approvedAt: timestamp("approved_at"),
+  paidAt: timestamp("paid_at"),
+  disputedReason: text("disputed_reason"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCommissionLedgerEntrySchema = createInsertSchema(commissionLedgerEntries).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type CommissionLedgerEntry = typeof commissionLedgerEntries.$inferSelect;
+export type InsertCommissionLedgerEntry = z.infer<typeof insertCommissionLedgerEntrySchema>;
+
+>>>>>>> origin/main
 // GLOBAL ACTIVITY LOG TABLE (company-wide activity visible to all team members)
 export const globalActivityLogs = pgTable("global_activity_logs", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -1049,3 +1587,194 @@ export const insertPlaygroundPropertySessionSchema = createInsertSchema(playgrou
 } as any);
 export type PlaygroundPropertySession = typeof playgroundPropertySessions.$inferSelect;
 export type InsertPlaygroundPropertySession = z.infer<typeof insertPlaygroundPropertySessionSchema>;
+<<<<<<< HEAD
+=======
+
+export const companies = pgTable("companies", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  companyType: varchar("company_type", { length: 50 }),
+  website: varchar("website", { length: 500 }),
+  phone: varchar("phone", { length: 32 }),
+  email: varchar("email", { length: 255 }),
+  address: text("address"),
+  notes: text("notes"),
+  tags: text("tags").array(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCompanySchema = createInsertSchema(companies).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type Company = typeof companies.$inferSelect;
+export type InsertCompany = z.infer<typeof insertCompanySchema>;
+
+export const companyPeople = pgTable("company_people", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  companyId: integer("company_id").notNull(),
+  contactId: integer("contact_id").notNull(),
+  title: varchar("title", { length: 120 }),
+  isPrimary: boolean("is_primary").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCompanyPersonSchema = createInsertSchema(companyPeople).omit({ id: true, createdAt: true } as any);
+export type CompanyPerson = typeof companyPeople.$inferSelect;
+export type InsertCompanyPerson = z.infer<typeof insertCompanyPersonSchema>;
+
+export const companyLinks = pgTable("company_links", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  companyId: integer("company_id").notNull(),
+  entityType: varchar("entity_type", { length: 50 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  role: varchar("role", { length: 50 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertCompanyLinkSchema = createInsertSchema(companyLinks).omit({ id: true, createdAt: true } as any);
+export type CompanyLink = typeof companyLinks.$inferSelect;
+export type InsertCompanyLink = z.infer<typeof insertCompanyLinkSchema>;
+
+export const documents = pgTable("documents", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  kind: varchar("kind", { length: 50 }),
+  mimeType: varchar("mime_type", { length: 120 }).notNull(),
+  sizeBytes: integer("size_bytes"),
+  storageKey: text("storage_key").notNull(),
+  sha256: varchar("sha256", { length: 64 }),
+  tags: text("tags").array(),
+  isPrivate: boolean("is_private").default(false),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type Document = typeof documents.$inferSelect;
+export type InsertDocument = z.infer<typeof insertDocumentSchema>;
+
+export const documentLinks = pgTable("document_links", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  documentId: integer("document_id").notNull(),
+  entityType: varchar("entity_type", { length: 50 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  relation: varchar("relation", { length: 50 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDocumentLinkSchema = createInsertSchema(documentLinks).omit({ id: true, createdAt: true } as any);
+export type DocumentLink = typeof documentLinks.$inferSelect;
+export type InsertDocumentLink = z.infer<typeof insertDocumentLinkSchema>;
+
+export const vaultDocumentVersions = pgTable("vault_document_versions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  documentId: integer("document_id").notNull(),
+  version: integer("version").notNull(),
+  storageKey: text("storage_key").notNull(),
+  mimeType: varchar("mime_type", { length: 120 }).notNull(),
+  sizeBytes: integer("size_bytes"),
+  sha256: varchar("sha256", { length: 64 }),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertVaultDocumentVersionSchema = createInsertSchema(vaultDocumentVersions).omit({ id: true, createdAt: true } as any);
+export type VaultDocumentVersion = typeof vaultDocumentVersions.$inferSelect;
+export type InsertVaultDocumentVersion = z.infer<typeof insertVaultDocumentVersionSchema>;
+
+export const automations = pgTable("automations", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  name: varchar("name", { length: 120 }).notNull(),
+  description: text("description"),
+  enabled: boolean("enabled").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAutomationSchema = createInsertSchema(automations).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type Automation = typeof automations.$inferSelect;
+export type InsertAutomation = z.infer<typeof insertAutomationSchema>;
+
+export const automationTriggers = pgTable("automation_triggers", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  automationId: integer("automation_id").notNull(),
+  eventType: varchar("event_type", { length: 80 }).notNull(),
+  configJson: text("config_json").notNull().default("{}"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAutomationTriggerSchema = createInsertSchema(automationTriggers).omit({ id: true, createdAt: true } as any);
+export type AutomationTrigger = typeof automationTriggers.$inferSelect;
+export type InsertAutomationTrigger = z.infer<typeof insertAutomationTriggerSchema>;
+
+export const automationConditions = pgTable("automation_conditions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  automationId: integer("automation_id").notNull(),
+  configJson: text("config_json").notNull().default("{}"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAutomationConditionSchema = createInsertSchema(automationConditions).omit({ id: true, createdAt: true } as any);
+export type AutomationCondition = typeof automationConditions.$inferSelect;
+export type InsertAutomationCondition = z.infer<typeof insertAutomationConditionSchema>;
+
+export const automationActions = pgTable("automation_actions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  automationId: integer("automation_id").notNull(),
+  actionType: varchar("action_type", { length: 80 }).notNull(),
+  configJson: text("config_json").notNull().default("{}"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAutomationActionSchema = createInsertSchema(automationActions).omit({ id: true, createdAt: true } as any);
+export type AutomationAction = typeof automationActions.$inferSelect;
+export type InsertAutomationAction = z.infer<typeof insertAutomationActionSchema>;
+
+export const automationRuns = pgTable("automation_runs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  automationId: integer("automation_id").notNull(),
+  eventType: varchar("event_type", { length: 80 }).notNull(),
+  eventJson: text("event_json").notNull(),
+  status: varchar("status", { length: 20 }).notNull(),
+  error: text("error"),
+  deliveryId: varchar("delivery_id", { length: 36 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  finishedAt: timestamp("finished_at"),
+});
+
+export const insertAutomationRunSchema = createInsertSchema(automationRuns).omit({ id: true, createdAt: true } as any);
+export type AutomationRun = typeof automationRuns.$inferSelect;
+export type InsertAutomationRun = z.infer<typeof insertAutomationRunSchema>;
+
+export const auditEvents = pgTable("audit_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  actorUserId: integer("actor_user_id"),
+  entityType: varchar("entity_type", { length: 50 }).notNull(),
+  entityId: integer("entity_id"),
+  action: varchar("action", { length: 80 }).notNull(),
+  beforeJson: text("before_json"),
+  afterJson: text("after_json"),
+  diffJson: text("diff_json"),
+  ip: varchar("ip", { length: 64 }),
+  userAgent: text("user_agent"),
+  requestId: varchar("request_id", { length: 64 }),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAuditEventSchema = createInsertSchema(auditEvents).omit({ id: true, createdAt: true } as any);
+export type AuditEvent = typeof auditEvents.$inferSelect;
+export type InsertAuditEvent = z.infer<typeof insertAuditEventSchema>;
+>>>>>>> origin/main

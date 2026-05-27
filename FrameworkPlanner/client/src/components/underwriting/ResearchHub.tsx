@@ -8,8 +8,14 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
+<<<<<<< HEAD
 import { Textarea } from "@/components/ui/textarea";
 import { Copy, ExternalLink, Loader2, RefreshCw, Search, Trash2 } from "lucide-react";
+=======
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
+import { Copy, ExternalLink, Loader2, Maximize2, RefreshCw, Search, Trash2 } from "lucide-react";
+>>>>>>> origin/main
 import { useToast } from "@/hooks/use-toast";
 
 type BrowserStatus = "idle" | "loading" | "loaded" | "maybe_blocked";
@@ -150,6 +156,10 @@ export function ResearchHub(props: {
   const [status, setStatus] = useState<BrowserStatus>(() => (props.currentUrl.trim() ? "loading" : "idle"));
   const [validationError, setValidationError] = useState<string>("");
   const [reloadNonce, setReloadNonce] = useState(0);
+<<<<<<< HEAD
+=======
+  const [isBrowserFullscreen, setIsBrowserFullscreen] = useState(false);
+>>>>>>> origin/main
   const longLoadTimerRef = useRef<number | null>(null);
   const iframeKey = `${srcUrl}::${reloadNonce}`;
 
@@ -385,8 +395,94 @@ export function ResearchHub(props: {
                   <Button variant="outline" size="icon" onClick={copyUrl} aria-label="Copy URL" disabled={!srcUrl.trim()}>
                     <Copy className="h-4 w-4" />
                   </Button>
+<<<<<<< HEAD
                 </div>
 
+=======
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() => setIsBrowserFullscreen(true)}
+                    aria-label="Fullscreen"
+                    disabled={!srcUrl.trim() || props.browserMode === "external"}
+                  >
+                    <Maximize2 className="h-4 w-4" />
+                  </Button>
+                </div>
+
+                <Dialog open={isBrowserFullscreen} onOpenChange={setIsBrowserFullscreen}>
+                  <DialogContent className="w-[100dvw] h-[100dvh] max-w-none max-h-none rounded-none p-0 overflow-hidden">
+                    <div className="flex h-full flex-col">
+                      <div className="border-b px-4 py-3">
+                        <DialogHeader className="space-y-1">
+                          <DialogTitle className="text-base">Browser</DialogTitle>
+                          <div className="text-xs text-muted-foreground truncate">{srcUrl || "—"}</div>
+                        </DialogHeader>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <Button variant="destructive" onClick={openExternal} disabled={!srcUrl.trim()}>
+                            <ExternalLink className="h-4 w-4 mr-2" />
+                            Open in New Tab
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            onClick={reload}
+                            aria-label="Reload"
+                            disabled={!srcUrl.trim() || props.browserMode === "external"}
+                          >
+                            <RefreshCw className="h-4 w-4" />
+                          </Button>
+                          <Button variant="outline" size="icon" onClick={copyUrl} aria-label="Copy URL" disabled={!srcUrl.trim()}>
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 min-h-0">
+                        {props.browserMode !== "iframe" ? (
+                          <div className="h-full w-full flex items-center justify-center">
+                            <div className="text-sm text-muted-foreground text-center px-6">
+                              Fullscreen is only available in in-app (iframe) mode.
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="relative h-full w-full bg-background">
+                            {!srcUrl.trim() ? (
+                              <div className="absolute inset-0 flex items-center justify-center">
+                                <div className="text-sm text-muted-foreground">Enter a search or URL to start.</div>
+                              </div>
+                            ) : null}
+                            {status === "loading" || status === "maybe_blocked" ? (
+                              <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/70">
+                                <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
+                                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                                  <div>{status === "maybe_blocked" ? "Still loading. This site may block embedding." : "Loading page…"}</div>
+                                  {status === "maybe_blocked" ? (
+                                    <Button variant="outline" size="sm" onClick={openExternal}>
+                                      Open in new tab
+                                    </Button>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ) : null}
+                            {srcUrl.trim() ? (
+                              <iframe
+                                key={`fullscreen:${iframeKey}`}
+                                title="Playground browser fullscreen"
+                                src={srcUrl}
+                                className="h-full w-full"
+                                referrerPolicy="no-referrer"
+                                onLoad={() => setStatus("loaded")}
+                              />
+                            ) : null}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+
+>>>>>>> origin/main
                 {props.browserMode === "iframe" ? (
                   <div className="rounded-md border bg-amber-50 text-amber-950 px-4 py-3 text-sm">
                     <div className="font-medium">Most sites block embedded viewing</div>
@@ -442,7 +538,11 @@ export function ResearchHub(props: {
                         </div>
                       </div>
                     ) : null}
+<<<<<<< HEAD
                     {srcUrl.trim() ? (
+=======
+                    {srcUrl.trim() && !isBrowserFullscreen ? (
+>>>>>>> origin/main
                       <iframe
                         key={iframeKey}
                         title="Playground browser"

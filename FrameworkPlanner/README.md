@@ -27,6 +27,15 @@ A comprehensive real estate wholesaler CRM built with React, Express, and Postgr
    DATABASE_URL="postgresql://..."
    SESSION_SECRET="your-secret"
    EMPLOYEE_ACCESS_CODE="your-employee-code"
+<<<<<<< HEAD
+=======
+   ORG_EMAIL_DOMAIN="oceanluxe.org"
+   ADMIN_ROLE_CODE="..."
+   TEAM_LEADER_ROLE_CODE="..."
+   AGENT_ROLE_CODE="..."
+   VA_ROLE_CODE="..."
+   CONCIERGE_ROLE_CODE="..."
+>>>>>>> origin/main
    NODE_ENV="development"
    ```
 
@@ -86,7 +95,13 @@ Optional env vars:
    - `DATABASE_URL`: Your Neon connection string (Use `sslmode=require`, **remove** `channel_binding=require` if present).
    - `SESSION_SECRET`: A strong random string.
    - `EMPLOYEE_ACCESS_CODE`: your internal employee access code.
+<<<<<<< HEAD
    - `NODE_ENV`: `production`.
+=======
+   - `CONCIERGE_ROLE_CODE`: access code to allow concierge-role signups (optional).
+   - `NODE_ENV`: `production`.
+   - `COOKIE_DOMAIN`: Optional. Set only when you need a shared session cookie across `*.oceanluxe.org` (use `.oceanluxe.org`). Leave unset for `*.vercel.app` deployments.
+>>>>>>> origin/main
    - `AUTO_APPLY_MIGRATIONS`: `true` (Production only; runs SQL migrations at build time).
 4. Deploy.
 

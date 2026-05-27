@@ -13,6 +13,10 @@ import { useSignalWire } from "@/hooks/useSignalWire";
 import { EntityActivity } from "@/components/activity/EntityActivity";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+<<<<<<< HEAD
+=======
+import type { DialerQueueItem } from "@/lib/dialerTypes";
+>>>>>>> origin/main
 
 function formatE164(raw: string) {
   const digits = raw.replace(/[^\d+]/g, "");
@@ -65,6 +69,10 @@ function DialerWorkspaceInner() {
   const [tagInput, setTagInput] = useState("");
   const [powerMode, setPowerMode] = useState(false);
   const [saveLogPending, setSaveLogPending] = useState(false);
+<<<<<<< HEAD
+=======
+  const [logSaved, setLogSaved] = useState(false);
+>>>>>>> origin/main
 
   const [scriptId, setScriptId] = useState<number | null>(null);
   const [scriptName, setScriptName] = useState("");
@@ -73,12 +81,27 @@ function DialerWorkspaceInner() {
   const [scriptSaving, setScriptSaving] = useState(false);
 
   const initial = useMemo(() => {
+<<<<<<< HEAD
     if (typeof window === "undefined") return { leadId: null as number | null, number: "" };
     const params = new URLSearchParams(window.location.search);
     const leadIdRaw = params.get("leadId");
     const n = params.get("number") || params.get("to") || "";
     const leadId = leadIdRaw ? parseInt(leadIdRaw, 10) : NaN;
     return { leadId: Number.isFinite(leadId) ? leadId : null, number: n };
+=======
+    if (typeof window === "undefined") return { leadId: null as number | null, propertyId: null as number | null, number: "" };
+    const params = new URLSearchParams(window.location.search);
+    const leadIdRaw = params.get("leadId");
+    const propertyIdRaw = params.get("propertyId") || params.get("opportunityId");
+    const n = params.get("number") || params.get("to") || "";
+    const leadId = leadIdRaw ? parseInt(leadIdRaw, 10) : NaN;
+    const propertyId = propertyIdRaw ? parseInt(propertyIdRaw, 10) : NaN;
+    return {
+      leadId: Number.isFinite(leadId) && leadId > 0 ? leadId : null,
+      propertyId: Number.isFinite(propertyId) && propertyId > 0 ? propertyId : null,
+      number: n,
+    };
+>>>>>>> origin/main
   }, []);
 
   useEffect(() => {
@@ -86,6 +109,39 @@ function DialerWorkspaceInner() {
   }, [initial.number]);
 
   useEffect(() => {
+<<<<<<< HEAD
+=======
+    if (!initial.leadId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiRequest("GET", `/api/leads/${initial.leadId}`);
+        const json = await res.json();
+        if (cancelled) return;
+        const lead = json?.lead || json;
+        const item: DialerQueueItem = {
+          leadId: Number(lead?.id || initial.leadId),
+          ownerName: String(lead?.ownerName || ""),
+          ownerPhone: String(lead?.ownerPhone || ""),
+          address: String(lead?.address || ""),
+          city: String(lead?.city || ""),
+          state: String(lead?.state || ""),
+          status: lead?.status ?? null,
+          nextFollowUpAt: lead?.nextFollowUpAt ? new Date(lead.nextFollowUpAt).toISOString() : null,
+          lastCallAt: null,
+        };
+        setQueue([item]);
+        setActiveIndex(0);
+        if (!initial.number && item.ownerPhone) setNumber(item.ownerPhone);
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initial.leadId, initial.number, setActiveIndex, setQueue]);
+
+  useEffect(() => {
+>>>>>>> origin/main
     if (activeItem?.ownerPhone) setNumber(activeItem.ownerPhone);
   }, [activeItem?.ownerPhone]);
 
@@ -98,10 +154,19 @@ function DialerWorkspaceInner() {
     setCallId(null);
     setStatus("idle");
     setStartTs(null);
+<<<<<<< HEAD
+=======
+    setLogSaved(false);
+>>>>>>> origin/main
     wasConnectedRef.current = false;
     lastPatchedStatusRef.current = null;
   }, [activeItem?.leadId]);
 
+<<<<<<< HEAD
+=======
+  const wrapUpValid = Boolean(disposition) && (disposition !== "call_back" || Boolean(followUpAt));
+
+>>>>>>> origin/main
   const { data: lead } = useQuery<any>({
     queryKey: activeItem?.leadId ? [`/api/leads/${activeItem.leadId}`] : ["lead-none"],
     queryFn: async () => {
@@ -178,7 +243,12 @@ function DialerWorkspaceInner() {
 
   const createCallLog = useMutation({
     mutationFn: async () => {
+<<<<<<< HEAD
       if (!activeItem?.leadId) throw new Error("Select a lead");
+=======
+      const effectiveLeadId = activeItem?.leadId ?? initial.leadId;
+      if (!effectiveLeadId) throw new Error("Select a lead");
+>>>>>>> origin/main
       const res = await fetch(`/api/telephony/calls`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -187,8 +257,13 @@ function DialerWorkspaceInner() {
           number: formatted,
           status: "dialing",
           startedAt: new Date().toISOString(),
+<<<<<<< HEAD
           leadId: activeItem.leadId,
           metadata: { leadId: activeItem.leadId },
+=======
+          leadId: effectiveLeadId,
+          metadata: { leadId: effectiveLeadId, propertyId: initial.propertyId || undefined },
+>>>>>>> origin/main
         }),
         credentials: "include",
       });
@@ -206,12 +281,23 @@ function DialerWorkspaceInner() {
 
   const sendSms = useMutation({
     mutationFn: async () => {
+<<<<<<< HEAD
       if (!activeItem?.leadId) throw new Error("Select a lead");
       const to = formatE164(activeItem.ownerPhone || "");
       const res = await fetch(`/api/telephony/sms`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ to, body: smsBody, metadata: { leadId: activeItem.leadId } }),
+=======
+      const effectiveLeadId = activeItem?.leadId ?? initial.leadId;
+      if (!effectiveLeadId) throw new Error("Select a lead");
+      const to = formatE164(String(activeItem?.ownerPhone || number || ""));
+      if (!to) throw new Error("Missing phone number");
+      const res = await fetch(`/api/telephony/sms`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to, body: smsBody, metadata: { leadId: effectiveLeadId, propertyId: initial.propertyId || undefined } }),
+>>>>>>> origin/main
         credentials: "include",
       });
       if (!res.ok) throw new Error(await res.text());
@@ -435,6 +521,10 @@ function DialerWorkspaceInner() {
                       });
                     } catch {}
                   }
+<<<<<<< HEAD
+=======
+                  if (id && wrapUpValid) setLogSaved(true);
+>>>>>>> origin/main
 
                   setStatus("ended");
                 }}
@@ -455,7 +545,11 @@ function DialerWorkspaceInner() {
                   </Button>
                 </>
               ) : null}
+<<<<<<< HEAD
               <Button variant="outline" onClick={next} disabled={!state.queue.length}>
+=======
+              <Button variant="outline" onClick={next} disabled={!state.queue.length || (callId && !logSaved) || saveLogPending}>
+>>>>>>> origin/main
                 Next Lead
               </Button>
             </div>
@@ -770,6 +864,10 @@ function DialerWorkspaceInner() {
                       onClick={async () => {
                         if (!callId) return;
                         if (saveLogPending) return;
+<<<<<<< HEAD
+=======
+                        if (!wrapUpValid) return;
+>>>>>>> origin/main
                         setSaveLogPending(true);
                         try {
                           await patchCallLog(callId, {
@@ -778,15 +876,34 @@ function DialerWorkspaceInner() {
                             followUpAt: followUpAt ? new Date(followUpAt).toISOString() : null,
                           });
                           queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+<<<<<<< HEAD
+=======
+                          setLogSaved(true);
+>>>>>>> origin/main
                           if (powerMode) next();
                         } finally {
                           setSaveLogPending(false);
                         }
                       }}
+<<<<<<< HEAD
                       disabled={!callId || saveLogPending}
                     >
                       Save Log
                     </Button>
+=======
+                      disabled={!callId || saveLogPending || !wrapUpValid}
+                    >
+                      Save Log
+                    </Button>
+                    {callId && !wrapUpValid ? (
+                      <div className="text-xs text-muted-foreground">
+                        {disposition ? "Follow-up date required for call_back." : "Select a disposition to save the log."}
+                      </div>
+                    ) : null}
+                    {callId && !logSaved ? (
+                      <div className="text-xs text-muted-foreground">Save the log before moving to the next lead.</div>
+                    ) : null}
+>>>>>>> origin/main
                   </div>
                 </div>
 

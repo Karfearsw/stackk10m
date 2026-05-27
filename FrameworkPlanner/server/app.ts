@@ -10,6 +10,11 @@ import { initSentry, Sentry } from "./sentry.js";
 import crypto from "node:crypto";
 import { httpRequestsTotal, httpErrorsTotal, metricsText } from "./metrics.js";
 import { getSchemaReadiness, schemaFixInstructions } from "./schema-readiness.js";
+<<<<<<< HEAD
+=======
+import { getDatabaseUrlMissing, getSessionSecretMissing } from "./auth/config.js";
+import { getRequestIdFromRes, sendAuthError } from "./auth/errors.js";
+>>>>>>> origin/main
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -41,6 +46,7 @@ if (!(globalThis as any).__stackk_process_handlers_installed) {
   });
 }
 
+<<<<<<< HEAD
 app.use(
   helmet({
     contentSecurityPolicy:
@@ -62,6 +68,11 @@ app.use(
         : false,
   }),
 );
+=======
+app.use(helmet({
+  contentSecurityPolicy: false, // Disabled for simplicity with Vite dev server scripts
+}));
+>>>>>>> origin/main
 
 declare module 'http' {
   interface IncomingMessage {
@@ -149,20 +160,44 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: false }));
 
+<<<<<<< HEAD
 if (!sessionSecret) {
   app.use("/api", (_req, res) => {
     res.status(503).json({ message: "Server authentication is not configured" });
+=======
+app.use((req, res, next) => {
+  const requestId = (req.headers["x-request-id"] as string) || crypto.randomUUID();
+  (res.locals as any).requestId = requestId;
+  res.setHeader("x-request-id", requestId);
+  next();
+});
+
+if (!sessionSecret) {
+  app.use("/api", (_req, res) => {
+    const missing = getSessionSecretMissing();
+    return sendAuthError(res, 503, { code: "session_secret_missing", message: "Server authentication is not configured", missing: missing.length ? missing : undefined });
+>>>>>>> origin/main
   });
   app.use((_req, _res, next) => {
     next(new Error("SESSION_SECRET is required"));
   });
 } else if (process.env.NODE_ENV === "production" && !hasDatabaseUrl) {
   app.use("/api", (_req, res) => {
+<<<<<<< HEAD
     res.status(503).json({
       message: "Server database is not configured",
       kind: "db_unavailable",
       missing: ["env:DATABASE_URL", "env:POSTGRES_URL_NON_POOLING", "env:POSTGRES_PRISMA_URL", "env:POSTGRES_URL"],
       code: null,
+=======
+    const missing = getDatabaseUrlMissing();
+    res.status(503).json({
+      message: "Server database is not configured",
+      kind: "db_unavailable",
+      missing,
+      code: "db_not_configured",
+      requestId: getRequestIdFromRes(res),
+>>>>>>> origin/main
       howToFix: schemaFixInstructions(),
     });
   });
@@ -175,11 +210,21 @@ if (!sessionSecret) {
     getSchemaReadiness()
       .then((r) => {
         if (r.ok) return next();
+<<<<<<< HEAD
+=======
+        const requestId = getRequestIdFromRes(res);
+        const code = r.kind === "db_unavailable" ? "db_unavailable" : "schema_not_ready";
+>>>>>>> origin/main
         res.status(503).json({
           message: r.message,
           kind: r.kind,
           missing: r.missing,
+<<<<<<< HEAD
           code: r.code,
+=======
+          code,
+          requestId,
+>>>>>>> origin/main
           howToFix: schemaFixInstructions(),
         });
       })
@@ -204,8 +249,13 @@ if (!sessionSecret) {
       saveUninitialized: false,
       cookie: {
         domain:
+<<<<<<< HEAD
           process.env.NODE_ENV === "production"
             ? String(process.env.COOKIE_DOMAIN || ".oceanluxe.org").trim() || ".oceanluxe.org"
+=======
+          process.env.NODE_ENV === "production" && String(process.env.COOKIE_DOMAIN || "").trim()
+            ? String(process.env.COOKIE_DOMAIN).trim()
+>>>>>>> origin/main
             : undefined,
         secure: process.env.NODE_ENV === "production",
         httpOnly: true,
@@ -216,6 +266,24 @@ if (!sessionSecret) {
   );
 
   if (process.env.DEBUG_ENDPOINTS === "1") {
+<<<<<<< HEAD
+=======
+    app.get("/api/debug/config", (_req: Request, res: Response) => {
+      const cookieDomain =
+        process.env.NODE_ENV === "production" && String(process.env.COOKIE_DOMAIN || "").trim()
+          ? String(process.env.COOKIE_DOMAIN).trim()
+          : null;
+      res.json({
+        hasSessionSecret: Boolean(sessionSecret && String(sessionSecret).trim()),
+        hasDatabaseUrl,
+        hasEmployeeAccessCode: Boolean(
+          process.env.EMPLOYEE_ACCESS_CODE && String(process.env.EMPLOYEE_ACCESS_CODE).trim(),
+        ),
+        cookieDomain,
+        env: process.env.NODE_ENV || "development",
+      });
+    });
+>>>>>>> origin/main
     app.get("/api/debug/session", (req: Request, res: Response) => {
       const cookieHeader = String(req.headers.cookie || "");
       res.json({
@@ -233,9 +301,18 @@ if (!sessionSecret) {
 app.use((req, res, next) => {
   const start = Date.now();
   const path = req.path;
+<<<<<<< HEAD
   const requestId = (req.headers["x-request-id"] as string) || crypto.randomUUID();
   (res.locals as any).requestId = requestId;
   res.setHeader("x-request-id", requestId);
+=======
+  const requestId =
+    (res.locals as any).requestId ||
+    (req.headers["x-request-id"] as string) ||
+    crypto.randomUUID();
+  (res.locals as any).requestId = requestId;
+  if (!res.getHeader("x-request-id")) res.setHeader("x-request-id", requestId);
+>>>>>>> origin/main
   let capturedJsonResponse: Record<string, any> | undefined = undefined;
 
   const originalResJson = res.json;
@@ -271,6 +348,10 @@ import { startAutomationWorker } from "./cron/lead-automation.js";
 import { startCampaignScheduler } from "./cron/campaign-scheduler.js";
 import { startRvmPoller } from "./cron/rvm-poller.js";
 import { startTaskReminders } from "./cron/task-reminders.js";
+<<<<<<< HEAD
+=======
+import { startSkipTraceWorker } from "./cron/skip-trace-worker.js";
+>>>>>>> origin/main
 
 export default async function runApp(
   setup: (app: Express, server: Server) => Promise<void>,
@@ -311,6 +392,10 @@ export default async function runApp(
       : !isServerless && process.env.NODE_ENV !== "test" && hasDatabaseUrl;
   if (enableAutomationWorker) {
     startAutomationWorker(60000); // Run every minute
+<<<<<<< HEAD
+=======
+    startSkipTraceWorker(15000);
+>>>>>>> origin/main
   }
 
   const enableCampaignScheduler = String(process.env.FEATURE_CAMPAIGNS || "").trim().toLowerCase() === "true";

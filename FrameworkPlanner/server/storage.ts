@@ -1,12 +1,29 @@
 import { db } from "./db.js";
 import { asc, desc, sql } from "drizzle-orm";
 import { 
+<<<<<<< HEAD
   leads, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, teamSettings, notificationPreferences, userGoals, userNotifications, tasks, offers, timesheetEntries, timeClockSessions, globalActivityLogs,
   buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
+=======
+  leads, leadNotes, savedViews, leadBulkActionJobs, aiActionLogs, aiActionUndo, appAuditRuns, appAuditFindings, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
+  users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, workCategories, timesheetEntries, timeClockSessions, workerProfiles, categoryRateOverrides, payPeriods, approvalEvents, commissionEvents, dealParticipants, commissionLedgerEntries, globalActivityLogs,
+  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents,
+  companies, companyPeople, companyLinks, documents, documentLinks, vaultDocumentVersions, automations, automationTriggers, automationConditions, automationActions, automationRuns, auditEvents
+} from "./shared-schema.js";
+import { 
+  type Lead, type InsertLead, 
+  type LeadNote, type InsertLeadNote,
+  type SavedView, type InsertSavedView,
+  type LeadBulkActionJob, type InsertLeadBulkActionJob,
+  type AiActionLog, type InsertAiActionLog,
+  type AiActionUndo, type InsertAiActionUndo,
+  type AppAuditRun, type InsertAppAuditRun,
+  type AppAuditFinding, type InsertAppAuditFinding,
+>>>>>>> origin/main
   type Property, type InsertProperty, 
   type Contact, type InsertContact, 
   type Contract, type InsertContract,
@@ -26,14 +43,30 @@ import {
   type Team, type InsertTeam,
   type TeamMember, type InsertTeamMember,
   type TeamActivityLog, type InsertTeamActivityLog,
+<<<<<<< HEAD
   type TeamSettings, type InsertTeamSettings,
+=======
+>>>>>>> origin/main
   type NotificationPreference, type InsertNotificationPreference,
   type UserGoal, type InsertUserGoal,
   type UserNotification, type InsertUserNotification,
   type Task, type InsertTask,
   type Offer, type InsertOffer,
+<<<<<<< HEAD
   type TimesheetEntry, type InsertTimesheetEntry,
   type TimeClockSession, type InsertTimeClockSession,
+=======
+  type WorkCategory, type InsertWorkCategory,
+  type TimesheetEntry, type InsertTimesheetEntry,
+  type TimeClockSession, type InsertTimeClockSession,
+  type WorkerProfile, type InsertWorkerProfile,
+  type CategoryRateOverride, type InsertCategoryRateOverride,
+  type PayPeriod, type InsertPayPeriod,
+  type ApprovalEvent, type InsertApprovalEvent,
+  type CommissionEvent, type InsertCommissionEvent,
+  type DealParticipant, type InsertDealParticipant,
+  type CommissionLedgerEntry, type InsertCommissionLedgerEntry,
+>>>>>>> origin/main
   type GlobalActivityLog, type InsertGlobalActivityLog,
   type Buyer, type InsertBuyer,
   type BuyerCommunication, type InsertBuyerCommunication,
@@ -46,6 +79,13 @@ import {
   type PlaygroundPropertySession, type InsertPlaygroundPropertySession,
   type UserFeatureFlag, type InsertUserFeatureFlag,
   type SkipTraceResult, type InsertSkipTraceResult,
+<<<<<<< HEAD
+=======
+  type SkipTraceJob, type InsertSkipTraceJob,
+  type SkipTraceJobEvent, type InsertSkipTraceJobEvent,
+  type SkipTraceEvidence, type InsertSkipTraceEvidence,
+  type LeadScoreSnapshot, type InsertLeadScoreSnapshot,
+>>>>>>> origin/main
   type LeadSourceOption, type InsertLeadSourceOption,
   type Campaign, type InsertCampaign,
   type CampaignStep, type InsertCampaignStep,
@@ -53,7 +93,36 @@ import {
   type CampaignDelivery, type InsertCampaignDelivery,
   type RvmAudioAsset, type InsertRvmAudioAsset,
   type RvmCampaign, type InsertRvmCampaign,
+<<<<<<< HEAD
   type RvmDrop, type InsertRvmDrop
+=======
+  type RvmDrop, type InsertRvmDrop,
+  type XpExperience, type InsertXpExperience,
+  type XpTimeSlot, type InsertXpTimeSlot,
+  type XpBlackout, type InsertXpBlackout,
+  type XpBooking, type InsertXpBooking,
+  type XpStripeEvent, type InsertXpStripeEvent,
+  type XpLocation, type InsertXpLocation,
+  type XpVehicle, type InsertXpVehicle,
+  type XpBookingAssignment,
+  type XpBookingNote, type InsertXpBookingNote,
+  xpLocations,
+  xpVehicles,
+  xpBookingAssignments,
+  xpBookingNotes,
+  type Company, type InsertCompany,
+  type CompanyPerson, type InsertCompanyPerson,
+  type CompanyLink, type InsertCompanyLink,
+  type Document, type InsertDocument,
+  type DocumentLink, type InsertDocumentLink,
+  type VaultDocumentVersion, type InsertVaultDocumentVersion,
+  type Automation, type InsertAutomation,
+  type AutomationTrigger, type InsertAutomationTrigger,
+  type AutomationCondition, type InsertAutomationCondition,
+  type AutomationAction, type InsertAutomationAction,
+  type AutomationRun, type InsertAutomationRun,
+  type AuditEvent, type InsertAuditEvent
+>>>>>>> origin/main
 } from "./shared-schema.js";
 import { eq, and, gte, lte, isNull, inArray, or, ne, isNotNull } from "drizzle-orm";
 
@@ -64,8 +133,44 @@ export interface IStorage {
     q?: string;
     status?: string;
     owner?: string;
+<<<<<<< HEAD
     createdFrom?: Date;
     createdTo?: Date;
+=======
+    zip?: string;
+    state?: string;
+    city?: string;
+    county?: string;
+    leadType?: string;
+    assignedTo?: number | "unassigned";
+    tags?: string[];
+    tagsMode?: "any" | "all";
+    contactPresence?: "phone_only" | "email_only" | "both" | "none";
+    scoreMin?: number;
+    scoreMax?: number;
+    archived?: "exclude" | "include" | "only";
+    hasNotes?: boolean;
+    noteUpdatedWithinDays?: number;
+    lastTouchFrom?: Date;
+    lastTouchTo?: Date;
+    nextFollowUpFrom?: Date;
+    nextFollowUpTo?: Date;
+    sortKey?:
+      | "newest_imported"
+      | "oldest_imported"
+      | "highest_score"
+      | "lowest_score"
+      | "highest_value"
+      | "recently_updated"
+      | "oldest_untouched"
+      | "most_recent_contact"
+      | "status_age"
+      | "assigned_user";
+    sortDir?: "asc" | "desc";
+    createdFrom?: Date;
+    createdTo?: Date;
+    allowedAssignedToUserIds?: number[];
+>>>>>>> origin/main
     limit?: number;
     offset?: number;
   }): Promise<{ items: Lead[]; total: number }>;
@@ -74,12 +179,60 @@ export interface IStorage {
   updateLead(id: number, lead: Partial<InsertLead>): Promise<Lead>;
   deleteLead(id: number): Promise<void>;
 
+<<<<<<< HEAD
+=======
+  listLeadNotes(leadId: number, limit?: number): Promise<LeadNote[]>;
+  createLeadNote(input: InsertLeadNote): Promise<LeadNote>;
+  getLeadNotesAggByLeadIds(
+    leadIds: number[],
+  ): Promise<Array<{ leadId: number; notesCount: number; lastNoteAt: Date | null; lastNotePreview: string | null }>>;
+
+  listSavedViews(input: { entityType: string; userId: number; teamIds: number[] }): Promise<SavedView[]>;
+  getSavedViewById(id: number): Promise<SavedView | undefined>;
+  getSavedViewByShareToken(token: string): Promise<SavedView | undefined>;
+  createSavedView(input: InsertSavedView): Promise<SavedView>;
+  updateSavedView(id: number, patch: Partial<InsertSavedView>): Promise<SavedView>;
+  deleteSavedView(id: number): Promise<void>;
+
+  createLeadBulkActionJob(input: InsertLeadBulkActionJob): Promise<LeadBulkActionJob>;
+  getLeadBulkActionJobById(id: number): Promise<LeadBulkActionJob | undefined>;
+  updateLeadBulkActionJob(id: number, patch: Partial<InsertLeadBulkActionJob>): Promise<LeadBulkActionJob>;
+
+  createAiActionLog(input: InsertAiActionLog): Promise<AiActionLog>;
+  createAiActionUndo(input: InsertAiActionUndo): Promise<AiActionUndo>;
+  getAiActionUndoByActionId(aiActionLogId: number): Promise<AiActionUndo | undefined>;
+  updateAiActionUndo(id: number, patch: Partial<InsertAiActionUndo>): Promise<AiActionUndo>;
+
+  createAppAuditRun(input: InsertAppAuditRun): Promise<AppAuditRun>;
+  listAppAuditRuns(input: { createdBy: number; limit?: number }): Promise<AppAuditRun[]>;
+  createAppAuditFinding(input: InsertAppAuditFinding): Promise<AppAuditFinding>;
+  listAppAuditFindings(input: { runId: number; limit?: number }): Promise<AppAuditFinding[]>;
+  updateAppAuditFinding(id: number, patch: Partial<InsertAppAuditFinding>): Promise<AppAuditFinding>;
+
+>>>>>>> origin/main
   getLatestSkipTraceForLead(leadId: number): Promise<SkipTraceResult | undefined>;
   getLatestSkipTraceForProperty(propertyId: number): Promise<SkipTraceResult | undefined>;
   getLatestSkipTraceByCacheKey(cacheKey: string): Promise<SkipTraceResult | undefined>;
   createSkipTraceResult(input: InsertSkipTraceResult): Promise<SkipTraceResult>;
   updateSkipTraceResult(id: number, patch: Partial<InsertSkipTraceResult>): Promise<SkipTraceResult>;
 
+<<<<<<< HEAD
+=======
+  createSkipTraceJob(input: InsertSkipTraceJob): Promise<SkipTraceJob>;
+  updateSkipTraceJob(id: number, patch: Partial<InsertSkipTraceJob>): Promise<SkipTraceJob>;
+  getSkipTraceJobById(id: number): Promise<SkipTraceJob | undefined>;
+  listSkipTraceJobsForEntity(entityType: string, entityId: number, limit?: number): Promise<SkipTraceJob[]>;
+  listQueuedSkipTraceJobs(limit?: number): Promise<SkipTraceJob[]>;
+  claimSkipTraceJobForRun(id: number, startedAt: Date): Promise<SkipTraceJob | undefined>;
+  createSkipTraceJobEvent(input: InsertSkipTraceJobEvent): Promise<SkipTraceJobEvent>;
+  listSkipTraceJobEvents(jobId: number, limit?: number): Promise<SkipTraceJobEvent[]>;
+  createSkipTraceEvidence(input: InsertSkipTraceEvidence): Promise<SkipTraceEvidence>;
+  listSkipTraceEvidence(jobId: number, limit?: number): Promise<SkipTraceEvidence[]>;
+  createLeadScoreSnapshot(input: InsertLeadScoreSnapshot): Promise<LeadScoreSnapshot>;
+  getLatestLeadScoreSnapshot(entityType: string, entityId: number): Promise<LeadScoreSnapshot | undefined>;
+  listLeadScoreSnapshotsByJobId(jobId: number): Promise<LeadScoreSnapshot[]>;
+
+>>>>>>> origin/main
   getLeadSourceOptions(userId: number): Promise<LeadSourceOption[]>;
   upsertLeadSourceOption(input: InsertLeadSourceOption): Promise<LeadSourceOption>;
 
@@ -120,6 +273,67 @@ export interface IStorage {
   updateContact(id: number, contact: Partial<InsertContact>): Promise<Contact>;
   deleteContact(id: number): Promise<void>;
 
+<<<<<<< HEAD
+=======
+  // Companies
+  listCompanies(input: { teamId: number; q?: string; companyType?: string; limit?: number; offset?: number }): Promise<{ items: Company[]; total: number }>;
+  getCompanyById(id: number): Promise<Company | undefined>;
+  createCompany(company: InsertCompany): Promise<Company>;
+  updateCompany(id: number, patch: Partial<InsertCompany>): Promise<Company>;
+  deleteCompany(id: number): Promise<void>;
+  getCompanyPeople(companyId: number): Promise<Array<{ companyPerson: CompanyPerson; contact: Contact }>>;
+  createCompanyPerson(input: InsertCompanyPerson): Promise<CompanyPerson>;
+  deleteCompanyPerson(id: number): Promise<void>;
+  listCompanyLinksForEntity(input: { teamId: number; entityType: string; entityId: number }): Promise<Array<{ link: CompanyLink; company: Company }>>;
+  createCompanyLink(input: InsertCompanyLink): Promise<CompanyLink>;
+  deleteCompanyLinkForTeam(teamId: number, id: number): Promise<void>;
+
+  // Document Vault
+  listDocuments(input: {
+    teamId: number;
+    q?: string;
+    tag?: string;
+    entityType?: string;
+    entityId?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: Document[]; total: number }>;
+  getDocumentById(id: number): Promise<Document | undefined>;
+  createDocument(input: InsertDocument): Promise<Document>;
+  updateDocument(id: number, patch: Partial<InsertDocument>): Promise<Document>;
+  deleteDocument(id: number): Promise<void>;
+  getDocumentLinksByDocumentId(documentId: number): Promise<DocumentLink[]>;
+  getDocumentLinkById(id: number): Promise<DocumentLink | undefined>;
+  createDocumentLink(input: InsertDocumentLink): Promise<DocumentLink>;
+  deleteDocumentLink(id: number): Promise<void>;
+  deleteDocumentLinkForTeam(teamId: number, id: number): Promise<void>;
+  getVaultDocumentVersions(documentId: number): Promise<VaultDocumentVersion[]>;
+  createVaultDocumentVersion(input: InsertVaultDocumentVersion): Promise<VaultDocumentVersion>;
+
+  // Automations
+  listAutomations(teamId: number, limit?: number, offset?: number): Promise<Automation[]>;
+  getAutomationById(id: number): Promise<Automation | undefined>;
+  createAutomation(input: InsertAutomation): Promise<Automation>;
+  updateAutomation(id: number, patch: Partial<InsertAutomation>): Promise<Automation>;
+  deleteAutomation(id: number): Promise<void>;
+  getAutomationTriggers(automationId: number): Promise<AutomationTrigger[]>;
+  replaceAutomationTriggers(teamId: number, automationId: number, triggers: Array<{ eventType: string; configJson: string }>): Promise<AutomationTrigger[]>;
+  getAutomationCondition(automationId: number): Promise<AutomationCondition | undefined>;
+  upsertAutomationCondition(teamId: number, automationId: number, configJson: string): Promise<AutomationCondition>;
+  getAutomationActions(automationId: number): Promise<AutomationAction[]>;
+  replaceAutomationActions(
+    teamId: number,
+    automationId: number,
+    actions: Array<{ actionType: string; configJson: string; sortOrder: number }>,
+  ): Promise<AutomationAction[]>;
+  createAutomationRun(input: InsertAutomationRun): Promise<AutomationRun>;
+  updateAutomationRun(id: number, patch: Partial<InsertAutomationRun>): Promise<AutomationRun>;
+  listAutomationRuns(teamId: number, automationId: number, limit?: number, offset?: number): Promise<AutomationRun[]>;
+  getEnabledAutomationsForEvent(teamId: number, eventType: string): Promise<
+    Array<{ automation: Automation; triggers: AutomationTrigger[]; condition: AutomationCondition | null; actions: AutomationAction[] }>
+  >;
+
+>>>>>>> origin/main
   // Contracts
   getContracts(limit?: number, offset?: number): Promise<Contract[]>;
   getContractsByPropertyId(propertyId: number, limit?: number, offset?: number): Promise<Contract[]>;
@@ -224,10 +438,13 @@ export interface IStorage {
   getTeamActivityLogs(teamId: number, limit?: number): Promise<TeamActivityLog[]>;
   createTeamActivityLog(log: InsertTeamActivityLog): Promise<TeamActivityLog>;
 
+<<<<<<< HEAD
   // Team Settings
   getTeamSettings(teamId: number): Promise<TeamSettings | undefined>;
   upsertTeamSettings(teamId: number, patch: Partial<InsertTeamSettings>): Promise<TeamSettings>;
 
+=======
+>>>>>>> origin/main
   // Notification Preferences
   getNotificationPreferencesByUserId(userId: number): Promise<NotificationPreference | undefined>;
   createNotificationPreferences(prefs: InsertNotificationPreference): Promise<NotificationPreference>;
@@ -284,7 +501,11 @@ export interface IStorage {
 
   // Timesheet Entries
   getTimesheetEntries(userId: number, limit?: number, offset?: number): Promise<TimesheetEntry[]>;
+<<<<<<< HEAD
   getTimesheetEntriesFiltered(input: { userId?: number; teamId?: number; status?: string; from?: string; to?: string; limit?: number; offset?: number }): Promise<TimesheetEntry[]>;
+=======
+  getTimesheetEntriesFiltered(input: { userId?: number; from?: string; to?: string; limit?: number; offset?: number }): Promise<TimesheetEntry[]>;
+>>>>>>> origin/main
   getTimesheetEntryById(id: number): Promise<TimesheetEntry | undefined>;
   createTimesheetEntry(entry: InsertTimesheetEntry): Promise<TimesheetEntry>;
   updateTimesheetEntry(id: number, entry: Partial<InsertTimesheetEntry>): Promise<TimesheetEntry>;
@@ -295,6 +516,42 @@ export interface IStorage {
   updateOpenTimeClockSession(userId: number, partial: Partial<InsertTimeClockSession>): Promise<TimeClockSession | undefined>;
   closeOpenTimeClockSessionAndCreateEntry(userId: number, input: { clockOutAt: Date; tzOffsetMinutes: number }): Promise<{ session: TimeClockSession; entry: TimesheetEntry } | undefined>;
 
+<<<<<<< HEAD
+=======
+  // Work Categories
+  getWorkCategories(input?: { includeInactive?: boolean }): Promise<WorkCategory[]>;
+  createWorkCategory(input: InsertWorkCategory): Promise<WorkCategory>;
+  updateWorkCategory(id: number, patch: Partial<InsertWorkCategory>): Promise<WorkCategory>;
+
+  // Worker Profiles
+  listWorkerProfiles(): Promise<WorkerProfile[]>;
+  upsertWorkerProfile(userId: number, patch: Partial<InsertWorkerProfile>): Promise<WorkerProfile>;
+
+  // Category Rate Overrides
+  getCategoryRateOverridesByUser(userId: number): Promise<CategoryRateOverride[]>;
+  upsertCategoryRateOverride(userId: number, categoryId: number, patch: Partial<InsertCategoryRateOverride>): Promise<CategoryRateOverride>;
+  deleteCategoryRateOverride(userId: number, categoryId: number): Promise<void>;
+
+  // Pay Periods
+  upsertPayPeriod(input: InsertPayPeriod): Promise<PayPeriod>;
+
+  // Approval Events
+  createApprovalEvent(input: InsertApprovalEvent): Promise<ApprovalEvent>;
+
+  // Commissions
+  upsertCommissionEvent(input: InsertCommissionEvent): Promise<CommissionEvent>;
+  listCommissionEvents(input: { from?: Date; to?: Date; sourceType?: string; sourceId?: number; limit?: number; offset?: number }): Promise<CommissionEvent[]>;
+  listDealParticipants(input: { sourceType: string; sourceId: number }): Promise<DealParticipant[]>;
+  upsertDealParticipant(input: InsertDealParticipant): Promise<DealParticipant>;
+  deleteDealParticipant(id: number): Promise<void>;
+  listCommissionLedgerEntries(input: { userId?: number; status?: string; eventId?: number; limit?: number; offset?: number }): Promise<CommissionLedgerEntry[]>;
+  upsertCommissionLedgerEntry(input: InsertCommissionLedgerEntry): Promise<CommissionLedgerEntry>;
+  updateCommissionLedgerEntry(id: number, patch: Partial<InsertCommissionLedgerEntry>): Promise<CommissionLedgerEntry>;
+
+  // Payroll
+  getPayrollSummary(input: { from: string; to: string; userId?: number }): Promise<any>;
+
+>>>>>>> origin/main
   // Global Activity Logs
   getGlobalActivityLogs(limit?: number, offset?: number): Promise<GlobalActivityLog[]>;
   createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog>;
@@ -308,9 +565,13 @@ export interface IStorage {
 
   // Pipeline Configs
   getPipelineConfig(userId: number, entityType: string): Promise<PipelineConfig | undefined>;
+<<<<<<< HEAD
   getPipelineConfigByTeam(teamId: number, entityType: string): Promise<PipelineConfig | undefined>;
   upsertPipelineConfig(userId: number, entityType: string, columns: string): Promise<PipelineConfig>;
   upsertPipelineConfigByTeam(teamId: number, userId: number, entityType: string, columns: string): Promise<PipelineConfig>;
+=======
+  upsertPipelineConfig(userId: number, entityType: string, columns: string): Promise<PipelineConfig>;
+>>>>>>> origin/main
 
   getUnderwritingTemplates(userId: number): Promise<UnderwritingTemplate[]>;
   getUnderwritingTemplateById(id: number): Promise<UnderwritingTemplate | undefined>;
@@ -339,12 +600,171 @@ export interface IStorage {
   updateDealAssignment(id: number, assignment: Partial<InsertDealAssignment>): Promise<DealAssignment>;
   deleteDealAssignment(id: number): Promise<void>;
 
+<<<<<<< HEAD
+=======
+  listXpExperiences(input?: { activeOnly?: boolean }): Promise<XpExperience[]>;
+  getXpExperienceBySlug(slug: string): Promise<XpExperience | undefined>;
+  getXpExperienceById(id: number): Promise<XpExperience | undefined>;
+  createXpExperience(input: InsertXpExperience): Promise<XpExperience>;
+  updateXpExperience(id: number, patch: Partial<InsertXpExperience>): Promise<XpExperience>;
+  deactivateXpExperience(id: number): Promise<XpExperience>;
+
+  listXpTimeSlots(experienceId: number, input?: { from?: Date; to?: Date; activeOnly?: boolean }): Promise<XpTimeSlot[]>;
+  getXpTimeSlotById(id: number): Promise<XpTimeSlot | undefined>;
+  createXpTimeSlot(input: InsertXpTimeSlot): Promise<XpTimeSlot>;
+  deleteXpTimeSlot(id: number): Promise<void>;
+
+  listXpBlackouts(experienceId: number, input?: { from?: Date; to?: Date }): Promise<XpBlackout[]>;
+  createXpBlackout(input: InsertXpBlackout): Promise<XpBlackout>;
+  deleteXpBlackout(id: number): Promise<void>;
+
+  listXpLocations(input?: { activeOnly?: boolean }): Promise<XpLocation[]>;
+  createXpLocation(input: InsertXpLocation): Promise<XpLocation>;
+  updateXpLocation(id: number, patch: Partial<InsertXpLocation>): Promise<XpLocation>;
+  deactivateXpLocation(id: number): Promise<XpLocation>;
+
+  listXpVehicles(input?: { activeOnly?: boolean; locationId?: number }): Promise<XpVehicle[]>;
+  createXpVehicle(input: InsertXpVehicle): Promise<XpVehicle>;
+  updateXpVehicle(id: number, patch: Partial<InsertXpVehicle>): Promise<XpVehicle>;
+  deactivateXpVehicle(id: number): Promise<XpVehicle>;
+
+  listXpConciergeUsers(): Promise<User[]>;
+
+  upsertXpBookingAssignment(input: { bookingId: number; locationId?: number | null; vehicleId?: number | null; conciergeUserId?: number | null }): Promise<XpBookingAssignment>;
+  listXpBookingNotes(bookingId: number): Promise<Array<XpBookingNote & { author?: { id: number; email: string; firstName?: string | null; lastName?: string | null } | null }>>;
+  createXpBookingNote(input: InsertXpBookingNote): Promise<XpBookingNote>;
+
+  listXpBookings(input?: {
+    experienceId?: number;
+    status?: string;
+    kind?: string;
+    from?: Date;
+    to?: Date;
+    conciergeUserId?: number;
+    locationId?: number;
+    vehicleId?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    items: Array<XpBooking & { assignment?: { locationId: number | null; locationName: string | null; vehicleId: number | null; vehicleName: string | null; conciergeUserId: number | null; conciergeName: string | null; conciergeEmail: string | null; assignedAt: Date | null } | null }>;
+    total: number;
+  }>;
+  getXpBookingById(id: number): Promise<(XpBooking & { assignment?: { locationId: number | null; locationName: string | null; vehicleId: number | null; vehicleName: string | null; conciergeUserId: number | null; conciergeName: string | null; conciergeEmail: string | null; assignedAt: Date | null } | null; notes?: Array<XpBookingNote & { author?: { id: number; email: string; firstName?: string | null; lastName?: string | null } | null }> }) | undefined>;
+  createXpBookingPending(input: InsertXpBooking): Promise<XpBooking>;
+  updateXpBookingStripeSession(id: number, stripeCheckoutSessionId: string): Promise<XpBooking | undefined>;
+  getXpBookingByStripeSessionId(sessionId: string): Promise<XpBooking | undefined>;
+  confirmXpBookingByStripeSessionId(input: { sessionId: string; paymentIntentId?: string | null; stripeCustomerId?: string | null }): Promise<XpBooking | undefined>;
+  cancelXpBooking(id: number): Promise<XpBooking | undefined>;
+
+  hasStripeEvent(eventId: string): Promise<boolean>;
+  recordStripeEvent(input: InsertXpStripeEvent): Promise<XpStripeEvent>;
+
+  countXpActiveBookingsOverlapping(input: { experienceId: number; kind: string; startAt: Date; endAt: Date }): Promise<number>;
+  hasXpBlackoutOverlap(input: { experienceId: number; startAt: Date; endAt: Date }): Promise<boolean>;
+
+>>>>>>> origin/main
   // Call Logs
   getCallLogs(limit?: number, offset?: number, status?: string, contactId?: number): Promise<CallLog[]>;
   createCallLog(log: InsertCallLog): Promise<CallLog>;
   updateCallLog(id: number, patch: Partial<InsertCallLog & { status?: string; endedAt?: Date; durationMs?: number; errorCode?: string; errorMessage?: string }>): Promise<CallLog>;
 }
 
+<<<<<<< HEAD
+=======
+function normalizeGlobalActivityAction(action: string) {
+  const a = String(action || "").trim();
+  if (!a) return a;
+  const map: Record<string, string> = {
+    call_started: "telephony.call.started",
+    call_answered: "telephony.call.answered",
+    call_missed: "telephony.call.missed",
+    call_failed: "telephony.call.failed",
+    call_inbound: "telephony.call.inbound",
+    call_dispositioned: "telephony.call.dispositioned",
+    followup_scheduled: "telephony.followup.scheduled",
+    followup_task_created: "telephony.followup.task_created",
+    sms_sent: "telephony.sms.sent",
+    sms_received: "telephony.sms.received",
+    voicemail_received: "telephony.voicemail.received",
+    created_lead: "lead.created",
+    deleted_lead: "lead.deleted",
+    converted_lead_to_property: "lead.converted_to_opportunity",
+    auto_converted_lead: "lead.auto_converted_to_opportunity",
+    created_opportunity: "opportunity.created",
+    deleted_opportunity: "opportunity.deleted",
+    created_property: "opportunity.created",
+    updated_property: "opportunity.updated",
+    deleted_property: "opportunity.deleted",
+    added_note: "note.added",
+    playground_open_session: "playground.session.opened",
+    playground_send_to_crm: "playground.sent_to_crm",
+    playground_voice_append_note: "playground.note.appended_by_voice",
+    lead_voice_add_note: "lead.note.added_by_voice",
+    campaign_enrolled: "campaign.enrolled",
+    rvm_campaign_launched: "rvm.campaign.launched",
+    campaign_opt_out: "campaign.opt_out",
+    skip_trace_cached: "skip_trace.cached",
+    skip_trace_requested: "skip_trace.requested",
+    skip_trace_success: "skip_trace.success",
+    skip_trace_failed: "skip_trace.failed",
+  };
+  return map[a] || a;
+}
+
+const MAX_TIME_ENTRY_HOURS = 16;
+const MIN_TIME_ENTRY_MINUTES = 5;
+
+function parseTimeHm(raw: string) {
+  const s = String(raw || "").trim();
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const h = Number.parseInt(m[1], 10);
+  const min = Number.parseInt(m[2], 10);
+  if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
+  if (h < 0 || h > 23) return null;
+  if (min < 0 || min > 59) return null;
+  return { h, m: min };
+}
+
+function computeTimeEntryDuration(input: { date: string; startTime: string; endTime: string }) {
+  const start = parseTimeHm(input.startTime);
+  const end = parseTimeHm(input.endTime);
+  if (!start || !end) {
+    return { ok: false as const, error: "Invalid startTime/endTime" };
+  }
+
+  const startMinutes = start.h * 60 + start.m;
+  const endMinutes = end.h * 60 + end.m;
+  let durationMinutes = endMinutes - startMinutes;
+  let overnight = false;
+  if (durationMinutes < 0) {
+    durationMinutes += 24 * 60;
+    overnight = true;
+  }
+
+  if (durationMinutes === 0) {
+    return { ok: false as const, error: "Start and end times are the same" };
+  }
+
+  const hours = durationMinutes / 60;
+  const flags: string[] = [];
+  let status: string = "draft";
+  let payableHours: number | null = null;
+
+  if (durationMinutes > MAX_TIME_ENTRY_HOURS * 60) {
+    flags.push("duration_over_max");
+    status = "disputed";
+    payableHours = 0;
+  } else if (durationMinutes < MIN_TIME_ENTRY_MINUTES) {
+    flags.push("too_short");
+    status = "disputed";
+    payableHours = 0;
+  }
+
+  return { ok: true as const, hours, durationMinutes, overnight, status, payableHours, flags };
+}
+
+>>>>>>> origin/main
 export class DatabaseStorage implements IStorage {
   // Leads
   async getLeads(limit?: number, offset: number = 0): Promise<Lead[]> {
@@ -356,20 +776,98 @@ export class DatabaseStorage implements IStorage {
   async listLeads(input: {
     q?: string;
     status?: string;
+<<<<<<< HEAD
     owner?: string;
     assignedTo?: number;
     createdFrom?: Date;
     createdTo?: Date;
+=======
+    statusIn?: string[];
+    owner?: string;
+    zip?: string;
+    state?: string;
+    city?: string;
+    county?: string;
+    leadType?: string;
+    assignedTo?: number | "unassigned";
+    tags?: string[];
+    tagsMode?: "any" | "all";
+    contactPresence?: "phone_only" | "email_only" | "both" | "none";
+    scoreMin?: number;
+    scoreMax?: number;
+    archived?: "exclude" | "include" | "only";
+    hasNotes?: boolean;
+    noteUpdatedWithinDays?: number;
+    lastTouchFrom?: Date;
+    lastTouchTo?: Date;
+    nextFollowUpFrom?: Date;
+    nextFollowUpTo?: Date;
+    sortKey?:
+      | "newest_imported"
+      | "oldest_imported"
+      | "highest_score"
+      | "lowest_score"
+      | "highest_value"
+      | "recently_updated"
+      | "oldest_untouched"
+      | "most_recent_contact"
+      | "status_age"
+      | "assigned_user";
+    sortDir?: "asc" | "desc";
+    createdFrom?: Date;
+    createdTo?: Date;
+    allowedAssignedToUserIds?: number[];
+>>>>>>> origin/main
     limit?: number;
     offset?: number;
   }): Promise<{ items: Lead[]; total: number }> {
     const limit = typeof input.limit === "number" ? input.limit : 200;
     const offset = typeof input.offset === "number" ? input.offset : 0;
 
+<<<<<<< HEAD
     const whereParts: any[] = [];
 
     const status = String(input.status || "").trim();
     if (status && status !== "all") whereParts.push(eq(leads.status, status));
+=======
+    if (Array.isArray(input.allowedAssignedToUserIds)) {
+      const ids = input.allowedAssignedToUserIds.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      if (!ids.length) return { items: [], total: 0 };
+    }
+
+    const whereParts: any[] = [];
+
+    const archivedMode = input.archived || "exclude";
+    if (archivedMode === "exclude") whereParts.push(isNull(leads.archivedAt));
+    if (archivedMode === "only") whereParts.push(isNotNull(leads.archivedAt));
+
+    const statusInRaw = Array.isArray(input.statusIn) ? input.statusIn : [];
+    const statusIn = statusInRaw
+      .map((s) => String(s || "").trim())
+      .filter(Boolean)
+      .slice(0, 10);
+    if (statusIn.length) {
+      whereParts.push(inArray(leads.status, statusIn as any));
+    } else {
+      const status = String(input.status || "").trim();
+      if (status && status !== "all") whereParts.push(eq(leads.status, status));
+    }
+
+    const zip = String(input.zip || "").trim();
+    if (zip) whereParts.push(eq(leads.zipCode, zip));
+
+    const state = String(input.state || "").trim();
+    if (state) whereParts.push(eq(leads.state, state));
+
+    const city = String(input.city || "").trim();
+    if (city) whereParts.push(eq(leads.city, city));
+
+    const county = String(input.county || "").trim();
+    if (county) whereParts.push(eq(leads.county, county));
+
+    const leadType = String(input.leadType || "").trim();
+    if (leadType) whereParts.push(eq(leads.leadType, leadType));
+>>>>>>> origin/main
 
     const owner = String(input.owner || "").trim().toLowerCase();
     if (owner) {
@@ -377,10 +875,13 @@ export class DatabaseStorage implements IStorage {
       whereParts.push(sql`lower(${leads.ownerName}) LIKE ${needle}`);
     }
 
+<<<<<<< HEAD
     if (typeof input.assignedTo === "number" && Number.isFinite(input.assignedTo)) {
       whereParts.push(eq(leads.assignedTo, input.assignedTo));
     }
 
+=======
+>>>>>>> origin/main
     const qRaw = String(input.q || "").trim().toLowerCase();
     if (qRaw) {
       const needle = `%${qRaw}%`;
@@ -396,6 +897,7 @@ export class DatabaseStorage implements IStorage {
       );
     }
 
+<<<<<<< HEAD
     if (input.createdFrom) whereParts.push(gte(leads.createdAt, input.createdFrom));
     if (input.createdTo) whereParts.push(lte(leads.createdAt, input.createdTo));
 
@@ -404,6 +906,78 @@ export class DatabaseStorage implements IStorage {
     let q: any = db.select().from(leads);
     if (whereClause) q = q.where(whereClause);
     q = q.orderBy(desc(leads.createdAt), desc(leads.id)).limit(limit).offset(offset);
+=======
+    if (typeof input.assignedTo === "number") whereParts.push(eq(leads.assignedTo, input.assignedTo));
+    if (input.assignedTo === "unassigned") whereParts.push(isNull(leads.assignedTo));
+
+    if (Array.isArray(input.tags) && input.tags.length) {
+      const cleaned = input.tags.map((t) => String(t || "").trim()).filter(Boolean);
+      if (cleaned.length) {
+        const arr = sql`ARRAY[${sql.join(cleaned.map((t) => sql`${t}`), sql`,`) }]::text[]`;
+        const mode = input.tagsMode || "any";
+        if (mode === "all") whereParts.push(sql`${leads.tags} @> ${arr}`);
+        else whereParts.push(sql`${leads.tags} && ${arr}`);
+      }
+    }
+
+    if (typeof input.scoreMin === "number" && Number.isFinite(input.scoreMin)) whereParts.push(gte(leads.relasScore, input.scoreMin));
+    if (typeof input.scoreMax === "number" && Number.isFinite(input.scoreMax)) whereParts.push(lte(leads.relasScore, input.scoreMax));
+
+    const contactPresence = input.contactPresence;
+    if (contactPresence) {
+      const hasPhone = sql`COALESCE(NULLIF(TRIM(${leads.ownerPhone}), ''), NULL) IS NOT NULL`;
+      const hasEmail = sql`COALESCE(NULLIF(TRIM(${leads.ownerEmail}), ''), NULL) IS NOT NULL`;
+      if (contactPresence === "phone_only") whereParts.push(and(hasPhone, sql`NOT (${hasEmail})`));
+      if (contactPresence === "email_only") whereParts.push(and(hasEmail, sql`NOT (${hasPhone})`));
+      if (contactPresence === "both") whereParts.push(and(hasPhone, hasEmail));
+      if (contactPresence === "none") whereParts.push(and(sql`NOT (${hasPhone})`, sql`NOT (${hasEmail})`));
+    }
+
+    if (typeof input.hasNotes === "boolean") {
+      if (input.hasNotes) whereParts.push(sql`EXISTS (SELECT 1 FROM lead_notes ln WHERE ln.lead_id = ${leads.id})`);
+      else whereParts.push(sql`NOT EXISTS (SELECT 1 FROM lead_notes ln WHERE ln.lead_id = ${leads.id})`);
+    }
+
+    if (typeof input.noteUpdatedWithinDays === "number" && Number.isFinite(input.noteUpdatedWithinDays) && input.noteUpdatedWithinDays > 0) {
+      whereParts.push(
+        sql`EXISTS (SELECT 1 FROM lead_notes ln WHERE ln.lead_id = ${leads.id} AND ln.created_at >= NOW() - (${input.noteUpdatedWithinDays}::int * INTERVAL '1 day'))`,
+      );
+    }
+
+    if (input.createdFrom) whereParts.push(gte(leads.createdAt, input.createdFrom));
+    if (input.createdTo) whereParts.push(lte(leads.createdAt, input.createdTo));
+    if (input.lastTouchFrom) whereParts.push(gte(leads.lastTouchAt, input.lastTouchFrom));
+    if (input.lastTouchTo) whereParts.push(lte(leads.lastTouchAt, input.lastTouchTo));
+    if (input.nextFollowUpFrom) whereParts.push(gte(leads.nextFollowUpAt, input.nextFollowUpFrom));
+    if (input.nextFollowUpTo) whereParts.push(lte(leads.nextFollowUpAt, input.nextFollowUpTo));
+
+    if (Array.isArray(input.allowedAssignedToUserIds)) {
+      const ids = input.allowedAssignedToUserIds.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      whereParts.push(inArray(leads.assignedTo, ids));
+    }
+
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+
+    const dir = input.sortDir === "asc" ? "asc" : "desc";
+    const dirSql = dir === "asc" ? sql`ASC` : sql`DESC`;
+    const sortKey = input.sortKey || "newest_imported";
+    const orderByParts: any[] = [];
+    if (sortKey === "newest_imported") orderByParts.push(desc(leads.createdAt), desc(leads.id));
+    else if (sortKey === "oldest_imported") orderByParts.push(asc(leads.createdAt), asc(leads.id));
+    else if (sortKey === "highest_score") orderByParts.push(sql`${leads.relasScore} DESC NULLS LAST`, desc(leads.createdAt), desc(leads.id));
+    else if (sortKey === "lowest_score") orderByParts.push(sql`${leads.relasScore} ASC NULLS LAST`, desc(leads.createdAt), desc(leads.id));
+    else if (sortKey === "highest_value") orderByParts.push(sql`${leads.estimatedValue} ${dirSql} NULLS LAST`, desc(leads.createdAt), desc(leads.id));
+    else if (sortKey === "recently_updated") orderByParts.push(sql`${leads.updatedAt} ${dirSql}`, desc(leads.id));
+    else if (sortKey === "oldest_untouched") orderByParts.push(sql`COALESCE(${leads.lastTouchAt}, ${leads.createdAt}) ASC`, asc(leads.id));
+    else if (sortKey === "most_recent_contact") orderByParts.push(sql`${leads.lastTouchAt} DESC NULLS LAST`, desc(leads.createdAt), desc(leads.id));
+    else if (sortKey === "status_age") orderByParts.push(sql`${leads.statusChangedAt} ${dirSql} NULLS LAST`, desc(leads.createdAt), desc(leads.id));
+    else if (sortKey === "assigned_user") orderByParts.push(sql`${leads.assignedTo} ${dirSql} NULLS LAST`, desc(leads.createdAt), desc(leads.id));
+    else orderByParts.push(desc(leads.createdAt), desc(leads.id));
+
+    let q: any = db.select().from(leads);
+    if (whereClause) q = q.where(whereClause);
+    q = q.orderBy(...orderByParts).limit(limit).offset(offset);
+>>>>>>> origin/main
     const items = (await q) as unknown as Lead[];
 
     let cq: any = db.select({ count: sql<number>`count(*)::int` }).from(leads);
@@ -433,6 +1007,196 @@ export class DatabaseStorage implements IStorage {
     await db.delete(leads).where(eq(leads.id, id));
   }
 
+<<<<<<< HEAD
+=======
+  async listLeadNotes(leadId: number, limit: number = 50): Promise<LeadNote[]> {
+    const n = Number.isFinite(limit) ? Math.max(1, Math.min(500, limit)) : 50;
+    return db
+      .select()
+      .from(leadNotes)
+      .where(eq(leadNotes.leadId, leadId))
+      .orderBy(desc(leadNotes.createdAt), desc(leadNotes.id))
+      .limit(n);
+  }
+
+  async createLeadNote(input: InsertLeadNote): Promise<LeadNote> {
+    const result = await db.insert(leadNotes).values(input as any).returning();
+    return result[0];
+  }
+
+  async getLeadNotesAggByLeadIds(
+    leadIds: number[],
+  ): Promise<Array<{ leadId: number; notesCount: number; lastNoteAt: Date | null; lastNotePreview: string | null }>> {
+    const ids = (leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+    if (!ids.length) return [];
+
+    const rows = await db
+      .select({
+        leadId: leadNotes.leadId,
+        notesCount: sql<number>`count(*)::int`,
+        lastNoteAt: sql<Date | null>`max(${leadNotes.createdAt})`,
+      })
+      .from(leadNotes)
+      .where(inArray(leadNotes.leadId, ids))
+      .groupBy(leadNotes.leadId);
+
+    const latestRows: any = await db.execute(sql`
+      SELECT DISTINCT ON (lead_id)
+        lead_id as "leadId",
+        body as "body",
+        created_at as "createdAt"
+      FROM lead_notes
+      WHERE lead_id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
+      ORDER BY lead_id, created_at DESC, id DESC
+    `);
+
+    const latestByLeadId = new Map<number, { body: string; createdAt: Date | null }>();
+    for (const r of (latestRows as any).rows || []) {
+      const lid = Number(r.leadId);
+      if (!Number.isFinite(lid) || lid <= 0) continue;
+      latestByLeadId.set(lid, { body: String(r.body || ""), createdAt: r.createdAt ? new Date(r.createdAt) : null });
+    }
+
+    return rows.map((r) => {
+      const lid = Number((r as any).leadId);
+      const latest = latestByLeadId.get(lid);
+      return {
+        leadId: lid,
+        notesCount: Number((r as any).notesCount || 0),
+        lastNoteAt: (r as any).lastNoteAt ? new Date((r as any).lastNoteAt) : latest?.createdAt ?? null,
+        lastNotePreview: latest ? String(latest.body || "").trim().slice(0, 280) || null : null,
+      };
+    });
+  }
+
+  async listSavedViews(input: { entityType: string; userId: number; teamIds: number[] }): Promise<SavedView[]> {
+    const entityType = String(input.entityType || "").trim();
+    const userId = Number(input.userId);
+    const teamIds = (input.teamIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+    if (!entityType || !Number.isFinite(userId) || userId <= 0) return [];
+
+    const whereParts: any[] = [eq(savedViews.entityType, entityType)];
+    const scopes: any[] = [eq(savedViews.ownerUserId, userId)];
+    if (teamIds.length) scopes.push(and(eq(savedViews.visibility, "team"), inArray(savedViews.teamId, teamIds)));
+    scopes.push(and(eq(savedViews.visibility, "link"), eq(savedViews.ownerUserId, userId)));
+    whereParts.push(or(...scopes));
+
+    return db.select().from(savedViews).where(and(...whereParts)).orderBy(desc(savedViews.updatedAt), desc(savedViews.id));
+  }
+
+  async getSavedViewById(id: number): Promise<SavedView | undefined> {
+    const out = await db.select().from(savedViews).where(eq(savedViews.id, id)).limit(1);
+    return out[0];
+  }
+
+  async getSavedViewByShareToken(token: string): Promise<SavedView | undefined> {
+    const t = String(token || "").trim();
+    if (!t) return undefined;
+    const out = await db
+      .select()
+      .from(savedViews)
+      .where(and(eq(savedViews.shareToken, t), eq(savedViews.visibility, "link")))
+      .limit(1);
+    return out[0];
+  }
+
+  async createSavedView(input: InsertSavedView): Promise<SavedView> {
+    const result = await db.insert(savedViews).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateSavedView(id: number, patch: Partial<InsertSavedView>): Promise<SavedView> {
+    const result = await db
+      .update(savedViews)
+      .set({ ...(patch as any), updatedAt: new Date() } as any)
+      .where(eq(savedViews.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteSavedView(id: number): Promise<void> {
+    await db.delete(savedViews).where(eq(savedViews.id, id));
+  }
+
+  async createLeadBulkActionJob(input: InsertLeadBulkActionJob): Promise<LeadBulkActionJob> {
+    const result = await db.insert(leadBulkActionJobs).values(input as any).returning();
+    return result[0];
+  }
+
+  async getLeadBulkActionJobById(id: number): Promise<LeadBulkActionJob | undefined> {
+    const out = await db.select().from(leadBulkActionJobs).where(eq(leadBulkActionJobs.id, id)).limit(1);
+    return out[0];
+  }
+
+  async updateLeadBulkActionJob(id: number, patch: Partial<InsertLeadBulkActionJob>): Promise<LeadBulkActionJob> {
+    const result = await db
+      .update(leadBulkActionJobs)
+      .set({ ...(patch as any), updatedAt: new Date() } as any)
+      .where(eq(leadBulkActionJobs.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async createAiActionLog(input: InsertAiActionLog): Promise<AiActionLog> {
+    const result = await db.insert(aiActionLogs).values(input as any).returning();
+    return result[0];
+  }
+
+  async createAiActionUndo(input: InsertAiActionUndo): Promise<AiActionUndo> {
+    const result = await db.insert(aiActionUndo).values(input as any).returning();
+    return result[0];
+  }
+
+  async getAiActionUndoByActionId(aiActionLogId: number): Promise<AiActionUndo | undefined> {
+    const out = await db.select().from(aiActionUndo).where(eq(aiActionUndo.aiActionLogId, aiActionLogId)).limit(1);
+    return out[0];
+  }
+
+  async updateAiActionUndo(id: number, patch: Partial<InsertAiActionUndo>): Promise<AiActionUndo> {
+    const result = await db.update(aiActionUndo).set(patch as any).where(eq(aiActionUndo.id, id)).returning();
+    return result[0];
+  }
+
+  async createAppAuditRun(input: InsertAppAuditRun): Promise<AppAuditRun> {
+    const result = await db.insert(appAuditRuns).values(input as any).returning();
+    return result[0];
+  }
+
+  async listAppAuditRuns(input: { createdBy: number; limit?: number }): Promise<AppAuditRun[]> {
+    const n = typeof input.limit === "number" ? Math.max(1, Math.min(200, input.limit)) : 50;
+    return db
+      .select()
+      .from(appAuditRuns)
+      .where(eq(appAuditRuns.createdBy, input.createdBy))
+      .orderBy(desc(appAuditRuns.createdAt), desc(appAuditRuns.id))
+      .limit(n);
+  }
+
+  async createAppAuditFinding(input: InsertAppAuditFinding): Promise<AppAuditFinding> {
+    const result = await db.insert(appAuditFindings).values(input as any).returning();
+    return result[0];
+  }
+
+  async listAppAuditFindings(input: { runId: number; limit?: number }): Promise<AppAuditFinding[]> {
+    const n = typeof input.limit === "number" ? Math.max(1, Math.min(1000, input.limit)) : 200;
+    return db
+      .select()
+      .from(appAuditFindings)
+      .where(eq(appAuditFindings.runId, input.runId))
+      .orderBy(desc(appAuditFindings.updatedAt), desc(appAuditFindings.id))
+      .limit(n);
+  }
+
+  async updateAppAuditFinding(id: number, patch: Partial<InsertAppAuditFinding>): Promise<AppAuditFinding> {
+    const result = await db
+      .update(appAuditFindings)
+      .set({ ...(patch as any), updatedAt: new Date() } as any)
+      .where(eq(appAuditFindings.id, id))
+      .returning();
+    return result[0];
+  }
+
+>>>>>>> origin/main
   async getLatestSkipTraceForLead(leadId: number): Promise<SkipTraceResult | undefined> {
     const result = await db
       .select()
@@ -473,6 +1237,102 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+<<<<<<< HEAD
+=======
+  async createSkipTraceJob(input: InsertSkipTraceJob): Promise<SkipTraceJob> {
+    const result = await db.insert(skipTraceJobs).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateSkipTraceJob(id: number, patch: Partial<InsertSkipTraceJob>): Promise<SkipTraceJob> {
+    const result = await db.update(skipTraceJobs).set(patch as any).where(eq(skipTraceJobs.id, id)).returning();
+    return result[0];
+  }
+
+  async getSkipTraceJobById(id: number): Promise<SkipTraceJob | undefined> {
+    const result = await db.select().from(skipTraceJobs).where(eq(skipTraceJobs.id, id)).limit(1);
+    return result[0];
+  }
+
+  async listSkipTraceJobsForEntity(entityType: string, entityId: number, limit: number = 20): Promise<SkipTraceJob[]> {
+    return db
+      .select()
+      .from(skipTraceJobs)
+      .where(and(eq(skipTraceJobs.entityType, entityType), eq(skipTraceJobs.entityId, entityId)))
+      .orderBy(desc(skipTraceJobs.createdAt), desc(skipTraceJobs.id))
+      .limit(limit);
+  }
+
+  async listQueuedSkipTraceJobs(limit: number = 25): Promise<SkipTraceJob[]> {
+    return db
+      .select()
+      .from(skipTraceJobs)
+      .where(eq(skipTraceJobs.status, "queued"))
+      .orderBy(asc(skipTraceJobs.createdAt), asc(skipTraceJobs.id))
+      .limit(limit);
+  }
+
+  async claimSkipTraceJobForRun(id: number, startedAt: Date): Promise<SkipTraceJob | undefined> {
+    const result = await db
+      .update(skipTraceJobs)
+      .set({ status: "running", startedAt, errorMessage: null } as any)
+      .where(and(eq(skipTraceJobs.id, id), eq(skipTraceJobs.status, "queued")))
+      .returning();
+    return result[0];
+  }
+
+  async createSkipTraceJobEvent(input: InsertSkipTraceJobEvent): Promise<SkipTraceJobEvent> {
+    const result = await db.insert(skipTraceJobEvents).values(input as any).returning();
+    return result[0];
+  }
+
+  async listSkipTraceJobEvents(jobId: number, limit: number = 200): Promise<SkipTraceJobEvent[]> {
+    return db
+      .select()
+      .from(skipTraceJobEvents)
+      .where(eq(skipTraceJobEvents.jobId, jobId))
+      .orderBy(asc(skipTraceJobEvents.createdAt), asc(skipTraceJobEvents.id))
+      .limit(limit);
+  }
+
+  async createSkipTraceEvidence(input: InsertSkipTraceEvidence): Promise<SkipTraceEvidence> {
+    const result = await db.insert(skipTraceEvidence).values(input as any).returning();
+    return result[0];
+  }
+
+  async listSkipTraceEvidence(jobId: number, limit: number = 500): Promise<SkipTraceEvidence[]> {
+    return db
+      .select()
+      .from(skipTraceEvidence)
+      .where(eq(skipTraceEvidence.jobId, jobId))
+      .orderBy(desc(skipTraceEvidence.collectedAt), desc(skipTraceEvidence.id))
+      .limit(limit);
+  }
+
+  async createLeadScoreSnapshot(input: InsertLeadScoreSnapshot): Promise<LeadScoreSnapshot> {
+    const result = await db.insert(leadScoreSnapshots).values(input as any).returning();
+    return result[0];
+  }
+
+  async getLatestLeadScoreSnapshot(entityType: string, entityId: number): Promise<LeadScoreSnapshot | undefined> {
+    const result = await db
+      .select()
+      .from(leadScoreSnapshots)
+      .where(and(eq(leadScoreSnapshots.entityType, entityType), eq(leadScoreSnapshots.entityId, entityId)))
+      .orderBy(desc(leadScoreSnapshots.createdAt), desc(leadScoreSnapshots.id))
+      .limit(1);
+    return result[0];
+  }
+
+  async listLeadScoreSnapshotsByJobId(jobId: number): Promise<LeadScoreSnapshot[]> {
+    return db
+      .select()
+      .from(leadScoreSnapshots)
+      .where(eq(leadScoreSnapshots.jobId, jobId))
+      .orderBy(desc(leadScoreSnapshots.createdAt), desc(leadScoreSnapshots.id));
+  }
+
+>>>>>>> origin/main
   async getLeadSourceOptions(userId: number): Promise<LeadSourceOption[]> {
     return db
       .select()
@@ -681,6 +1541,389 @@ export class DatabaseStorage implements IStorage {
     await db.delete(contacts).where(eq(contacts.id, id));
   }
 
+<<<<<<< HEAD
+=======
+  // Companies
+  async listCompanies(input: { teamId: number; q?: string; companyType?: string; limit?: number; offset?: number }): Promise<{ items: Company[]; total: number }> {
+    const limit = typeof input.limit === "number" ? input.limit : 50;
+    const offset = typeof input.offset === "number" ? input.offset : 0;
+
+    const whereParts: any[] = [eq(companies.teamId, input.teamId)];
+
+    const companyType = String(input.companyType || "").trim();
+    if (companyType && companyType !== "all") whereParts.push(eq(companies.companyType, companyType));
+
+    const qRaw = String(input.q || "").trim().toLowerCase();
+    if (qRaw) {
+      const needle = `%${qRaw}%`;
+      whereParts.push(or(sql`lower(${companies.name}) LIKE ${needle}`, sql`lower(${companies.email}) LIKE ${needle}`));
+    }
+
+    const whereClause = and(...whereParts);
+
+    const items = (await db
+      .select()
+      .from(companies)
+      .where(whereClause)
+      .orderBy(asc(companies.name), asc(companies.id))
+      .limit(limit)
+      .offset(offset)) as unknown as Company[];
+
+    const countRows = await db.select({ count: sql<number>`count(*)::int` }).from(companies).where(whereClause);
+    const total = Number((countRows as any)?.[0]?.count || 0);
+
+    return { items, total };
+  }
+
+  async getCompanyById(id: number): Promise<Company | undefined> {
+    const result = await db.select().from(companies).where(eq(companies.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createCompany(company: InsertCompany): Promise<Company> {
+    const result = await db.insert(companies).values(company as any).returning();
+    return result[0];
+  }
+
+  async updateCompany(id: number, patch: Partial<InsertCompany>): Promise<Company> {
+    const result = await db.update(companies).set(patch as any).where(eq(companies.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteCompany(id: number): Promise<void> {
+    await db.delete(companies).where(eq(companies.id, id));
+  }
+
+  async getCompanyPeople(companyId: number): Promise<Array<{ companyPerson: CompanyPerson; contact: Contact }>> {
+    const rows = await db
+      .select({ companyPerson: companyPeople, contact: contacts })
+      .from(companyPeople)
+      .innerJoin(contacts, eq(companyPeople.contactId, contacts.id))
+      .where(eq(companyPeople.companyId, companyId))
+      .orderBy(desc(companyPeople.isPrimary), asc(companyPeople.id));
+    return rows as any;
+  }
+
+  async createCompanyPerson(input: InsertCompanyPerson): Promise<CompanyPerson> {
+    const result = await db.insert(companyPeople).values(input as any).returning();
+    return result[0];
+  }
+
+  async deleteCompanyPerson(id: number): Promise<void> {
+    await db.delete(companyPeople).where(eq(companyPeople.id, id));
+  }
+
+  async listCompanyLinksForEntity(input: { teamId: number; entityType: string; entityId: number }): Promise<Array<{ link: CompanyLink; company: Company }>> {
+    const rows = await db
+      .select({ link: companyLinks, company: companies })
+      .from(companyLinks)
+      .innerJoin(companies, eq(companyLinks.companyId, companies.id))
+      .where(and(eq(companyLinks.teamId, input.teamId), eq(companyLinks.entityType, input.entityType), eq(companyLinks.entityId, input.entityId)))
+      .orderBy(asc(companies.name), asc(companyLinks.id));
+    return rows as any;
+  }
+
+  async createCompanyLink(input: InsertCompanyLink): Promise<CompanyLink> {
+    const rows = await db.insert(companyLinks).values(input as any).returning();
+    return rows[0];
+  }
+
+  async deleteCompanyLinkForTeam(teamId: number, id: number): Promise<void> {
+    await db.delete(companyLinks).where(and(eq(companyLinks.id, id), eq(companyLinks.teamId, teamId)));
+  }
+
+  // Document Vault
+  async listDocuments(input: {
+    teamId: number;
+    q?: string;
+    tag?: string;
+    entityType?: string;
+    entityId?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: Document[]; total: number }> {
+    const limit = typeof input.limit === "number" ? input.limit : 50;
+    const offset = typeof input.offset === "number" ? input.offset : 0;
+
+    const whereParts: any[] = [eq(documents.teamId, input.teamId)];
+
+    const qRaw = String(input.q || "").trim().toLowerCase();
+    if (qRaw) {
+      const needle = `%${qRaw}%`;
+      whereParts.push(or(sql`lower(${documents.title}) LIKE ${needle}`, sql`lower(${documents.kind}) LIKE ${needle}`));
+    }
+
+    const tag = String(input.tag || "").trim();
+    if (tag) {
+      whereParts.push(sql`coalesce(${documents.tags}, ARRAY[]::text[]) @> ARRAY[${tag}]::text[]`);
+    }
+
+    const entityType = String(input.entityType || "").trim();
+    const entityId = typeof input.entityId === "number" ? input.entityId : undefined;
+
+    const whereDocs = whereParts.length ? and(...whereParts) : undefined;
+
+    if (entityType && typeof entityId === "number" && Number.isFinite(entityId)) {
+      const whereLinks = and(eq(documentLinks.teamId, input.teamId), eq(documentLinks.entityType, entityType), eq(documentLinks.entityId, entityId));
+      const joinWhere = whereDocs ? and(whereDocs, whereLinks) : whereLinks;
+
+      const idRows = await db
+        .select({ id: documents.id })
+        .from(documents)
+        .innerJoin(documentLinks, eq(documentLinks.documentId, documents.id))
+        .where(joinWhere)
+        .groupBy(documents.id)
+        .orderBy(desc(documents.createdAt), desc(documents.id))
+        .limit(limit)
+        .offset(offset);
+
+      const ids = (idRows as any[]).map((r) => Number(r.id)).filter((n) => Number.isFinite(n) && n > 0);
+      const items =
+        ids.length > 0
+          ? ((await db
+              .select()
+              .from(documents)
+              .where(inArray(documents.id, ids))
+              .orderBy(desc(documents.createdAt), desc(documents.id))) as unknown as Document[])
+          : [];
+
+      const countRows = await db
+        .select({ count: sql<number>`count(distinct ${documents.id})::int` })
+        .from(documents)
+        .innerJoin(documentLinks, eq(documentLinks.documentId, documents.id))
+        .where(joinWhere);
+      const total = Number((countRows as any)?.[0]?.count || 0);
+
+      return { items, total };
+    }
+
+    let q: any = db.select().from(documents);
+    if (whereDocs) q = q.where(whereDocs);
+    q = q.orderBy(desc(documents.createdAt), desc(documents.id)).limit(limit).offset(offset);
+    const items = (await q) as unknown as Document[];
+
+    let cq: any = db.select({ count: sql<number>`count(*)::int` }).from(documents);
+    if (whereDocs) cq = cq.where(whereDocs);
+    const countRows = await cq;
+    const total = Number((countRows as any)?.[0]?.count || 0);
+
+    return { items, total };
+  }
+
+  async getDocumentById(id: number): Promise<Document | undefined> {
+    const result = await db.select().from(documents).where(eq(documents.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createDocument(input: InsertDocument): Promise<Document> {
+    const result = await db.insert(documents).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateDocument(id: number, patch: Partial<InsertDocument>): Promise<Document> {
+    const result = await db.update(documents).set(patch as any).where(eq(documents.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteDocument(id: number): Promise<void> {
+    await db.delete(documents).where(eq(documents.id, id));
+  }
+
+  async getDocumentLinksByDocumentId(documentId: number): Promise<DocumentLink[]> {
+    const rows = await db
+      .select()
+      .from(documentLinks)
+      .where(eq(documentLinks.documentId, documentId))
+      .orderBy(desc(documentLinks.createdAt), desc(documentLinks.id));
+    return rows as any;
+  }
+
+  async getDocumentLinkById(id: number): Promise<DocumentLink | undefined> {
+    const rows = await db.select().from(documentLinks).where(eq(documentLinks.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async createDocumentLink(input: InsertDocumentLink): Promise<DocumentLink> {
+    const result = await db.insert(documentLinks).values(input as any).returning();
+    return result[0];
+  }
+
+  async deleteDocumentLink(id: number): Promise<void> {
+    await db.delete(documentLinks).where(eq(documentLinks.id, id));
+  }
+
+  async deleteDocumentLinkForTeam(teamId: number, id: number): Promise<void> {
+    await db.delete(documentLinks).where(and(eq(documentLinks.id, id), eq(documentLinks.teamId, teamId)));
+  }
+
+  async getVaultDocumentVersions(documentId: number): Promise<VaultDocumentVersion[]> {
+    const rows = await db
+      .select()
+      .from(vaultDocumentVersions)
+      .where(eq(vaultDocumentVersions.documentId, documentId))
+      .orderBy(desc(vaultDocumentVersions.version), desc(vaultDocumentVersions.id));
+    return rows as any;
+  }
+
+  async createVaultDocumentVersion(input: InsertVaultDocumentVersion): Promise<VaultDocumentVersion> {
+    const result = await db.insert(vaultDocumentVersions).values(input as any).returning();
+    return result[0];
+  }
+
+  // Automations
+  async listAutomations(teamId: number, limit?: number, offset: number = 0): Promise<Automation[]> {
+    let q: any = db.select().from(automations).where(eq(automations.teamId, teamId)).orderBy(desc(automations.updatedAt), desc(automations.id));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q as unknown as Promise<Automation[]>;
+  }
+
+  async getAutomationById(id: number): Promise<Automation | undefined> {
+    const rows = await db.select().from(automations).where(eq(automations.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async createAutomation(input: InsertAutomation): Promise<Automation> {
+    const rows = await db.insert(automations).values(input as any).returning();
+    return rows[0];
+  }
+
+  async updateAutomation(id: number, patch: Partial<InsertAutomation>): Promise<Automation> {
+    const rows = await db.update(automations).set(patch as any).where(eq(automations.id, id)).returning();
+    return rows[0];
+  }
+
+  async deleteAutomation(id: number): Promise<void> {
+    await db.delete(automations).where(eq(automations.id, id));
+  }
+
+  async getAutomationTriggers(automationId: number): Promise<AutomationTrigger[]> {
+    const rows = await db
+      .select()
+      .from(automationTriggers)
+      .where(eq(automationTriggers.automationId, automationId))
+      .orderBy(asc(automationTriggers.id));
+    return rows as any;
+  }
+
+  async replaceAutomationTriggers(teamId: number, automationId: number, triggers: Array<{ eventType: string; configJson: string }>): Promise<AutomationTrigger[]> {
+    await db.delete(automationTriggers).where(eq(automationTriggers.automationId, automationId));
+    if (!triggers.length) return [];
+    const rows = await db
+      .insert(automationTriggers)
+      .values(
+        triggers.map((t) => ({
+          teamId,
+          automationId,
+          eventType: String(t.eventType || "").trim(),
+          configJson: String(t.configJson || "{}"),
+        })) as any,
+      )
+      .returning();
+    return rows as any;
+  }
+
+  async getAutomationCondition(automationId: number): Promise<AutomationCondition | undefined> {
+    const rows = await db.select().from(automationConditions).where(eq(automationConditions.automationId, automationId)).limit(1);
+    return rows[0];
+  }
+
+  async upsertAutomationCondition(teamId: number, automationId: number, configJson: string): Promise<AutomationCondition> {
+    const existing = await this.getAutomationCondition(automationId);
+    if (existing) {
+      const rows = await db
+        .update(automationConditions)
+        .set({ configJson: String(configJson || "{}") } as any)
+        .where(eq(automationConditions.id, existing.id))
+        .returning();
+      return rows[0];
+    }
+    const rows = await db
+      .insert(automationConditions)
+      .values({ teamId, automationId, configJson: String(configJson || "{}") } as any)
+      .returning();
+    return rows[0];
+  }
+
+  async getAutomationActions(automationId: number): Promise<AutomationAction[]> {
+    const rows = await db
+      .select()
+      .from(automationActions)
+      .where(eq(automationActions.automationId, automationId))
+      .orderBy(asc(automationActions.sortOrder), asc(automationActions.id));
+    return rows as any;
+  }
+
+  async replaceAutomationActions(
+    teamId: number,
+    automationId: number,
+    actions: Array<{ actionType: string; configJson: string; sortOrder: number }>,
+  ): Promise<AutomationAction[]> {
+    await db.delete(automationActions).where(eq(automationActions.automationId, automationId));
+    if (!actions.length) return [];
+    const rows = await db
+      .insert(automationActions)
+      .values(
+        actions.map((a) => ({
+          teamId,
+          automationId,
+          actionType: String(a.actionType || "").trim(),
+          configJson: String(a.configJson || "{}"),
+          sortOrder: typeof a.sortOrder === "number" ? a.sortOrder : 0,
+        })) as any,
+      )
+      .returning();
+    return rows as any;
+  }
+
+  async createAutomationRun(input: InsertAutomationRun): Promise<AutomationRun> {
+    const rows = await db.insert(automationRuns).values(input as any).returning();
+    return rows[0];
+  }
+
+  async updateAutomationRun(id: number, patch: Partial<InsertAutomationRun>): Promise<AutomationRun> {
+    const rows = await db.update(automationRuns).set(patch as any).where(eq(automationRuns.id, id)).returning();
+    return rows[0];
+  }
+
+  async listAutomationRuns(teamId: number, automationId: number, limit?: number, offset: number = 0): Promise<AutomationRun[]> {
+    let q: any = db
+      .select()
+      .from(automationRuns)
+      .where(and(eq(automationRuns.teamId, teamId), eq(automationRuns.automationId, automationId)))
+      .orderBy(desc(automationRuns.createdAt), desc(automationRuns.id));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q as unknown as Promise<AutomationRun[]>;
+  }
+
+  async getEnabledAutomationsForEvent(teamId: number, eventType: string): Promise<
+    Array<{ automation: Automation; triggers: AutomationTrigger[]; condition: AutomationCondition | null; actions: AutomationAction[] }>
+  > {
+    const rows = await db
+      .select({ automation: automations, trigger: automationTriggers })
+      .from(automations)
+      .innerJoin(automationTriggers, eq(automationTriggers.automationId, automations.id))
+      .where(and(eq(automations.teamId, teamId), eq(automations.enabled, true as any), eq(automationTriggers.eventType, eventType)));
+
+    const byAutomationId = new Map<number, { automation: Automation; triggers: AutomationTrigger[] }>();
+    for (const r of rows as any[]) {
+      const a = r.automation as Automation;
+      const t = r.trigger as AutomationTrigger;
+      const id = Number((a as any).id);
+      const existing = byAutomationId.get(id);
+      if (existing) existing.triggers.push(t);
+      else byAutomationId.set(id, { automation: a, triggers: [t] });
+    }
+
+    const out: Array<{ automation: Automation; triggers: AutomationTrigger[]; condition: AutomationCondition | null; actions: AutomationAction[] }> = [];
+    for (const [id, bundle] of byAutomationId.entries()) {
+      const condition = (await this.getAutomationCondition(id)) || null;
+      const actions = await this.getAutomationActions(id);
+      out.push({ automation: bundle.automation, triggers: bundle.triggers, condition, actions });
+    }
+    return out;
+  }
+
+>>>>>>> origin/main
   // Contracts
   async getContracts(limit?: number, offset: number = 0): Promise<Contract[]> {
     let q: any = db.select().from(contracts);
@@ -897,7 +2140,20 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
+<<<<<<< HEAD
     const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+=======
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (!normalizedEmail) return undefined;
+    const result = await db
+      .select()
+      .from(users)
+      .where(sql`lower(${users.email}) = ${normalizedEmail}`)
+      .limit(2);
+    if (result.length > 1) {
+      throw new Error("Multiple users found for email");
+    }
+>>>>>>> origin/main
     return result[0];
   }
 
@@ -1084,6 +2340,7 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+<<<<<<< HEAD
   async getTeamSettings(teamId: number): Promise<TeamSettings | undefined> {
     const result = await db.select().from(teamSettings).where(eq(teamSettings.teamId, teamId)).limit(1);
     return result[0];
@@ -1106,6 +2363,8 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+=======
+>>>>>>> origin/main
   // Notification Preferences
   async getNotificationPreferencesByUserId(userId: number): Promise<NotificationPreference | undefined> {
     const result = await db.select().from(notificationPreferences).where(eq(notificationPreferences.userId, userId)).limit(1);
@@ -1225,16 +2484,26 @@ export class DatabaseStorage implements IStorage {
     return q as unknown as Promise<TimesheetEntry[]>;
   }
 
+<<<<<<< HEAD
   async getTimesheetEntriesFiltered(input: { userId?: number; teamId?: number; status?: string; from?: string; to?: string; limit?: number; offset?: number }): Promise<TimesheetEntry[]> {
     const conditions: any[] = [];
     if (typeof input.userId === "number") conditions.push(eq(timesheetEntries.userId, input.userId));
     if (typeof input.teamId === "number") conditions.push(eq(timesheetEntries.teamId, input.teamId));
     if (typeof input.status === "string" && input.status.trim()) conditions.push(eq(timesheetEntries.status, input.status.trim()));
+=======
+  async getTimesheetEntriesFiltered(input: { userId?: number; from?: string; to?: string; limit?: number; offset?: number }): Promise<TimesheetEntry[]> {
+    const conditions: any[] = [];
+    if (typeof input.userId === "number") conditions.push(eq(timesheetEntries.userId, input.userId));
+>>>>>>> origin/main
     if (input.from) conditions.push(gte(timesheetEntries.date, input.from));
     if (input.to) conditions.push(lte(timesheetEntries.date, input.to));
 
     let q: any = db.select().from(timesheetEntries);
     if (conditions.length > 0) q = q.where(and(...conditions));
+<<<<<<< HEAD
+=======
+    q = q.orderBy(desc(timesheetEntries.date), desc(timesheetEntries.id));
+>>>>>>> origin/main
     if (typeof input.limit === "number") q = q.limit(input.limit).offset(input.offset || 0);
     return q as unknown as Promise<TimesheetEntry[]>;
   }
@@ -1290,9 +2559,35 @@ export class DatabaseStorage implements IStorage {
     const open = await this.getOpenTimeClockSession(userId);
     if (!open) return undefined;
 
+<<<<<<< HEAD
     const closedRows = await db
       .update(timeClockSessions)
       .set({ clockOutAt: input.clockOutAt, updatedAt: new Date() } as any)
+=======
+    const msRaw = input.clockOutAt.getTime() - new Date(open.clockInAt as any).getTime();
+    const hoursRaw = msRaw > 0 ? msRaw / 3_600_000 : 0;
+    const flags: string[] = [];
+    let status: string = "draft";
+    let payableHours: number | null = null;
+    let autoClosed = false;
+    let autoClosedReason: string | null = null;
+
+    if (hoursRaw > MAX_TIME_ENTRY_HOURS) {
+      flags.push("duration_over_max");
+      status = "disputed";
+      payableHours = 0;
+      autoClosed = true;
+      autoClosedReason = "duration_over_max";
+    } else if (msRaw > 0 && msRaw < MIN_TIME_ENTRY_MINUTES * 60_000) {
+      flags.push("too_short");
+      status = "disputed";
+      payableHours = 0;
+    }
+
+    const closedRows = await db
+      .update(timeClockSessions)
+      .set({ clockOutAt: input.clockOutAt, updatedAt: new Date(), autoClosed, autoClosedReason } as any)
+>>>>>>> origin/main
       .where(eq(timeClockSessions.id, open.id))
       .returning();
     const session = closedRows[0];
@@ -1321,11 +2616,18 @@ export class DatabaseStorage implements IStorage {
       startTime,
       endTime,
       hours: hours.toFixed(2) as any,
+<<<<<<< HEAD
+=======
+      status: status as any,
+      payableHours: payableHours === null ? null : (Number(payableHours.toFixed(2)) as any),
+      anomalyFlags: flags.length ? (flags as any) : null,
+>>>>>>> origin/main
     } as any);
 
     return { session, entry };
   }
 
+<<<<<<< HEAD
   // Global Activity Logs
   async getGlobalActivityLogs(limit: number = 50, offset: number = 0): Promise<GlobalActivityLog[]> {
     return db.select().from(globalActivityLogs).orderBy(desc(globalActivityLogs.createdAt)).offset(offset).limit(limit);
@@ -1333,6 +2635,256 @@ export class DatabaseStorage implements IStorage {
 
   async createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog> {
     const result = await db.insert(globalActivityLogs).values(log as any).returning();
+=======
+  async getWorkCategories(input?: { includeInactive?: boolean }): Promise<WorkCategory[]> {
+    const includeInactive = !!input?.includeInactive;
+    let q: any = db.select().from(workCategories);
+    if (!includeInactive) q = q.where(eq(workCategories.isActive, true));
+    q = q.orderBy(asc(workCategories.name));
+    return q as unknown as Promise<WorkCategory[]>;
+  }
+
+  async createWorkCategory(input: InsertWorkCategory): Promise<WorkCategory> {
+    const now = new Date();
+    const result = await db.insert(workCategories).values({ ...(input as any), updatedAt: now } as any).returning();
+    return result[0];
+  }
+
+  async updateWorkCategory(id: number, patch: Partial<InsertWorkCategory>): Promise<WorkCategory> {
+    const result = await db.update(workCategories).set({ ...(patch as any), updatedAt: new Date() } as any).where(eq(workCategories.id, id)).returning();
+    return result[0];
+  }
+
+  async listWorkerProfiles(): Promise<WorkerProfile[]> {
+    return db.select().from(workerProfiles).orderBy(asc(workerProfiles.userId)) as unknown as Promise<WorkerProfile[]>;
+  }
+
+  async upsertWorkerProfile(userId: number, patch: Partial<InsertWorkerProfile>): Promise<WorkerProfile> {
+    const now = new Date();
+    const v: any = patch as any;
+    const result = await db
+      .insert(workerProfiles)
+      .values({ userId, ...(patch as any), updatedAt: now } as any)
+      .onConflictDoUpdate({
+        target: [workerProfiles.userId] as any,
+        set: { ...(v as any), updatedAt: now } as any,
+      })
+      .returning();
+    return result[0];
+  }
+
+  async getCategoryRateOverridesByUser(userId: number): Promise<CategoryRateOverride[]> {
+    return db
+      .select()
+      .from(categoryRateOverrides)
+      .where(eq(categoryRateOverrides.userId, userId))
+      .orderBy(asc(categoryRateOverrides.categoryId)) as unknown as Promise<CategoryRateOverride[]>;
+  }
+
+  async upsertCategoryRateOverride(userId: number, categoryId: number, patch: Partial<InsertCategoryRateOverride>): Promise<CategoryRateOverride> {
+    const now = new Date();
+    const v: any = patch as any;
+    const result = await db
+      .insert(categoryRateOverrides)
+      .values({ userId, categoryId, ...(patch as any), updatedAt: now } as any)
+      .onConflictDoUpdate({
+        target: [categoryRateOverrides.userId, categoryRateOverrides.categoryId] as any,
+        set: { ...(v as any), updatedAt: now } as any,
+      })
+      .returning();
+    return result[0];
+  }
+
+  async deleteCategoryRateOverride(userId: number, categoryId: number): Promise<void> {
+    await db.delete(categoryRateOverrides).where(and(eq(categoryRateOverrides.userId, userId), eq(categoryRateOverrides.categoryId, categoryId)));
+  }
+
+  async upsertPayPeriod(input: InsertPayPeriod): Promise<PayPeriod> {
+    const now = new Date();
+    const v: any = input as any;
+    const result = await db
+      .insert(payPeriods)
+      .values({ ...(input as any), updatedAt: now } as any)
+      .onConflictDoUpdate({
+        target: [payPeriods.startDate, payPeriods.endDate] as any,
+        set: { status: v.status as any, createdByUserId: v.createdByUserId as any, updatedAt: now } as any,
+      })
+      .returning();
+    return result[0];
+  }
+
+  async createApprovalEvent(input: InsertApprovalEvent): Promise<ApprovalEvent> {
+    const result = await db.insert(approvalEvents).values(input as any).returning();
+    return result[0];
+  }
+
+  async upsertCommissionEvent(input: InsertCommissionEvent): Promise<CommissionEvent> {
+    const now = new Date();
+    const v: any = input as any;
+    const result = await db
+      .insert(commissionEvents)
+      .values({ ...(input as any), updatedAt: now } as any)
+      .onConflictDoUpdate({
+        target: [commissionEvents.sourceType, commissionEvents.sourceId, commissionEvents.milestone] as any,
+        set: { eventDate: v.eventDate as any, grossAmount: v.grossAmount as any, currency: v.currency as any, metadata: v.metadata as any, updatedAt: now } as any,
+      })
+      .returning();
+    return result[0];
+  }
+
+  async listCommissionEvents(input: { from?: Date; to?: Date; sourceType?: string; sourceId?: number; limit?: number; offset?: number }): Promise<CommissionEvent[]> {
+    const whereParts: any[] = [];
+    if (input.sourceType) whereParts.push(eq(commissionEvents.sourceType, input.sourceType));
+    if (typeof input.sourceId === "number") whereParts.push(eq(commissionEvents.sourceId, input.sourceId));
+    if (input.from) whereParts.push(gte(commissionEvents.eventDate as any, input.from as any));
+    if (input.to) whereParts.push(lte(commissionEvents.eventDate as any, input.to as any));
+    let q: any = db.select().from(commissionEvents);
+    if (whereParts.length) q = q.where(and(...whereParts));
+    q = q.orderBy(desc(commissionEvents.eventDate), desc(commissionEvents.id));
+    if (typeof input.limit === "number") q = q.limit(input.limit).offset(input.offset || 0);
+    return q as unknown as Promise<CommissionEvent[]>;
+  }
+
+  async listDealParticipants(input: { sourceType: string; sourceId: number }): Promise<DealParticipant[]> {
+    return db
+      .select()
+      .from(dealParticipants)
+      .where(and(eq(dealParticipants.sourceType, input.sourceType), eq(dealParticipants.sourceId, input.sourceId)))
+      .orderBy(asc(dealParticipants.id)) as unknown as Promise<DealParticipant[]>;
+  }
+
+  async upsertDealParticipant(input: InsertDealParticipant): Promise<DealParticipant> {
+    const now = new Date();
+    const v: any = input as any;
+    const result = await db
+      .insert(dealParticipants)
+      .values({ ...(input as any), updatedAt: now } as any)
+      .onConflictDoUpdate({
+        target: [dealParticipants.sourceType, dealParticipants.sourceId, dealParticipants.userId, dealParticipants.role] as any,
+        set: { splitPct: v.splitPct as any, updatedAt: now } as any,
+      })
+      .returning();
+    return result[0];
+  }
+
+  async deleteDealParticipant(id: number): Promise<void> {
+    await db.delete(dealParticipants).where(eq(dealParticipants.id, id));
+  }
+
+  async listCommissionLedgerEntries(input: { userId?: number; status?: string; eventId?: number; limit?: number; offset?: number }): Promise<CommissionLedgerEntry[]> {
+    const whereParts: any[] = [];
+    if (typeof input.userId === "number") whereParts.push(eq(commissionLedgerEntries.userId, input.userId));
+    if (typeof input.eventId === "number") whereParts.push(eq(commissionLedgerEntries.eventId, input.eventId));
+    if (input.status) whereParts.push(eq(commissionLedgerEntries.status, input.status));
+    let q: any = db.select().from(commissionLedgerEntries);
+    if (whereParts.length) q = q.where(and(...whereParts));
+    q = q.orderBy(desc(commissionLedgerEntries.updatedAt), desc(commissionLedgerEntries.id));
+    if (typeof input.limit === "number") q = q.limit(input.limit).offset(input.offset || 0);
+    return q as unknown as Promise<CommissionLedgerEntry[]>;
+  }
+
+  async upsertCommissionLedgerEntry(input: InsertCommissionLedgerEntry): Promise<CommissionLedgerEntry> {
+    const now = new Date();
+    const v: any = input as any;
+    const result = await db
+      .insert(commissionLedgerEntries)
+      .values({ ...(input as any), updatedAt: now } as any)
+      .onConflictDoUpdate({
+        target: [commissionLedgerEntries.eventId, commissionLedgerEntries.userId] as any,
+        set: { amount: v.amount as any, status: v.status as any, ruleSnapshot: v.ruleSnapshot as any, updatedAt: now } as any,
+      })
+      .returning();
+    return result[0];
+  }
+
+  async updateCommissionLedgerEntry(id: number, patch: Partial<InsertCommissionLedgerEntry>): Promise<CommissionLedgerEntry> {
+    const result = await db
+      .update(commissionLedgerEntries)
+      .set({ ...(patch as any), updatedAt: new Date() } as any)
+      .where(eq(commissionLedgerEntries.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getPayrollSummary(input: { from: string; to: string; userId?: number }): Promise<any> {
+    const conditions: any[] = [gte(timesheetEntries.date, input.from), lte(timesheetEntries.date, input.to)];
+    if (typeof input.userId === "number") conditions.push(eq(timesheetEntries.userId, input.userId));
+    const entries: any[] = await db.select().from(timesheetEntries).where(and(...conditions));
+    const profiles: any[] = await db.select().from(workerProfiles);
+    const overrides: any[] = await db.select().from(categoryRateOverrides);
+    const categories: any[] = await db.select().from(workCategories);
+
+    const profileByUserId = new Map<number, any>();
+    for (const p of profiles) profileByUserId.set(p.userId, p);
+
+    const overrideByUserCategory = new Map<string, any>();
+    for (const o of overrides) overrideByUserCategory.set(`${o.userId}:${o.categoryId}`, o);
+
+    const categoryById = new Map<number, any>();
+    for (const c of categories) categoryById.set(c.id, c);
+
+    const agg = new Map<number, any>();
+    for (const e of entries) {
+      const uid = Number(e.userId);
+      if (!agg.has(uid)) {
+        agg.set(uid, {
+          userId: uid,
+          trackedHours: 0,
+          payableHours: 0,
+          approvedPayableHours: 0,
+          hourlyAmount: 0,
+          hourlyApprovedAmount: 0,
+          disputedHours: 0,
+          pendingHours: 0,
+        });
+      }
+      const row = agg.get(uid);
+      const tracked = Number.parseFloat(String(e.hours || 0));
+      const payable = e.payableHours === null || typeof e.payableHours === "undefined" ? tracked : Number.parseFloat(String(e.payableHours || 0));
+      const status = String(e.status || "draft");
+      row.trackedHours += tracked;
+      row.payableHours += payable;
+      if (status === "approved" || status === "paid") row.approvedPayableHours += payable;
+      if (status === "disputed") row.disputedHours += payable;
+      if (status === "submitted" || status === "draft") row.pendingHours += payable;
+
+      const profile = profileByUserId.get(uid);
+      const payType = String(profile?.payType || "hourly");
+      const baseRate = profile?.defaultHourlyRate !== null && typeof profile?.defaultHourlyRate !== "undefined"
+        ? Number.parseFloat(String(profile.defaultHourlyRate))
+        : null;
+      const categoryId = e.categoryId ? Number(e.categoryId) : null;
+      const override = categoryId ? overrideByUserCategory.get(`${uid}:${categoryId}`) : null;
+      const category = categoryId ? categoryById.get(categoryId) : null;
+      const categoryRate = override?.hourlyRate !== null && typeof override?.hourlyRate !== "undefined"
+        ? Number.parseFloat(String(override.hourlyRate))
+        : category?.defaultHourlyRate !== null && typeof category?.defaultHourlyRate !== "undefined"
+          ? Number.parseFloat(String(category.defaultHourlyRate))
+          : null;
+      const rate = categoryRate !== null && typeof categoryRate !== "undefined" ? categoryRate : baseRate;
+      const payoutRate = payType === "salary_shadow" || payType === "commission" ? 0 : (rate || 0);
+      const amt = payable * payoutRate;
+      row.hourlyAmount += amt;
+      if (status === "approved" || status === "paid") row.hourlyApprovedAmount += amt;
+    }
+
+    return {
+      from: input.from,
+      to: input.to,
+      rows: Array.from(agg.values()).sort((a, b) => a.userId - b.userId),
+    };
+  }
+
+  // Global Activity Logs
+  async getGlobalActivityLogs(limit: number = 50, offset: number = 0): Promise<GlobalActivityLog[]> {
+    const rows = await db.select().from(globalActivityLogs).orderBy(desc(globalActivityLogs.createdAt)).offset(offset).limit(limit);
+    return rows.map((r: any) => ({ ...r, action: normalizeGlobalActivityAction(r.action) })) as any;
+  }
+
+  async createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog> {
+    const normalized = { ...(log as any), action: normalizeGlobalActivityAction((log as any).action) };
+    const result = await db.insert(globalActivityLogs).values(normalized).returning();
+>>>>>>> origin/main
     return result[0];
   }
 
@@ -1382,6 +2934,7 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+<<<<<<< HEAD
   async getPipelineConfigByTeam(teamId: number, entityType: string): Promise<PipelineConfig | undefined> {
     const result = await db
       .select()
@@ -1391,6 +2944,8 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+=======
+>>>>>>> origin/main
   async upsertPipelineConfig(userId: number, entityType: string, columns: string): Promise<PipelineConfig> {
     const existing = await this.getPipelineConfig(userId, entityType);
     if (existing) {
@@ -1401,6 +2956,7 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+<<<<<<< HEAD
   async upsertPipelineConfigByTeam(teamId: number, userId: number, entityType: string, columns: string): Promise<PipelineConfig> {
     const existing = await this.getPipelineConfigByTeam(teamId, entityType);
     if (existing) {
@@ -1418,6 +2974,8 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+=======
+>>>>>>> origin/main
   async getUnderwritingTemplates(userId: number): Promise<UnderwritingTemplate[]> {
     return db.select().from(underwritingTemplates).where(eq(underwritingTemplates.userId, userId)).orderBy(desc(underwritingTemplates.updatedAt));
   }
@@ -1697,6 +3255,509 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+<<<<<<< HEAD
+=======
+  async listXpExperiences(input?: { activeOnly?: boolean }): Promise<XpExperience[]> {
+    const activeOnly = !!input?.activeOnly;
+    let q: any = db.select().from(xpExperiences);
+    if (activeOnly) q = q.where(eq(xpExperiences.active, true));
+    q = q.orderBy(asc(xpExperiences.title));
+    return q as unknown as Promise<XpExperience[]>;
+  }
+
+  async getXpExperienceBySlug(slug: string): Promise<XpExperience | undefined> {
+    const s = String(slug || "").trim();
+    if (!s) return undefined;
+    const result = await db.select().from(xpExperiences).where(eq(xpExperiences.slug, s)).limit(1);
+    return result[0];
+  }
+
+  async getXpExperienceById(id: number): Promise<XpExperience | undefined> {
+    const result = await db.select().from(xpExperiences).where(eq(xpExperiences.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createXpExperience(input: InsertXpExperience): Promise<XpExperience> {
+    const now = new Date();
+    const result = await db.insert(xpExperiences).values({ ...(input as any), createdAt: now, updatedAt: now } as any).returning();
+    return result[0];
+  }
+
+  async updateXpExperience(id: number, patch: Partial<InsertXpExperience>): Promise<XpExperience> {
+    const result = await db.update(xpExperiences).set({ ...(patch as any), updatedAt: new Date() } as any).where(eq(xpExperiences.id, id)).returning();
+    return result[0];
+  }
+
+  async deactivateXpExperience(id: number): Promise<XpExperience> {
+    const result = await db.update(xpExperiences).set({ active: false, updatedAt: new Date() } as any).where(eq(xpExperiences.id, id)).returning();
+    return result[0];
+  }
+
+  async listXpTimeSlots(experienceId: number, input?: { from?: Date; to?: Date; activeOnly?: boolean }): Promise<XpTimeSlot[]> {
+    const whereParts: any[] = [eq(xpTimeSlots.experienceId, experienceId)];
+    const activeOnly = input?.activeOnly !== false;
+    if (activeOnly) whereParts.push(eq(xpTimeSlots.active, true));
+    if (input?.from) whereParts.push(gte(xpTimeSlots.startAt, input.from));
+    if (input?.to) whereParts.push(lte(xpTimeSlots.startAt, input.to));
+    let q: any = db.select().from(xpTimeSlots).where(and(...whereParts)).orderBy(asc(xpTimeSlots.startAt));
+    return q as unknown as Promise<XpTimeSlot[]>;
+  }
+
+  async getXpTimeSlotById(id: number): Promise<XpTimeSlot | undefined> {
+    const result = await db.select().from(xpTimeSlots).where(eq(xpTimeSlots.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createXpTimeSlot(input: InsertXpTimeSlot): Promise<XpTimeSlot> {
+    const now = new Date();
+    const result = await db.insert(xpTimeSlots).values({ ...(input as any), createdAt: now, updatedAt: now } as any).returning();
+    return result[0];
+  }
+
+  async deleteXpTimeSlot(id: number): Promise<void> {
+    await db.delete(xpTimeSlots).where(eq(xpTimeSlots.id, id));
+  }
+
+  async listXpBlackouts(experienceId: number, input?: { from?: Date; to?: Date }): Promise<XpBlackout[]> {
+    const whereParts: any[] = [eq(xpBlackouts.experienceId, experienceId)];
+    if (input?.from && input?.to) {
+      whereParts.push(sql`${xpBlackouts.startAt} < ${input.to} AND ${xpBlackouts.endAt} > ${input.from}`);
+    } else if (input?.from) {
+      whereParts.push(sql`${xpBlackouts.endAt} > ${input.from}`);
+    } else if (input?.to) {
+      whereParts.push(sql`${xpBlackouts.startAt} < ${input.to}`);
+    }
+    const q: any = db.select().from(xpBlackouts).where(and(...whereParts)).orderBy(asc(xpBlackouts.startAt));
+    return q as unknown as Promise<XpBlackout[]>;
+  }
+
+  async createXpBlackout(input: InsertXpBlackout): Promise<XpBlackout> {
+    const now = new Date();
+    const result = await db.insert(xpBlackouts).values({ ...(input as any), createdAt: now, updatedAt: now } as any).returning();
+    return result[0];
+  }
+
+  async deleteXpBlackout(id: number): Promise<void> {
+    await db.delete(xpBlackouts).where(eq(xpBlackouts.id, id));
+  }
+
+  async listXpLocations(input?: { activeOnly?: boolean }): Promise<XpLocation[]> {
+    const whereParts: any[] = [];
+    if (input?.activeOnly) whereParts.push(eq(xpLocations.active, true));
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+    let q: any = db.select().from(xpLocations);
+    if (whereClause) q = q.where(whereClause);
+    q = q.orderBy(asc(xpLocations.name));
+    return q as unknown as Promise<XpLocation[]>;
+  }
+
+  async createXpLocation(input: InsertXpLocation): Promise<XpLocation> {
+    const now = new Date();
+    const result = await db.insert(xpLocations).values({ ...(input as any), createdAt: now, updatedAt: now } as any).returning();
+    return result[0];
+  }
+
+  async updateXpLocation(id: number, patch: Partial<InsertXpLocation>): Promise<XpLocation> {
+    const result = await db.update(xpLocations).set({ ...(patch as any), updatedAt: new Date() } as any).where(eq(xpLocations.id, id)).returning();
+    return result[0];
+  }
+
+  async deactivateXpLocation(id: number): Promise<XpLocation> {
+    const result = await db.update(xpLocations).set({ active: false, updatedAt: new Date() } as any).where(eq(xpLocations.id, id)).returning();
+    return result[0];
+  }
+
+  async listXpVehicles(input?: { activeOnly?: boolean; locationId?: number }): Promise<XpVehicle[]> {
+    const whereParts: any[] = [];
+    if (input?.activeOnly) whereParts.push(eq(xpVehicles.active, true));
+    if (typeof input?.locationId === "number") whereParts.push(eq(xpVehicles.locationId, input.locationId));
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+    let q: any = db.select().from(xpVehicles);
+    if (whereClause) q = q.where(whereClause);
+    q = q.orderBy(asc(xpVehicles.name));
+    return q as unknown as Promise<XpVehicle[]>;
+  }
+
+  async createXpVehicle(input: InsertXpVehicle): Promise<XpVehicle> {
+    const now = new Date();
+    const result = await db.insert(xpVehicles).values({ ...(input as any), createdAt: now, updatedAt: now } as any).returning();
+    return result[0];
+  }
+
+  async updateXpVehicle(id: number, patch: Partial<InsertXpVehicle>): Promise<XpVehicle> {
+    const result = await db.update(xpVehicles).set({ ...(patch as any), updatedAt: new Date() } as any).where(eq(xpVehicles.id, id)).returning();
+    return result[0];
+  }
+
+  async deactivateXpVehicle(id: number): Promise<XpVehicle> {
+    const result = await db.update(xpVehicles).set({ active: false, updatedAt: new Date() } as any).where(eq(xpVehicles.id, id)).returning();
+    return result[0];
+  }
+
+  async listXpConciergeUsers(): Promise<User[]> {
+    const q: any = db.select().from(users).where(and(eq(users.isActive, true), eq(users.role, "concierge"))).orderBy(asc(users.firstName));
+    return q as unknown as Promise<User[]>;
+  }
+
+  async upsertXpBookingAssignment(input: { bookingId: number; locationId?: number | null; vehicleId?: number | null; conciergeUserId?: number | null }): Promise<XpBookingAssignment> {
+    const bookingId = Number(input.bookingId);
+    if (!Number.isFinite(bookingId)) throw new Error("Invalid bookingId");
+    const existing = await db.select().from(xpBookingAssignments).where(eq(xpBookingAssignments.bookingId, bookingId)).limit(1);
+    const now = new Date();
+    const values: any = {
+      bookingId,
+      locationId: input.locationId ?? null,
+      vehicleId: input.vehicleId ?? null,
+      conciergeUserId: input.conciergeUserId ?? null,
+      assignedAt: input.conciergeUserId ? now : null,
+      updatedAt: now,
+    };
+    if (existing[0]) {
+      const result = await db
+        .update(xpBookingAssignments)
+        .set(values)
+        .where(eq(xpBookingAssignments.bookingId, bookingId))
+        .returning();
+      return result[0];
+    }
+    const result = await db.insert(xpBookingAssignments).values(values).returning();
+    return result[0];
+  }
+
+  async listXpBookingNotes(bookingId: number): Promise<Array<XpBookingNote & { author?: { id: number; email: string; firstName?: string | null; lastName?: string | null } | null }>> {
+    const id = Number(bookingId);
+    if (!Number.isFinite(id)) return [];
+    const rows: any = await db
+      .select({
+        id: xpBookingNotes.id,
+        bookingId: xpBookingNotes.bookingId,
+        authorUserId: xpBookingNotes.authorUserId,
+        body: xpBookingNotes.body,
+        createdAt: xpBookingNotes.createdAt,
+        authorId: users.id,
+        authorEmail: users.email,
+        authorFirstName: users.firstName,
+        authorLastName: users.lastName,
+      })
+      .from(xpBookingNotes)
+      .leftJoin(users, eq(users.id, xpBookingNotes.authorUserId))
+      .where(eq(xpBookingNotes.bookingId, id))
+      .orderBy(desc(xpBookingNotes.createdAt));
+    return rows.map((r: any) => ({
+      id: r.id,
+      bookingId: r.bookingId,
+      authorUserId: r.authorUserId,
+      body: r.body,
+      createdAt: r.createdAt,
+      author: r.authorId
+        ? { id: r.authorId, email: r.authorEmail, firstName: r.authorFirstName, lastName: r.authorLastName }
+        : null,
+    }));
+  }
+
+  async createXpBookingNote(input: InsertXpBookingNote): Promise<XpBookingNote> {
+    const result = await db.insert(xpBookingNotes).values(input as any).returning();
+    return result[0];
+  }
+
+  async listXpBookings(input?: {
+    experienceId?: number;
+    status?: string;
+    kind?: string;
+    from?: Date;
+    to?: Date;
+    conciergeUserId?: number;
+    locationId?: number;
+    vehicleId?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{
+    items: Array<
+      XpBooking & {
+        assignment?: {
+          locationId: number | null;
+          locationName: string | null;
+          vehicleId: number | null;
+          vehicleName: string | null;
+          conciergeUserId: number | null;
+          conciergeName: string | null;
+          conciergeEmail: string | null;
+          assignedAt: Date | null;
+        } | null;
+      }
+    >;
+    total: number;
+  }> {
+    const limit = typeof input?.limit === "number" ? input.limit : 50;
+    const offset = typeof input?.offset === "number" ? input.offset : 0;
+
+    const whereParts: any[] = [];
+    if (typeof input?.experienceId === "number") whereParts.push(eq(xpBookings.experienceId, input.experienceId));
+    if (input?.status) whereParts.push(eq(xpBookings.status, input.status));
+    if (input?.kind) whereParts.push(eq(xpBookings.kind, input.kind));
+    if (input?.from && input?.to) whereParts.push(sql`${xpBookings.startAt} < ${input.to} AND ${xpBookings.endAt} > ${input.from}`);
+    if (typeof input?.conciergeUserId === "number") whereParts.push(eq(xpBookingAssignments.conciergeUserId, input.conciergeUserId));
+    if (typeof input?.locationId === "number") whereParts.push(eq(xpBookingAssignments.locationId, input.locationId));
+    if (typeof input?.vehicleId === "number") whereParts.push(eq(xpBookingAssignments.vehicleId, input.vehicleId));
+
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;
+
+    const rows: any = await db
+      .select({
+        id: xpBookings.id,
+        experienceId: xpBookings.experienceId,
+        kind: xpBookings.kind,
+        customerName: xpBookings.customerName,
+        customerEmail: xpBookings.customerEmail,
+        customerPhone: xpBookings.customerPhone,
+        startAt: xpBookings.startAt,
+        endAt: xpBookings.endAt,
+        status: xpBookings.status,
+        currency: xpBookings.currency,
+        depositAmount: xpBookings.depositAmount,
+        stripeCheckoutSessionId: xpBookings.stripeCheckoutSessionId,
+        stripePaymentIntentId: xpBookings.stripePaymentIntentId,
+        stripeCustomerId: xpBookings.stripeCustomerId,
+        createdAt: xpBookings.createdAt,
+        updatedAt: xpBookings.updatedAt,
+        assignmentLocationId: xpBookingAssignments.locationId,
+        assignmentVehicleId: xpBookingAssignments.vehicleId,
+        assignmentConciergeUserId: xpBookingAssignments.conciergeUserId,
+        assignmentAssignedAt: xpBookingAssignments.assignedAt,
+        locationName: xpLocations.name,
+        vehicleName: xpVehicles.name,
+        conciergeId: users.id,
+        conciergeEmail: users.email,
+        conciergeFirstName: users.firstName,
+        conciergeLastName: users.lastName,
+      })
+      .from(xpBookings)
+      .leftJoin(xpBookingAssignments, eq(xpBookingAssignments.bookingId, xpBookings.id))
+      .leftJoin(xpLocations, eq(xpLocations.id, xpBookingAssignments.locationId))
+      .leftJoin(xpVehicles, eq(xpVehicles.id, xpBookingAssignments.vehicleId))
+      .leftJoin(users, eq(users.id, xpBookingAssignments.conciergeUserId))
+      .where(whereClause)
+      .orderBy(desc(xpBookings.createdAt))
+      .limit(limit)
+      .offset(offset);
+
+    const totalRes: any = await db
+      .select({ c: sql`count(*)` })
+      .from(xpBookings)
+      .leftJoin(xpBookingAssignments, eq(xpBookingAssignments.bookingId, xpBookings.id))
+      .where(whereClause);
+    const total = Number(totalRes?.[0]?.c || 0);
+
+    const items = rows.map((r: any) => ({
+      id: r.id,
+      experienceId: r.experienceId,
+      kind: r.kind,
+      customerName: r.customerName,
+      customerEmail: r.customerEmail,
+      customerPhone: r.customerPhone,
+      startAt: r.startAt,
+      endAt: r.endAt,
+      status: r.status,
+      currency: r.currency,
+      depositAmount: r.depositAmount,
+      stripeCheckoutSessionId: r.stripeCheckoutSessionId,
+      stripePaymentIntentId: r.stripePaymentIntentId,
+      stripeCustomerId: r.stripeCustomerId,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      assignment:
+        r.assignmentLocationId || r.assignmentVehicleId || r.assignmentConciergeUserId
+          ? {
+              locationId: r.assignmentLocationId ?? null,
+              locationName: r.locationName ?? null,
+              vehicleId: r.assignmentVehicleId ?? null,
+              vehicleName: r.vehicleName ?? null,
+              conciergeUserId: r.assignmentConciergeUserId ?? null,
+              conciergeName: r.conciergeId ? [r.conciergeFirstName, r.conciergeLastName].filter(Boolean).join(" ") || null : null,
+              conciergeEmail: r.conciergeEmail ?? null,
+              assignedAt: r.assignmentAssignedAt ?? null,
+            }
+          : null,
+    }));
+
+    return { items, total };
+  }
+
+  async getXpBookingById(
+    id: number,
+  ): Promise<
+    | (XpBooking & {
+        assignment?: {
+          locationId: number | null;
+          locationName: string | null;
+          vehicleId: number | null;
+          vehicleName: string | null;
+          conciergeUserId: number | null;
+          conciergeName: string | null;
+          conciergeEmail: string | null;
+          assignedAt: Date | null;
+        } | null;
+        notes?: Array<XpBookingNote & { author?: { id: number; email: string; firstName?: string | null; lastName?: string | null } | null }>;
+      })
+    | undefined
+  > {
+    const rows: any = await db
+      .select({
+        id: xpBookings.id,
+        experienceId: xpBookings.experienceId,
+        kind: xpBookings.kind,
+        customerName: xpBookings.customerName,
+        customerEmail: xpBookings.customerEmail,
+        customerPhone: xpBookings.customerPhone,
+        startAt: xpBookings.startAt,
+        endAt: xpBookings.endAt,
+        status: xpBookings.status,
+        currency: xpBookings.currency,
+        depositAmount: xpBookings.depositAmount,
+        stripeCheckoutSessionId: xpBookings.stripeCheckoutSessionId,
+        stripePaymentIntentId: xpBookings.stripePaymentIntentId,
+        stripeCustomerId: xpBookings.stripeCustomerId,
+        createdAt: xpBookings.createdAt,
+        updatedAt: xpBookings.updatedAt,
+        assignmentLocationId: xpBookingAssignments.locationId,
+        assignmentVehicleId: xpBookingAssignments.vehicleId,
+        assignmentConciergeUserId: xpBookingAssignments.conciergeUserId,
+        assignmentAssignedAt: xpBookingAssignments.assignedAt,
+        locationId: xpLocations.id,
+        locationName: xpLocations.name,
+        vehicleId: xpVehicles.id,
+        vehicleName: xpVehicles.name,
+        conciergeId: users.id,
+        conciergeEmail: users.email,
+        conciergeFirstName: users.firstName,
+        conciergeLastName: users.lastName,
+      })
+      .from(xpBookings)
+      .leftJoin(xpBookingAssignments, eq(xpBookingAssignments.bookingId, xpBookings.id))
+      .leftJoin(xpLocations, eq(xpLocations.id, xpBookingAssignments.locationId))
+      .leftJoin(xpVehicles, eq(xpVehicles.id, xpBookingAssignments.vehicleId))
+      .leftJoin(users, eq(users.id, xpBookingAssignments.conciergeUserId))
+      .where(eq(xpBookings.id, id))
+      .limit(1);
+    const r = rows[0];
+    if (!r) return undefined;
+    const notes = await this.listXpBookingNotes(id);
+    return {
+      id: r.id,
+      experienceId: r.experienceId,
+      kind: r.kind,
+      customerName: r.customerName,
+      customerEmail: r.customerEmail,
+      customerPhone: r.customerPhone,
+      startAt: r.startAt,
+      endAt: r.endAt,
+      status: r.status,
+      currency: r.currency,
+      depositAmount: r.depositAmount,
+      stripeCheckoutSessionId: r.stripeCheckoutSessionId,
+      stripePaymentIntentId: r.stripePaymentIntentId,
+      stripeCustomerId: r.stripeCustomerId,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
+      assignment:
+        r.assignmentLocationId || r.assignmentVehicleId || r.assignmentConciergeUserId
+          ? {
+              locationId: r.assignmentLocationId ?? null,
+              locationName: r.locationName ?? null,
+              vehicleId: r.assignmentVehicleId ?? null,
+              vehicleName: r.vehicleName ?? null,
+              conciergeUserId: r.assignmentConciergeUserId ?? null,
+              conciergeName: r.conciergeId ? [r.conciergeFirstName, r.conciergeLastName].filter(Boolean).join(" ") || null : null,
+              conciergeEmail: r.conciergeEmail ?? null,
+              assignedAt: r.assignmentAssignedAt ?? null,
+            }
+          : null,
+      notes,
+    } as any;
+  }
+
+  async createXpBookingPending(input: InsertXpBooking): Promise<XpBooking> {
+    const now = new Date();
+    const result = await db.insert(xpBookings).values({ ...(input as any), createdAt: now, updatedAt: now } as any).returning();
+    return result[0];
+  }
+
+  async updateXpBookingStripeSession(id: number, stripeCheckoutSessionId: string): Promise<XpBooking | undefined> {
+    const sessionId = String(stripeCheckoutSessionId || "").trim();
+    if (!sessionId) return undefined;
+    const result = await db
+      .update(xpBookings)
+      .set({ stripeCheckoutSessionId: sessionId, updatedAt: new Date() } as any)
+      .where(eq(xpBookings.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getXpBookingByStripeSessionId(sessionId: string): Promise<XpBooking | undefined> {
+    const s = String(sessionId || "").trim();
+    if (!s) return undefined;
+    const result = await db.select().from(xpBookings).where(eq(xpBookings.stripeCheckoutSessionId, s)).limit(1);
+    return result[0];
+  }
+
+  async confirmXpBookingByStripeSessionId(input: { sessionId: string; paymentIntentId?: string | null; stripeCustomerId?: string | null }): Promise<XpBooking | undefined> {
+    const s = String(input.sessionId || "").trim();
+    if (!s) return undefined;
+    const result = await db
+      .update(xpBookings)
+      .set({
+        status: "confirmed",
+        stripePaymentIntentId: input.paymentIntentId ?? null,
+        stripeCustomerId: input.stripeCustomerId ?? null,
+        updatedAt: new Date(),
+      } as any)
+      .where(eq(xpBookings.stripeCheckoutSessionId, s))
+      .returning();
+    return result[0];
+  }
+
+  async cancelXpBooking(id: number): Promise<XpBooking | undefined> {
+    const result = await db.update(xpBookings).set({ status: "cancelled", updatedAt: new Date() } as any).where(eq(xpBookings.id, id)).returning();
+    return result[0];
+  }
+
+  async hasStripeEvent(eventId: string): Promise<boolean> {
+    const e = String(eventId || "").trim();
+    if (!e) return false;
+    const result = await db.select().from(xpStripeEvents).where(eq(xpStripeEvents.eventId, e)).limit(1);
+    return !!result[0];
+  }
+
+  async recordStripeEvent(input: InsertXpStripeEvent): Promise<XpStripeEvent> {
+    const result = await db.insert(xpStripeEvents).values(input as any).returning();
+    return result[0];
+  }
+
+  async countXpActiveBookingsOverlapping(input: { experienceId: number; kind: string; startAt: Date; endAt: Date }): Promise<number> {
+    const rows: any = await db.execute(sql`
+      SELECT COUNT(*)::int AS c
+      FROM xp_bookings
+      WHERE experience_id = ${input.experienceId}
+        AND kind = ${input.kind}
+        AND status IN ('pending_payment', 'confirmed')
+        AND start_at < ${input.endAt}
+        AND end_at > ${input.startAt}
+    `);
+    return Number((rows as any).rows?.[0]?.c || 0);
+  }
+
+  async hasXpBlackoutOverlap(input: { experienceId: number; startAt: Date; endAt: Date }): Promise<boolean> {
+    const rows: any = await db.execute(sql`
+      SELECT COUNT(*)::int AS c
+      FROM xp_blackouts
+      WHERE experience_id = ${input.experienceId}
+        AND start_at < ${input.endAt}
+        AND end_at > ${input.startAt}
+    `);
+    return Number((rows as any).rows?.[0]?.c || 0) > 0;
+  }
+
+>>>>>>> origin/main
   async getTelephonyAnalyticsSummary(userId: number, startDate: Date): Promise<{ total: number; answered: number; missed: number; failed: number; talkSeconds: number }> {
     const rows: any = await db.execute(sql`
       SELECT

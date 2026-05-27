@@ -1,10 +1,21 @@
 import { useState } from 'react';
 import { useLocation } from 'wouter';
 import { useAuth } from '@/contexts/AuthContext';
+<<<<<<< HEAD
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+=======
+import { AuthApiError } from '@/lib/authApiError';
+import { getAuth503Guidance } from '@/lib/auth503Guidance';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { PasswordInput } from '@/components/ui/password-input';
+>>>>>>> origin/main
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -19,12 +30,17 @@ export default function Signup() {
   const [employeeCode, setEmployeeCode] = useState('');
   const [teamInviteCode, setTeamInviteCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+<<<<<<< HEAD
 
   const VALID_EMPLOYEE_CODE = "3911";
+=======
+  const [apiError, setApiError] = useState<AuthApiError | null>(null);
+>>>>>>> origin/main
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+<<<<<<< HEAD
 
     try {
       // Validate employee code
@@ -34,6 +50,11 @@ export default function Signup() {
         return;
       }
 
+=======
+    setApiError(null);
+
+    try {
+>>>>>>> origin/main
       // Validate passwords match
       if (password !== confirmPassword) {
         toast.error('Passwords do not match');
@@ -52,12 +73,25 @@ export default function Signup() {
       toast.success('Account created! Redirecting...');
       setTimeout(() => setLocation('/'), 500);
     } catch (error: any) {
+<<<<<<< HEAD
       toast.error(error.message || 'Signup failed');
+=======
+      if (error instanceof AuthApiError && error.status === 503 && getAuth503Guidance(error.code, error.missing)) {
+        setApiError(error);
+      } else {
+        toast.error(error.message || 'Signup failed');
+      }
+>>>>>>> origin/main
     } finally {
       setIsLoading(false);
     }
   };
 
+<<<<<<< HEAD
+=======
+  const guidance = apiError ? getAuth503Guidance(apiError.code, apiError.missing) : null;
+
+>>>>>>> origin/main
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted/20 p-4">
       <Card className="w-full max-w-md">
@@ -75,6 +109,28 @@ export default function Signup() {
           </CardDescription>
         </CardHeader>
         <CardContent>
+<<<<<<< HEAD
+=======
+          {apiError && guidance && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertTitle>{guidance.title}</AlertTitle>
+              <AlertDescription className="space-y-2">
+                <p>{guidance.description}</p>
+                {guidance.steps?.length ? (
+                  <ul className="list-disc ml-5 space-y-1">
+                    {guidance.steps.map((s) => (
+                      <li key={s}>{s}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                <div className="text-xs text-muted-foreground space-y-1">
+                  {apiError.code ? <p>Code: {apiError.code}</p> : null}
+                  {apiError.requestId ? <p>Request ID: {apiError.requestId}</p> : null}
+                </div>
+              </AlertDescription>
+            </Alert>
+          )}
+>>>>>>> origin/main
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
@@ -121,9 +177,14 @@ export default function Signup() {
 
             <div className="space-y-2">
               <Label htmlFor="employeeCode">Employee Code</Label>
+<<<<<<< HEAD
               <Input
                 id="employeeCode"
                 type="password"
+=======
+              <PasswordInput
+                id="employeeCode"
+>>>>>>> origin/main
                 placeholder="Enter your employee code"
                 value={employeeCode}
                 onChange={(e) => setEmployeeCode(e.target.value)}
@@ -151,9 +212,14 @@ export default function Signup() {
 
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
+<<<<<<< HEAD
               <Input
                 id="password"
                 type="password"
+=======
+              <PasswordInput
+                id="password"
+>>>>>>> origin/main
                 placeholder="Enter your password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -165,9 +231,14 @@ export default function Signup() {
 
             <div className="space-y-2">
               <Label htmlFor="confirmPassword">Confirm Password</Label>
+<<<<<<< HEAD
               <Input
                 id="confirmPassword"
                 type="password"
+=======
+              <PasswordInput
+                id="confirmPassword"
+>>>>>>> origin/main
                 placeholder="Confirm your password"
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}

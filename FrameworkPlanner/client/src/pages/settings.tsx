@@ -1,7 +1,10 @@
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+<<<<<<< HEAD
 import { Checkbox } from "@/components/ui/checkbox";
+=======
+>>>>>>> origin/main
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
@@ -13,7 +16,10 @@ import { toast } from "sonner";
 import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock, ImageIcon, Camera, Upload, X, Trash2, Server, Database, Phone, Bot } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+<<<<<<< HEAD
 import { CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+=======
+>>>>>>> origin/main
 import { useAuth } from "@/contexts/AuthContext";
 import { runSignalWireDiagnostics } from "@/debug/signalwireDiag";
 import { useLocation } from "wouter";
@@ -87,6 +93,7 @@ function SettingsContent() {
 
   const teamLoading = myTeamsLoading || activeTeamLoading || teamMembersLoading || teamActivityLoading;
 
+<<<<<<< HEAD
   const { data: teamSettingsResp, isLoading: teamSettingsLoading } = useQuery<any>({
     queryKey: ["/api/teams", activeTeamId, "settings"],
     enabled: !!activeTeamId,
@@ -177,6 +184,8 @@ function SettingsContent() {
     }
   }, [teamSettingsResp]);
 
+=======
+>>>>>>> origin/main
   // Fetch goals
   const { data: goals = [], isLoading: goalsLoading } = useQuery<any[]>({
     queryKey: [`/api/users/${user!.id}/goals`],
@@ -287,6 +296,18 @@ function SettingsContent() {
     },
   });
 
+<<<<<<< HEAD
+=======
+  const { data: skipTraceConfig, refetch: refetchSkipTraceConfig, isFetching: skipTraceFetching } = useQuery<any>({
+    queryKey: ["/api/skip-trace/config"],
+    queryFn: async () => {
+      const res = await fetch("/api/skip-trace/config", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch skip trace config");
+      return res.json();
+    },
+  });
+
+>>>>>>> origin/main
   // Update user mutation
   const updateUserMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -379,6 +400,7 @@ function SettingsContent() {
   const myTeamRole = String(myMembership?.role || "").toLowerCase();
   const canManageTeam = Boolean(user?.isSuperAdmin) || myTeamRole === "owner" || myTeamRole === "admin";
 
+<<<<<<< HEAD
   const patchTeamSettingsMutation = useMutation({
     mutationFn: async (patch: any) => {
       if (!activeTeamId) throw new Error("No active team");
@@ -444,6 +466,8 @@ function SettingsContent() {
     onError: (e: any) => toast.error(e?.message || "Failed to reject timesheet"),
   });
 
+=======
+>>>>>>> origin/main
   const setActiveTeamMutation = useMutation({
     mutationFn: async (teamId: number) => {
       const res = await fetch(`/api/teams/active`, {
@@ -643,6 +667,7 @@ function SettingsContent() {
     });
   };
 
+<<<<<<< HEAD
   const settingsSearchItems: Array<{ id: string; label: string; tab: string; anchor?: string }> = [
     { id: "account-profile", label: "Account: Profile", tab: "account" },
     { id: "security-password", label: "Security: Password", tab: "security" },
@@ -670,6 +695,8 @@ function SettingsContent() {
     }
   };
 
+=======
+>>>>>>> origin/main
   if (userLoading) {
     return (
       <Layout>
@@ -695,6 +722,7 @@ function SettingsContent() {
         }}
         className="w-full"
       >
+<<<<<<< HEAD
         <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
           <div className="space-y-3">
             <Button variant="outline" className="w-full justify-start" onClick={() => setSettingsSearchOpen(true)} data-testid="button-settings-search">
@@ -742,6 +770,47 @@ function SettingsContent() {
             </TabsList>
           </div>
           <div className="min-w-0">
+=======
+        <TabsList className="border-b rounded-none bg-transparent p-0 h-auto flex-wrap">
+          <TabsTrigger value="account" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <User className="w-4 h-4 mr-2" />
+            Account
+          </TabsTrigger>
+          <TabsTrigger value="security" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Shield className="w-4 h-4 mr-2" />
+            Security
+          </TabsTrigger>
+          <TabsTrigger value="notifications" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Bell className="w-4 h-4 mr-2" />
+            Notifications
+          </TabsTrigger>
+          <TabsTrigger value="team" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Users className="w-4 h-4 mr-2" />
+            Team
+          </TabsTrigger>
+          <TabsTrigger value="goals" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Target className="w-4 h-4 mr-2" />
+            Goals
+          </TabsTrigger>
+          <TabsTrigger value="offers" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <FileText className="w-4 h-4 mr-2" />
+            Offers
+          </TabsTrigger>
+          <TabsTrigger value="pipeline" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Database className="w-4 h-4 mr-2" />
+            Pipeline
+          </TabsTrigger>
+          <TabsTrigger value="appearance" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <ImageIcon className="w-4 h-4 mr-2" />
+            Appearance
+          </TabsTrigger>
+          <TabsTrigger value="system" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Server className="w-4 h-4 mr-2" />
+            System
+          </TabsTrigger>
+        </TabsList>
+
+>>>>>>> origin/main
         {/* ACCOUNT TAB */}
         <TabsContent value="account" className="mt-6 space-y-6">
           <form onSubmit={handleProfileSubmit}>
@@ -1287,6 +1356,7 @@ function SettingsContent() {
                 </CardContent>
               </Card>
 
+<<<<<<< HEAD
               <Card id="comp-settings">
                 <CardHeader>
                   <CardTitle>Compensation & Approvals</CardTitle>
@@ -1413,6 +1483,8 @@ function SettingsContent() {
                 </CardContent>
               </Card>
 
+=======
+>>>>>>> origin/main
               <Card>
                 <CardHeader>
                   <CardTitle>Team Activity</CardTitle>
@@ -1600,6 +1672,7 @@ function SettingsContent() {
         </TabsContent>
 
         <TabsContent value="pipeline" className="mt-6 space-y-6">
+<<<<<<< HEAD
           <Card id="lead-scoring">
             <CardHeader>
               <CardTitle>Lead Scoring</CardTitle>
@@ -1941,6 +2014,8 @@ function SettingsContent() {
             </CardContent>
           </Card>
 
+=======
+>>>>>>> origin/main
           <Card>
             <CardHeader>
               <CardTitle>Lead Pipeline Columns</CardTitle>
@@ -2220,6 +2295,7 @@ function SettingsContent() {
 
         {/* SYSTEM TAB */}
         <TabsContent value="system" className="mt-6 space-y-6">
+<<<<<<< HEAD
           <Card id="telephony-settings">
             <CardHeader>
               <CardTitle>Telephony Defaults</CardTitle>
@@ -2447,6 +2523,8 @@ function SettingsContent() {
             </CardContent>
           </Card>
 
+=======
+>>>>>>> origin/main
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -2474,6 +2552,69 @@ function SettingsContent() {
               </Button>
             </CardContent>
           </Card>
+<<<<<<< HEAD
+=======
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Target className="w-5 h-5" />
+                Skip Trace
+              </CardTitle>
+              <CardDescription>Set your default workflow for provider and public research.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {skipTraceConfig?.enabled === false ? (
+                <div className="text-sm text-muted-foreground">Skip Trace is disabled for your account.</div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Provider</div>
+                      <div className="text-sm font-medium">{skipTraceConfig?.providerName || "—"}</div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Public research</div>
+                      <div className="text-sm font-medium">{skipTraceConfig?.publicResearchEnabled ? "enabled" : "disabled"}</div>
+                    </div>
+                    <div className="space-y-1">
+                      <div className="text-xs text-muted-foreground">Status</div>
+                      <div className="text-sm font-medium">{skipTraceFetching ? "checking…" : "ready"}</div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Default mode</Label>
+                    <Select
+                      value={String(userData?.skipTraceDefaultMode || "both")}
+                      onValueChange={(value) => updateUserMutation.mutate({ skipTraceDefaultMode: value })}
+                      disabled={updateUserMutation.isPending || skipTraceFetching}
+                    >
+                      <SelectTrigger data-testid="select-skip-trace-default-mode">
+                        <SelectValue placeholder="Select default mode" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="provider" disabled={Array.isArray(skipTraceConfig?.allowedModes) && !skipTraceConfig.allowedModes.includes("provider")}>
+                          Provider
+                        </SelectItem>
+                        <SelectItem
+                          value="public_research"
+                          disabled={Array.isArray(skipTraceConfig?.allowedModes) && !skipTraceConfig.allowedModes.includes("public_research")}
+                        >
+                          Public
+                        </SelectItem>
+                        <SelectItem value="both" disabled={Array.isArray(skipTraceConfig?.allowedModes) && !skipTraceConfig.allowedModes.includes("both")}>
+                          Both
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+>>>>>>> origin/main
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <Card>
               <CardHeader>
@@ -2556,6 +2697,7 @@ function SettingsContent() {
             </Card>
           </div>
         </TabsContent>
+<<<<<<< HEAD
           </div>
         </div>
 
@@ -2607,6 +2749,8 @@ function SettingsContent() {
             </div>
           </DialogContent>
         </Dialog>
+=======
+>>>>>>> origin/main
       </Tabs>
     </Layout>
   );

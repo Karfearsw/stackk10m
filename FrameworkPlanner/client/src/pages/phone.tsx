@@ -69,7 +69,11 @@ export default function PhoneWorkspace() {
     if (typeof window === "undefined") return null;
     const params = new URLSearchParams(window.location.search);
     const leadIdRaw = params.get("leadId");
+<<<<<<< HEAD
     const propertyIdRaw = params.get("propertyId");
+=======
+    const propertyIdRaw = params.get("propertyId") || params.get("opportunityId");
+>>>>>>> origin/main
     const leadId = leadIdRaw ? parseInt(leadIdRaw, 10) : 0;
     const propertyId = propertyIdRaw ? parseInt(propertyIdRaw, 10) : 0;
     const meta: any = {};

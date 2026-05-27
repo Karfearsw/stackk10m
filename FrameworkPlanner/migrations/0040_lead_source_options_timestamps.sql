@@ -1,0 +1,6 @@
+ALTER TABLE lead_source_options
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();
+
+ALTER TABLE lead_source_options
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW();
+

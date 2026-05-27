@@ -9,6 +9,10 @@ import { addDays, endOfMonth, endOfWeek, format, isSameMonth, isToday, startOfMo
 import { CalendarDays, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
+<<<<<<< HEAD
+=======
+import { getEntityFilterFromLocation, leadUrl, opportunityUrl } from "@/lib/deepLinks";
+>>>>>>> origin/main
 
 type Task = {
   id: number;
@@ -34,8 +38,13 @@ function rangeForMonth(cursor: Date) {
 }
 
 function taskLink(t: Task) {
+<<<<<<< HEAD
   if (t.relatedEntityType === "lead" && t.relatedEntityId) return `/leads?leadId=${t.relatedEntityId}`;
   if (t.relatedEntityType === "opportunity" && t.relatedEntityId) return `/opportunities/${t.relatedEntityId}`;
+=======
+  if (t.relatedEntityType === "lead" && t.relatedEntityId) return leadUrl(t.relatedEntityId);
+  if (t.relatedEntityType === "opportunity" && t.relatedEntityId) return opportunityUrl(t.relatedEntityId);
+>>>>>>> origin/main
   if (t.relatedEntityType === "buyer" && t.relatedEntityId) return `/buyers?buyerId=${t.relatedEntityId}`;
   if (t.relatedEntityType === "campaign" && t.relatedEntityId) return `/campaigns?campaignId=${t.relatedEntityId}`;
   return null;
@@ -47,6 +56,10 @@ export default function CalendarPage() {
   const [view, setView] = useState<"month" | "week" | "day">("month");
   const [cursor, setCursor] = useState<Date>(new Date());
   const [selectedDay, setSelectedDay] = useState<Date>(new Date());
+<<<<<<< HEAD
+=======
+  const entityFilter = useMemo(() => getEntityFilterFromLocation(), []);
+>>>>>>> origin/main
 
   const range = useMemo(() => {
     if (view === "month") return rangeForMonth(cursor);
@@ -64,8 +77,17 @@ export default function CalendarPage() {
     p.set("limit", "200");
     p.set("dueFrom", range.start.toISOString());
     p.set("dueTo", range.end.toISOString());
+<<<<<<< HEAD
     return `/api/tasks?${p.toString()}`;
   }, [range.end, range.start]);
+=======
+    if (entityFilter.relatedEntityType && entityFilter.relatedEntityId) {
+      p.set("relatedEntityType", entityFilter.relatedEntityType);
+      p.set("relatedEntityId", String(entityFilter.relatedEntityId));
+    }
+    return `/api/tasks?${p.toString()}`;
+  }, [entityFilter.relatedEntityId, entityFilter.relatedEntityType, range.end, range.start]);
+>>>>>>> origin/main
 
   const { data, isLoading } = useQuery<TaskListResponse>({
     queryKey: [listKey],

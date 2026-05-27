@@ -224,6 +224,66 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+<<<<<<< HEAD
+=======
+  const resetTokens = new Map<string, { email: string; expires: number }>();
+
+  app.post("/api/auth/forgot-password", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) return res.status(400).json({ message: "Email is required" });
+
+      const user = await storage.getUserByEmail(email);
+      if (!user) {
+        return res.json({ message: "If that email exists, a reset link was generated.", resetUrl: null });
+      }
+
+      const { randomBytes } = await import("crypto");
+      const token = randomBytes(32).toString("hex");
+      const expires = Date.now() + 60 * 60 * 1000;
+      resetTokens.set(token, { email, expires });
+
+      const host = req.headers["x-forwarded-host"] || req.headers["host"] || "crm-luxe.vercel.app";
+      const proto = req.headers["x-forwarded-proto"] || "https";
+      const resetUrl = `${proto}://${host}/reset-password?token=${token}`;
+
+      console.log(`[Auth] Password reset token generated for ${email}`);
+      res.json({ message: "Reset link generated.", resetUrl });
+    } catch (error: any) {
+      console.error(`[Auth] forgot-password error: ${error.message}`);
+      res.status(500).json({ message: "Failed to generate reset link" });
+    }
+  });
+
+  app.post("/api/auth/reset-password", async (req, res) => {
+    try {
+      const { token, password } = req.body;
+      if (!token || !password) return res.status(400).json({ message: "Token and password are required" });
+      if (password.length < 8) return res.status(400).json({ message: "Password must be at least 8 characters" });
+
+      const entry = resetTokens.get(token);
+      if (!entry) return res.status(400).json({ message: "Invalid or expired reset token" });
+      if (Date.now() > entry.expires) {
+        resetTokens.delete(token);
+        return res.status(400).json({ message: "Reset token has expired. Request a new one." });
+      }
+
+      const user = await storage.getUserByEmail(entry.email);
+      if (!user) return res.status(404).json({ message: "User not found" });
+
+      const passwordHash = await bcrypt.hash(password, 12);
+      await storage.updateUser(user.id, { passwordHash });
+      resetTokens.delete(token);
+
+      console.log(`[Auth] Password reset successful for ${entry.email}`);
+      res.json({ message: "Password updated successfully" });
+    } catch (error: any) {
+      console.error(`[Auth] reset-password error: ${error.message}`);
+      res.status(500).json({ message: "Failed to reset password" });
+    }
+  });
+
+>>>>>>> origin/main
   app.post("/api/auth/signup", async (req, res) => {
     try {
       const { firstName, lastName, email, password, role = "employee", isSuperAdmin = false, isActive = true, employeeCode } = req.body;

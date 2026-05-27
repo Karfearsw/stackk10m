@@ -5,7 +5,11 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+<<<<<<< HEAD
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+=======
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+>>>>>>> origin/main
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -13,6 +17,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { DealCalculator } from "@/components/deals/DealCalculator";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
+<<<<<<< HEAD
+=======
+import { SkipTraceJobPanel } from "@/components/skipTrace/SkipTraceJobPanel";
+>>>>>>> origin/main
 import { 
   ArrowLeft, 
   MapPin, 
@@ -24,7 +32,14 @@ import {
   MessageSquare,
   FileText,
   Calculator,
+<<<<<<< HEAD
   Lightbulb
+=======
+  Lightbulb,
+  FolderOpen,
+  Building2,
+  Plus
+>>>>>>> origin/main
 } from "lucide-react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -34,6 +49,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiUpload } from "@/lib/queryClient";
+<<<<<<< HEAD
+=======
+import { calendarUrl, dialerUrl, leadUrl, playgroundUrl, tasksUrl } from "@/lib/deepLinks";
+>>>>>>> origin/main
 
 export default function PropertyDetail() {
   const [, params] = useRoute("/opportunities/:id");
@@ -53,6 +72,7 @@ export default function PropertyDetail() {
   const property = data?.property;
   const lead = data?.lead;
   const num = (v: unknown) => (typeof v === "string" ? (Number.isFinite(parseFloat(v)) ? parseFloat(v) : 0) : typeof v === "number" ? (Number.isFinite(v) ? v : 0) : 0);
+<<<<<<< HEAD
 
   const { data: skipTraceLatest } = useQuery<any>({
     queryKey: ["/api/opportunities", id, "skip-trace-latest"],
@@ -82,6 +102,8 @@ export default function PropertyDetail() {
     },
   });
 
+=======
+>>>>>>> origin/main
   const { data: internalComps } = useQuery<any>({
     queryKey: ["/api/opportunities", id, "comps-snapshots"],
     enabled: !!id,
@@ -180,6 +202,59 @@ export default function PropertyDetail() {
     onError: (e: any) => toast({ title: e?.message || "Upload failed", variant: "destructive" }),
   });
 
+<<<<<<< HEAD
+=======
+  const docsKey = React.useMemo(() => (property?.id ? `/api/documents?limit=20&offset=0&entityType=opportunity&entityId=${property.id}` : null), [property?.id]);
+  const { data: docsResp } = useQuery<any>({
+    queryKey: docsKey ? [docsKey] : [""],
+    enabled: !!docsKey && !!user,
+  });
+  const linkedDocs = Array.isArray(docsResp?.items) ? docsResp.items : [];
+
+  const { data: linkedCompanies = [] } = useQuery<any[]>({
+    queryKey: property?.id ? [`/api/opportunities/${property.id}/companies`] : [""],
+    enabled: !!property?.id && !!user,
+  });
+
+  const [companyDialogOpen, setCompanyDialogOpen] = React.useState(false);
+  const [companyLinkForm, setCompanyLinkForm] = React.useState({ companyId: "", role: "" });
+
+  const linkCompanyMutation = useMutation({
+    mutationFn: async () => {
+      const companyId = parseInt(companyLinkForm.companyId, 10);
+      const payload: any = { companyId, role: companyLinkForm.role.trim() || null };
+      const res = await apiRequest("POST", `/api/opportunities/${property.id}/companies`, payload);
+      return await res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: [`/api/opportunities/${property.id}/companies`] });
+      setCompanyDialogOpen(false);
+      setCompanyLinkForm({ companyId: "", role: "" });
+      toast({ title: "Company linked" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to link company", variant: "destructive" }),
+  });
+
+  const docInputRef = React.useRef<HTMLInputElement | null>(null);
+  const uploadDocMutation = useMutation({
+    mutationFn: async (files: FileList) => {
+      const f = files.item(0);
+      if (!f) throw new Error("No file");
+      const fd = new FormData();
+      fd.set("file", f);
+      fd.set("entityType", "opportunity");
+      fd.set("entityId", String(property.id));
+      const res = await apiUpload("POST", `/api/documents/upload`, fd);
+      return await res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: [docsKey || ""] });
+      toast({ title: "Document uploaded" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Upload failed", variant: "destructive" }),
+  });
+
+>>>>>>> origin/main
   return (
     <Layout>
       <div className="flex flex-col gap-6">
@@ -203,7 +278,29 @@ export default function PropertyDetail() {
             </div>
           </div>
           <div className="flex items-center gap-2">
+<<<<<<< HEAD
             <Button variant="outline" onClick={() => property?.id && setLocation(`/playground?propertyId=${property.id}`)} disabled={!property?.id}>
+=======
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!lead?.id) return;
+                setLocation(leadUrl(lead.id));
+              }}
+              disabled={!lead?.id}
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Open Lead
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!property?.id) return;
+                setLocation(playgroundUrl({ propertyId: property.id, leadId: lead?.id ?? null }));
+              }}
+              disabled={!property?.id}
+            >
+>>>>>>> origin/main
               <Lightbulb className="mr-2 h-4 w-4" />
               Underwrite Deal
             </Button>
@@ -218,13 +315,42 @@ export default function PropertyDetail() {
             <Button
               onClick={() => {
                 if (!lead?.ownerPhone) return;
+<<<<<<< HEAD
                 setLocation(`/dialer?number=${encodeURIComponent(lead.ownerPhone)}`);
+=======
+                setLocation(dialerUrl({ number: String(lead.ownerPhone), leadId: lead?.id ?? null, propertyId: property?.id ?? null }));
+>>>>>>> origin/main
               }}
               disabled={!lead?.ownerPhone}
             >
               <Phone className="mr-2 h-4 w-4" />
               Call Owner
             </Button>
+<<<<<<< HEAD
+=======
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!property?.id) return;
+                setLocation(tasksUrl({ relatedEntityType: "opportunity", relatedEntityId: property.id }));
+              }}
+              disabled={!property?.id}
+            >
+              <CheckCircle2 className="mr-2 h-4 w-4" />
+              Tasks
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!property?.id) return;
+                setLocation(calendarUrl({ relatedEntityType: "opportunity", relatedEntityId: property.id }));
+              }}
+              disabled={!property?.id}
+            >
+              <Calendar className="mr-2 h-4 w-4" />
+              Calendar
+            </Button>
+>>>>>>> origin/main
           </div>
         </div>
 
@@ -379,8 +505,35 @@ export default function PropertyDetail() {
                         </div>
                       </div>
                       <div className="flex gap-2">
+<<<<<<< HEAD
                         <Button variant="ghost" size="sm"><Phone className="h-4 w-4" /></Button>
                         <Button variant="ghost" size="sm"><Mail className="h-4 w-4" /></Button>
+=======
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            if (!lead?.ownerPhone) return;
+                            setLocation(
+                              dialerUrl({ number: String(lead.ownerPhone), leadId: lead?.id ?? null, propertyId: property?.id ?? null }),
+                            );
+                          }}
+                          disabled={!lead?.ownerPhone}
+                        >
+                          <Phone className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            if (!lead?.ownerEmail) return;
+                            window.location.href = `mailto:${encodeURIComponent(String(lead.ownerEmail))}`;
+                          }}
+                          disabled={!lead?.ownerEmail}
+                        >
+                          <Mail className="h-4 w-4" />
+                        </Button>
+>>>>>>> origin/main
                       </div>
                     </div>
                     <Separator />
@@ -402,6 +555,7 @@ export default function PropertyDetail() {
                         <p className="font-medium">{lead?.motivation ?? "—"}</p>
                       </div>
                     </div>
+<<<<<<< HEAD
                     <div className="space-y-2">
                       <Button variant="secondary" className="w-full" disabled={skipTraceMutation.isPending} onClick={() => skipTraceMutation.mutate()}>
                         Skip Trace Owner
@@ -441,6 +595,9 @@ export default function PropertyDetail() {
                         </div>
                       )}
                     </div>
+=======
+                    <SkipTraceJobPanel entityType="opportunity" entityId={id} />
+>>>>>>> origin/main
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -449,8 +606,14 @@ export default function PropertyDetail() {
                 <DealCalculator
                   initialValues={{
                     arv: num(property?.arv),
+<<<<<<< HEAD
                     purchasePrice: num(property?.price),
                     repairCosts: num(property?.repairCost),
+=======
+                    offerTarget: num(property?.price),
+                    repairs: num(property?.repairCost),
+                    rentPerMonth: num(property?.rentPerMonth),
+>>>>>>> origin/main
                   }}
                   showActions={false}
                 />
@@ -489,6 +652,7 @@ export default function PropertyDetail() {
                       {(internalComps?.saleComps || []).length === 0 ? (
                         <div className="text-sm text-muted-foreground">No sale comps yet.</div>
                       ) : (
+<<<<<<< HEAD
                         <div className="border rounded-md overflow-hidden">
                           <div className="grid grid-cols-6 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
                             <div className="col-span-2">Address</div>
@@ -506,6 +670,27 @@ export default function PropertyDetail() {
                               <div>{r.comp?.sqft ? Number(r.comp.sqft).toLocaleString() : "—"}</div>
                             </div>
                           ))}
+=======
+                        <div className="border rounded-md scroll-x-container">
+                          <div className="min-w-[900px]">
+                            <div className="grid grid-cols-6 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
+                              <div className="col-span-2">Address</div>
+                              <div>Distance</div>
+                              <div>Sold Price</div>
+                              <div>Sold Date</div>
+                              <div>SqFt</div>
+                            </div>
+                            {(internalComps.saleComps || []).slice(0, 25).map((r: any) => (
+                              <div key={String(r.id)} className="grid grid-cols-6 gap-2 p-2 text-sm border-t">
+                                <div className="col-span-2 truncate">{r.comp?.address || `Property ${r.compPropertyId}`}</div>
+                                <div>{typeof r.distanceMiles === "number" ? r.distanceMiles.toFixed(2) : "—"} mi</div>
+                                <div>{typeof r.soldPrice === "number" ? `$${Math.round(r.soldPrice).toLocaleString()}` : "—"}</div>
+                                <div>{r.soldDate ? new Date(r.soldDate).toLocaleDateString() : "—"}</div>
+                                <div>{r.comp?.sqft ? Number(r.comp.sqft).toLocaleString() : "—"}</div>
+                              </div>
+                            ))}
+                          </div>
+>>>>>>> origin/main
                         </div>
                       )}
                     </div>
@@ -515,6 +700,7 @@ export default function PropertyDetail() {
                       {(internalComps?.rentalComps || []).length === 0 ? (
                         <div className="text-sm text-muted-foreground">No rental comps yet.</div>
                       ) : (
+<<<<<<< HEAD
                         <div className="border rounded-md overflow-hidden">
                           <div className="grid grid-cols-6 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
                             <div className="col-span-2">Address</div>
@@ -532,6 +718,27 @@ export default function PropertyDetail() {
                               <div>{r.comp?.sqft ? Number(r.comp.sqft).toLocaleString() : "—"}</div>
                             </div>
                           ))}
+=======
+                        <div className="border rounded-md scroll-x-container">
+                          <div className="min-w-[900px]">
+                            <div className="grid grid-cols-6 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
+                              <div className="col-span-2">Address</div>
+                              <div>Distance</div>
+                              <div>Rent</div>
+                              <div>Rented Date</div>
+                              <div>SqFt</div>
+                            </div>
+                            {(internalComps.rentalComps || []).slice(0, 25).map((r: any) => (
+                              <div key={String(r.id)} className="grid grid-cols-6 gap-2 p-2 text-sm border-t">
+                                <div className="col-span-2 truncate">{r.comp?.address || `Property ${r.compPropertyId}`}</div>
+                                <div>{typeof r.distanceMiles === "number" ? r.distanceMiles.toFixed(2) : "—"} mi</div>
+                                <div>{typeof r.rentPerMonth === "number" ? `$${Math.round(r.rentPerMonth).toLocaleString()}/mo` : "—"}</div>
+                                <div>{r.comp?.rented_date || r.comp?.rentedDate ? new Date(r.comp.rented_date || r.comp.rentedDate).toLocaleDateString() : "—"}</div>
+                                <div>{r.comp?.sqft ? Number(r.comp.sqft).toLocaleString() : "—"}</div>
+                              </div>
+                            ))}
+                          </div>
+>>>>>>> origin/main
                         </div>
                       )}
                     </div>
@@ -551,6 +758,7 @@ export default function PropertyDetail() {
                     {buyerMatches.length === 0 ? (
                       <div className="text-sm text-muted-foreground">No matches yet.</div>
                     ) : (
+<<<<<<< HEAD
                       <div className="border rounded-md overflow-hidden">
                         <div className="grid grid-cols-12 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
                           <div className="col-span-5">Buyer</div>
@@ -591,6 +799,46 @@ export default function PropertyDetail() {
                             </div>
                           );
                         })}
+=======
+                      <div className="border rounded-md scroll-x-container">
+                        <div className="min-w-[1000px]">
+                          <div className="grid grid-cols-12 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
+                            <div className="col-span-5">Buyer</div>
+                            <div className="col-span-2">Score</div>
+                            <div className="col-span-3">Reasons</div>
+                            <div className="col-span-2 text-right">Actions</div>
+                          </div>
+                          {buyerMatches.slice(0, 25).map((m: any) => {
+                            const buyerId = Number(m.buyerId ?? m.buyer_id);
+                            const reasons = Array.isArray(m.reasons) ? m.reasons : [];
+                            const score = typeof m.matchScore === "number" ? m.matchScore : typeof m.score === "number" ? m.score / 1000 : 0;
+                            return (
+                              <div key={String(m.id)} className="grid grid-cols-12 gap-2 p-2 text-sm border-t items-center">
+                                <div className="col-span-5 truncate">{buyerNameById.get(buyerId) || `Buyer ${buyerId}`}</div>
+                                <div className="col-span-2 font-medium">{score.toFixed(2)}</div>
+                                <div className="col-span-3 flex flex-wrap gap-1">
+                                  {reasons.slice(0, 3).map((r: string) => (
+                                    <Badge key={r} variant="secondary" className="text-xs">{r}</Badge>
+                                  ))}
+                                </div>
+                                <div className="col-span-2 flex justify-end gap-2">
+                                  <Button size="sm" variant="outline" onClick={() => toast({ title: "Notify Buyer is not implemented yet" })}>
+                                    Notify
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => assignBuyerMutation.mutate(buyerId)}
+                                    disabled={assignBuyerMutation.isPending}
+                                  >
+                                    Assign
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+>>>>>>> origin/main
                       </div>
                     )}
                   </CardContent>
@@ -652,7 +900,11 @@ export default function PropertyDetail() {
                   className="w-full justify-start"
                   onClick={() => {
                     if (!property?.id) return;
+<<<<<<< HEAD
                     setLocation(`/playground?propertyId=${property.id}`);
+=======
+                    setLocation(playgroundUrl({ propertyId: property.id, leadId: lead?.id ?? null }));
+>>>>>>> origin/main
                   }}
                   disabled={!property?.id}
                 >
@@ -664,7 +916,13 @@ export default function PropertyDetail() {
                   className="w-full justify-start"
                   onClick={() => {
                     if (!lead?.ownerPhone) return;
+<<<<<<< HEAD
                     setLocation(`/dialer?number=${encodeURIComponent(lead.ownerPhone)}`);
+=======
+                    setLocation(
+                      dialerUrl({ number: String(lead.ownerPhone), leadId: lead?.id ?? null, propertyId: property?.id ?? null }),
+                    );
+>>>>>>> origin/main
                   }}
                   disabled={!lead?.ownerPhone}
                 >
@@ -692,6 +950,109 @@ export default function PropertyDetail() {
               </CardContent>
             </Card>
 
+<<<<<<< HEAD
+=======
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <FolderOpen className="h-4 w-4" />
+                  Documents
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={docInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = e.target.files;
+                      if (files && files.length) uploadDocMutation.mutate(files);
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => docInputRef.current?.click()}
+                    disabled={!property?.id || uploadDocMutation.isPending}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Upload
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {linkedDocs.length ? (
+                  linkedDocs.map((d: any) => (
+                    <div key={d.id} className="flex items-center justify-between gap-2">
+                      <div className="text-sm truncate">{String(d.title || `Document ${d.id}`)}</div>
+                      <Button variant="outline" size="sm" onClick={() => window.open(`/api/documents/${d.id}/download`, "_blank")}>
+                        Download
+                      </Button>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-muted-foreground">No documents linked</div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Building2 className="h-4 w-4" />
+                  Companies
+                </CardTitle>
+                <Dialog open={companyDialogOpen} onOpenChange={setCompanyDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm" disabled={!property?.id}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      Link
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                      <DialogTitle>Link company</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label>Company ID</Label>
+                        <Input value={companyLinkForm.companyId} onChange={(e) => setCompanyLinkForm((p) => ({ ...p, companyId: e.target.value }))} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Role</Label>
+                        <Input value={companyLinkForm.role} onChange={(e) => setCompanyLinkForm((p) => ({ ...p, role: e.target.value }))} placeholder="lender, title, vendor" />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        onClick={() => {
+                          const n = parseInt(companyLinkForm.companyId, 10);
+                          if (!Number.isFinite(n) || n <= 0) return toast({ title: "Company ID is required", variant: "destructive" });
+                          linkCompanyMutation.mutate();
+                        }}
+                        disabled={linkCompanyMutation.isPending}
+                      >
+                        Link
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {linkedCompanies.length ? (
+                  linkedCompanies.map((row: any) => (
+                    <div key={row.link?.id || row.company?.id} className="text-sm">
+                      {String(row.company?.name || `Company ${row.link?.companyId || ""}`)}
+                      {row.link?.role ? ` (${String(row.link.role)})` : ""}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-sm text-muted-foreground">No companies linked</div>
+                )}
+              </CardContent>
+            </Card>
+
+>>>>>>> origin/main
             {property?.id ? <EntityTasksWidget entityType="opportunity" entityId={property.id} /> : null}
           </div>
         </div>

@@ -1,0 +1,9 @@
+ALTER TABLE xp_experiences
+  ADD COLUMN IF NOT EXISTS payment_mode VARCHAR(20) NOT NULL DEFAULT 'deposit',
+  ADD COLUMN IF NOT EXISTS itinerary JSONB,
+  ADD COLUMN IF NOT EXISTS location TEXT,
+  ADD COLUMN IF NOT EXISTS duration_minutes INTEGER,
+  ADD COLUMN IF NOT EXISTS highlights TEXT[],
+  ADD COLUMN IF NOT EXISTS inclusions TEXT[],
+  ADD COLUMN IF NOT EXISTS cancellation_policy TEXT;
+

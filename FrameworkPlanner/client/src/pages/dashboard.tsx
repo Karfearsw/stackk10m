@@ -1,6 +1,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Layout } from "@/components/layout/Layout";
+<<<<<<< HEAD
 import { ArrowUpRight, DollarSign, Users, Briefcase, Activity, User, Building2, FileText, Clock, Trash2 } from "lucide-react";
+=======
+import { ArrowUpRight, DollarSign, Users, Briefcase, Activity, User, Building2, FileText, Clock, Trash2, Phone, Plus } from "lucide-react";
+>>>>>>> origin/main
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
@@ -8,6 +12,12 @@ import { MotivationalBanner } from "@/components/dashboard/MotivationalBanner";
 import { PipelineBar } from "@/components/dashboard/PipelineBar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
+<<<<<<< HEAD
+=======
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { useLocation } from "wouter";
+>>>>>>> origin/main
 
 interface ActivityLog {
   id: number;
@@ -16,6 +26,10 @@ interface ActivityLog {
   description: string;
   metadata: string;
   createdAt: string;
+<<<<<<< HEAD
+=======
+  groupCount?: number;
+>>>>>>> origin/main
   user: {
     id: number;
     firstName: string;
@@ -66,11 +80,36 @@ function formatTimeAgo(dateString: string | null): string {
 }
 
 export default function Dashboard() {
+<<<<<<< HEAD
+=======
+  const [, setLocation] = useLocation();
+>>>>>>> origin/main
   const { data: leadsResp, isLoading: leadsLoading } = useQuery<any>({
     queryKey: ['/api/leads?limit=500'],
   });
   const leads = Array.isArray(leadsResp?.items) ? leadsResp.items : [];
 
+<<<<<<< HEAD
+=======
+  const tasksKey = useMemo(() => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    const todayEnd = new Date(tomorrowStart.getTime() - 1);
+    const p = new URLSearchParams();
+    p.set("status", "open");
+    p.set("includeCompleted", "false");
+    p.set("limit", "200");
+    p.set("dueTo", todayEnd.toISOString());
+    return `/api/tasks?${p.toString()}`;
+  }, []);
+
+  const { data: tasksResp } = useQuery<any>({
+    queryKey: [tasksKey],
+  });
+  const tasks = Array.isArray(tasksResp?.items) ? tasksResp.items : [];
+
+>>>>>>> origin/main
   const { data: properties = [], isLoading: propertiesLoading } = useQuery<any[]>({
     queryKey: ['/api/properties'],
   });
@@ -84,7 +123,11 @@ export default function Dashboard() {
   });
 
   const { data: activityLogs = [] } = useQuery<ActivityLog[]>({
+<<<<<<< HEAD
     queryKey: ['/api/activity'],
+=======
+    queryKey: ['/api/activity?group=true&windowMinutes=15'],
+>>>>>>> origin/main
     refetchInterval: 30000,
   });
 
@@ -96,6 +139,73 @@ export default function Dashboard() {
 
   const activeTeamMembers = allUsers.filter(user => user.isActive);
 
+<<<<<<< HEAD
+=======
+  const needsAttention = useMemo(() => {
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrowStart = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000);
+    const staleCutoff = new Date(todayStart.getTime() - 14 * 24 * 60 * 60 * 1000);
+    const staleCutoffYmd = `${staleCutoff.getFullYear()}-${String(staleCutoff.getMonth() + 1).padStart(2, "0")}-${String(staleCutoff.getDate()).padStart(2, "0")}`;
+
+    const staleLeads = (leads || []).filter((l: any) => {
+      const lastTouch = l?.lastTouchAt ? new Date(l.lastTouchAt) : null;
+      if (!lastTouch || Number.isNaN(lastTouch.valueOf())) return true;
+      return lastTouch.getTime() < staleCutoff.getTime();
+    });
+    const staleLeadsTop = [...staleLeads]
+      .sort((a: any, b: any) => {
+        const aT = a?.lastTouchAt ? new Date(a.lastTouchAt).getTime() : 0;
+        const bT = b?.lastTouchAt ? new Date(b.lastTouchAt).getTime() : 0;
+        return aT - bT;
+      })
+      .slice(0, 5);
+
+    const overdueTasks = (tasks || []).filter((t: any) => {
+      if (!t?.dueAt) return false;
+      const d = new Date(t.dueAt);
+      if (Number.isNaN(d.valueOf())) return false;
+      return d.getTime() < todayStart.getTime();
+    });
+    const overdueTasksTop = [...overdueTasks]
+      .sort((a: any, b: any) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime())
+      .slice(0, 5);
+
+    const followUpsDue = (tasks || []).filter((t: any) => {
+      if (!t?.dueAt) return false;
+      const d = new Date(t.dueAt);
+      if (Number.isNaN(d.valueOf())) return false;
+      const type = String(t?.type || "").toLowerCase();
+      const isToday = d.getTime() >= todayStart.getTime() && d.getTime() < tomorrowStart.getTime();
+      return isToday && (type === "follow_up" || type === "call");
+    });
+    const followUpsDueTop = [...followUpsDue]
+      .sort((a: any, b: any) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime())
+      .slice(0, 5);
+
+    const inFlightContracts = (contractDocuments || []).filter((c: any) => c.status === "draft" || c.status === "sent" || c.status === "executed");
+    const inFlightContractsTop = [...inFlightContracts]
+      .sort((a: any, b: any) => {
+        const aT = a?.updatedAt ? new Date(a.updatedAt).getTime() : (a?.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const bT = b?.updatedAt ? new Date(b.updatedAt).getTime() : (b?.createdAt ? new Date(b.createdAt).getTime() : 0);
+        return aT - bT;
+      })
+      .slice(0, 5);
+
+    return {
+      staleCutoffYmd,
+      staleLeadsCount: staleLeads.length,
+      staleLeadsTop,
+      overdueTasksCount: overdueTasks.length,
+      overdueTasksTop,
+      followUpsDueCount: followUpsDue.length,
+      followUpsDueTop,
+      inFlightContractsCount: inFlightContracts.length,
+      inFlightContractsTop,
+    };
+  }, [leads, tasks, contractDocuments]);
+
+>>>>>>> origin/main
   const kpiData = useMemo(() => {
     const closedDocuments = contractDocuments.filter(doc => doc.status === 'closed');
     
@@ -136,6 +246,7 @@ export default function Dashboard() {
         change: closedDeals > 0 ? `${closedDeals} closed deals` : "No closed deals yet",
         trend: "up",
         icon: DollarSign,
+<<<<<<< HEAD
         description: ""
       },
       {
@@ -145,6 +256,19 @@ export default function Dashboard() {
         trend: "neutral",
         icon: Users,
         description: ""
+=======
+        description: "",
+        href: "/contracts?tab=list&status=closed",
+      },
+      {
+        title: "Active Leads",
+        value: activeLeads.toString(),
+        change: leads.length ? `${leads.length} total leads` : "No leads yet",
+        trend: "neutral",
+        icon: Users,
+        description: "",
+        href: "/leads?statusIn=new,contacted&sortKey=oldest_untouched&sortDir=asc",
+>>>>>>> origin/main
       },
       {
         title: "Deals in Pipeline",
@@ -152,7 +276,12 @@ export default function Dashboard() {
         change: `${contractDocuments.length} total contracts`,
         trend: "neutral",
         icon: Briefcase,
+<<<<<<< HEAD
         description: ""
+=======
+        description: "",
+        href: "/contracts?tab=list&statusIn=draft,sent,executed",
+>>>>>>> origin/main
       },
       {
         title: "Conversion Rate",
@@ -160,11 +289,39 @@ export default function Dashboard() {
         change: closedDeals > 0 ? `${closedDeals} closed` : "No closed deals",
         trend: "neutral",
         icon: Activity,
+<<<<<<< HEAD
         description: ""
+=======
+        description: "",
+        href: "/analytics",
+>>>>>>> origin/main
       }
     ];
   }, [leads, contracts, contractDocuments]);
 
+<<<<<<< HEAD
+=======
+  const groupedActivityLogs = useMemo((): ActivityLog[] => {
+    const windowMs = 15 * 60 * 1000;
+    const out: Array<ActivityLog & { __groupKey?: string }> = [];
+    for (const raw of activityLogs || []) {
+      const weight = typeof raw.groupCount === "number" && Number.isFinite(raw.groupCount) && raw.groupCount > 1 ? raw.groupCount : 1;
+      const createdAtMs = new Date(raw.createdAt as any).getTime();
+      const key = `${raw.userId}|${raw.action}|${raw.description || ""}`;
+      const last = out[out.length - 1];
+      if (last && last.__groupKey === key) {
+        const lastMs = new Date(last.createdAt as any).getTime();
+        if (Number.isFinite(lastMs) && Number.isFinite(createdAtMs) && lastMs - createdAtMs <= windowMs) {
+          last.groupCount = Number(last.groupCount || 1) + weight;
+          continue;
+        }
+      }
+      out.push({ ...raw, groupCount: weight, __groupKey: key });
+    }
+    return out.map(({ __groupKey, ...rest }) => rest);
+  }, [activityLogs]);
+
+>>>>>>> origin/main
   const chartData = useMemo(() => {
     if (contracts.length === 0) {
       return [
@@ -240,6 +397,7 @@ export default function Dashboard() {
         <p className="text-muted-foreground">Overview of your wholesaling operations and performance metrics.</p>
       </div>
 
+<<<<<<< HEAD
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {kpiData.map((kpi) => (
           <Card key={kpi.title} className="hover-elevate transition-all duration-200" data-testid={`kpi-${kpi.title.toLowerCase().replace(/\s+/g, '-')}`}>
@@ -264,6 +422,208 @@ export default function Dashboard() {
         ))}
       </div>
 
+=======
+      <div className="flex flex-wrap items-center gap-2">
+        <Button size="sm" onClick={() => setLocation("/leads?add=1")}>
+          <Plus className="mr-2 h-4 w-4" />
+          Add Lead
+        </Button>
+        <Button size="sm" variant="secondary" onClick={() => setLocation("/phone")}>
+          <Phone className="mr-2 h-4 w-4" />
+          Start Dial Session
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => setLocation("/playground")}>
+          <Activity className="mr-2 h-4 w-4" />
+          Resume Playground
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => setLocation("/contracts?tab=create")}>
+          <FileText className="mr-2 h-4 w-4" />
+          New Contract
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => setLocation("/leads?sortKey=highest_score&sortDir=desc&scoreMin=70")}>
+          <Users className="mr-2 h-4 w-4" />
+          View Hot Leads
+        </Button>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {kpiData.map((kpi) => (
+          <button
+            key={kpi.title}
+            type="button"
+            className="text-left"
+            onClick={() => setLocation(kpi.href)}
+          >
+            <Card className="hover-elevate transition-all duration-200" data-testid={`kpi-${kpi.title.toLowerCase().replace(/\s+/g, '-')}`}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">
+                  {kpi.title}
+                </CardTitle>
+                <kpi.icon className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold" data-testid={`value-${kpi.title.toLowerCase().replace(/\s+/g, '-')}`}>
+                  {kpi.value}
+                </div>
+                <p className="text-xs text-muted-foreground flex items-center gap-1 mt-1">
+                  <span className="text-muted-foreground">
+                    {kpi.change}
+                  </span>
+                  {kpi.description}
+                </p>
+              </CardContent>
+            </Card>
+          </button>
+        ))}
+      </div>
+
+      <Card className="hover-elevate">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Clock className="h-5 w-5" />
+            Needs Attention Now
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium text-muted-foreground">Stale leads (14+ days)</div>
+                <button
+                  type="button"
+                  className="inline-flex items-center text-xs text-primary hover:underline"
+                  onClick={() => setLocation(`/leads?lastTouchTo=${encodeURIComponent(needsAttention.staleCutoffYmd)}&sortKey=oldest_untouched&sortDir=asc`)}
+                >
+                  Open <ArrowUpRight className="ml-1 h-3 w-3" />
+                </button>
+              </div>
+              <div className="text-2xl font-bold">{needsAttention.staleLeadsCount.toLocaleString()}</div>
+              <div className="space-y-2">
+                {needsAttention.staleLeadsTop.length ? (
+                  needsAttention.staleLeadsTop.map((l: any) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      className="w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted/50"
+                      onClick={() =>
+                        setLocation(
+                          `/leads?lastTouchTo=${encodeURIComponent(needsAttention.staleCutoffYmd)}&sortKey=oldest_untouched&sortDir=asc&leadId=${encodeURIComponent(
+                            String(l.id),
+                          )}`,
+                        )
+                      }
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-medium truncate">{l.address || "Lead"}</div>
+                        <div className="text-xs text-muted-foreground">{formatTimeAgo(l.lastTouchAt || null)}</div>
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">{[l.city, l.state].filter(Boolean).join(", ")}</div>
+                    </button>
+                  ))
+                ) : (
+                  <div className="text-xs text-muted-foreground">Nothing stale right now</div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium text-muted-foreground">Overdue tasks</div>
+                <button type="button" className="inline-flex items-center text-xs text-primary hover:underline" onClick={() => setLocation(`/today`)}>
+                  Open <ArrowUpRight className="ml-1 h-3 w-3" />
+                </button>
+              </div>
+              <div className="text-2xl font-bold">{needsAttention.overdueTasksCount.toLocaleString()}</div>
+              <div className="space-y-2">
+                {needsAttention.overdueTasksTop.length ? (
+                  needsAttention.overdueTasksTop.map((t: any) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      className="w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted/50"
+                      onClick={() => setLocation(`/today`)}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-medium truncate">{t.title || "Task"}</div>
+                        <div className="text-xs text-muted-foreground">{t.dueAt ? new Date(t.dueAt).toLocaleDateString() : ""}</div>
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">Overdue</div>
+                    </button>
+                  ))
+                ) : (
+                  <div className="text-xs text-muted-foreground">No overdue tasks</div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium text-muted-foreground">Follow-ups due today</div>
+                <button type="button" className="inline-flex items-center text-xs text-primary hover:underline" onClick={() => setLocation(`/today`)}>
+                  Open <ArrowUpRight className="ml-1 h-3 w-3" />
+                </button>
+              </div>
+              <div className="text-2xl font-bold">{needsAttention.followUpsDueCount.toLocaleString()}</div>
+              <div className="space-y-2">
+                {needsAttention.followUpsDueTop.length ? (
+                  needsAttention.followUpsDueTop.map((t: any) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      className="w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted/50"
+                      onClick={() => setLocation(`/today`)}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-medium truncate">{t.title || "Follow-up"}</div>
+                        <div className="text-xs text-muted-foreground">{t.dueAt ? formatTimeAgo(t.dueAt) : ""}</div>
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">{String(t.type || "").replaceAll("_", " ")}</div>
+                    </button>
+                  ))
+                ) : (
+                  <div className="text-xs text-muted-foreground">No follow-ups due today</div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium text-muted-foreground">Contracts in flight</div>
+                <button
+                  type="button"
+                  className="inline-flex items-center text-xs text-primary hover:underline"
+                  onClick={() => setLocation(`/contracts?tab=list&statusIn=draft,sent,executed`)}
+                >
+                  Open <ArrowUpRight className="ml-1 h-3 w-3" />
+                </button>
+              </div>
+              <div className="text-2xl font-bold">{needsAttention.inFlightContractsCount.toLocaleString()}</div>
+              <div className="space-y-2">
+                {needsAttention.inFlightContractsTop.length ? (
+                  needsAttention.inFlightContractsTop.map((c: any) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className="w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted/50"
+                      onClick={() => setLocation(`/contracts?tab=list&statusIn=draft,sent,executed`)}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-medium truncate">{c.title || "Contract"}</div>
+                        <Badge variant="outline" className="capitalize">{String(c.status || "")}</Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">{c.documentType || "contract"}</div>
+                    </button>
+                  ))
+                ) : (
+                  <div className="text-xs text-muted-foreground">No contracts in flight</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+>>>>>>> origin/main
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
         <Card className="col-span-4 hover-elevate">
           <CardHeader>
@@ -274,8 +634,18 @@ export default function Dashboard() {
               <div className="h-[300px] flex items-center justify-center text-center">
                 <div>
                   <DollarSign className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
+<<<<<<< HEAD
                   <p className="text-muted-foreground">No contract data yet</p>
                   <p className="text-xs text-muted-foreground mt-1">Start adding contracts to see your revenue trends</p>
+=======
+                  <p className="text-muted-foreground">No revenue data yet</p>
+                  <p className="text-xs text-muted-foreground mt-1">Create a contract, mark it Executed, then close it with an assignment fee.</p>
+                  <div className="mt-4 flex flex-col sm:flex-row items-center justify-center gap-2">
+                    <Button size="sm" onClick={() => setLocation("/contracts?tab=create")}>Create contract</Button>
+                    <Button size="sm" variant="outline" onClick={() => setLocation("/contracts?tab=list")}>Review contracts</Button>
+                    <Button size="sm" variant="secondary" onClick={() => setLocation("/contracts?tab=closing")}>Closing module</Button>
+                  </div>
+>>>>>>> origin/main
                 </div>
               </div>
             ) : (
@@ -337,7 +707,11 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <ScrollArea className="h-[300px] pr-4">
+<<<<<<< HEAD
               {activityLogs.length === 0 ? (
+=======
+              {groupedActivityLogs.length === 0 ? (
+>>>>>>> origin/main
                 <div className="h-full flex items-center justify-center text-center">
                   <div>
                     <Activity className="w-12 h-12 mx-auto text-muted-foreground/50 mb-3" />
@@ -347,7 +721,11 @@ export default function Dashboard() {
                 </div>
               ) : (
                 <div className="space-y-4">
+<<<<<<< HEAD
                   {activityLogs.map((log) => {
+=======
+                  {groupedActivityLogs.map((log) => {
+>>>>>>> origin/main
                     const ActionIcon = getActionIcon(log.action);
                     return (
                       <div key={log.id} className="flex items-start gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors" data-testid={`activity-${log.id}`}>
@@ -365,6 +743,12 @@ export default function Dashboard() {
                                 : log.user?.email || 'Unknown User'}
                             </span>
                             <ActionIcon className={`h-3.5 w-3.5 ${getActionColor(log.action)}`} />
+<<<<<<< HEAD
+=======
+                            {typeof log.groupCount === "number" && log.groupCount > 1 ? (
+                              <Badge variant="secondary">×{log.groupCount}</Badge>
+                            ) : null}
+>>>>>>> origin/main
                           </div>
                           <p className="text-sm text-muted-foreground line-clamp-1">
                             {log.description}

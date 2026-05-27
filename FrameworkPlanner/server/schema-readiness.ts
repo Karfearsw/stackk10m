@@ -91,6 +91,15 @@ async function checkSchemaOnce(): Promise<SchemaReadiness> {
     );
     if (!plsDetailRes?.rows?.length) missing.push("column:properties.lead_source_detail");
 
+<<<<<<< HEAD
+=======
+    const lsoUpdatedRes = await pool.query(
+      "select 1 as ok from information_schema.columns where table_schema = 'public' and table_name = 'lead_source_options' and column_name = 'updated_at' limit 1",
+      [],
+    );
+    if (!lsoUpdatedRes?.rows?.length) missing.push("column:lead_source_options.updated_at");
+
+>>>>>>> origin/main
     if (missing.length) {
       log("error", { kind: "missing", missing, requestId: reqId });
       return {
