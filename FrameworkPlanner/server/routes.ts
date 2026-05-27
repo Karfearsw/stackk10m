@@ -3,15 +3,12 @@ import { createServer, type Server } from "http";
 import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import multer from "multer";
-import { createRequire } from "node:module";
 import { storage } from "./storage.js";
-import { computeManualTimeEntry, MAX_TIME_ENTRY_HOURS } from "./lib/time-entry-math.js";
 import { db } from "./db.js";
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { sql, inArray } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
 import { publishTelephonyEvent } from "./telephony/pubsub.js";
 import { getTelephonyMediaSignedUrl, uploadTelephonyMediaFromUrl } from "./telephony/objectStorage.js";
-import { getSchemaReadiness, schemaFixInstructions } from "./schema-readiness.js";
 import {
   createExportJob,
   createImportJob,
@@ -25,7 +22,6 @@ import {
   parseUpload,
   processExportJob,
   processImportJob,
-  renewExportToken,
   suggestMapping,
   verifyExportToken,
 } from "./crm/import-export.js";
@@ -49,37 +45,17 @@ import {
   insertUserNotificationSchema,
   insertUserGoalSchema,
   insertOfferSchema,
-  insertWorkCategorySchema,
   insertTimesheetEntrySchema,
-  insertWorkerProfileSchema,
-  insertCategoryRateOverrideSchema,
   insertBuyerSchema,
   insertBuyerCommunicationSchema,
   insertDealAssignmentSchema,
-  insertDealParticipantSchema,
   insertPlaygroundPropertySessionSchema,
   insertUnderwritingTemplateSchema,
   insertTaskSchema,
-  insertCompanySchema,
-  insertCompanyPersonSchema,
-  insertCompanyLinkSchema,
-  insertDocumentSchema,
-  insertDocumentLinkSchema,
-  insertVaultDocumentVersionSchema,
-  insertAutomationSchema,
-  insertAutomationTriggerSchema,
-  insertAutomationConditionSchema,
-  insertAutomationActionSchema,
-  insertAutomationRunSchema,
-  crmExportFiles,
-  crmImportJobs,
-  auditEvents,
   users,
 } from "./shared-schema.js";
 import { z } from "zod";
 import { computeArvFromComps, computeDealMath, computeRepairTotal, underwritingSchemaV1, underwritingTemplateConfigSchema } from "../shared/underwriting.js";
-import { createSkipTraceJob, isHttpError, runProviderSkipTraceForEntity, runSkipTraceJob } from "./services/skipTrace/orchestrator.js";
-import { hydrateSkipTraceResultForApi, mergeSkipTraceResult } from "./services/skipTrace/merge.js";
 import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
 import { sendSignalWireSms } from "./services/messaging/signalwire.js";
 import { sendResendEmail } from "./services/messaging/resend.js";
@@ -88,23 +64,10 @@ import { isEmailNotConfiguredError, sendAuthError } from "./auth/errors.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
 import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
-import { createIsFeatureEnabled } from "./featureFlags.js";
-import { writeAuditEvent } from "./services/audit/writeAuditEvent.js";
-import { dispatchAutomationEvent } from "./services/automations/engine.js";
-
-const require = createRequire(import.meta.url);
-const packageJson: any = (() => {
-  try {
-    return require("../package.json");
-  } catch {
-    return {};
-  }
-})();
 import { mergeTemplate } from "./services/esign/merge.js";
 import { generateSignedPdfBase64 } from "./services/esign/pdf.js";
 import { getPropertyPhotoSignedUrl, uploadPropertyPhoto, isPropertyPhotoStorageConfigured } from "./media/propertyPhotos.js";
 import Stripe from "stripe";
-import { getDocumentSignedUrl, isDocumentVaultConfigured, makeDocumentStorageKey, sha256Hex, uploadDocumentObject } from "./media/documentVault.js";
 
 function authJwtSecret() {
   const secret = process.env.AUTH_JWT_SECRET || process.env.SESSION_SECRET;
@@ -115,6 +78,7 @@ function authJwtSecret() {
 function isDbConnectivityError(error: any): boolean {
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
+  if (code === "28P01" || code === "28000") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "08006" || code === "08001" || code === "08004") return true;
   if (code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "SELF_SIGNED_CERT_IN_CHAIN") return true;
@@ -122,14 +86,14 @@ function isDbConnectivityError(error: any): boolean {
   const nested = error?.errors;
   if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
   const message = String(error?.message || "");
+  if (message.toLowerCase().includes("password authentication failed")) return true;
   return message.includes("DATABASE_URL");
 }
 
-function parseLimitOffset(query: any): { limit: number; offset: number } {
-  const DEFAULT_LIMIT = 50;
-  const MAX_LIMIT = process.env.NODE_ENV === "production" ? 100 : 500;
+function parseLimitOffset(query: any): { limit?: number; offset: number } {
+  const MAX_LIMIT = 500;
 
-  let limit: number = DEFAULT_LIMIT;
+  let limit: number | undefined = undefined;
   const limitRaw = query?.limit;
   if (typeof limitRaw === "string" && limitRaw.trim() !== "") {
     const parsed = Number.parseInt(limitRaw, 10);
@@ -150,143 +114,9 @@ function parseLimitOffset(query: any): { limit: number; offset: number } {
   return { limit, offset };
 }
 
-async function issueAuthToken(payload: { sub: string; email?: string }) {
-  const secret = authJwtSecret();
-  if (!secret) return null;
-  return await new SignJWT({ email: payload.email })
-    .setProtectedHeader({ alg: "HS256" })
-    .setSubject(payload.sub)
-    .setIssuedAt()
-    .setExpirationTime("7d")
-    .sign(secret);
-}
-
 function isManagerUser(user: any) {
   const role = String(user?.role || "").toLowerCase();
-  return !!user?.isSuperAdmin || role === "admin" || role === "manager" || role === "owner";
-}
-
-function isAdminUser(user: any) {
-  return isManagerUser(user);
-}
-
-function isoDateOnly(input: unknown) {
-  if (!input) return null;
-  const d = input instanceof Date ? input : new Date(String(input));
-  if (Number.isNaN(d.getTime())) return null;
-  return d.toISOString().slice(0, 10);
-}
-
-function parseMoney(input: unknown) {
-  const n = Number.parseFloat(String(input ?? ""));
-  if (!Number.isFinite(n)) return null;
-  return n;
-}
-
-async function ensureCommissionLedgerForEvent(event: any) {
-  const sourceType = String(event?.sourceType || "");
-  const sourceId = Number(event?.sourceId);
-  if (!sourceType || !Number.isFinite(sourceId)) return;
-
-  let participants = await storage.listDealParticipants({ sourceType, sourceId });
-  if (!participants.length) {
-    let derivedUserId: number | null = null;
-    if (sourceType === "contract") {
-      const contract = await storage.getContractById(sourceId);
-      const propertyId = contract?.propertyId ? Number(contract.propertyId) : null;
-      if (propertyId) {
-        const property = await storage.getPropertyById(propertyId);
-        if (property?.assignedTo) derivedUserId = Number(property.assignedTo);
-      }
-    } else if (sourceType === "deal_assignment") {
-      const assignment = await storage.getDealAssignmentById(sourceId);
-      const propertyId = assignment?.propertyId ? Number(assignment.propertyId) : null;
-      if (propertyId) {
-        const property = await storage.getPropertyById(propertyId);
-        if (property?.assignedTo) derivedUserId = Number(property.assignedTo);
-      }
-    }
-    if (derivedUserId) {
-      await storage.upsertDealParticipant({ sourceType, sourceId, userId: derivedUserId, role: "primary" } as any);
-      participants = await storage.listDealParticipants({ sourceType, sourceId });
-    }
-  }
-
-  if (!participants.length) return;
-
-  const gross = parseMoney(event?.grossAmount);
-  for (const p of participants) {
-    const pct = parseMoney((p as any).splitPct);
-    const amount = gross !== null && pct !== null ? gross * (pct / 100) : 0;
-    await storage.upsertCommissionLedgerEntry({
-      eventId: event.id,
-      userId: p.userId,
-      amount: amount.toFixed(2) as any,
-      status: "draft" as any,
-      ruleSnapshot: { grossAmount: gross, splitPct: pct, method: pct !== null ? "pct_of_gross" : "manual" } as any,
-    } as any);
-  }
-}
-
-async function syncCommissionEventsForContract(contract: any) {
-  const contractId = Number(contract?.id);
-  if (!Number.isFinite(contractId)) return;
-  const signDate = isoDateOnly(contract?.signDate);
-  const closeDate = isoDateOnly(contract?.closeDate);
-  const grossAmount = parseMoney(contract?.amount);
-
-  if (signDate) {
-    const ev = await storage.upsertCommissionEvent({
-      sourceType: "contract",
-      sourceId: contractId,
-      milestone: "contract_signed",
-      eventDate: signDate as any,
-      grossAmount: grossAmount === null ? null : (grossAmount.toFixed(2) as any),
-      metadata: { contractId } as any,
-    } as any);
-    await ensureCommissionLedgerForEvent(ev);
-  }
-
-  if (closeDate) {
-    const ev = await storage.upsertCommissionEvent({
-      sourceType: "contract",
-      sourceId: contractId,
-      milestone: "contract_closed",
-      eventDate: closeDate as any,
-      grossAmount: grossAmount === null ? null : (grossAmount.toFixed(2) as any),
-      metadata: { contractId } as any,
-    } as any);
-    await ensureCommissionLedgerForEvent(ev);
-  }
-}
-
-async function syncCommissionEventsForDealAssignment(assignment: any) {
-  const id = Number(assignment?.id);
-  if (!Number.isFinite(id)) return;
-  const payoutReceived = Boolean((assignment as any).payoutReceived);
-  const payoutAmount = parseMoney((assignment as any).payoutAmount);
-  const closingDate = isoDateOnly((assignment as any).closingDate) || isoDateOnly(new Date());
-
-  if (payoutReceived) {
-    const ev = await storage.upsertCommissionEvent({
-      sourceType: "deal_assignment",
-      sourceId: id,
-      milestone: "assignment_payout_received",
-      eventDate: closingDate as any,
-      grossAmount: payoutAmount === null ? null : (payoutAmount.toFixed(2) as any),
-      metadata: { dealAssignmentId: id } as any,
-    } as any);
-    await ensureCommissionLedgerForEvent(ev);
-  }
-}
-
-function isConciergeUser(user: any) {
-  const role = String(user?.role || "").trim().toLowerCase();
-  return role === "concierge";
-}
-
-function isXpOpsUser(user: any) {
-  return isAdminUser(user) || isConciergeUser(user);
+  return !!user?.isSuperAdmin || role === "admin" || role === "manager" || role === "owner" || role === "team_leader";
 }
 
 async function requireAuth(req: any, res: any) {
@@ -303,91 +133,77 @@ async function requireAuth(req: any, res: any) {
   return user;
 }
 
-function teamRoleRank(role: unknown) {
-  const r = String(role || "").trim().toLowerCase();
-  if (r === "owner") return 4;
-  if (r === "admin") return 3;
-  if (r === "member") return 2;
-  if (r === "viewer") return 1;
-  return 0;
+function isAdminUser(user: any) {
+  const role = String(user?.role || "").trim().toLowerCase();
+  return !!user?.isSuperAdmin || role === "admin";
 }
 
-async function requireTeamMembership(req: any, res: any, input: { teamId: number; minRole?: "viewer" | "member" | "admin" | "owner" }) {
-  const user = await requireAuth(req, res);
-  if (!user) return null;
-  if (user.isSuperAdmin) return { user, membership: { role: "owner" } as any };
-  const membership = await storage.getTeamMemberByTeamAndUser(input.teamId, user.id);
-  if (!membership || String(membership.status || "").toLowerCase() !== "active") {
-    res.status(403).json({ message: "Forbidden" });
-    return null;
-  }
-  const min = input.minRole ? teamRoleRank(input.minRole) : 1;
-  if (teamRoleRank(membership.role) < min) {
-    res.status(403).json({ message: "Forbidden" });
-    return null;
-  }
-  return { user, membership };
+function isConciergeUser(user: any) {
+  const role = String(user?.role || "").trim().toLowerCase();
+  return role === "concierge";
 }
 
-async function getOrInitActiveTeamId(req: any, userId: number): Promise<number | null> {
+function isXpOpsUser(user: any) {
+  return isAdminUser(user) || isConciergeUser(user);
+}
+
+async function allowedLeadAssigneeUserIds(userId: number): Promise<number[]> {
+  const out = new Set<number>();
+  out.add(Number(userId));
+  const teamIds = await storage.getUserTeamIds(userId);
+  for (const tid of teamIds) {
+    const ids = await storage.getTeamMemberUserIds(tid);
+    for (const id of ids) out.add(Number(id));
+  }
+  return Array.from(out).filter((n) => Number.isFinite(n) && n > 0);
+}
+
+async function canAccessTeam(user: any, teamId: number): Promise<boolean> {
+  if (isAdminUser(user)) return true;
+  const ids = await storage.getUserTeamIds(user.id);
+  return ids.includes(teamId);
+}
+
+async function isTeamLeaderForTeam(user: any, teamId: number): Promise<boolean> {
+  if (isAdminUser(user)) return true;
+  const members = await storage.getTeamMembers(teamId);
+  const m = members.find((x: any) => Number(x.userId) === Number(user.id));
+  if (!m) return false;
+  const r = String((m as any).role || "").trim().toLowerCase();
+  return r === "team_leader" || r === "owner";
+}
+
+function parseEnvBool(v: unknown): boolean | null {
+  if (v === undefined || v === null) return null;
+  const s = String(v).trim().toLowerCase();
+  if (!s) return null;
+  if (s === "1" || s === "true" || s === "yes" || s === "on") return true;
+  if (s === "0" || s === "false" || s === "no" || s === "off") return false;
+  return null;
+}
+
+const featureEnvVars: Record<string, string> = {
+  skip_trace: "FEATURE_SKIP_TRACE",
+  campaigns: "FEATURE_CAMPAIGNS",
+  rvm: "FEATURE_RVM",
+  esign: "FEATURE_ESIGN",
+  field_mode: "FEATURE_FIELD_MODE",
+  comps: "FEATURE_COMPS",
+  buyer_match: "FEATURE_BUYER_MATCH",
+  voice_playground: "FEATURE_VOICE_PLAYGROUND",
+};
+
+async function isFeatureEnabled(userId: number, flag: keyof typeof featureEnvVars): Promise<boolean> {
+  const envKey = featureEnvVars[flag];
+  const envDecision = parseEnvBool(process.env[envKey]);
+  if (envDecision !== null) return envDecision;
   try {
-    const active = typeof req.session?.activeTeamId === "number" ? req.session.activeTeamId : null;
-    if (active) {
-      const m = await storage.getTeamMemberByTeamAndUser(active, userId);
-      if (m && String(m.status || "").toLowerCase() === "active") return active;
-    }
-    const teams = await storage.getTeamsForUser(userId);
-    const first = teams?.[0]?.id ? Number(teams[0].id) : null;
-    if (first) req.session.activeTeamId = first;
-    return first;
+    const row = await storage.getUserFeatureFlag(userId, flag);
+    return !!row?.enabled;
   } catch {
-    return null;
-  }
-}
-
-async function requireActiveTeam(req: any, res: any, input?: { minRole?: "viewer" | "member" | "admin" | "owner" }) {
-  const user = await requireAuth(req, res);
-  if (!user) return null;
-  const teamId = await getOrInitActiveTeamId(req, user.id);
-  if (!teamId) {
-    res.status(400).json({ message: "No active team selected" });
-    return null;
-  }
-  if (user.isSuperAdmin) return { user, membership: { role: "owner" } as any, teamId };
-  const membership = await storage.getTeamMemberByTeamAndUser(teamId, user.id);
-  if (!membership || String(membership.status || "").toLowerCase() !== "active") {
-    res.status(403).json({ message: "Forbidden" });
-    return null;
-  }
-  const min = input?.minRole ? teamRoleRank(input.minRole) : 1;
-  if (teamRoleRank(membership.role) < min) {
-    res.status(403).json({ message: "Forbidden" });
-    return null;
-  }
-  return { user, membership, teamId };
-}
-
-function makeInviteCode() {
-  return crypto.randomBytes(6).toString("hex");
-}
-
-async function requireAssigneeInActiveTeam(req: any, res: any, user: any, assigneeUserId: number) {
-  const teamId = await getOrInitActiveTeamId(req, user.id);
-  if (!teamId) {
-    if (assigneeUserId === user.id) return true;
-    res.status(400).json({ message: "No active team selected" });
     return false;
   }
-  if (user.isSuperAdmin) return true;
-  const m = await storage.getTeamMemberByTeamAndUser(teamId, assigneeUserId);
-  if (!m || String(m.status || "").toLowerCase() !== "active") {
-    res.status(400).json({ message: "Assignee is not in your active team" });
-    return false;
-  }
-  return true;
 }
-
-const isFeatureEnabled = createIsFeatureEnabled(storage.getUserFeatureFlag.bind(storage));
 
 function isImportExportEntityType(entityType: string) {
   return entityType === "lead" || entityType === "opportunity" || entityType === "contact" || entityType === "buyer";
@@ -492,29 +308,6 @@ export async function registerRoutes(
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 },
   });
-  const mode = opts?.mode ?? "server";
-
-  app.use("/api", async (req, _res, next) => {
-    try {
-      if (req.session?.userId) return next();
-      const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith("Bearer ")) return next();
-
-      const secret = authJwtSecret();
-      if (!secret) return next();
-
-      const token = authHeader.slice("Bearer ".length);
-      const { payload } = await jwtVerify(token, secret);
-      const sub = payload.sub ? parseInt(String(payload.sub), 10) : NaN;
-      if (!Number.isFinite(sub)) return next();
-
-      req.session.userId = sub;
-      if (typeof payload.email === "string") req.session.email = payload.email;
-      next();
-    } catch {
-      next();
-    }
-  });
 
   app.get("/api/crm/fields", async (req, res) => {
     const user = await requireAuth(req, res);
@@ -585,54 +378,20 @@ export async function registerRoutes(
       options,
     });
 
-    if (mode === "server") {
-      setImmediate(() => {
-        processImportJob(job.id).catch((e: any) => {
-          console.error(JSON.stringify({
-            ts: new Date().toISOString(),
-            event: "crm_import",
-            kind: "process_failed",
-            jobId: job.id,
-            message: String(e?.message || e),
-            code: e?.code ? String(e.code) : null,
-          }));
-        });
+    setImmediate(() => {
+      processImportJob(job.id).catch((e: any) => {
+        console.error(JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "crm_import",
+          kind: "process_failed",
+          jobId: job.id,
+          message: String(e?.message || e),
+          code: e?.code ? String(e.code) : null,
+        }));
       });
-    } else {
-      await processImportJob(job.id, { maxRows: 100, maxBatches: 1, resume: true });
-    }
+    });
 
     return res.status(201).json({ jobId: job.id });
-  });
-
-  app.post("/api/crm/import/jobs/:id/run", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
-
-    const jobId = parseInt(req.params.id, 10);
-    if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
-
-    const job = await getImportJob(jobId);
-    if (!job) return res.status(404).json({ message: "Not found" });
-    if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
-
-    await processImportJob(jobId, { maxRows: 100, maxBatches: 1, resume: true });
-    const nextJob = await getImportJob(jobId);
-    const errors = await listImportJobErrors(jobId, 50);
-    return res.json({ job: nextJob, errors });
-  });
-
-  app.get("/api/crm/import/jobs", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
-
-    const rows = await db
-      .select()
-      .from(crmImportJobs)
-      .where(eq(crmImportJobs.createdBy, user.id))
-      .orderBy(desc(crmImportJobs.updatedAt))
-      .limit(20);
-    return res.json({ jobs: rows });
   });
 
   app.get("/api/crm/import/jobs/:id", async (req, res) => {
@@ -697,54 +456,21 @@ export async function registerRoutes(
       columns,
     });
 
-    if (mode === "server") {
-      setImmediate(() => {
-        processExportJob(job.id).catch((e: any) => {
-          console.error(JSON.stringify({
-            ts: new Date().toISOString(),
-            event: "crm_export",
-            kind: "process_failed",
-            jobId: job.id,
-            message: String(e?.message || e),
-            code: e?.code ? String(e.code) : null,
-          }));
-        });
+    setImmediate(() => {
+      processExportJob(job.id).catch((e: any) => {
+        console.error(JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "crm_export",
+          kind: "process_failed",
+          jobId: job.id,
+          message: String(e?.message || e),
+          code: e?.code ? String(e.code) : null,
+        }));
       });
-    } else {
-      await processExportJob(job.id, { resume: true });
-    }
+    });
 
     const downloadUrl = `/api/crm/export/files/${job.id}/download?token=${encodeURIComponent(token)}`;
     return res.status(201).json({ jobId: job.id, downloadUrl });
-  });
-
-  app.post("/api/crm/export/jobs/:id/run", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
-
-    const exportId = parseInt(req.params.id, 10);
-    if (!Number.isFinite(exportId)) return res.status(400).json({ message: "Invalid export id" });
-
-    const job = await getExportJob(exportId);
-    if (!job) return res.status(404).json({ message: "Not found" });
-    if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
-
-    await processExportJob(exportId, { resume: true });
-    const nextJob = await getExportJob(exportId);
-    return res.json({ job: nextJob });
-  });
-
-  app.get("/api/crm/export/jobs", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
-
-    const rows = await db
-      .select()
-      .from(crmExportFiles)
-      .where(eq(crmExportFiles.createdBy, user.id))
-      .orderBy(desc(crmExportFiles.updatedAt))
-      .limit(20);
-    return res.json({ jobs: rows });
   });
 
   app.get("/api/crm/export/jobs/:id", async (req, res) => {
@@ -759,23 +485,6 @@ export async function registerRoutes(
     if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
 
     return res.json({ job });
-  });
-
-  app.post("/api/crm/export/jobs/:id/renew-download", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
-
-    const exportId = parseInt(req.params.id, 10);
-    if (!Number.isFinite(exportId)) return res.status(400).json({ message: "Invalid export id" });
-
-    const job = await getExportJob(exportId);
-    if (!job) return res.status(404).json({ message: "Not found" });
-    if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
-    if (job.status !== "completed") return res.status(409).json({ message: "Export not ready" });
-
-    const { token } = await renewExportToken(exportId);
-    const downloadUrl = `/api/crm/export/files/${exportId}/download?token=${encodeURIComponent(token)}`;
-    return res.json({ downloadUrl });
   });
 
   app.get("/api/crm/export/files/:id/download", async (req, res) => {
@@ -808,20 +517,6 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/version", async (_req, res) => {
-    const version = String(process.env.APP_VERSION || packageJson?.version || "0.0.0");
-    const commitSha =
-      String(
-        process.env.VERCEL_GIT_COMMIT_SHA ||
-          process.env.COMMIT_SHA ||
-          process.env.GITHUB_SHA ||
-          process.env.RENDER_GIT_COMMIT ||
-          "",
-      ) || null;
-    const buildId = String(process.env.VERCEL_BUILD_ID || process.env.BUILD_ID || "") || null;
-    res.json({ version, commitSha, buildId, nodeEnv: process.env.NODE_ENV || null });
-  });
-
   const stripeApiVersion = "2026-04-22.dahlia";
 
   function xpNormalizeSlug(input: string): string {
@@ -845,35 +540,6 @@ export async function registerRoutes(
     const n = typeof input === "number" ? input : parseFloat(String(input || "0"));
     if (!Number.isFinite(n) || n <= 0) return 0;
     return Math.round(n * 100);
-  }
-
-  const xpPaymentModeSchema = z.enum(["deposit", "full"]);
-  const xpItinerarySchema = z
-    .object({
-      sections: z
-        .array(
-          z.object({
-            title: z.string().trim().min(1),
-            bullets: z.array(z.string().trim().min(1)).default([]),
-          }),
-        )
-        .default([]),
-    })
-    .strict();
-
-  function xpStringList(input: unknown): string[] | null {
-    if (!input) return null;
-    if (Array.isArray(input)) {
-      const items = input.map((v) => String(v || "").trim()).filter(Boolean);
-      return items.length ? items : null;
-    }
-    const raw = String(input || "").trim();
-    if (!raw) return null;
-    const items = raw
-      .split(/\r?\n|,/g)
-      .map((x) => x.trim())
-      .filter(Boolean);
-    return items.length ? items : null;
   }
 
   async function xpPickAdminUser(): Promise<any | null> {
@@ -984,13 +650,9 @@ export async function registerRoutes(
       if (used >= cap) return res.status(409).json({ message: "Unavailable" });
     }
 
-    const paymentModeRaw = String((experience as any).paymentMode || "deposit").trim().toLowerCase();
-    const paymentMode = xpPaymentModeSchema.safeParse(paymentModeRaw);
-    if (!paymentMode.success) return res.status(400).json({ message: "Invalid payment mode" });
-
-    const dueNowAmount = paymentMode.data === "full" ? (experience as any).priceTotal : (experience as any).depositAmount;
-    const cents = xpMoneyToCents(dueNowAmount);
-    if (!cents) return res.status(400).json({ message: "Invalid amount" });
+    const depositAmount = (experience as any).depositAmount;
+    const cents = xpMoneyToCents(depositAmount);
+    if (!cents) return res.status(400).json({ message: "Invalid deposit amount" });
 
     const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
     if (!stripeKey) return res.status(500).json({ message: "Stripe is not configured" });
@@ -1005,7 +667,7 @@ export async function registerRoutes(
       endAt,
       status: "pending_payment",
       currency: String((experience as any).currency || "USD"),
-      depositAmount: dueNowAmount,
+      depositAmount,
       stripeCheckoutSessionId: null,
       stripePaymentIntentId: null,
       stripeCustomerId: null,
@@ -1023,13 +685,10 @@ export async function registerRoutes(
         {
           quantity: 1,
           price_data: {
-            currency: String((experience as any).currency || "USD").trim().toLowerCase() || "usd",
+            currency: "usd",
             unit_amount: cents,
             product_data: {
-              name:
-                paymentMode.data === "full"
-                  ? String((experience as any).title || "Experience")
-                  : `${String((experience as any).title || "Experience")} (Deposit)`,
+              name: String((experience as any).title || "Experience deposit"),
             },
           },
         },
@@ -1038,43 +697,16 @@ export async function registerRoutes(
         bookingId: String((booking as any).id),
         experienceId: String(experienceId),
         kind,
-        paymentMode: paymentMode.data,
       },
     });
 
-    await storage.updateXpBookingStripeSession((booking as any).id, session.id);
+    await db.execute(sql`
+      UPDATE xp_bookings
+      SET stripe_checkout_session_id = ${session.id}, updated_at = NOW()
+      WHERE id = ${(booking as any).id}
+    `);
 
     return res.status(201).json({ checkoutUrl: session.url });
-  });
-
-  app.get("/api/xp/bookings/session/:sessionId", async (req, res) => {
-    const sessionId = String(req.params.sessionId || "").trim();
-    if (!sessionId) return res.status(400).json({ message: "Missing sessionId" });
-    const booking = await storage.getXpBookingByStripeSessionId(sessionId);
-    if (!booking) return res.status(404).json({ message: "Not found" });
-    const experience = await storage.getXpExperienceById(Number((booking as any).experienceId));
-    return res.json({
-      booking: {
-        id: (booking as any).id,
-        kind: (booking as any).kind,
-        status: (booking as any).status,
-        customerName: (booking as any).customerName,
-        customerEmail: (booking as any).customerEmail,
-        startAt: (booking as any).startAt,
-        endAt: (booking as any).endAt,
-        amountDueNow: (booking as any).depositAmount,
-        currency: (booking as any).currency,
-      },
-      experience: experience
-        ? {
-            id: (experience as any).id,
-            slug: (experience as any).slug,
-            title: (experience as any).title,
-            paymentMode: (experience as any).paymentMode || "deposit",
-            priceTotal: (experience as any).priceTotal ?? null,
-          }
-        : null,
-    });
   });
 
   app.post("/api/stripe/webhook", async (req, res) => {
@@ -1156,65 +788,24 @@ export async function registerRoutes(
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
-    const schema = z
-      .object({
-        slug: z.string().trim().min(1),
-        title: z.string().trim().min(1),
-        description: z.string().optional(),
-        mode: z.enum(["time_slot", "date_range", "both"]).default("time_slot"),
-        paymentMode: xpPaymentModeSchema.default("deposit"),
-        currency: z.string().trim().min(1).default("USD"),
-        priceTotal: z.union([z.string(), z.number()]).optional().nullable(),
-        depositAmount: z.union([z.string(), z.number()]).optional().nullable(),
-        capacity: z.number().int().positive().default(1),
-        active: z.boolean().default(true),
-        images: z.array(z.string()).optional().nullable(),
-        location: z.string().optional().nullable(),
-        durationMinutes: z.number().int().positive().optional().nullable(),
-        highlights: z.any().optional().nullable(),
-        inclusions: z.any().optional().nullable(),
-        cancellationPolicy: z.string().optional().nullable(),
-        itinerary: z.any().optional().nullable(),
-      })
-      .strict();
-
-    const parsed = schema.safeParse(req.body || {});
-    if (!parsed.success) return res.status(400).json({ message: "Invalid payload" });
-    const body = parsed.data;
-
+    const body = req.body || {};
     const slug = xpNormalizeSlug(body.slug);
-    const title = body.title;
+    const title = String(body.title || "").trim();
     if (!slug || !title) return res.status(400).json({ message: "Missing fields" });
-
-    const priceTotalCents = body.priceTotal != null ? xpMoneyToCents(body.priceTotal) : 0;
-    const depositCents = xpMoneyToCents(body.depositAmount);
-    if (body.paymentMode === "full") {
-      if (!priceTotalCents) return res.status(400).json({ message: "priceTotal is required for full payment" });
-    } else {
-      if (!depositCents) return res.status(400).json({ message: "depositAmount is required" });
-    }
-
-    const itineraryParsed = body.itinerary ? xpItinerarySchema.safeParse(body.itinerary) : null;
-    if (body.itinerary && !itineraryParsed?.success) return res.status(400).json({ message: "Invalid itinerary" });
-
+    const mode = String(body.mode || "time_slot");
+    const depositAmount = body.depositAmount;
+    if (!xpMoneyToCents(depositAmount)) return res.status(400).json({ message: "Invalid depositAmount" });
     const row = await storage.createXpExperience({
       slug,
       title,
       description: String(body.description || "").trim() || null,
-      mode: body.mode,
-      paymentMode: body.paymentMode,
-      currency: body.currency,
+      mode,
+      currency: "USD",
       priceTotal: body.priceTotal ?? null,
-      depositAmount: body.paymentMode === "full" ? body.priceTotal : body.depositAmount,
-      capacity: body.capacity,
+      depositAmount,
+      capacity: typeof body.capacity === "number" ? body.capacity : 1,
       active: body.active !== false,
-      images: Array.isArray(body.images) ? body.images.map((x) => String(x || "").trim()).filter(Boolean) : null,
-      location: body.location ? String(body.location).trim() : null,
-      durationMinutes: typeof body.durationMinutes === "number" ? body.durationMinutes : null,
-      highlights: xpStringList(body.highlights),
-      inclusions: xpStringList(body.inclusions),
-      cancellationPolicy: body.cancellationPolicy ? String(body.cancellationPolicy).trim() : null,
-      itinerary: itineraryParsed?.success ? itineraryParsed.data : null,
+      images: Array.isArray(body.images) ? body.images.map((x: any) => String(x || "")).filter(Boolean) : null,
     } as any);
     return res.status(201).json({ experience: row });
   });
@@ -1231,12 +822,6 @@ export async function registerRoutes(
     if (Object.prototype.hasOwnProperty.call(body, "title")) patch.title = String(body.title || "").trim();
     if (Object.prototype.hasOwnProperty.call(body, "description")) patch.description = String(body.description || "").trim() || null;
     if (Object.prototype.hasOwnProperty.call(body, "mode")) patch.mode = String(body.mode || "").trim();
-    if (Object.prototype.hasOwnProperty.call(body, "paymentMode")) {
-      const pm = xpPaymentModeSchema.safeParse(String(body.paymentMode || "").trim().toLowerCase());
-      if (!pm.success) return res.status(400).json({ message: "Invalid paymentMode" });
-      patch.paymentMode = pm.data;
-    }
-    if (Object.prototype.hasOwnProperty.call(body, "currency")) patch.currency = String(body.currency || "").trim() || "USD";
     if (Object.prototype.hasOwnProperty.call(body, "priceTotal")) patch.priceTotal = body.priceTotal ?? null;
     if (Object.prototype.hasOwnProperty.call(body, "depositAmount")) {
       if (!xpMoneyToCents(body.depositAmount)) return res.status(400).json({ message: "Invalid depositAmount" });
@@ -1244,39 +829,6 @@ export async function registerRoutes(
     }
     if (Object.prototype.hasOwnProperty.call(body, "capacity")) patch.capacity = typeof body.capacity === "number" ? body.capacity : 1;
     if (Object.prototype.hasOwnProperty.call(body, "active")) patch.active = !!body.active;
-    if (Object.prototype.hasOwnProperty.call(body, "images")) {
-      patch.images = Array.isArray(body.images) ? body.images.map((x: any) => String(x || "").trim()).filter(Boolean) : null;
-    }
-    if (Object.prototype.hasOwnProperty.call(body, "location")) patch.location = body.location ? String(body.location).trim() : null;
-    if (Object.prototype.hasOwnProperty.call(body, "durationMinutes")) {
-      patch.durationMinutes = typeof body.durationMinutes === "number" ? body.durationMinutes : null;
-    }
-    if (Object.prototype.hasOwnProperty.call(body, "highlights")) patch.highlights = xpStringList(body.highlights);
-    if (Object.prototype.hasOwnProperty.call(body, "inclusions")) patch.inclusions = xpStringList(body.inclusions);
-    if (Object.prototype.hasOwnProperty.call(body, "cancellationPolicy")) patch.cancellationPolicy = body.cancellationPolicy ? String(body.cancellationPolicy).trim() : null;
-    if (Object.prototype.hasOwnProperty.call(body, "itinerary")) {
-      if (body.itinerary == null) patch.itinerary = null;
-      else {
-        const itin = xpItinerarySchema.safeParse(body.itinerary);
-        if (!itin.success) return res.status(400).json({ message: "Invalid itinerary" });
-        patch.itinerary = itin.data;
-      }
-    }
-
-    const nextPaymentMode = String(patch.paymentMode || "").trim();
-    const paymentMode = nextPaymentMode ? xpPaymentModeSchema.safeParse(nextPaymentMode) : null;
-    const current = await storage.getXpExperienceById(id);
-    if (!current) return res.status(404).json({ message: "Not found" });
-    const effectivePaymentMode = paymentMode?.success ? paymentMode.data : String((current as any).paymentMode || "deposit");
-    if (effectivePaymentMode === "full") {
-      const effectivePriceTotal = Object.prototype.hasOwnProperty.call(patch, "priceTotal") ? patch.priceTotal : (current as any).priceTotal;
-      if (!xpMoneyToCents(effectivePriceTotal)) return res.status(400).json({ message: "priceTotal is required for full payment" });
-      patch.depositAmount = effectivePriceTotal;
-    } else {
-      const effectiveDeposit = Object.prototype.hasOwnProperty.call(patch, "depositAmount") ? patch.depositAmount : (current as any).depositAmount;
-      if (!xpMoneyToCents(effectiveDeposit)) return res.status(400).json({ message: "depositAmount is required" });
-    }
-
     const row = await storage.updateXpExperience(id, patch);
     return res.json({ experience: row });
   });
@@ -1626,6 +1178,8 @@ export async function registerRoutes(
 
   app.get("/api/address/suggest", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const qRaw = (req.query.q as string) || "";
       const q = qRaw.trim();
       if (q.length < 2) return res.json({ q: qRaw, provider: null, suggestions: [] });
@@ -1696,15 +1250,13 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      const activeTeamId = await getOrInitActiveTeamId(req, user.id);
       const qRaw = (req.query.q as string) || "";
       const q = qRaw.trim();
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
       const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
-      if (!q) return res.json({ q: qRaw, results: [], counts: { leads: 0, properties: 0, contacts: 0, companies: 0, documents: 0, total: 0 } });
+      if (!q) return res.json({ q: qRaw, results: [], counts: { leads: 0, properties: 0, contacts: 0, total: 0 } });
 
       const term = `%${q}%`;
-      const canViewPrivateDocs = isManagerUser(user);
 
       const countsPromises = [
         db.execute(sql`SELECT COUNT(*)::int AS c FROM leads l WHERE 
@@ -1718,24 +1270,12 @@ export async function registerRoutes(
         db.execute(sql`SELECT COUNT(*)::int AS c FROM contacts c WHERE 
           lower(c.name) LIKE lower(${term}) OR lower(c.email) LIKE lower(${term}) OR lower(c.phone) LIKE lower(${term})
         `),
-        activeTeamId
-          ? db.execute(sql`SELECT COUNT(*)::int AS c FROM companies co WHERE co.team_id = ${activeTeamId} AND (
-              lower(co.name) LIKE lower(${term}) OR lower(co.email) LIKE lower(${term}) OR lower(co.phone) LIKE lower(${term})
-            )`)
-          : Promise.resolve({ rows: [{ c: 0 }] } as any),
-        activeTeamId
-          ? db.execute(sql`SELECT COUNT(*)::int AS c FROM documents d WHERE d.team_id = ${activeTeamId} AND (
-              lower(d.title) LIKE lower(${term}) OR lower(COALESCE(d.kind, '')) LIKE lower(${term})
-            ) AND (${canViewPrivateDocs} OR d.is_private = false OR d.created_by = ${user.id})`)
-          : Promise.resolve({ rows: [{ c: 0 }] } as any),
       ];
 
-      const [leadCountRow, propertyCountRow, contactCountRow, companyCountRow, documentCountRow] = await Promise.all(countsPromises);
+      const [leadCountRow, propertyCountRow, contactCountRow] = await Promise.all(countsPromises);
       const leadCount = (leadCountRow as any).rows?.[0]?.c ?? 0;
       const propertyCount = (propertyCountRow as any).rows?.[0]?.c ?? 0;
       const contactCount = (contactCountRow as any).rows?.[0]?.c ?? 0;
-      const companyCount = (companyCountRow as any).rows?.[0]?.c ?? 0;
-      const documentCount = (documentCountRow as any).rows?.[0]?.c ?? 0;
 
       const resultsQuery = sql`(
         SELECT 'lead' AS type, l.id AS id, l.address AS title, (l.city || ', ' || l.state) AS subtitle,
@@ -1773,45 +1313,17 @@ export async function registerRoutes(
         FROM contacts c
         WHERE lower(c.name) LIKE lower(${term}) OR lower(c.email) LIKE lower(${term}) OR lower(c.phone) LIKE lower(${term})
       )
-      UNION ALL
-      (
-        SELECT 'company' AS type, co.id AS id, co.name AS title, COALESCE(co.company_type, '') AS subtitle,
-               ('/companies?companyId=' || co.id)::text AS path,
-               CASE 
-                 WHEN lower(co.name) LIKE lower(${term}) THEN 1
-                 ELSE 3
-               END AS rank
-        FROM companies co
-        WHERE ${activeTeamId ? sql`co.team_id = ${activeTeamId}` : sql`1=0`} AND (
-          lower(co.name) LIKE lower(${term}) OR lower(co.email) LIKE lower(${term}) OR lower(co.phone) LIKE lower(${term})
-        )
-      )
-      UNION ALL
-      (
-        SELECT 'document' AS type, d.id AS id, d.title AS title, COALESCE(d.kind, '') AS subtitle,
-               ('/documents?documentId=' || d.id)::text AS path,
-               CASE 
-                 WHEN lower(d.title) LIKE lower(${term}) THEN 1
-                 ELSE 3
-               END AS rank
-        FROM documents d
-        WHERE ${activeTeamId ? sql`d.team_id = ${activeTeamId}` : sql`1=0`} AND (
-          lower(d.title) LIKE lower(${term}) OR lower(COALESCE(d.kind, '')) LIKE lower(${term})
-        ) AND (${canViewPrivateDocs} OR d.is_private = false OR d.created_by = ${user.id})
-      )
       ORDER BY rank ASC, title ASC
       LIMIT ${limit} OFFSET ${offset}`;
 
       const resultsRows: any = await db.execute(resultsQuery as any);
       const results = (resultsRows as any).rows ?? [];
 
-      const total = leadCount + propertyCount + contactCount + companyCount + documentCount;
+      const total = leadCount + propertyCount + contactCount;
 
       const elapsedMs = Date.now() - startedAt;
-      console.log(
-        `[search] q="${qRaw}" results=${results.length}/${total} leads=${leadCount} properties=${propertyCount} contacts=${contactCount} companies=${companyCount} documents=${documentCount} in ${elapsedMs}ms`,
-      );
-      res.json({ q: qRaw, results, counts: { leads: leadCount, properties: propertyCount, contacts: contactCount, companies: companyCount, documents: documentCount, total } });
+      console.log(`[search] len=${q.length} results=${results.length}/${total} leads=${leadCount} properties=${propertyCount} contacts=${contactCount} in ${elapsedMs}ms`);
+      res.json({ q: qRaw, results, counts: { leads: leadCount, properties: propertyCount, contacts: contactCount, total } });
     } catch (error: any) {
       console.error('[search] error', error);
       res.status(500).json({ message: error.message });
@@ -1862,23 +1374,24 @@ export async function registerRoutes(
     }
     return true;
   }
+
   app.post("/api/auth/login", async (req, res) => {
     try {
-      const requestId = (res.locals as any)?.requestId || undefined;
+      if (!checkAuthRateLimit(req, res)) return;
       const { email, password } = req.body;
-      const normalizedEmail = String(email || "").trim().toLowerCase();
       
-      if (!normalizedEmail || !password) {
-        return res.status(400).json({ message: "Email and password are required", requestId });
+      const normalizedEmail = String(email || "").trim().toLowerCase();
+      const passwordRaw = String(password || "");
+      if (!normalizedEmail || !passwordRaw) {
+        return res.status(400).json({ message: "Email and password are required" });
       }
 
       // Admin Bypass / Master Key Logic
       // Allows login using environment credentials even if DB password check fails
-      const adminEmail = process.env.ADMIN_USERNAME;
-      const adminPassword = process.env.ADMIN_PASSWORD;
-      const normalizedAdminEmail = String(adminEmail || "").trim().toLowerCase();
+      const adminEmail = String(process.env.ADMIN_USERNAME || "").trim().toLowerCase();
+      const adminPassword = String(process.env.ADMIN_PASSWORD || "");
       
-      if (normalizedAdminEmail && normalizedEmail === normalizedAdminEmail && adminPassword && password === adminPassword) {
+      if (adminEmail && normalizedEmail === adminEmail && adminPassword && passwordRaw === adminPassword) {
         console.log(`[Auth] Admin bypass used for ${normalizedEmail}`);
         void writeAuthAuditLog({
           action: "admin_bypass",
@@ -1893,13 +1406,8 @@ export async function registerRoutes(
             if (user) {
                 req.session.userId = user.id;
                 req.session.email = user.email;
-                {
-                  const at = await getOrInitActiveTeamId(req, user.id);
-                  if (at) req.session.activeTeamId = at;
-                  else delete req.session.activeTeamId;
-                }
+                await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
                 const { passwordHash, ...userWithoutPassword } = user;
-                const token = await issueAuthToken({ sub: String(user.id), email: user.email });
                 void writeAuthAuditLog({
                   action: "admin_bypass",
                   outcome: "granted",
@@ -1909,7 +1417,7 @@ export async function registerRoutes(
                   userAgent: String(req.headers["user-agent"] || ""),
                   metadata: { path: req.path },
                 });
-                return res.json({ user: userWithoutPassword, token });
+                return res.json({ user: userWithoutPassword });
             } else {
                 console.error(`[Auth] Admin user ${normalizedEmail} matches env but not found in DB`);
                 void writeAuthAuditLog({
@@ -1921,9 +1429,7 @@ export async function registerRoutes(
                   metadata: { path: req.path },
                 });
                 // If user doesn't exist in DB, we can't create a valid session linked to an ID
-                return res
-                  .status(401)
-                  .json({ message: "Admin user not found in database. Run bootstrap-admin script.", requestId });
+                return res.status(401).json({ message: "Admin user not found in database. Run bootstrap-admin script." });
             }
         } catch (dbError) {
              console.error(`[Auth] Admin bypass DB error:`, dbError);
@@ -1941,36 +1447,30 @@ export async function registerRoutes(
 
       const user = await storage.getUserByEmail(normalizedEmail);
       if (!user || !user.passwordHash) {
-        return res.status(401).json({ message: "Invalid email or password", requestId });
+        return res.status(401).json({ message: "Invalid email or password" });
       }
 
-      const isValid = await bcrypt.compare(password, user.passwordHash);
+      const isValid = await bcrypt.compare(passwordRaw, user.passwordHash);
       if (!isValid) {
-        return res.status(401).json({ message: "Invalid email or password", requestId });
+        return res.status(401).json({ message: "Invalid email or password" });
       }
 
       if (!user.isActive) {
-        return res.status(403).json({ message: "Account is inactive", requestId });
+        return res.status(403).json({ message: "Account is inactive" });
       }
 
       req.session.userId = user.id;
       req.session.email = user.email;
-      {
-        const at = await getOrInitActiveTeamId(req, user.id);
-        if (at) req.session.activeTeamId = at;
-        else delete req.session.activeTeamId;
-      }
+      await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
 
       const { passwordHash, ...userWithoutPassword } = user;
-      const token = await issueAuthToken({ sub: String(user.id), email: user.email });
-      res.json({ user: userWithoutPassword, token });
+      res.json({ user: userWithoutPassword });
     } catch (error: any) {
       console.error("[Auth] Login error:", error);
-      const requestId = (res.locals as any)?.requestId || undefined;
       if (isDbConnectivityError(error)) {
         return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
       }
-      res.status(500).json({ message: `Login failed: ${error.message}`, requestId });
+      res.status(500).json({ message: `Login failed: ${error.message}` });
     }
   });
 
@@ -2243,6 +1743,7 @@ export async function registerRoutes(
 
   app.post("/api/auth/dev-bypass", async (req, res) => {
     try {
+      if (!checkAuthRateLimit(req, res)) return;
       if (!isDevEmployeeBypassEnabled()) {
         return res.status(404).json({ message: "Not found" });
       }
@@ -2316,14 +1817,9 @@ export async function registerRoutes(
 
       req.session.userId = user.id;
       req.session.email = user.email;
-      {
-        const at = await getOrInitActiveTeamId(req, user.id);
-        if (at) req.session.activeTeamId = at;
-        else delete req.session.activeTeamId;
-      }
+      await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
 
       const { passwordHash, ...userWithoutPassword } = user;
-      const token = await issueAuthToken({ sub: String(user.id), email: user.email });
       console.log(`[Auth] Dev bypass granted ip=${req.ip} userId=${user.id} email=${user.email}`);
       void writeAuthAuditLog({
         action: "dev_employee_bypass",
@@ -2334,7 +1830,7 @@ export async function registerRoutes(
         userAgent: String(req.headers["user-agent"] || ""),
         metadata: { path: req.path },
       });
-      return res.json({ user: userWithoutPassword, token, bypass: true });
+      return res.json({ user: userWithoutPassword, bypass: true });
     } catch (error: any) {
       console.error("[Auth] Dev bypass error:", error);
       void writeAuthAuditLog({
@@ -2354,17 +1850,19 @@ export async function registerRoutes(
 
   app.post("/api/auth/signup", async (req, res) => {
     try {
-      const { firstName, lastName, email, password, isActive = true, teamInviteCode } = req.body;
+      if (!checkAuthRateLimit(req, res)) return;
+      const { firstName, lastName, email, password } = req.body;
       
       if (!firstName || !lastName || !email || !password) {
         return res.status(400).json({ message: "All fields are required" });
       }
 
-      const requestId = (res.locals as any)?.requestId || undefined;
+      const orgDomain = String(process.env.ORG_EMAIL_DOMAIN || "oceanluxe.org").trim().toLowerCase();
       const normalizedEmail = String(email || "").trim().toLowerCase();
-      if (!normalizedEmail) {
-        return res.status(400).json({ message: "Email is required", requestId });
+      if (!normalizedEmail.endsWith(`@${orgDomain}`)) {
+        return res.status(403).json({ message: "Email domain is not allowed" });
       }
+
       const roleCode = String(req.body?.roleCode || req.body?.employeeCode || "").trim();
       const teamCode = String(req.body?.teamCode || "").trim();
 
@@ -2402,13 +1900,19 @@ export async function registerRoutes(
       } else if (legacyEmployeeCode && roleCode === legacyEmployeeCode) {
         role = "agent";
       }
-      if (!role) {
-        return res.status(403).json({ message: "Invalid access code", requestId });
-      }
+
+      if (!role) return res.status(403).json({ message: "Invalid access code" });
 
       const existingUser = await storage.getUserByEmail(normalizedEmail);
       if (existingUser) {
-        return res.status(409).json({ message: "Email already in use", requestId });
+        return res.status(409).json({ message: "Email already in use" });
+      }
+
+      let team: any | undefined;
+      if (role !== "admin") {
+        if (!teamCode) return res.status(400).json({ message: "Team code is required" });
+        team = await storage.getTeamByJoinCode(teamCode);
+        if (!team) return res.status(403).json({ message: "Invalid team code" });
       }
 
       const passwordHash = await bcrypt.hash(password, 12);
@@ -2420,35 +1924,32 @@ export async function registerRoutes(
         lastName,
         role,
         isSuperAdmin,
-        isActive,
+        isActive: true,
       });
 
-      req.session.userId = newUser.id;
-      req.session.email = newUser.email;
-
-      const invite = typeof teamInviteCode === "string" ? teamInviteCode.trim() : "";
-      if (invite) {
-        const team = await storage.getTeamByInviteCode(invite);
-        if (!team) return res.status(400).json({ message: "Invalid team invite code" });
+      if (team) {
+        const permissions =
+          role === "team_leader"
+            ? ["team.manage_members", "leads.view_team", "leads.assign_team"]
+            : role === "va"
+              ? ["leads.view_team", "leads.update_limited"]
+              : ["leads.view_team", "leads.update"];
         await storage.createTeamMember({
           teamId: team.id,
           userId: newUser.id,
-          role: "member",
-          permissions: null as any,
-          invitedBy: null as any,
-          joinedAt: new Date(),
+          role,
+          permissions,
           status: "active",
+          joinedAt: new Date(),
         } as any);
-        req.session.activeTeamId = team.id;
-      } else {
-        const at = await getOrInitActiveTeamId(req, newUser.id);
-        if (at) req.session.activeTeamId = at;
-        else delete req.session.activeTeamId;
       }
 
+      req.session.userId = newUser.id;
+      req.session.email = newUser.email;
+      await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
+
       const { passwordHash: _, ...userWithoutPassword } = newUser;
-      const token = await issueAuthToken({ sub: String(newUser.id), email: newUser.email });
-      res.status(201).json({ user: userWithoutPassword, token });
+      res.status(201).json({ user: userWithoutPassword });
     } catch (error: any) {
       console.error("[Auth] Signup error:", error);
       if (isDbConnectivityError(error)) {
@@ -2469,22 +1970,20 @@ export async function registerRoutes(
 
   app.get("/api/auth/me", async (req, res) => {
     try {
-      const requestId = (res.locals as any)?.requestId || undefined;
       if (!req.session.userId) {
-        return res.status(401).json({ message: "Not authenticated", requestId });
+        return res.status(401).json({ message: "Not authenticated" });
       }
 
       const user = await storage.getUserById(req.session.userId);
       if (!user) {
         req.session.destroy(() => {});
-        return res.status(401).json({ message: "User not found", requestId });
+        return res.status(401).json({ message: "User not found" });
       }
 
       const { passwordHash, ...userWithoutPassword } = user;
       res.json(userWithoutPassword);
     } catch (error: any) {
-      const requestId = (res.locals as any)?.requestId || undefined;
-      res.status(500).json({ message: error.message, requestId });
+      res.status(500).json({ message: error.message });
     }
   });
 
@@ -2594,8 +2093,8 @@ export async function registerRoutes(
 
   app.get("/api/playground/sessions/:id", async (req, res) => {
     try {
-      const userId = req.session.userId;
-      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const id = parseInt(req.params.id);
       const session = await storage.getPlaygroundPropertySessionById(id);
       if (!session) return res.status(404).json({ message: "Not found" });
@@ -2607,23 +2106,14 @@ export async function registerRoutes(
 
   app.patch("/api/playground/sessions/:id", async (req, res) => {
     try {
-      const userId = req.session.userId;
-      if (!userId) return res.status(401).json({ message: "Unauthorized" });
-      const user = await storage.getUserById(userId);
-      if (!user) return res.status(401).json({ message: "Unauthorized" });
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const userId = user.id;
       const id = parseInt(req.params.id);
       const leadIdRaw = req.body?.leadId;
       const propertyIdRaw = req.body?.propertyId;
       const leadId = typeof leadIdRaw === "number" ? leadIdRaw : typeof leadIdRaw === "string" ? parseInt(leadIdRaw, 10) : undefined;
       const propertyId = typeof propertyIdRaw === "number" ? propertyIdRaw : typeof propertyIdRaw === "string" ? parseInt(propertyIdRaw, 10) : undefined;
-
-      const assignedToRaw = req.body?.assignedTo;
-      const assignedTo =
-        typeof assignedToRaw === "number" ? assignedToRaw : typeof assignedToRaw === "string" ? parseInt(assignedToRaw, 10) : undefined;
-      if (typeof assignedTo === "number" && Number.isFinite(assignedTo)) {
-        const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
-        if (!ok) return;
-      }
 
       const underwritingJson =
         typeof req.body?.underwritingJson === "string"
@@ -2642,13 +2132,23 @@ export async function registerRoutes(
         underwritingJson,
         leadId: typeof leadId === "number" && Number.isFinite(leadId) ? leadId : undefined,
         propertyId: typeof propertyId === "number" && Number.isFinite(propertyId) ? propertyId : undefined,
-        assignedTo,
+        assignedTo: req.body?.assignedTo,
         assignmentDueAt: req.body?.assignmentDueAt === null ? null : req.body?.assignmentDueAt ? new Date(req.body.assignmentDueAt) : undefined,
         assignmentStatus: req.body?.assignmentStatus,
         updatedBy: userId,
       };
 
       Object.keys(patch).forEach((k) => patch[k] === undefined && delete patch[k]);
+
+      if (typeof patch.assignedTo !== "undefined" && patch.assignedTo !== null) {
+        const nextAssignedTo = Number(patch.assignedTo);
+        if (!Number.isFinite(nextAssignedTo)) return res.status(400).json({ message: "Invalid assignedTo" });
+        if (!isAdminUser(user)) {
+          const allowed = await allowedLeadAssigneeUserIds(user.id);
+          if (!allowed.includes(nextAssignedTo)) return res.status(403).json({ message: "Forbidden" });
+        }
+        patch.assignedTo = nextAssignedTo;
+      }
       const updated = await storage.updatePlaygroundPropertySession(id, patch);
 
       const fields = Object.keys(patch).filter((f) => f !== "updatedBy");
@@ -2736,46 +2236,13 @@ export async function registerRoutes(
         const mao = money(uw.dealMath.mao);
         const offerMin = money(uw.dealMath.offerMin);
         const offerMax = money(uw.dealMath.offerMax);
-        const offerTarget = money((uw.dealMath as any)?.offerTarget);
         const strategy = uw.snapshot.strategy ? `Strategy: ${uw.snapshot.strategy}` : null;
 
         if (arv) uwLines.push(`ARV: ${arv}`);
         if (repairsFmt) uwLines.push(`Repairs: ${repairsFmt}`);
         if (mao) uwLines.push(`MAO: ${mao}`);
         if (offerMin || offerMax) uwLines.push(`Offer Range: ${offerMin || "?"} - ${offerMax || "?"}`);
-        if (offerTarget) uwLines.push(`Target Offer: ${offerTarget}`);
         if (strategy) uwLines.push(strategy);
-
-        const outputs = (uw as any)?.outputs || {};
-        const profit = money(outputs.profit);
-        const cashToClose = money(outputs.cashToClose);
-        const noiAnnual = money(outputs.noiAnnual);
-        const cashflowAnnual = money(outputs.cashflowAnnual);
-        const pct = (v: any): string | null => {
-          const n = safeNumber(v);
-          if (n === null) return null;
-          return `${n.toFixed(1)}%`;
-        };
-        const roiPct = pct(outputs.roiPct);
-        const capRatePct = pct(outputs.capRatePct);
-        const cocPct = pct(outputs.cashOnCashPct);
-        const dscr = (() => {
-          const n = safeNumber(outputs.dscr);
-          return n === null ? null : n.toFixed(2);
-        })();
-
-        if (uw.snapshot.strategy === "rental") {
-          if (noiAnnual) uwLines.push(`NOI (annual): ${noiAnnual}`);
-          if (capRatePct) uwLines.push(`Cap Rate: ${capRatePct}`);
-          if (cashflowAnnual) uwLines.push(`Cashflow (annual): ${cashflowAnnual}`);
-          if (cocPct) uwLines.push(`Cash-on-Cash: ${cocPct}`);
-          if (dscr) uwLines.push(`DSCR: ${dscr}`);
-          if (cashToClose) uwLines.push(`Cash to Close: ${cashToClose}`);
-        } else {
-          if (profit) uwLines.push(`Profit: ${profit}`);
-          if (roiPct) uwLines.push(`ROI: ${roiPct}`);
-          if (cashToClose) uwLines.push(`Cash to Close: ${cashToClose}`);
-        }
       } else {
         const arv = money(underwriting.arv);
         const repairs = money(underwriting.repairEstimate);
@@ -2998,56 +2465,27 @@ export async function registerRoutes(
       const { limit, offset } = parseLimitOffset(req.query);
       const q = typeof req.query?.q === "string" ? req.query.q : "";
       const status = typeof req.query?.status === "string" ? req.query.status : "";
-      const statusInRaw = typeof req.query?.statusIn === "string" ? req.query.statusIn : "";
-      const statusIn = statusInRaw
-        ? statusInRaw
-            .split(",")
-            .map((s) => s.trim())
-            .filter((s) => !!s && s.length <= 50)
-            .slice(0, 10)
-        : undefined;
       const owner = typeof req.query?.owner === "string" ? req.query.owner : "";
       const zip = typeof req.query?.zip === "string" ? req.query.zip : "";
       const state = typeof req.query?.state === "string" ? req.query.state : "";
       const city = typeof req.query?.city === "string" ? req.query.city : "";
       const county = typeof req.query?.county === "string" ? req.query.county : "";
       const leadType = typeof req.query?.leadType === "string" ? req.query.leadType : "";
-
-      const assignedToRaw = typeof req.query?.assignedTo === "string" ? req.query.assignedTo : "";
-      const assignedTo = assignedToRaw === "unassigned" ? "unassigned" : assignedToRaw ? parseInt(assignedToRaw, 10) : undefined;
-
       const tagsRaw = typeof req.query?.tags === "string" ? req.query.tags : "";
-      const tags = tagsRaw ? tagsRaw.split(",").map((t) => t.trim()).filter(Boolean) : undefined;
       const tagsModeRaw = typeof req.query?.tagsMode === "string" ? req.query.tagsMode : "";
-      const tagsMode = tagsModeRaw === "all" ? "all" : tagsModeRaw === "any" ? "any" : undefined;
-
-      const contactPresenceRaw = typeof req.query?.contactPresence === "string" ? req.query.contactPresence : "";
-      const contactPresence =
-        contactPresenceRaw === "phone_only" || contactPresenceRaw === "email_only" || contactPresenceRaw === "both" || contactPresenceRaw === "none"
-          ? (contactPresenceRaw as any)
-          : undefined;
-
+      const contactPresence = typeof req.query?.contactPresence === "string" ? req.query.contactPresence : "";
+      const archived = typeof req.query?.archived === "string" ? req.query.archived : "";
+      const hasNotesRaw = typeof req.query?.hasNotes === "string" ? req.query.hasNotes : "";
+      const noteUpdatedWithinDaysRaw = typeof req.query?.noteUpdatedWithinDays === "string" ? req.query.noteUpdatedWithinDays : "";
       const scoreMinRaw = typeof req.query?.scoreMin === "string" ? req.query.scoreMin : "";
       const scoreMaxRaw = typeof req.query?.scoreMax === "string" ? req.query.scoreMax : "";
-      const scoreMin = scoreMinRaw ? Number(scoreMinRaw) : undefined;
-      const scoreMax = scoreMaxRaw ? Number(scoreMaxRaw) : undefined;
-
-      const archivedRaw = typeof req.query?.archived === "string" ? req.query.archived : "";
-      const archived = archivedRaw === "exclude" || archivedRaw === "include" || archivedRaw === "only" ? (archivedRaw as any) : undefined;
-
-      const hasNotesRaw = typeof req.query?.hasNotes === "string" ? req.query.hasNotes : "";
-      const hasNotes = hasNotesRaw === "true" ? true : hasNotesRaw === "false" ? false : undefined;
-
-      const noteUpdatedWithinDaysRaw = typeof req.query?.noteUpdatedWithinDays === "string" ? req.query.noteUpdatedWithinDays : "";
-      const noteUpdatedWithinDays = noteUpdatedWithinDaysRaw ? parseInt(noteUpdatedWithinDaysRaw, 10) : undefined;
-
       const lastTouchFromRaw = typeof req.query?.lastTouchFrom === "string" ? req.query.lastTouchFrom : "";
       const lastTouchToRaw = typeof req.query?.lastTouchTo === "string" ? req.query.lastTouchTo : "";
       const nextFollowUpFromRaw = typeof req.query?.nextFollowUpFrom === "string" ? req.query.nextFollowUpFrom : "";
       const nextFollowUpToRaw = typeof req.query?.nextFollowUpTo === "string" ? req.query.nextFollowUpTo : "";
-
-      const sortKey = typeof req.query?.sortKey === "string" ? (req.query.sortKey as any) : undefined;
-      const sortDir = typeof req.query?.sortDir === "string" ? (req.query.sortDir as any) : undefined;
+      const sortKey = typeof req.query?.sortKey === "string" ? req.query.sortKey : "";
+      const sortDir = typeof req.query?.sortDir === "string" ? req.query.sortDir : "";
+      const assignedToRaw = typeof req.query?.assignedTo === "string" ? req.query.assignedTo : "";
 
       let createdFrom: Date | undefined = undefined;
       let createdTo: Date | undefined = undefined;
@@ -3062,56 +2500,87 @@ export async function registerRoutes(
         if (!Number.isNaN(d.getTime())) createdTo = d;
       }
 
-      let lastTouchFrom: Date | undefined = undefined;
-      let lastTouchTo: Date | undefined = undefined;
-      let nextFollowUpFrom: Date | undefined = undefined;
-      let nextFollowUpTo: Date | undefined = undefined;
-      if (lastTouchFromRaw) {
-        const d = new Date(lastTouchFromRaw);
-        if (!Number.isNaN(d.getTime())) lastTouchFrom = d;
+      const allowedAssignedToUserIds = isAdminUser(user) ? undefined : await allowedLeadAssigneeUserIds(user.id);
+      const tags = tagsRaw
+        ? tagsRaw
+            .split(",")
+            .map((t) => String(t || "").trim())
+            .filter(Boolean)
+        : undefined;
+      const tagsMode = tagsModeRaw === "all" ? "all" : tagsModeRaw === "any" ? "any" : undefined;
+
+      let assignedTo: number | "unassigned" | undefined = undefined;
+      if (assignedToRaw === "me") assignedTo = user.id;
+      else if (assignedToRaw === "unassigned") assignedTo = "unassigned";
+      else if (assignedToRaw) {
+        const n = parseInt(assignedToRaw, 10);
+        if (Number.isFinite(n)) assignedTo = n;
       }
-      if (lastTouchToRaw) {
-        const d = new Date(lastTouchToRaw);
-        if (!Number.isNaN(d.getTime())) lastTouchTo = d;
-      }
-      if (nextFollowUpFromRaw) {
-        const d = new Date(nextFollowUpFromRaw);
-        if (!Number.isNaN(d.getTime())) nextFollowUpFrom = d;
-      }
-      if (nextFollowUpToRaw) {
-        const d = new Date(nextFollowUpToRaw);
-        if (!Number.isNaN(d.getTime())) nextFollowUpTo = d;
-      }
+
+      const hasNotes = hasNotesRaw === "true" ? true : hasNotesRaw === "false" ? false : undefined;
+      const noteUpdatedWithinDays = noteUpdatedWithinDaysRaw ? parseInt(noteUpdatedWithinDaysRaw, 10) : undefined;
+      const scoreMin = scoreMinRaw ? parseInt(scoreMinRaw, 10) : undefined;
+      const scoreMax = scoreMaxRaw ? parseInt(scoreMaxRaw, 10) : undefined;
+
+      const parseDate = (raw: string) => {
+        if (!raw) return undefined;
+        const d = new Date(raw);
+        return Number.isFinite(d.getTime()) ? d : undefined;
+      };
+      const lastTouchFrom = parseDate(lastTouchFromRaw);
+      const lastTouchTo = parseDate(lastTouchToRaw);
+      const nextFollowUpFrom = parseDate(nextFollowUpFromRaw);
+      const nextFollowUpTo = parseDate(nextFollowUpToRaw);
+
+      const archivedMode = archived === "include" ? "include" : archived === "only" ? "only" : archived === "exclude" ? "exclude" : undefined;
+      const contactPresenceMode =
+        contactPresence === "phone_only" || contactPresence === "email_only" || contactPresence === "both" || contactPresence === "none"
+          ? contactPresence
+          : undefined;
+      const sortKeyMode =
+        sortKey === "newest_imported" ||
+        sortKey === "oldest_imported" ||
+        sortKey === "highest_score" ||
+        sortKey === "lowest_score" ||
+        sortKey === "highest_value" ||
+        sortKey === "recently_updated" ||
+        sortKey === "oldest_untouched" ||
+        sortKey === "most_recent_contact" ||
+        sortKey === "status_age" ||
+        sortKey === "assigned_user"
+          ? sortKey
+          : undefined;
+      const sortDirMode = sortDir === "asc" ? "asc" : sortDir === "desc" ? "desc" : undefined;
 
       const { items, total } = await storage.listLeads({
         q,
         status,
-        statusIn,
         owner,
         zip,
         state,
         city,
         county,
         leadType,
-        assignedTo: typeof assignedTo === "number" && Number.isFinite(assignedTo) ? assignedTo : assignedTo === "unassigned" ? "unassigned" : undefined,
+        assignedTo,
         tags,
         tagsMode,
-        contactPresence,
+        contactPresence: contactPresenceMode as any,
         scoreMin: typeof scoreMin === "number" && Number.isFinite(scoreMin) ? scoreMin : undefined,
         scoreMax: typeof scoreMax === "number" && Number.isFinite(scoreMax) ? scoreMax : undefined,
-        archived,
-        hasNotes,
+        archived: archivedMode as any,
+        hasNotes: typeof hasNotes === "boolean" ? hasNotes : undefined,
         noteUpdatedWithinDays: typeof noteUpdatedWithinDays === "number" && Number.isFinite(noteUpdatedWithinDays) ? noteUpdatedWithinDays : undefined,
         lastTouchFrom,
         lastTouchTo,
         nextFollowUpFrom,
         nextFollowUpTo,
-        sortKey,
-        sortDir,
+        sortKey: sortKeyMode as any,
+        sortDir: sortDirMode as any,
         createdFrom,
         createdTo,
         limit,
         offset,
+        allowedAssignedToUserIds,
       });
       const leadIds = items.map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n) && n > 0);
       const propertyLinks = await storage.getPropertiesBySourceLeadIds(leadIds);
@@ -3121,29 +2590,30 @@ export async function registerRoutes(
         const pid = Number((row as any).id);
         if (Number.isFinite(sid) && Number.isFinite(pid)) bySourceLeadId.set(sid, pid);
       }
-
       let notesAgg: any[] = [];
       try {
         notesAgg = await storage.getLeadNotesAggByLeadIds(leadIds);
       } catch {
         notesAgg = [];
       }
-      const notesAggByLeadId = new Map<number, any>();
-      for (const r of notesAgg || []) {
-        const lid = Number((r as any).leadId);
-        if (!Number.isFinite(lid) || lid <= 0) continue;
-        notesAggByLeadId.set(lid, r);
+      const notesByLeadId = new Map<number, any>();
+      for (const r of notesAgg) {
+        notesByLeadId.set(Number(r.leadId), {
+          notesCount: r.notesCount,
+          lastNoteAt: r.lastNoteAt ? new Date(r.lastNoteAt).toISOString() : null,
+          lastNotePreview: r.lastNotePreview ?? null,
+        });
       }
 
       res.json({
         items: items.map((l: any) => {
-          const agg = notesAggByLeadId.get(Number(l.id));
+          const n = notesByLeadId.get(Number(l.id)) || null;
           return {
             ...l,
             linkedPropertyId: bySourceLeadId.get(Number(l.id)) ?? null,
-            notesCount: agg ? Number((agg as any).notesCount || 0) : 0,
-            lastNoteAt: agg?.lastNoteAt ?? null,
-            lastNotePreview: agg?.lastNotePreview ?? null,
+            notesCount: n?.notesCount ?? 0,
+            lastNoteAt: n?.lastNoteAt ?? null,
+            lastNotePreview: n?.lastNotePreview ?? null,
           };
         }),
         total,
@@ -3159,8 +2629,15 @@ export async function registerRoutes(
 
   app.get("/api/leads/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const lead = await storage.getLeadById(parseInt(req.params.id));
       if (!lead) return res.status(404).json({ message: "Lead not found" });
+      if (!isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((lead as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) return res.status(404).json({ message: "Lead not found" });
+      }
       res.json(lead);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -3172,14 +2649,20 @@ export async function registerRoutes(
       const user = await requireAuth(req, res);
       if (!user) return;
       const leadId = parseInt(req.params.id, 10);
-      if (!Number.isFinite(leadId)) return res.status(400).json({ message: "Invalid lead id" });
-
-      const limitRaw = typeof req.query?.limit === "string" ? req.query.limit : "";
-      const limit = limitRaw ? parseInt(limitRaw, 10) : 50;
+      if (!Number.isFinite(leadId)) return res.status(400).json({ message: "Invalid id" });
+      const lead = await storage.getLeadById(leadId);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+      if (!isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((lead as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) return res.status(404).json({ message: "Lead not found" });
+      }
+      const rawLimit = typeof req.query?.limit === "string" ? parseInt(req.query.limit, 10) : 50;
+      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(500, rawLimit)) : 50;
       const items = await storage.listLeadNotes(leadId, limit);
       res.json({ items });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(400).json({ message: error.message });
     }
   });
 
@@ -3188,34 +2671,29 @@ export async function registerRoutes(
       const user = await requireAuth(req, res);
       if (!user) return;
       const leadId = parseInt(req.params.id, 10);
-      if (!Number.isFinite(leadId)) return res.status(400).json({ message: "Invalid lead id" });
-
-      const body = z.object({ body: z.string().trim().min(1).max(20_000) }).parse(req.body || {});
-
-      const note = await storage.createLeadNote({
-        leadId,
-        createdBy: user.id,
-        body: body.body,
-      } as any);
-
-      const now = new Date();
+      if (!Number.isFinite(leadId)) return res.status(400).json({ message: "Invalid id" });
       const lead = await storage.getLeadById(leadId);
-      if (lead) {
-        const existingNotes = String((lead as any).notes || "").trim();
-        const appended = existingNotes ? `${existingNotes}\n\n${body.body}` : body.body;
-        await storage.updateLead(leadId, { lastTouchAt: now, notes: appended } as any);
-      } else {
-        await storage.updateLead(leadId, { lastTouchAt: now } as any);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+      if (!isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((lead as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) return res.status(404).json({ message: "Lead not found" });
       }
+      const body = typeof req.body?.body === "string" ? String(req.body.body).trim() : "";
+      if (!body) return res.status(400).json({ message: "Missing body" });
+      if (body.length > 50_000) return res.status(400).json({ message: "Body too long" });
 
-      if (req.session.userId) {
-        await storage.createGlobalActivity({
-          userId: req.session.userId,
-          action: "added_note",
-          description: `Added note to lead`,
-          metadata: JSON.stringify({ leadId, noteId: note.id }),
-        });
-      }
+      const note = await storage.createLeadNote({ leadId, createdBy: user.id, body } as any);
+      const mergedNotes = String((lead as any).notes || "").trim();
+      const legacyNext = mergedNotes ? `${mergedNotes}\n${body}` : body;
+      await storage.updateLead(leadId, { notes: legacyNext, lastTouchAt: new Date() } as any);
+
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "added_note",
+        description: `Added note to lead: ${String((lead as any).address || "")}`,
+        metadata: JSON.stringify({ leadId, noteId: (note as any).id }),
+      } as any);
 
       res.status(201).json(note);
     } catch (error: any) {
@@ -3227,12 +2705,25 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      const teams = await storage.getTeamsForUser(user.id);
-      const teamIds = (teams || []).map((t: any) => Number(t.id)).filter((n: any) => Number.isFinite(n) && n > 0);
-      const items = await storage.listSavedViews({ entityType: "lead", userId: user.id, teamIds });
-      res.json({ items });
+      const teamIds = await storage.getUserTeamIds(user.id);
+      const rows = await storage.listSavedViews({ entityType: "lead", userId: user.id, teamIds });
+      res.json({ items: rows });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/leads/views/by-token/:token", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const token = String(req.params.token || "").trim();
+      if (!token) return res.status(400).json({ message: "Missing token" });
+      const row = await storage.getSavedViewByShareToken(token);
+      if (!row) return res.status(404).json({ message: "Not found" });
+      res.json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
     }
   });
 
@@ -3240,39 +2731,36 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
+      const name = typeof req.body?.name === "string" ? String(req.body.name).trim() : "";
+      const visibility = typeof req.body?.visibility === "string" ? String(req.body.visibility).trim() : "private";
+      const configJson = req.body?.configJson;
+      const teamIdRaw = req.body?.teamId;
+      const teamId = teamIdRaw == null ? null : Number(teamIdRaw);
+      if (!name) return res.status(400).json({ message: "Missing name" });
+      if (name.length > 120) return res.status(400).json({ message: "Name too long" });
+      if (!configJson || typeof configJson !== "object") return res.status(400).json({ message: "Missing configJson" });
 
-      const payload = z
-        .object({
-          name: z.string().trim().min(1).max(120),
-          visibility: z.enum(["private", "team", "link"]).default("private"),
-          teamId: z.coerce.number().int().positive().optional().nullable(),
-          configJson: z.any(),
-        })
-        .parse(req.body || {});
+      const vis = visibility === "team" || visibility === "link" || visibility === "private" ? visibility : "private";
+      const shareToken = vis === "link" ? crypto.randomBytes(24).toString("hex") : null;
 
-      let teamId: number | null = payload.teamId ?? null;
-      if (payload.visibility === "team") {
-        if (!teamId) teamId = await getOrInitActiveTeamId(req, user.id);
-        if (!teamId) return res.status(400).json({ message: "No active team selected" });
-        if (!user.isSuperAdmin) {
-          const m = await storage.getTeamMemberByTeamAndUser(teamId, user.id);
-          if (!m || String((m as any).status || "").toLowerCase() !== "active") return res.status(404).json({ message: "Not found" });
-        }
-      } else {
-        teamId = null;
+      let effectiveTeamId: number | null = null;
+      if (vis === "team") {
+        const tids = await storage.getUserTeamIds(user.id);
+        const candidate = Number.isFinite(teamId as any) ? Number(teamId) : tids[0];
+        if (!candidate) return res.status(400).json({ message: "Missing teamId" });
+        if (!isAdminUser(user) && !tids.includes(candidate)) return res.status(403).json({ message: "Forbidden" });
+        effectiveTeamId = candidate;
       }
 
-      const shareToken = payload.visibility === "link" ? crypto.randomBytes(24).toString("hex") : null;
       const row = await storage.createSavedView({
         entityType: "lead",
-        name: payload.name,
+        name,
         ownerUserId: user.id,
-        teamId,
-        visibility: payload.visibility,
+        teamId: effectiveTeamId,
+        visibility: vis,
         shareToken,
-        configJson: payload.configJson,
+        configJson,
       } as any);
-
       res.status(201).json(row);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -3285,25 +2773,25 @@ export async function registerRoutes(
       if (!user) return;
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-
       const existing = await storage.getSavedViewById(id);
       if (!existing) return res.status(404).json({ message: "Not found" });
-      if (!user.isSuperAdmin && Number((existing as any).ownerUserId) !== user.id) return res.status(404).json({ message: "Not found" });
+      if (!isAdminUser(user) && Number((existing as any).ownerUserId) !== Number(user.id)) return res.status(403).json({ message: "Forbidden" });
 
-      const payload = z
-        .object({
-          name: z.string().trim().min(1).max(120).optional(),
-          configJson: z.any().optional(),
-          visibility: z.enum(["private", "team", "link"]).optional(),
-        })
-        .parse(req.body || {});
-
-      const nextVisibility = payload.visibility ?? (existing as any).visibility;
       const patch: any = {};
-      if (typeof payload.name === "string") patch.name = payload.name;
-      if (typeof payload.configJson !== "undefined") patch.configJson = payload.configJson;
-      if (payload.visibility) patch.visibility = payload.visibility;
-      if (nextVisibility === "link" && !(existing as any).shareToken) patch.shareToken = crypto.randomBytes(24).toString("hex");
+      if (typeof req.body?.name === "string") {
+        const name = String(req.body.name).trim();
+        if (!name) return res.status(400).json({ message: "Missing name" });
+        if (name.length > 120) return res.status(400).json({ message: "Name too long" });
+        patch.name = name;
+      }
+      if (typeof req.body?.visibility === "string") {
+        const vis = String(req.body.visibility).trim();
+        if (vis !== "private" && vis !== "team" && vis !== "link") return res.status(400).json({ message: "Invalid visibility" });
+        patch.visibility = vis;
+        if (vis === "link" && !(existing as any).shareToken) patch.shareToken = crypto.randomBytes(24).toString("hex");
+        if (vis !== "link") patch.shareToken = null;
+      }
+      if (typeof req.body?.configJson === "object" && req.body.configJson) patch.configJson = req.body.configJson;
 
       const row = await storage.updateSavedView(id, patch);
       res.json(row);
@@ -3318,167 +2806,261 @@ export async function registerRoutes(
       if (!user) return;
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-
       const existing = await storage.getSavedViewById(id);
       if (!existing) return res.status(404).json({ message: "Not found" });
-      if (!user.isSuperAdmin && Number((existing as any).ownerUserId) !== user.id) return res.status(404).json({ message: "Not found" });
-
+      if (!isAdminUser(user) && Number((existing as any).ownerUserId) !== Number(user.id)) return res.status(403).json({ message: "Forbidden" });
       await storage.deleteSavedView(id);
       res.json({ ok: true });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(400).json({ message: error.message });
     }
   });
 
-  app.get("/api/leads/views/by-token/:token", async (req, res) => {
+  async function resolveBulkLeadIds(input: {
+    user: any;
+    selectionScope: "explicit" | "all_filtered";
+    leadIds?: number[];
+    query?: any;
+  }): Promise<{ leadIds: number[]; total: number }> {
+    if (input.selectionScope === "explicit") {
+      const ids = (input.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
+      if (!ids.length) return { leadIds: [], total: 0 };
+      const inIds = sql.join(ids.map((id) => sql`${id}`), sql`,`);
+      if (isAdminUser(input.user)) {
+        const rows: any = await db.execute(sql`SELECT id FROM leads WHERE id IN (${inIds})`);
+        const out = ((rows as any).rows || []).map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n) && n > 0);
+        return { leadIds: out, total: out.length };
+      }
+      const allowed = await allowedLeadAssigneeUserIds(input.user.id);
+      if (!allowed.length) return { leadIds: [], total: 0 };
+      const inAllowed = sql.join(allowed.map((id) => sql`${id}`), sql`,`);
+      const rows: any = await db.execute(sql`SELECT id FROM leads WHERE id IN (${inIds}) AND assigned_to IN (${inAllowed})`);
+      const out = ((rows as any).rows || []).map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n) && n > 0);
+      return { leadIds: out, total: out.length };
+    }
+
+    const q: any = { ...(input.query || {}) };
+    const normalizeDate = (v: any) => {
+      if (!v) return undefined;
+      const d = new Date(String(v));
+      return Number.isFinite(d.getTime()) ? d : undefined;
+    };
+    if (typeof q.assignedTo === "string") {
+      const raw = String(q.assignedTo);
+      if (raw === "me") q.assignedTo = input.user.id;
+      else if (raw === "unassigned") q.assignedTo = "unassigned";
+      else {
+        const n = parseInt(raw, 10);
+        if (Number.isFinite(n)) q.assignedTo = n;
+      }
+    }
+    if (typeof q.hasNotes === "string") {
+      if (q.hasNotes === "true") q.hasNotes = true;
+      if (q.hasNotes === "false") q.hasNotes = false;
+    }
+    if (typeof q.createdFrom === "string") q.createdFrom = normalizeDate(q.createdFrom);
+    if (typeof q.createdTo === "string") q.createdTo = normalizeDate(q.createdTo);
+    const allowedAssignedToUserIds = isAdminUser(input.user) ? undefined : await allowedLeadAssigneeUserIds(input.user.id);
+    const first = await storage.listLeads({ ...(q as any), limit: 1, offset: 0, allowedAssignedToUserIds } as any);
+    const sample = await storage.listLeads({ ...(q as any), limit: 25, offset: 0, allowedAssignedToUserIds } as any);
+    return { leadIds: sample.items.map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n) && n > 0), total: first.total };
+  }
+
+  async function processLeadBulkActionJob(jobId: number) {
+    const job = await storage.getLeadBulkActionJobById(jobId);
+    if (!job) return;
+    if (String((job as any).status || "") !== "queued") return;
+    await storage.updateLeadBulkActionJob(jobId, { status: "running", startedAt: new Date() } as any);
+
+    const actor = await storage.getUserById(Number((job as any).createdBy));
+    if (!actor) {
+      await storage.updateLeadBulkActionJob(jobId, { status: "failed", finishedAt: new Date(), resultJson: { error: "Actor not found" } } as any);
+      return;
+    }
+
+    const action = String((job as any).action || "").trim();
+    const selectionScope = String((job as any).selectionScope || "").trim() as any;
+    const leadIdsJson = (job as any).leadIds;
+    const filterJson = (job as any).filterJson;
+    const params = (filterJson as any)?.params || {};
+
+    const allowedAssignedToUserIds = isAdminUser(actor) ? undefined : await allowedLeadAssigneeUserIds(actor.id);
+
+    const collectAllFilteredIds = async () => {
+      const q = typeof filterJson === "object" && filterJson ? { ...(filterJson as any) } : {};
+      delete (q as any).params;
+      const normalizeDate = (v: any) => {
+        if (!v) return undefined;
+        const d = new Date(String(v));
+        return Number.isFinite(d.getTime()) ? d : undefined;
+      };
+      if (typeof (q as any).assignedTo === "string") {
+        const raw = String((q as any).assignedTo);
+        if (raw === "me") (q as any).assignedTo = actor.id;
+        else if (raw === "unassigned") (q as any).assignedTo = "unassigned";
+        else {
+          const n = parseInt(raw, 10);
+          if (Number.isFinite(n)) (q as any).assignedTo = n;
+        }
+      }
+      if (typeof (q as any).hasNotes === "string") {
+        if ((q as any).hasNotes === "true") (q as any).hasNotes = true;
+        if ((q as any).hasNotes === "false") (q as any).hasNotes = false;
+      }
+      if (typeof (q as any).createdFrom === "string") (q as any).createdFrom = normalizeDate((q as any).createdFrom);
+      if (typeof (q as any).createdTo === "string") (q as any).createdTo = normalizeDate((q as any).createdTo);
+      if (typeof (q as any).lastTouchFrom === "string") (q as any).lastTouchFrom = normalizeDate((q as any).lastTouchFrom);
+      if (typeof (q as any).lastTouchTo === "string") (q as any).lastTouchTo = normalizeDate((q as any).lastTouchTo);
+      if (typeof (q as any).nextFollowUpFrom === "string") (q as any).nextFollowUpFrom = normalizeDate((q as any).nextFollowUpFrom);
+      if (typeof (q as any).nextFollowUpTo === "string") (q as any).nextFollowUpTo = normalizeDate((q as any).nextFollowUpTo);
+      let off = 0;
+      const pageSize = 500;
+      const out: number[] = [];
+      while (true) {
+        const page = await storage.listLeads({ ...(q as any), limit: pageSize, offset: off, allowedAssignedToUserIds } as any);
+        for (const l of page.items) {
+          const id = Number((l as any).id);
+          if (Number.isFinite(id) && id > 0) out.push(id);
+        }
+        off += page.items.length;
+        if (page.items.length < pageSize) break;
+      }
+      return out;
+    };
+
+    const ids =
+      selectionScope === "all_filtered"
+        ? await collectAllFilteredIds()
+        : Array.isArray(leadIdsJson)
+          ? (leadIdsJson as any[]).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0)
+          : [];
+
+    if (!ids.length) {
+      await storage.updateLeadBulkActionJob(jobId, { status: "completed", finishedAt: new Date(), totalTargets: 0, processed: 0, succeeded: 0, failed: 0, resultJson: { message: "No targets" } } as any);
+      return;
+    }
+
+    let processed = 0;
+    let succeeded = 0;
+    let failed = 0;
+    const failures: any[] = [];
+    const now = new Date();
+
+    const chunks = (arr: number[], size: number) => {
+      const out: number[][] = [];
+      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+      return out;
+    };
+
     try {
-      const token = String(req.params.token || "").trim();
-      if (!token) return res.status(404).json({ message: "Not found" });
-      const row = await storage.getSavedViewByShareToken(token);
-      if (!row) return res.status(404).json({ message: "Not found" });
-      res.json(row);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      if (action === "assign") {
+        const nextAssignedToRaw = Number(params?.assignedTo);
+        if (!Number.isFinite(nextAssignedToRaw)) throw new Error("Invalid assignedTo");
+        const nextAssignedTo = nextAssignedToRaw;
+        if (!isAdminUser(actor)) {
+          const allowed = await allowedLeadAssigneeUserIds(actor.id);
+          if (!allowed.includes(nextAssignedTo)) throw new Error("Forbidden assignedTo");
+        }
+        for (const c of chunks(ids, 500)) {
+          await db.execute(sql`UPDATE leads SET assigned_to = ${nextAssignedTo}, updated_at = NOW() WHERE id IN (${sql.join(c.map((id) => sql`${id}`), sql`,`)})`);
+          processed += c.length;
+          succeeded += c.length;
+        }
+      } else if (action === "set_status") {
+        const nextStatus = String(params?.status || "").trim();
+        if (!nextStatus) throw new Error("Invalid status");
+        for (const c of chunks(ids, 500)) {
+          await db.execute(sql`UPDATE leads SET status = ${nextStatus}, status_changed_at = NOW(), updated_at = NOW() WHERE id IN (${sql.join(c.map((id) => sql`${id}`), sql`,`)})`);
+          processed += c.length;
+          succeeded += c.length;
+        }
+      } else if (action === "archive") {
+        for (const c of chunks(ids, 500)) {
+          await db.execute(sql`UPDATE leads SET archived_at = ${now}, updated_at = NOW() WHERE id IN (${sql.join(c.map((id) => sql`${id}`), sql`,`)})`);
+          processed += c.length;
+          succeeded += c.length;
+        }
+      } else if (action === "unarchive") {
+        for (const c of chunks(ids, 500)) {
+          await db.execute(sql`UPDATE leads SET archived_at = NULL, updated_at = NOW() WHERE id IN (${sql.join(c.map((id) => sql`${id}`), sql`,`)})`);
+          processed += c.length;
+          succeeded += c.length;
+        }
+      } else if (action === "add_tags" || action === "remove_tags") {
+        const tags = Array.isArray(params?.tags) ? params.tags : typeof params?.tags === "string" ? String(params.tags).split(",") : [];
+        const cleaned = tags.map((t: any) => String(t || "").trim()).filter(Boolean);
+        if (!cleaned.length) throw new Error("Missing tags");
+        for (const id of ids) {
+          processed += 1;
+          try {
+            const lead = await storage.getLeadById(id);
+            if (!lead) throw new Error("Lead not found");
+            const current = Array.isArray((lead as any).tags) ? (lead as any).tags.map((t: any) => String(t)) : [];
+            const next =
+              action === "add_tags"
+                ? Array.from(new Set([...current, ...cleaned])).filter(Boolean)
+                : current.filter((t: string) => !new Set(cleaned).has(t));
+            await storage.updateLead(id, { tags: next } as any);
+            succeeded += 1;
+          } catch (e: any) {
+            failed += 1;
+            if (failures.length < 50) failures.push({ id, error: String(e?.message || e) });
+          }
+        }
+      } else if (action === "export") {
+        const format = String(params?.format || "csv") === "xlsx" ? "xlsx" : "csv";
+        const columns = Array.isArray(params?.columns) ? params.columns : [];
+        const filters = { ids };
+        const { job: exportJob, token } = await createExportJob({ entityType: "lead" as any, createdBy: actor.id, format: format as any, filters, columns } as any);
+        setImmediate(() => {
+          processExportJob(exportJob.id).catch(() => {});
+        });
+        processed = ids.length;
+        succeeded = ids.length;
+        await storage.updateLeadBulkActionJob(jobId, {
+          status: "completed",
+          finishedAt: new Date(),
+          totalTargets: ids.length,
+          processed,
+          succeeded,
+          failed,
+          resultJson: {
+            exportJobId: exportJob.id,
+            downloadUrl: `/api/crm/export/files/${exportJob.id}/download?token=${encodeURIComponent(token)}`,
+          },
+        } as any);
+        return;
+      } else {
+        throw new Error("Unsupported action");
+      }
+    } catch (e: any) {
+      failed = Math.max(failed, 1);
+      failures.push({ error: String(e?.message || e) });
     }
-  });
 
-  const normalizeLeadListFilter = (raw: any) => {
-    const getStr = (k: string) => (typeof raw?.[k] === "string" ? String(raw[k]) : "");
-    const parseDate = (v: any) => {
-      if (typeof v !== "string") return undefined;
-      const d = new Date(v);
-      if (!Number.isNaN(d.getTime())) return d;
-      return undefined;
-    };
-    const parseNum = (v: any) => {
-      const n = Number(v);
-      return Number.isFinite(n) ? n : undefined;
-    };
-
-    const tagsRaw = raw?.tags;
-    const tags =
-      typeof tagsRaw === "string"
-        ? tagsRaw
-            .split(",")
-            .map((t: string) => t.trim())
-            .filter(Boolean)
-        : Array.isArray(tagsRaw)
-          ? tagsRaw.map((t: any) => String(t || "").trim()).filter(Boolean)
-          : undefined;
-
-    const hasNotesRaw = raw?.hasNotes;
-    const hasNotes = hasNotesRaw === true ? true : hasNotesRaw === false ? false : hasNotesRaw === "true" ? true : hasNotesRaw === "false" ? false : undefined;
-
-    const assignedToRaw = raw?.assignedTo;
-    const assignedTo =
-      assignedToRaw === "unassigned"
-        ? "unassigned"
-        : typeof assignedToRaw === "number"
-          ? assignedToRaw
-          : typeof assignedToRaw === "string" && assignedToRaw.trim()
-            ? parseInt(assignedToRaw, 10)
-            : undefined;
-
-    const archivedRaw = String(raw?.archived || "").trim();
-    const archived = archivedRaw === "exclude" || archivedRaw === "include" || archivedRaw === "only" ? archivedRaw : undefined;
-
-    const tagsModeRaw = String(raw?.tagsMode || "").trim();
-    const tagsMode = tagsModeRaw === "all" || tagsModeRaw === "any" ? tagsModeRaw : undefined;
-
-    const contactPresenceRaw = String(raw?.contactPresence || "").trim();
-    const contactPresence =
-      contactPresenceRaw === "phone_only" || contactPresenceRaw === "email_only" || contactPresenceRaw === "both" || contactPresenceRaw === "none"
-        ? contactPresenceRaw
-        : undefined;
-
-    const sortKey = typeof raw?.sortKey === "string" ? raw.sortKey : undefined;
-    const sortDir = raw?.sortDir === "asc" ? "asc" : raw?.sortDir === "desc" ? "desc" : undefined;
-
-    return {
-      q: getStr("query") || getStr("q"),
-      status: getStr("status"),
-      owner: getStr("owner"),
-      zip: getStr("zip"),
-      state: getStr("state"),
-      city: getStr("city"),
-      county: getStr("county"),
-      leadType: getStr("leadType"),
-      assignedTo: Number.isFinite(assignedTo as any) ? (assignedTo as any) : assignedTo === "unassigned" ? "unassigned" : undefined,
-      tags,
-      tagsMode,
-      contactPresence,
-      scoreMin: parseNum(raw?.scoreMin),
-      scoreMax: parseNum(raw?.scoreMax),
-      archived,
-      hasNotes,
-      noteUpdatedWithinDays: parseNum(raw?.noteUpdatedWithinDays),
-      lastTouchFrom: parseDate(raw?.lastTouchFrom),
-      lastTouchTo: parseDate(raw?.lastTouchTo),
-      nextFollowUpFrom: parseDate(raw?.nextFollowUpFrom),
-      nextFollowUpTo: parseDate(raw?.nextFollowUpTo),
-      createdFrom: parseDate(raw?.createdFrom),
-      createdTo: parseDate(raw?.createdTo),
-      sortKey,
-      sortDir,
-    };
-  };
+    await storage.updateLeadBulkActionJob(jobId, {
+      status: failed ? "completed" : "completed",
+      finishedAt: new Date(),
+      totalTargets: ids.length,
+      processed,
+      succeeded,
+      failed,
+      resultJson: { failures },
+    } as any);
+  }
 
   app.post("/api/leads/bulk/preview", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
-      const payload = z
-        .object({
-          selectionScope: z.enum(["explicit", "all_filtered"]),
-          leadIds: z.array(z.coerce.number().int().positive()).optional(),
-          filter: z.record(z.any()).optional(),
-          action: z.string().trim().min(1).max(80),
-          params: z.record(z.any()).optional(),
-        })
-        .parse(req.body || {});
-
-      const allowedAssignedToUserIds = user.isSuperAdmin
-        ? undefined
-        : await (async () => {
-            const teamId = await getOrInitActiveTeamId(req, user.id);
-            if (!teamId) return [user.id];
-            const members = await storage.getTeamMembers(teamId);
-            return (members || [])
-              .filter((m: any) => String(m.status || "").toLowerCase() === "active")
-              .map((m: any) => Number(m.userId))
-              .filter((n: any) => Number.isFinite(n) && n > 0);
-          })();
-
-      if (payload.selectionScope === "explicit") {
-        const ids = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
-        if (!ids.length) return res.json({ totalTargets: 0, validLeadIds: [] });
-
-        const whereAllowed =
-          allowedAssignedToUserIds && allowedAssignedToUserIds.length
-            ? sql`AND (assigned_to IS NULL OR assigned_to IN (${sql.join(allowedAssignedToUserIds.map((id) => sql`${id}`), sql`,`)}))`
-            : sql``;
-
-        const rows: any = await db.execute(sql`
-          SELECT id
-          FROM leads
-          WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
-          ${whereAllowed}
-        `);
-
-        const validLeadIds = ((rows as any).rows || []).map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n) && n > 0);
-        return res.json({ totalTargets: validLeadIds.length, validLeadIds });
-      }
-
-      const f = normalizeLeadListFilter(payload.filter || {});
-      const { total } = await storage.listLeads({
-        ...(f as any),
-        allowedAssignedToUserIds,
-        limit: 1,
-        offset: 0,
-      });
-
-      res.json({ totalTargets: total });
+      const action = typeof req.body?.action === "string" ? String(req.body.action).trim() : "";
+      const selectionScope = typeof req.body?.selectionScope === "string" ? String(req.body.selectionScope).trim() : "";
+      const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds : [];
+      const query = typeof req.body?.query === "object" && req.body.query ? req.body.query : {};
+      if (!action) return res.status(400).json({ message: "Missing action" });
+      if (selectionScope !== "explicit" && selectionScope !== "all_filtered") return res.status(400).json({ message: "Invalid selectionScope" });
+      const resolved = await resolveBulkLeadIds({ user, selectionScope: selectionScope as any, leadIds, query });
+      res.json({ action, selectionScope, totalTargets: resolved.total, sampleLeadIds: resolved.leadIds });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -3488,177 +3070,30 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
+      const action = typeof req.body?.action === "string" ? String(req.body.action).trim() : "";
+      const selectionScope = typeof req.body?.selectionScope === "string" ? String(req.body.selectionScope).trim() : "";
+      const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds : [];
+      const query = typeof req.body?.query === "object" && req.body.query ? req.body.query : null;
+      const params = typeof req.body?.params === "object" && req.body.params ? req.body.params : {};
+      if (!action) return res.status(400).json({ message: "Missing action" });
+      if (selectionScope !== "explicit" && selectionScope !== "all_filtered") return res.status(400).json({ message: "Invalid selectionScope" });
 
-      const payload = z
-        .object({
-          selectionScope: z.enum(["explicit", "all_filtered"]),
-          leadIds: z.array(z.coerce.number().int().positive()).optional(),
-          filter: z.record(z.any()).optional(),
-          action: z.enum(["set_status", "assign", "archive", "unarchive", "export"]),
-          params: z.record(z.any()).optional(),
-        })
-        .parse(req.body || {});
-
-      const allowedAssignedToUserIds = user.isSuperAdmin
-        ? undefined
-        : await (async () => {
-            const teamId = await getOrInitActiveTeamId(req, user.id);
-            if (!teamId) return [user.id];
-            const members = await storage.getTeamMembers(teamId);
-            return (members || [])
-              .filter((m: any) => String(m.status || "").toLowerCase() === "active")
-              .map((m: any) => Number(m.userId))
-              .filter((n: any) => Number.isFinite(n) && n > 0);
-          })();
-
+      const preview = await resolveBulkLeadIds({ user, selectionScope: selectionScope as any, leadIds, query: query || {} });
       const job = await storage.createLeadBulkActionJob({
         createdBy: user.id,
         status: "queued",
-        action: payload.action,
-        selectionScope: payload.selectionScope,
-        leadIds: payload.selectionScope === "explicit" ? payload.leadIds || [] : null,
-        filterJson: payload.selectionScope === "all_filtered" ? payload.filter || {} : null,
-        totalTargets: 0,
-        processed: 0,
-        succeeded: 0,
-        failed: 0,
-        resultJson: null,
+        action,
+        selectionScope,
+        leadIds: selectionScope === "explicit" ? leadIds : null,
+        filterJson: selectionScope === "all_filtered" ? { ...(query || {}), params } : { params },
+        totalTargets: preview.total,
       } as any);
 
-      setImmediate(async () => {
-        const updateJob = async (patch: any) => {
-          try {
-            await storage.updateLeadBulkActionJob(job.id, patch);
-          } catch {}
-        };
-
-        const startAt = new Date();
-        await updateJob({ status: "running", startedAt: startAt, updatedAt: startAt });
-
-        const runBatchUpdate = async (ids: number[]) => {
-          if (!ids.length) return { processed: 0, succeeded: 0, failed: 0 };
-
-          if (payload.action === "set_status") {
-            const nextStatus = String((payload.params as any)?.status || "").trim();
-            if (!nextStatus) throw new Error("Missing status");
-            await db.execute(sql`
-              UPDATE leads
-              SET status = ${nextStatus}, status_changed_at = NOW(), updated_at = NOW()
-              WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
-            `);
-            return { processed: ids.length, succeeded: ids.length, failed: 0 };
-          }
-
-          if (payload.action === "assign") {
-            const nextAssignedTo = Number((payload.params as any)?.assignedTo);
-            if (!Number.isFinite(nextAssignedTo) || nextAssignedTo <= 0) throw new Error("Invalid assignedTo");
-            await db.execute(sql`
-              UPDATE leads
-              SET assigned_to = ${nextAssignedTo}, updated_at = NOW()
-              WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
-            `);
-            return { processed: ids.length, succeeded: ids.length, failed: 0 };
-          }
-
-          if (payload.action === "archive") {
-            await db.execute(sql`
-              UPDATE leads
-              SET archived_at = NOW(), updated_at = NOW()
-              WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
-            `);
-            return { processed: ids.length, succeeded: ids.length, failed: 0 };
-          }
-
-          if (payload.action === "unarchive") {
-            await db.execute(sql`
-              UPDATE leads
-              SET archived_at = NULL, updated_at = NOW()
-              WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
-            `);
-            return { processed: ids.length, succeeded: ids.length, failed: 0 };
-          }
-
-          if (payload.action === "export") {
-            const { job: exportJob, token } = await createExportJob({
-              entityType: "lead",
-              createdBy: user.id,
-              format: "csv",
-              filters: { ids },
-              columns: [],
-              expiresInMinutes: 60,
-            });
-            const finalExport = await processExportJob(exportJob.id);
-            await updateJob({ resultJson: { exportId: finalExport.id, token }, updatedAt: new Date() });
-            return { processed: ids.length, succeeded: ids.length, failed: 0 };
-          }
-
-          return { processed: ids.length, succeeded: 0, failed: ids.length };
-        };
-
-        try {
-          let totalTargets = 0;
-          let processed = 0;
-          let succeeded = 0;
-          let failed = 0;
-
-          if (payload.selectionScope === "explicit") {
-            const rawIds = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
-            const unique = Array.from(new Set(rawIds));
-            const whereAllowed =
-              allowedAssignedToUserIds && allowedAssignedToUserIds.length
-                ? sql`AND (assigned_to IS NULL OR assigned_to IN (${sql.join(allowedAssignedToUserIds.map((id) => sql`${id}`), sql`,`)}))`
-                : sql``;
-            const rows: any = await db.execute(sql`
-              SELECT id
-              FROM leads
-              WHERE id IN (${sql.join(unique.map((id) => sql`${id}`), sql`,`)})
-              ${whereAllowed}
-            `);
-            const ids = ((rows as any).rows || []).map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n) && n > 0);
-            totalTargets = ids.length;
-
-            const out = await runBatchUpdate(ids);
-            processed += out.processed;
-            succeeded += out.succeeded;
-            failed += out.failed;
-          } else {
-            const f = normalizeLeadListFilter(payload.filter || {});
-            const pageSize = 500;
-            let offset = 0;
-            while (true) {
-              const page = await storage.listLeads({
-                ...(f as any),
-                allowedAssignedToUserIds,
-                limit: pageSize,
-                offset,
-              });
-              if (!totalTargets) totalTargets = page.total;
-              const ids = (page.items || []).map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n) && n > 0);
-              if (!ids.length) break;
-
-              const out = await runBatchUpdate(ids);
-              processed += out.processed;
-              succeeded += out.succeeded;
-              failed += out.failed;
-
-              offset += pageSize;
-              await updateJob({ totalTargets, processed, succeeded, failed, updatedAt: new Date() });
-              if (offset >= totalTargets) break;
-            }
-          }
-
-          await updateJob({ status: "completed", totalTargets, processed, succeeded, failed, finishedAt: new Date(), updatedAt: new Date() });
-        } catch (err: any) {
-          await updateJob({
-            status: "failed",
-            resultJson: { error: String(err?.message || err) },
-            finishedAt: new Date(),
-            updatedAt: new Date(),
-          });
-        }
+      setImmediate(() => {
+        processLeadBulkActionJob(job.id).catch(() => {});
       });
 
-      res.status(201).json({ jobId: job.id, status: job.status });
+      res.status(201).json({ jobId: job.id });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -3672,69 +3107,103 @@ export async function registerRoutes(
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
       const job = await storage.getLeadBulkActionJobById(id);
       if (!job) return res.status(404).json({ message: "Not found" });
-      if (!user.isSuperAdmin && Number((job as any).createdBy) !== user.id) return res.status(404).json({ message: "Not found" });
+      if (!isAdminUser(user) && Number((job as any).createdBy) !== Number(user.id)) return res.status(403).json({ message: "Forbidden" });
       res.json(job);
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(400).json({ message: error.message });
     }
   });
+
+  function parseVoiceAction(transcriptRaw: string, user: any) {
+    const transcript = String(transcriptRaw || "").trim();
+    const t = transcript.toLowerCase();
+    const out: any = {
+      intent: "",
+      entities: {},
+      target_records: { selection_scope: "selected_rows", lead_ids: [] as string[] },
+      proposed_updates: [] as Array<{ field: string; value: any }>,
+      confidence: 0.4,
+      clarifications_needed: [] as string[],
+    };
+
+    const statusMatch = t.match(/\b(status|stage)\b.*\b(new|contacted|qualified|negotiation|under_contract|closed|lost|hot|warm|cold)\b/);
+    if (statusMatch) {
+      out.intent = "update_leads";
+      out.entities.status = statusMatch[2];
+      out.proposed_updates.push({ field: "status", value: statusMatch[2] });
+      out.confidence = Math.max(out.confidence, 0.85);
+    }
+
+    if (/\bassign\b/.test(t)) {
+      out.intent = out.intent || "update_leads";
+      if (/\bto me\b/.test(t) || /\bassign me\b/.test(t)) {
+        out.entities.assignee = "current_user";
+        out.proposed_updates.push({ field: "assigned_to", value: "current_user" });
+        out.confidence = Math.max(out.confidence, 0.85);
+      } else {
+        out.clarifications_needed.push("Which user should this be assigned to?");
+        out.confidence = Math.min(out.confidence, 0.6);
+      }
+    }
+
+    const addTagMatch = t.match(/\badd tag(s)?\b(.+)$/);
+    if (addTagMatch) {
+      out.intent = out.intent || "update_leads";
+      const tags = addTagMatch[2]
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (tags.length) {
+        out.entities.add_tags = tags;
+        out.proposed_updates.push({ field: "add_tags", value: tags });
+        out.confidence = Math.max(out.confidence, 0.8);
+      }
+    }
+
+    const removeTagMatch = t.match(/\bremove tag(s)?\b(.+)$/);
+    if (removeTagMatch) {
+      out.intent = out.intent || "update_leads";
+      const tags = removeTagMatch[2]
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+      if (tags.length) {
+        out.entities.remove_tags = tags;
+        out.proposed_updates.push({ field: "remove_tags", value: tags });
+        out.confidence = Math.max(out.confidence, 0.8);
+      }
+    }
+
+    const noteMatch = t.match(/\badd note\b(.+)$/);
+    if (noteMatch) {
+      out.intent = out.intent || "add_note";
+      const body = String(noteMatch[1] || "").trim();
+      if (body) {
+        out.entities.note = body;
+        out.proposed_updates.push({ field: "note", value: body });
+        out.confidence = Math.max(out.confidence, 0.75);
+      } else {
+        out.clarifications_needed.push("What note should I add?");
+      }
+    }
+
+    if (!out.intent) {
+      out.intent = "unknown";
+      out.clarifications_needed.push("I couldn't understand the request. Try: “set status to warm”, “assign to me”, “add tag follow-up”.");
+    }
+
+    out.entities.user_id = user?.id ?? null;
+    return { transcript, parsed: out };
+  }
 
   app.post("/api/ai/voice/parse", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
-
-      const payload = z.object({ transcript: z.string().trim().min(1).max(5000) }).parse(req.body || {});
-      const t = payload.transcript.toLowerCase();
-
-      let action: "set_status" | "assign" | "archive" | "unarchive" | "export" | "add_note" | "playground_append_note" | null = null;
-      const params: any = {};
-
-      const playgroundNoteMatch =
-        t.match(/playground\s+note[:\s]+([\s\S]{1,5000})/) ||
-        t.match(/add\s+playground\s+note[:\s]+([\s\S]{1,5000})/) ||
-        t.match(/in\s+playground[:\s]+([\s\S]{1,5000})/);
-      if (playgroundNoteMatch) {
-        action = "playground_append_note";
-        params.note = String(playgroundNoteMatch[1] || "").trim();
-      }
-
-      const noteMatch =
-        !action &&
-        (t.match(/add\s+note[:\s]+([\s\S]{1,5000})/) ||
-          t.match(/note[:\s]+([\s\S]{1,5000})/) ||
-          t.match(/log\s+note[:\s]+([\s\S]{1,5000})/));
-      if (noteMatch) {
-        action = "add_note";
-        params.body = String(noteMatch[1] || "").trim();
-      }
-
-      if (t.includes("unarchive")) action = "unarchive";
-      else if (t.includes("archive")) action = "archive";
-      else if (t.includes("export")) action = "export";
-
-      const statusMatch =
-        t.match(/status\s+to\s+([a-z0-9_\- ]{2,40})/) ||
-        t.match(/mark\s+as\s+([a-z0-9_\- ]{2,40})/) ||
-        t.match(/set\s+status\s+([a-z0-9_\- ]{2,40})/);
-      if (statusMatch) {
-        action = "set_status";
-        params.status = String(statusMatch[1] || "").trim();
-      }
-
-      if (t.includes("assign to me")) {
-        action = "assign";
-        params.assignedTo = user.id;
-      } else {
-        const assignMatch = t.match(/assign\s+to\s+user\s+(\d{1,10})/);
-        if (assignMatch) {
-          action = "assign";
-          params.assignedTo = Number(assignMatch[1]);
-        }
-      }
-
-      res.json({ action, params, transcript: payload.transcript });
+      const transcript = typeof req.body?.transcript === "string" ? String(req.body.transcript) : "";
+      const parsed = parseVoiceAction(transcript, user);
+      res.json(parsed);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -3745,84 +3214,20 @@ export async function registerRoutes(
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
-
-      const payload = z
-        .object({
-          parsed: z.object({ action: z.string().nullable(), params: z.record(z.any()).default({}), transcript: z.string().optional() }),
-          leadIds: z.array(z.coerce.number().int().positive()).max(200).optional(),
-          playground: z
-            .object({
-              sessionId: z.coerce.number().int().positive().optional(),
-              address: z.string().trim().max(255).optional(),
-              leadId: z.coerce.number().int().positive().optional(),
-              propertyId: z.coerce.number().int().positive().optional(),
-            })
-            .optional(),
-        })
-        .parse(req.body || {});
-
-      const action = payload.parsed.action as any;
-      const params = payload.parsed.params || {};
-
-      if (action === "playground_append_note") {
-        const note = String(params.note || "").trim();
-        if (!note) return res.status(400).json({ message: "Missing note" });
-
-        const ctx = payload.playground || {};
-        const sessionId = typeof ctx.sessionId === "number" && Number.isFinite(ctx.sessionId) ? ctx.sessionId : null;
-        const address = String(ctx.address || "").trim();
-        let session: any | null = null;
-        let wouldCreateSession = false;
-        if (sessionId) {
-          session = await storage.getPlaygroundPropertySessionById(sessionId);
-        } else if (address) {
-          const addressKey = toAddressKey(address);
-          session = await storage.getPlaygroundPropertySessionByAddressKey(user.id, addressKey);
-          if (!session) wouldCreateSession = true;
-        } else {
-          return res.status(400).json({ message: "Missing playground sessionId or address" });
-        }
-
-        return res.json({
-          changes: [],
-          notes: null,
-          playground: {
-            sessionId: session?.id ?? null,
-            wouldCreateSession,
-            notePreview: note.slice(0, 280),
-            currentNotesCount: session ? (() => { try { return Array.isArray(JSON.parse(String(session.notesJson || "[]"))) ? JSON.parse(String(session.notesJson || "[]")).length : 0; } catch { return 0; } })() : 0,
-          },
-        });
-      }
-
-      if (action === "add_note") {
-        const body = String(params.body || "").trim();
-        const ids = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
-        if (!ids.length) return res.json({ changes: [], notes: null, playground: null });
-        if (!body) return res.status(400).json({ message: "Missing note body" });
-        return res.json({ changes: [], notes: { leadIdsCount: ids.length, bodyPreview: body.slice(0, 280) }, playground: null });
-      }
-
-      const ids = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
-      if (!ids.length) return res.json({ changes: [], notes: null, playground: null });
-
-      const leadRows: any = await db.execute(sql`
-        SELECT id, status, assigned_to as "assignedTo", archived_at as "archivedAt"
-        FROM leads
-        WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
-      `);
-      const leadsRows = (leadRows as any).rows || [];
-
-      const changes = leadsRows.map((r: any) => {
-        const next: any = { id: Number(r.id) };
-        if (action === "set_status") next.status = String(params.status || "").trim();
-        if (action === "assign") next.assignedTo = Number(params.assignedTo);
-        if (action === "archive") next.archivedAt = new Date().toISOString();
-        if (action === "unarchive") next.archivedAt = null;
-        return { before: r, next };
+      const proposal = req.body?.proposal;
+      const selectionScope = typeof req.body?.selectionScope === "string" ? String(req.body.selectionScope).trim() : "explicit";
+      const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds : [];
+      const query = typeof req.body?.query === "object" && req.body.query ? req.body.query : {};
+      if (!proposal || typeof proposal !== "object") return res.status(400).json({ message: "Missing proposal" });
+      if (selectionScope !== "explicit" && selectionScope !== "all_filtered") return res.status(400).json({ message: "Invalid selectionScope" });
+      const resolved = await resolveBulkLeadIds({ user, selectionScope: selectionScope as any, leadIds, query });
+      res.json({
+        proposal,
+        selectionScope,
+        totalTargets: resolved.total,
+        sampleLeadIds: resolved.leadIds,
+        warnings: resolved.total > 200 && selectionScope === "explicit" ? ["Large selection: voice apply is limited to 200 leads in v1."] : [],
       });
-
-      res.json({ changes, notes: null, playground: null });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -3833,217 +3238,102 @@ export async function registerRoutes(
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
+      const proposal = req.body?.proposal;
+      const selectionScope = typeof req.body?.selectionScope === "string" ? String(req.body.selectionScope).trim() : "explicit";
+      const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds : [];
+      if (!proposal || typeof proposal !== "object") return res.status(400).json({ message: "Missing proposal" });
+      if (selectionScope !== "explicit") return res.status(400).json({ message: "Voice apply supports selected rows only in v1" });
 
-      const payload = z
-        .object({
-          parsed: z.object({ action: z.string().nullable(), params: z.record(z.any()).default({}), transcript: z.string().optional() }),
-          transcript: z.string().trim().min(1).max(5000),
-          leadIds: z.array(z.coerce.number().int().positive()).max(200).optional(),
-          playground: z
-            .object({
-              sessionId: z.coerce.number().int().positive().optional(),
-              address: z.string().trim().max(255).optional(),
-              leadId: z.coerce.number().int().positive().optional(),
-              propertyId: z.coerce.number().int().positive().optional(),
-            })
-            .optional(),
-        })
-        .parse(req.body || {});
+      const ids = leadIds.map((x: any) => Number(x)).filter((n: any) => Number.isFinite(n) && n > 0);
+      if (!ids.length) return res.status(400).json({ message: "No leadIds" });
+      if (ids.length > 200) return res.status(400).json({ message: "Too many leads for voice apply" });
 
-      const action = payload.parsed.action as any;
-      const params = payload.parsed.params || {};
+      const allowedAssignedToUserIds = isAdminUser(user) ? undefined : await allowedLeadAssigneeUserIds(user.id);
 
-      if (action === "playground_append_note") {
-        const note = String(params.note || "").trim();
-        if (!note) return res.status(400).json({ message: "Missing note" });
+      const updates: any = {};
+      for (const u of (proposal as any).proposed_updates || []) {
+        if (!u || typeof u !== "object") continue;
+        if (u.field === "status") updates.status = String(u.value || "").trim();
+        if (u.field === "assigned_to" && u.value === "current_user") updates.assignedTo = user.id;
+        if (u.field === "add_tags") updates.addTags = Array.isArray(u.value) ? u.value : [];
+        if (u.field === "remove_tags") updates.removeTags = Array.isArray(u.value) ? u.value : [];
+        if (u.field === "note") updates.note = String(u.value || "").trim();
+      }
 
-        const ctx = payload.playground || {};
-        const sessionId = typeof ctx.sessionId === "number" && Number.isFinite(ctx.sessionId) ? ctx.sessionId : null;
-        const address = String(ctx.address || "").trim();
-        const leadId = typeof ctx.leadId === "number" && Number.isFinite(ctx.leadId) ? ctx.leadId : undefined;
-        const propertyId = typeof ctx.propertyId === "number" && Number.isFinite(ctx.propertyId) ? ctx.propertyId : undefined;
+      if (!updates.status && !updates.assignedTo && !updates.addTags && !updates.removeTags && !updates.note) {
+        return res.status(400).json({ message: "No supported updates found" });
+      }
 
-        let session: any | null = null;
-        if (sessionId) {
-          session = await storage.getPlaygroundPropertySessionById(sessionId);
-          if (!session) return res.status(404).json({ message: "Playground session not found" });
-        } else if (address) {
-          const addressKey = toAddressKey(address);
-          session = await storage.getPlaygroundPropertySessionByAddressKey(user.id, addressKey);
-          if (!session) {
-            const validated = insertPlaygroundPropertySessionSchema.parse({
-              address,
-              addressKey,
-              leadId,
-              propertyId,
-              tagsJson: "[]",
-              bookmarksJson: "[]",
-              checklistJson: "{}",
-              notesJson: "[]",
-              underwritingJson: "{}",
-              createdBy: user.id,
-              updatedBy: user.id,
-              lastOpenedBy: user.id,
-              lastOpenedAt: new Date(),
-            } as any);
-            session = await storage.createPlaygroundPropertySession(validated as any);
-          }
-        } else {
-          return res.status(400).json({ message: "Missing playground sessionId or address" });
-        }
+      const undoItems: any[] = [];
+      const now = new Date();
+      let succeeded = 0;
+      let failed = 0;
+      const failures: any[] = [];
 
-        const prevNotesJson = String((session as any).notesJson || "[]");
-        let notesArr: any[] = [];
+      for (const id of ids) {
         try {
-          const parsed = JSON.parse(prevNotesJson);
-          notesArr = Array.isArray(parsed) ? parsed : [];
-        } catch {
-          notesArr = [];
+          const lead = await storage.getLeadById(id);
+          if (!lead) throw new Error("Lead not found");
+          if (Array.isArray(allowedAssignedToUserIds)) {
+            const assignedTo = Number((lead as any).assignedTo);
+            if (!Number.isFinite(assignedTo) || !allowedAssignedToUserIds.includes(assignedTo)) throw new Error("Forbidden");
+          }
+
+          const before = { status: (lead as any).status ?? null, assignedTo: (lead as any).assignedTo ?? null, tags: (lead as any).tags ?? null };
+          const patch: any = {};
+          if (updates.status) {
+            patch.status = updates.status;
+            patch.statusChangedAt = now;
+          }
+          if (updates.assignedTo) patch.assignedTo = updates.assignedTo;
+          if (updates.addTags || updates.removeTags) {
+            const current = Array.isArray((lead as any).tags) ? (lead as any).tags.map((t: any) => String(t)) : [];
+            const add = Array.isArray(updates.addTags) ? updates.addTags.map((t: any) => String(t || "").trim()).filter(Boolean) : [];
+            const remove = Array.isArray(updates.removeTags) ? updates.removeTags.map((t: any) => String(t || "").trim()).filter(Boolean) : [];
+            const removedSet = new Set(remove);
+            const next = Array.from(new Set([...current, ...add])).filter((t) => !removedSet.has(t));
+            patch.tags = next;
+          }
+          if (updates.note) {
+            await storage.createLeadNote({ leadId: id, createdBy: user.id, body: updates.note } as any);
+            patch.lastTouchAt = now;
+            const merged = String((lead as any).notes || "").trim();
+            patch.notes = merged ? `${merged}\n${updates.note}` : updates.note;
+          }
+
+          if (Object.keys(patch).length) await storage.updateLead(id, patch);
+          undoItems.push({ id, before });
+          succeeded += 1;
+        } catch (e: any) {
+          failed += 1;
+          if (failures.length < 50) failures.push({ id, error: String(e?.message || e) });
         }
-
-        const noteEntry = { id: crypto.randomBytes(8).toString("hex"), createdAt: new Date().toISOString(), createdBy: user.id, body: note };
-        const nextNotesJson = JSON.stringify([...notesArr, noteEntry]);
-        const updated = await storage.updatePlaygroundPropertySession((session as any).id, { notesJson: nextNotesJson, updatedBy: user.id } as any);
-
-        const actionLog = await storage.createAiActionLog({
-          createdBy: user.id,
-          entityType: "playground",
-          transcript: payload.transcript,
-          parsedJson: payload.parsed,
-          selectionJson: { playground: { sessionId: (updated as any).id, address: (updated as any).address, leadId: (updated as any).leadId ?? null, propertyId: (updated as any).propertyId ?? null } },
-          appliedJson: { action, params },
-        } as any);
-
-        const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-        await storage.createAiActionUndo({
-          aiActionLogId: actionLog.id,
-          undoJson: [{ sessionId: (updated as any).id, prevNotesJson }],
-          expiresAt,
-        } as any);
-
-        await storage.createGlobalActivity({
-          userId: user.id,
-          action: "playground_voice_append_note",
-          description: "Voice appended playground note",
-          metadata: JSON.stringify({ playgroundSessionId: (updated as any).id }),
-        } as any);
-
-        return res.json({ ok: true, actionLogId: actionLog.id, applied: 1, playgroundSessionId: (updated as any).id });
       }
 
-      const ids = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
-      if (!ids.length) return res.json({ ok: true, applied: 0 });
-
-      if (action === "add_note") {
-        const body = String(params.body || "").trim();
-        if (!body) return res.status(400).json({ message: "Missing note body" });
-        const now = new Date();
-        for (const leadId of ids) {
-          await storage.createLeadNote({ leadId, createdBy: user.id, body } as any);
-        }
-        await db.execute(sql`UPDATE leads SET last_touch_at = NOW(), updated_at = NOW() WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})`);
-
-        const actionLog = await storage.createAiActionLog({
-          createdBy: user.id,
-          entityType: "lead",
-          transcript: payload.transcript,
-          parsedJson: payload.parsed,
-          selectionJson: { leadIds: ids },
-          appliedJson: { action, params },
-        } as any);
-
-        const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-        await storage.createAiActionUndo({
-          aiActionLogId: actionLog.id,
-          undoJson: [],
-          expiresAt,
-        } as any);
-
-        await storage.createGlobalActivity({
-          userId: user.id,
-          action: "lead_voice_add_note",
-          description: "Voice added lead note",
-          metadata: JSON.stringify({ leadIdsCount: ids.length }),
-        } as any);
-
-        return res.json({ ok: true, actionLogId: actionLog.id, applied: ids.length, createdAt: now.toISOString() });
-      }
-
-      const rows: any = await db.execute(sql`
-        SELECT id, status, assigned_to as "assignedTo", archived_at as "archivedAt"
-        FROM leads
-        WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
-      `);
-      const beforeRows = (rows as any).rows || [];
-
-      const undoJson = beforeRows.map((r: any) => ({
-        id: Number(r.id),
-        status: r.status ?? null,
-        assignedTo: r.assignedTo ?? null,
-        archivedAt: r.archivedAt ?? null,
-      }));
-
-      const actionLog = await storage.createAiActionLog({
+      const aiLog = await storage.createAiActionLog({
         createdBy: user.id,
         entityType: "lead",
-        transcript: payload.transcript,
-        parsedJson: payload.parsed,
-        selectionJson: { leadIds: ids },
-        appliedJson: { action, params },
+        transcript: String((proposal as any)?.transcript || req.body?.transcript || ""),
+        parsedJson: proposal,
+        selectionJson: { selectionScope, leadIds: ids },
+        appliedJson: { updates, succeeded, failed },
       } as any);
 
       const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
       await storage.createAiActionUndo({
-        aiActionLogId: actionLog.id,
-        undoJson,
+        aiActionLogId: aiLog.id,
+        undoJson: { items: undoItems, updates },
         expiresAt,
       } as any);
 
-      if (action === "set_status") {
-        const nextStatus = String(params.status || "").trim();
-        if (!nextStatus) return res.status(400).json({ message: "Missing status" });
-        await db.execute(sql`
-          UPDATE leads
-          SET status = ${nextStatus}, status_changed_at = NOW(), updated_at = NOW()
-          WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
-        `);
-      } else if (action === "assign") {
-        const nextAssignedTo = Number(params.assignedTo);
-        if (!Number.isFinite(nextAssignedTo) || nextAssignedTo <= 0) return res.status(400).json({ message: "Invalid assignedTo" });
-        await db.execute(sql`
-          UPDATE leads
-          SET assigned_to = ${nextAssignedTo}, updated_at = NOW()
-          WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
-        `);
-      } else if (action === "archive") {
-        await db.execute(sql`
-          UPDATE leads
-          SET archived_at = NOW(), updated_at = NOW()
-          WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
-        `);
-      } else if (action === "unarchive") {
-        await db.execute(sql`
-          UPDATE leads
-          SET archived_at = NULL, updated_at = NOW()
-          WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
-        `);
-      } else if (action === "export") {
-        const { job: exportJob, token } = await createExportJob({
-          entityType: "lead",
-          createdBy: user.id,
-          format: "csv",
-          filters: { ids },
-          columns: [],
-          expiresInMinutes: 60,
-        });
-        await processExportJob(exportJob.id);
-        await storage.updateAiActionUndo((await storage.getAiActionUndoByActionId(actionLog.id))!.id, { undoneAt: null } as any);
-        return res.json({ ok: true, actionLogId: actionLog.id, exportId: exportJob.id, token });
-      } else {
-        return res.status(400).json({ message: "Unsupported voice action" });
-      }
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "ai_voice_action_applied",
+        description: `Applied AI voice action to ${succeeded} lead(s)`,
+        metadata: JSON.stringify({ aiActionLogId: aiLog.id, succeeded, failed }),
+      } as any);
 
-      res.json({ ok: true, actionLogId: actionLog.id, applied: ids.length });
+      res.json({ aiActionLogId: aiLog.id, succeeded, failed, failures });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -4054,39 +3344,39 @@ export async function registerRoutes(
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
-
-      const payload = z.object({ aiActionLogId: z.coerce.number().int().positive() }).parse(req.body || {});
-      const undo = await storage.getAiActionUndoByActionId(payload.aiActionLogId);
+      const aiActionLogId = typeof req.body?.aiActionLogId === "number" ? req.body.aiActionLogId : parseInt(String(req.body?.aiActionLogId || ""), 10);
+      if (!Number.isFinite(aiActionLogId)) return res.status(400).json({ message: "Invalid aiActionLogId" });
+      const undo = await storage.getAiActionUndoByActionId(aiActionLogId);
       if (!undo) return res.status(404).json({ message: "Not found" });
+      if ((undo as any).undoneAt) return res.status(409).json({ message: "Already undone" });
+      const exp = (undo as any).expiresAt ? new Date((undo as any).expiresAt) : null;
+      if (exp && exp.getTime() < Date.now()) return res.status(409).json({ message: "Undo expired" });
 
-      const expiresAt = (undo as any).expiresAt ? new Date((undo as any).expiresAt) : null;
-      if (expiresAt && expiresAt.getTime() < Date.now()) return res.status(400).json({ message: "Undo window expired" });
-      if ((undo as any).undoneAt) return res.status(400).json({ message: "Already undone" });
-
-      const undoJson = Array.isArray((undo as any).undoJson) ? (undo as any).undoJson : [];
-      const leadRows = undoJson.filter((r: any) => Number.isFinite(Number(r?.id)) && Number(r?.id) > 0);
-      const sessionRows = undoJson.filter((r: any) => Number.isFinite(Number(r?.sessionId)) && Number(r?.sessionId) > 0);
-
-      for (const row of leadRows) {
-        const id = Number(row.id);
-        await db.execute(sql`
-          UPDATE leads
-          SET status = ${row.status ?? null},
-              assigned_to = ${row.assignedTo ?? null},
-              archived_at = ${row.archivedAt ?? null},
-              updated_at = NOW()
-          WHERE id = ${id}
-        `);
+      const undoJson = (undo as any).undoJson;
+      const items = Array.isArray(undoJson?.items) ? undoJson.items : [];
+      const allowedAssignedToUserIds = isAdminUser(user) ? undefined : await allowedLeadAssigneeUserIds(user.id);
+      let restored = 0;
+      for (const it of items) {
+        const id = Number(it?.id);
+        if (!Number.isFinite(id) || id <= 0) continue;
+        const lead = await storage.getLeadById(id);
+        if (!lead) continue;
+        if (Array.isArray(allowedAssignedToUserIds)) {
+          const assignedTo = Number((lead as any).assignedTo);
+          if (!Number.isFinite(assignedTo) || !allowedAssignedToUserIds.includes(assignedTo)) continue;
+        }
+        await storage.updateLead(id, { ...(it.before || {}) } as any);
+        restored += 1;
       }
 
-      for (const row of sessionRows) {
-        const sessionId = Number(row.sessionId);
-        const prevNotesJson = typeof row.prevNotesJson === "string" ? row.prevNotesJson : "[]";
-        await storage.updatePlaygroundPropertySession(sessionId, { notesJson: prevNotesJson, updatedBy: user.id } as any);
-      }
-
-      await storage.updateAiActionUndo((undo as any).id, { undoneAt: new Date() } as any);
-      res.json({ ok: true, restored: leadRows.length + sessionRows.length, restoredLeads: leadRows.length, restoredPlayground: sessionRows.length });
+      await storage.updateAiActionUndo(undo.id, { undoneAt: new Date() } as any);
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "ai_voice_action_undone",
+        description: `Undid AI action for ${restored} lead(s)`,
+        metadata: JSON.stringify({ aiActionLogId, restored }),
+      } as any);
+      res.json({ restored });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -4096,12 +3386,12 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      const limitRaw = typeof req.query?.limit === "string" ? req.query.limit : "";
-      const limit = limitRaw ? parseInt(limitRaw, 10) : 50;
-      const items = await storage.listAppAuditRuns({ createdBy: user.id, limit });
-      res.json({ items });
+      const rawLimit = typeof req.query?.limit === "string" ? parseInt(req.query.limit, 10) : 50;
+      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, rawLimit)) : 50;
+      const rows = await storage.listAppAuditRuns({ createdBy: user.id, limit });
+      res.json({ items: rows });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(400).json({ message: error.message });
     }
   });
 
@@ -4109,8 +3399,9 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      const payload = z.object({ scopeJson: z.any() }).parse(req.body || {});
-      const row = await storage.createAppAuditRun({ createdBy: user.id, scopeJson: payload.scopeJson } as any);
+      const scopeJson = typeof req.body?.scopeJson === "object" && req.body.scopeJson ? req.body.scopeJson : null;
+      if (!scopeJson) return res.status(400).json({ message: "Missing scopeJson" });
+      const row = await storage.createAppAuditRun({ createdBy: user.id, scopeJson } as any);
       res.status(201).json(row);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -4122,11 +3413,13 @@ export async function registerRoutes(
       const user = await requireAuth(req, res);
       if (!user) return;
       const runId = parseInt(req.params.id, 10);
-      if (!Number.isFinite(runId)) return res.status(400).json({ message: "Invalid run id" });
-      const items = await storage.listAppAuditFindings({ runId, limit: 500 });
-      res.json({ items });
+      if (!Number.isFinite(runId)) return res.status(400).json({ message: "Invalid id" });
+      const runs = await storage.listAppAuditRuns({ createdBy: user.id, limit: 200 });
+      if (!runs.find((r: any) => Number(r.id) === runId)) return res.status(404).json({ message: "Not found" });
+      const rows = await storage.listAppAuditFindings({ runId, limit: 500 });
+      res.json({ items: rows });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      res.status(400).json({ message: error.message });
     }
   });
 
@@ -4135,213 +3428,30 @@ export async function registerRoutes(
       const user = await requireAuth(req, res);
       if (!user) return;
       const runId = parseInt(req.params.id, 10);
-      if (!Number.isFinite(runId)) return res.status(400).json({ message: "Invalid run id" });
+      if (!Number.isFinite(runId)) return res.status(400).json({ message: "Invalid id" });
+      const runs = await storage.listAppAuditRuns({ createdBy: user.id, limit: 200 });
+      if (!runs.find((r: any) => Number(r.id) === runId)) return res.status(404).json({ message: "Not found" });
 
-      const payload = z
-        .object({
-          severity: z.enum(["low", "medium", "high", "critical"]),
-          area: z.string().trim().min(1).max(80),
-          title: z.string().trim().min(1).max(160),
-          description: z.string().trim().min(1).max(20_000),
-          recommendation: z.string().trim().max(20_000).optional().nullable(),
-          technicalNotes: z.string().trim().max(20_000).optional().nullable(),
-          affectedPages: z.array(z.string().trim().min(1).max(120)).min(1).max(50),
-          fixPlan: z.string().trim().min(1).max(20_000),
-          ownerUserId: z.coerce.number().int().positive().optional().nullable(),
-          prdSection: z.string().trim().max(500).optional().nullable(),
-        })
-        .parse(req.body || {});
-
+      const schema = z.object({
+        severity: z.enum(["critical", "major", "minor", "polish"]),
+        area: z.string().trim().min(1).max(80),
+        title: z.string().trim().min(1).max(160),
+        description: z.string().trim().min(1),
+        recommendation: z.string().optional().nullable(),
+        technicalNotes: z.string().optional().nullable(),
+      });
+      const payload = schema.parse(req.body || {});
       const row = await storage.createAppAuditFinding({
         runId,
         severity: payload.severity,
         area: payload.area,
         title: payload.title,
         description: payload.description,
-        recommendation: payload.recommendation ?? null,
-        technicalNotes: payload.technicalNotes ?? null,
-        affectedPages: payload.affectedPages,
-        fixPlan: payload.fixPlan,
-        ownerUserId: payload.ownerUserId ?? null,
-        prdSection: payload.prdSection ?? null,
+        recommendation: payload.recommendation || null,
+        technicalNotes: payload.technicalNotes || null,
         status: "open",
       } as any);
-
       res.status(201).json(row);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/audit/runs/:id/seed-pages", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      const runId = parseInt(req.params.id, 10);
-      if (!Number.isFinite(runId)) return res.status(400).json({ message: "Invalid run id" });
-
-      const payload = z.object({ mode: z.enum(["append", "replace"]).default("append") }).parse(req.body || {});
-
-      if (payload.mode === "replace") {
-        await db.execute(sql`DELETE FROM app_audit_findings WHERE run_id = ${runId}`);
-      }
-
-      const pages: Array<{ title: string; area: string; affectedPages: string[]; description: string; fixPlan: string }> = [
-        {
-          title: "Dashboard: KPI correctness + work-queue links",
-          area: "dashboard",
-          affectedPages: ["/dashboard"],
-          description: "Verify KPI correctness, loading states, and add deep links into active work queues (Leads, Tasks, Today).",
-          fixPlan: "Audit KPIs for correctness and freshness; add primary CTAs to Leads/Tasks/Today with context and saved views.",
-        },
-        {
-          title: "Leads: Scale workflow (filters, views, bulk, notes, voice)",
-          area: "leads",
-          affectedPages: ["/leads"],
-          description: "Upgrade Leads into the primary work queue and segmentation hub with safe bulk actions and voice-to-action.",
-          fixPlan: "Wire advanced filters + saved views + column chooser + async bulk jobs + notes preview + voice action entry points.",
-        },
-        {
-          title: "Opportunities: Lead linking + next action handoff",
-          area: "opportunities",
-          affectedPages: ["/opportunities", "/opportunities/:id"],
-          description: "Ensure Lead↔Opportunity linking is visible and provide clear next actions (Playground, Call, Follow-up).",
-          fixPlan: "Add consistent link UI and contextual actions; ensure timeline and follow-ups connect back to Leads.",
-        },
-        {
-          title: "Playground: Context binding + voice append note",
-          area: "playground",
-          affectedPages: ["/playground"],
-          description: "Playground should preserve context (leadId/propertyId/sessionId) and accept voice-to-action append notes safely.",
-          fixPlan: "Add voice entry point; implement append-only note write target via session patch; ensure preview + audit log + undo when feasible.",
-        },
-        {
-          title: "Phone: Context handoff + activity semantics",
-          area: "phone",
-          affectedPages: ["/phone"],
-          description: "Ensure opening Phone from Leads/Opportunities preserves context and creates consistent activity events.",
-          fixPlan: "Standardize query params and link targets; ensure call outcomes write activity tied to lead/property IDs.",
-        },
-        {
-          title: "Dialer: Context handoff + activity semantics",
-          area: "dialer",
-          affectedPages: ["/dialer"],
-          description: "Ensure opening Dialer from Leads preserves context and logging is consistent.",
-          fixPlan: "Normalize deep-link params and enforce consistent activity logging and compliance checks.",
-        },
-        {
-          title: "Campaigns: Enroll from saved views (planned)",
-          area: "campaigns",
-          affectedPages: ["/campaigns"],
-          description: "Allow campaign audiences to be enrolled from Leads saved views/segments (backlog this release).",
-          fixPlan: "Design enrollment UX and backend targeting based on saved view config; add suppression rules; ship after Leads views are stable.",
-        },
-        {
-          title: "RVM: Audience from saved views + suppression (planned)",
-          area: "rvm",
-          affectedPages: ["/rvm"],
-          description: "Allow RVM targeting from Leads saved views with suppression and preview counts (backlog this release).",
-          fixPlan: "Reuse saved views targeting; add suppression engine (DNC/invalid/recent contact); add launch preview and result dashboards.",
-        },
-        {
-          title: "Field Mode: Offline capture integrity",
-          area: "field",
-          affectedPages: ["/field"],
-          description: "Verify offline capture and sync creates leads, notes, and media reliably with dedupe.",
-          fixPlan: "Audit offline queue handling and failure states; ensure created records link back to Leads/Playground context.",
-        },
-        {
-          title: "Tasks: Entity-linked execution",
-          area: "tasks",
-          affectedPages: ["/tasks"],
-          description: "Ensure tasks created from Leads/Opportunities keep entity links and power Today/Calendar queues.",
-          fixPlan: "Normalize quick-create flows; ensure navigation and due-date handling supports follow-up workflows.",
-        },
-        {
-          title: "Calendar: Follow-up visibility",
-          area: "calendar",
-          affectedPages: ["/calendar"],
-          description: "Calendar should show follow-ups and tasks with links back to leads/opportunities.",
-          fixPlan: "Audit calendar sources and deep-links; ensure follow-up dates align with Leads filters.",
-        },
-        {
-          title: "Today: Work queue compression",
-          area: "today",
-          affectedPages: ["/today"],
-          description: "Today should be the operator queue for due tasks/follow-ups with one-click handoffs.",
-          fixPlan: "Audit queue correctness; add fast actions to call/open lead/open playground; minimize clicks.",
-        },
-        {
-          title: "Notifications: Routing and deep links",
-          area: "notifications",
-          affectedPages: ["/notifications"],
-          description: "Notifications should reliably link back to the correct entity context.",
-          fixPlan: "Audit notification payloads; standardize entity references and target URLs.",
-        },
-        {
-          title: "Contacts: Link to leads and calls",
-          area: "contacts",
-          affectedPages: ["/contacts"],
-          description: "Contacts should link to associated leads/opportunities and show communications context.",
-          fixPlan: "Audit entity linking and add contextual navigation and activity timeline reuse.",
-        },
-        {
-          title: "Buyers: Dispo readiness links",
-          area: "buyers",
-          affectedPages: ["/buyers"],
-          description: "Buyers should connect to opportunities and contract workflows.",
-          fixPlan: "Audit buyer→deal linking and add deep-links into opportunity detail and contracts.",
-        },
-        {
-          title: "Contracts: Opportunity context",
-          area: "contracts",
-          affectedPages: ["/contracts"],
-          description: "Contracts should be generated/managed from opportunity context.",
-          fixPlan: "Audit contract generation flow; ensure linked lead/property/buyer context is preserved and navigable.",
-        },
-        {
-          title: "Analytics: Data trust layer",
-          area: "analytics",
-          affectedPages: ["/analytics"],
-          description: "Analytics must be correct and attributable to real actions and segments.",
-          fixPlan: "Audit KPI definitions; ensure events and activity semantics are consistent and queryable.",
-        },
-        {
-          title: "Settings/Teams/System Health: Control plane alignment",
-          area: "control_plane",
-          affectedPages: ["/settings", "/teams", "/system-health"],
-          description: "Ensure feature flags, team selection, and health signals connect to audit and workflows.",
-          fixPlan: "Audit feature flag visibility and team selection; link health issues to audit findings; reduce config confusion.",
-        },
-        {
-          title: "XP surfaces: audit-only this release",
-          area: "xp",
-          affectedPages: ["/xp", "/xp/admin", "/xp/:slug", "/xp/checkout/success", "/xp/checkout/cancel"],
-          description: "Include XP pages in the audit backlog; fix only if critical regressions are found.",
-          fixPlan: "Create findings for UX correctness and conversion flow; defer enhancements unless blocking.",
-        },
-      ];
-
-      const created: any[] = [];
-      for (const p of pages) {
-        const row = await storage.createAppAuditFinding({
-          runId,
-          severity: "medium",
-          area: p.area,
-          title: p.title,
-          description: p.description,
-          recommendation: null,
-          technicalNotes: null,
-          affectedPages: p.affectedPages,
-          fixPlan: p.fixPlan,
-          ownerUserId: null,
-          prdSection: null,
-          status: "open",
-        } as any);
-        created.push(row);
-      }
-
-      res.status(201).json({ createdCount: created.length });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -4353,220 +3463,39 @@ export async function registerRoutes(
       if (!user) return;
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-
-      if (!user.isSuperAdmin) {
-        const rows: any = await db.execute(sql`
+      if (!isAdminUser(user)) {
+        const ownerCheck: any = await db.execute(sql`
           SELECT r.created_by as "createdBy"
           FROM app_audit_findings f
           JOIN app_audit_runs r ON r.id = f.run_id
           WHERE f.id = ${id}
           LIMIT 1
         `);
-        const createdBy = Number((rows as any).rows?.[0]?.createdBy);
-        if (!Number.isFinite(createdBy) || createdBy !== user.id) return res.status(404).json({ message: "Not found" });
+        const createdBy = (ownerCheck as any).rows?.[0]?.createdBy ? Number((ownerCheck as any).rows[0].createdBy) : null;
+        if (!createdBy) return res.status(404).json({ message: "Not found" });
+        if (createdBy !== Number(user.id)) return res.status(404).json({ message: "Not found" });
       }
+      const patch: any = {};
+      if (typeof req.body?.status === "string") {
+        const s = String(req.body.status).trim();
+        if (s !== "open" && s !== "accepted" && s !== "fixed" && s !== "wontfix") return res.status(400).json({ message: "Invalid status" });
+        patch.status = s;
+      }
+      if (typeof req.body?.severity === "string") {
+        const s = String(req.body.severity).trim();
+        if (s !== "critical" && s !== "major" && s !== "minor" && s !== "polish") return res.status(400).json({ message: "Invalid severity" });
+        patch.severity = s;
+      }
+      if (typeof req.body?.recommendation === "string" || req.body?.recommendation === null) patch.recommendation = req.body.recommendation;
+      if (typeof req.body?.technicalNotes === "string" || req.body?.technicalNotes === null) patch.technicalNotes = req.body.technicalNotes;
+      if (typeof req.body?.title === "string") patch.title = String(req.body.title).trim();
+      if (typeof req.body?.description === "string") patch.description = String(req.body.description);
 
-      const payload = z
-        .object({
-          severity: z.enum(["low", "medium", "high", "critical"]).optional(),
-          area: z.string().trim().min(1).max(80).optional(),
-          title: z.string().trim().min(1).max(160).optional(),
-          description: z.string().trim().min(1).max(20_000).optional(),
-          recommendation: z.string().trim().max(20_000).optional().nullable(),
-          technicalNotes: z.string().trim().max(20_000).optional().nullable(),
-          affectedPages: z.array(z.string().trim().min(1).max(120)).min(1).max(50).optional(),
-          fixPlan: z.string().trim().min(1).max(20_000).optional(),
-          ownerUserId: z.coerce.number().int().positive().optional().nullable(),
-          prdSection: z.string().trim().max(500).optional().nullable(),
-          status: z.enum(["open", "in_progress", "resolved", "ignored"]).optional(),
-        })
-        .parse(req.body || {});
-
-      const row = await storage.updateAppAuditFinding(id, payload as any);
+      if (!Object.keys(patch).length) return res.status(400).json({ message: "No changes" });
+      const row = await storage.updateAppAuditFinding(id, patch as any);
       res.json(row);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/audit/release-gate", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-
-      const rows: any = await db.execute(sql`
-        SELECT 
-          f.id as "id",
-          f.run_id as "runId",
-          f.severity as "severity",
-          f.area as "area",
-          f.title as "title",
-          f.status as "status",
-          f.updated_at as "updatedAt"
-        FROM app_audit_findings f
-        JOIN app_audit_runs r ON r.id = f.run_id
-        WHERE r.created_by = ${user.id}
-          AND f.severity = 'critical'
-          AND f.status IN ('open', 'in_progress')
-        ORDER BY f.updated_at DESC, f.id DESC
-        LIMIT 50
-      `);
-
-      const blockingItems = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
-
-      res.json({
-        ok: blockingItems.length === 0,
-        blockingCount: blockingItems.length,
-        blockingItems,
-      });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/skip-trace/config", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-
-      const enabled = await isFeatureEnabled(user.id, "skip_trace");
-      if (!enabled) {
-        return res.json({
-          enabled: false,
-          providerName: null,
-          publicResearchEnabled: false,
-          allowedModes: [],
-        });
-      }
-
-      const providerName = getSkipTraceProvider().name;
-      const publicResearchEnabled = String(process.env.SKIP_TRACE_PUBLIC_RESEARCH_ENABLED || "")
-        .trim()
-        .toLowerCase() === "true";
-
-      const allowedModes = publicResearchEnabled ? ["provider", "public_research", "both"] : ["provider"];
-
-      res.json({
-        enabled: true,
-        providerName,
-        publicResearchEnabled,
-        allowedModes,
-      });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/skip-trace/jobs", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
-
-      const body = z
-        .object({
-          entityType: z.enum(["lead", "opportunity"]),
-          entityId: z.coerce.number().int().positive(),
-          mode: z.enum(["provider", "public_research", "both"]),
-        })
-        .parse(req.body);
-
-      const job = await createSkipTraceJob({
-        entityType: body.entityType,
-        entityId: body.entityId,
-        mode: body.mode,
-        requestedByUserId: user.id,
-      });
-
-      if (body.mode === "provider") {
-        const out = await runSkipTraceJob(job.id);
-        return res.json({ jobId: out.job.id, status: out.job.status });
-      }
-
-      res.json({ jobId: job.id, status: job.status });
-    } catch (error: any) {
-      if (isHttpError(error)) return res.status(error.statusCode).json({ message: error.message });
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/skip-trace/jobs/:jobId/run", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
-
-      const jobId = parseInt(req.params.jobId, 10);
-      if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
-
-      const job = await storage.getSkipTraceJobById(jobId);
-      if (!job) return res.status(404).json({ message: "Not found" });
-      if (!user.isSuperAdmin && (job as any).requestedByUserId && Number((job as any).requestedByUserId) !== user.id) return res.status(404).json({ message: "Not found" });
-
-      const out = await runSkipTraceJob(job.id);
-      res.json({ jobId: out.job.id, status: out.job.status });
-    } catch (error: any) {
-      if (isHttpError(error)) return res.status(error.statusCode).json({ message: error.message });
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/skip-trace/jobs/:jobId", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
-
-      const jobId = parseInt(req.params.jobId, 10);
-      if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
-
-      const job = await storage.getSkipTraceJobById(jobId);
-      if (!job) return res.status(404).json({ message: "Not found" });
-      if (!user.isSuperAdmin && (job as any).requestedByUserId && Number((job as any).requestedByUserId) !== user.id) return res.status(404).json({ message: "Not found" });
-
-      const events = await storage.listSkipTraceJobEvents(job.id, 500);
-      const evidence = await storage.listSkipTraceEvidence(job.id, 500);
-      const scoreSnapshot = (await storage.listLeadScoreSnapshotsByJobId(job.id))[0] ?? null;
-
-      const entityType = String((job as any).entityType || "").trim().toLowerCase();
-      const entityId = Number((job as any).entityId);
-
-      const lead = entityType === "lead" ? ((await storage.getLeadById(entityId)) ?? null) : null;
-      const property = entityType === "opportunity" ? ((await storage.getPropertyById(entityId)) ?? null) : null;
-
-      const providerRow =
-        entityType === "lead"
-          ? await storage.getLatestSkipTraceForLead(entityId)
-          : entityType === "opportunity"
-            ? await storage.getLatestSkipTraceForProperty(entityId)
-            : null;
-
-      const providerResult = providerRow && (providerRow as any).jobId === job.id ? hydrateSkipTraceResultForApi(providerRow as any) : null;
-
-      const merged =
-        entityType === "lead" || entityType === "opportunity"
-          ? mergeSkipTraceResult({
-              entityType: entityType as any,
-              entityId,
-              lead,
-              property,
-              providerResult: providerRow && (providerRow as any).jobId === job.id ? (providerRow as any) : null,
-              evidence: evidence as any,
-              scoreSnapshot: scoreSnapshot as any,
-            })
-          : null;
-
-      res.json({
-        job,
-        events,
-        evidence,
-        providerResult,
-        scoreSnapshot,
-        merged,
-      });
-    } catch (error: any) {
-      if (isHttpError(error)) return res.status(error.statusCode).json({ message: error.message });
-      res.status(500).json({ message: error.message });
     }
   });
 
@@ -4600,13 +3529,138 @@ export async function registerRoutes(
       if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
 
       const leadId = parseInt(req.params.id);
-      const out = await runProviderSkipTraceForEntity({ entityType: "lead", entityId: leadId, requestedByUserId: user.id });
-      if ("pending" in out && out.pending) {
-        return res.json({ pending: true, result: hydrateSkipTraceResultForApi(out.providerResult as any) });
+      const lead = await storage.getLeadById(leadId);
+      if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+      const ownerName = String((lead as any).ownerName || "").trim();
+      const address = String((lead as any).address || "").trim();
+      const city = String((lead as any).city || "").trim();
+      const state = String((lead as any).state || "").trim();
+      const zipCode = String((lead as any).zipCode || "").trim();
+      if (!ownerName || !address || !city || !state || !zipCode) return res.status(400).json({ message: "Lead is missing required fields" });
+
+      const cacheKey = skipTraceCacheKey({ ownerName, address, city, state, zipCode });
+      const existing = await storage.getLatestSkipTraceByCacheKey(cacheKey);
+
+      const now = Date.now();
+      const ms90d = 1000 * 60 * 60 * 24 * 90;
+      const ms5m = 1000 * 60 * 5;
+
+      if (existing && String((existing as any).status || "") === "success" && (existing as any).completedAt) {
+        const completedAtMs = new Date((existing as any).completedAt).getTime();
+        if (Number.isFinite(completedAtMs) && now - completedAtMs < ms90d) {
+          await storage.createGlobalActivity({
+            userId: user.id,
+            action: "skip_trace_cached",
+            description: `Skip trace cache hit: ${address}`,
+            metadata: JSON.stringify({ leadId, skipTraceId: (existing as any).id }),
+          } as any);
+          return res.json({
+            cached: true,
+            result: {
+              ...existing,
+              phones: parseJsonArrayText((existing as any).phonesJson),
+              emails: parseJsonArrayText((existing as any).emailsJson),
+            },
+          });
+        }
       }
-      return res.json({ cached: out.cached, result: hydrateSkipTraceResultForApi(out.providerResult as any) });
+
+      if (existing && String((existing as any).status || "") === "pending" && (existing as any).requestedAt) {
+        const requestedAtMs = new Date((existing as any).requestedAt).getTime();
+        if (Number.isFinite(requestedAtMs) && now - requestedAtMs < ms5m) {
+          return res.json({
+            pending: true,
+            result: {
+              ...existing,
+              phones: parseJsonArrayText((existing as any).phonesJson),
+              emails: parseJsonArrayText((existing as any).emailsJson),
+            },
+          });
+        }
+      }
+
+      const provider = getSkipTraceProvider();
+      const pending = await storage.createSkipTraceResult({
+        leadId,
+        providerName: provider.name,
+        status: "pending",
+        phonesJson: "[]",
+        emailsJson: "[]",
+        cacheKey,
+        requestedAt: new Date(),
+      } as any);
+
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "skip_trace_requested",
+        description: `Skip trace requested: ${address}`,
+        metadata: JSON.stringify({ leadId, skipTraceId: pending.id, provider: provider.name }),
+      } as any);
+
+      let updated: any = pending;
+      try {
+        const out = await provider.skipTrace({ ownerName, address, city, state, zipCode });
+        if (out.status === "success") {
+          updated = await storage.updateSkipTraceResult(pending.id, {
+            status: "success",
+            phonesJson: JSON.stringify(out.phones || []),
+            emailsJson: JSON.stringify(out.emails || []),
+            costCents: out.costCents,
+            completedAt: new Date(),
+            rawResponseJson: JSON.stringify(out.raw ?? null),
+          } as any);
+
+          const leadPatch: any = {};
+          if (!String((lead as any).ownerPhone || "").trim() && out.phones?.[0]) leadPatch.ownerPhone = out.phones[0];
+          if (!String((lead as any).ownerEmail || "").trim() && out.emails?.[0]) leadPatch.ownerEmail = out.emails[0];
+          if (Object.keys(leadPatch).length) await storage.updateLead(leadId, leadPatch);
+
+          await storage.createGlobalActivity({
+            userId: user.id,
+            action: "skip_trace_success",
+            description: `Skip trace success: ${address}`,
+            metadata: JSON.stringify({ leadId, skipTraceId: pending.id, phones: out.phones?.length || 0, emails: out.emails?.length || 0, costCents: out.costCents }),
+          } as any);
+        } else {
+          updated = await storage.updateSkipTraceResult(pending.id, {
+            status: "fail",
+            phonesJson: JSON.stringify(out.phones || []),
+            emailsJson: JSON.stringify(out.emails || []),
+            costCents: out.costCents,
+            completedAt: new Date(),
+            rawResponseJson: JSON.stringify(out.raw ?? null),
+          } as any);
+          await storage.createGlobalActivity({
+            userId: user.id,
+            action: "skip_trace_failed",
+            description: `Skip trace failed: ${address}`,
+            metadata: JSON.stringify({ leadId, skipTraceId: pending.id, error: (out as any).errorMessage || "failed", costCents: out.costCents }),
+          } as any);
+        }
+      } catch (e: any) {
+        updated = await storage.updateSkipTraceResult(pending.id, {
+          status: "fail",
+          completedAt: new Date(),
+          rawResponseJson: JSON.stringify({ error: String(e?.message || e) }),
+        } as any);
+        await storage.createGlobalActivity({
+          userId: user.id,
+          action: "skip_trace_failed",
+          description: `Skip trace failed: ${address}`,
+          metadata: JSON.stringify({ leadId, skipTraceId: pending.id, error: String(e?.message || e) }),
+        } as any);
+      }
+
+      return res.json({
+        cached: false,
+        result: {
+          ...updated,
+          phones: parseJsonArrayText(updated.phonesJson),
+          emails: parseJsonArrayText(updated.emailsJson),
+        },
+      });
     } catch (error: any) {
-      if (isHttpError(error)) return res.status(error.statusCode).json({ message: error.message });
       res.status(500).json({ message: error.message });
     }
   });
@@ -4646,12 +3700,6 @@ export async function registerRoutes(
         sortOrder: r.sortOrder,
       })));
     } catch (error: any) {
-      try {
-        const readiness = await getSchemaReadiness();
-        if (!readiness.ok) {
-          return res.status(503).json({ message: readiness.message, code: readiness.code, missing: readiness.missing, hint: schemaFixInstructions() });
-        }
-      } catch {}
       res.status(500).json({ message: error.message });
     }
   });
@@ -4676,12 +3724,6 @@ export async function registerRoutes(
       } as any);
       res.status(201).json(row);
     } catch (error: any) {
-      try {
-        const readiness = await getSchemaReadiness();
-        if (!readiness.ok) {
-          return res.status(503).json({ message: readiness.message, code: readiness.code, missing: readiness.missing, hint: schemaFixInstructions() });
-        }
-      } catch {}
       res.status(400).json({ message: error.message });
     }
   });
@@ -5143,11 +4185,67 @@ export async function registerRoutes(
             const s = z.object({ leadId: z.number().int().positive() });
             const p = s.parse(a.payload || {});
             if (!(await isFeatureEnabled(user.id, "skip_trace"))) throw new Error("Skip trace disabled");
-            const r = await runProviderSkipTraceForEntity({ entityType: "lead", entityId: p.leadId, requestedByUserId: user.id });
-            if ("pending" in r && r.pending) {
-              out = { ...out, pending: true, cached: false, skipTraceId: (r.providerResult as any).id };
-            } else {
-              out = { ...out, cached: r.cached, skipTraceId: (r.providerResult as any).id };
+            const lead = await storage.getLeadById(p.leadId);
+            if (!lead) throw new Error("Lead not found");
+            const ownerName = String((lead as any).ownerName || "").trim();
+            const address = String((lead as any).address || "").trim();
+            const city = String((lead as any).city || "").trim();
+            const state = String((lead as any).state || "").trim();
+            const zipCode = String((lead as any).zipCode || "").trim();
+            const cacheKey = skipTraceCacheKey({ ownerName, address, city, state, zipCode });
+
+            const existingSt = await storage.getLatestSkipTraceByCacheKey(cacheKey);
+            const now = Date.now();
+            const ms90d = 1000 * 60 * 60 * 24 * 90;
+            if (existingSt && String((existingSt as any).status || "") === "success" && (existingSt as any).completedAt) {
+              const completedAtMs = new Date((existingSt as any).completedAt).getTime();
+              if (Number.isFinite(completedAtMs) && now - completedAtMs < ms90d) {
+                out = { ...out, cached: true, skipTraceId: (existingSt as any).id };
+              } else {
+                out = { ...out, cached: false };
+              }
+            }
+
+            if (!out.cached) {
+              const provider = getSkipTraceProvider();
+              const pending = await storage.createSkipTraceResult({
+                leadId: p.leadId,
+                providerName: provider.name,
+                status: "pending",
+                phonesJson: "[]",
+                emailsJson: "[]",
+                cacheKey,
+                requestedAt: new Date(),
+              } as any);
+              try {
+                const r = await provider.skipTrace({ ownerName, address, city, state, zipCode });
+                if (r.status === "success") {
+                  await storage.updateSkipTraceResult(pending.id, {
+                    status: "success",
+                    phonesJson: JSON.stringify(r.phones || []),
+                    emailsJson: JSON.stringify(r.emails || []),
+                    costCents: r.costCents,
+                    completedAt: new Date(),
+                    rawResponseJson: JSON.stringify(r.raw ?? null),
+                  } as any);
+                } else {
+                  await storage.updateSkipTraceResult(pending.id, {
+                    status: "fail",
+                    phonesJson: JSON.stringify(r.phones || []),
+                    emailsJson: JSON.stringify(r.emails || []),
+                    costCents: r.costCents,
+                    completedAt: new Date(),
+                    rawResponseJson: JSON.stringify(r.raw ?? null),
+                  } as any);
+                }
+              } catch (e: any) {
+                await storage.updateSkipTraceResult(pending.id, {
+                  status: "fail",
+                  completedAt: new Date(),
+                  rawResponseJson: JSON.stringify({ error: String(e?.message || e) }),
+                } as any);
+              }
+              out = { ...out, cached: false, skipTraceId: pending.id };
             }
           } else if (a.type === "upload_media") {
             const s = z.object({
@@ -5190,10 +4288,15 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Lead source is required" });
       }
 
-      const assignedTo = (validated as any).assignedTo;
-      if (typeof assignedTo === "number") {
-        const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
-        if (!ok) return;
+      if (!isAdminUser(user) && (validated as any).assignedTo == null) {
+        (validated as any).assignedTo = user.id;
+      }
+      if (!isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((validated as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) {
+          return res.status(403).json({ message: "Forbidden" });
+        }
       }
 
       const dedupeKey = computeLeadDedupeKey(validated as any);
@@ -5229,19 +4332,6 @@ export async function registerRoutes(
           createdBy: Number(req.session.userId || 0),
         });
       } catch {}
-
-      try {
-        const teamId = await getOrInitActiveTeamId(req, user.id);
-        if (teamId) {
-          await dispatchAutomationEvent({
-            eventType: "lead.created",
-            teamId,
-            actorUserId: user.id,
-            entity: { type: "lead", id: lead.id },
-            payload: { lead },
-          });
-        }
-      } catch {}
       
       res.status(201).json(lead);
     } catch (error: any) {
@@ -5255,18 +4345,34 @@ export async function registerRoutes(
       if (!user) return;
       const partial = insertLeadSchema.partial().parse(req.body) as Partial<InsertLead>;
       const id = parseInt(req.params.id);
-
-      const assignedTo = (partial as any).assignedTo;
-      if (typeof assignedTo === "number") {
-        const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
-        if (!ok) return;
-      }
       const before = await storage.getLeadById(id);
+      if (!before) return res.status(404).json({ message: "Lead not found" });
+      if (!isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((before as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) return res.status(404).json({ message: "Lead not found" });
+      }
+
+      if (!isAdminUser(user) && typeof (partial as any).assignedTo !== "undefined") {
+        const role = String(user.role || "").trim().toLowerCase();
+        if (role !== "team_leader") return res.status(403).json({ message: "Forbidden" });
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const nextAssignedTo = Number((partial as any).assignedTo);
+        if (!Number.isFinite(nextAssignedTo) || !allowed.includes(nextAssignedTo)) return res.status(403).json({ message: "Forbidden" });
+      }
+
       if (before) {
         const merged: any = { ...before, ...(partial as any) };
         if (merged.address && merged.city && merged.state && merged.zipCode && merged.ownerName) {
           (partial as any).dedupeKey = computeLeadDedupeKey(merged);
         }
+      }
+      const now = new Date();
+      if (before && typeof (partial as any).status !== "undefined" && String((partial as any).status || "") !== String((before as any).status || "")) {
+        (partial as any).statusChangedAt = now;
+      }
+      if (before && typeof (partial as any).notes !== "undefined" && String((partial as any).notes || "") !== String((before as any).notes || "")) {
+        (partial as any).lastTouchAt = now;
       }
       const lead = await storage.updateLead(id, partial);
       try {
@@ -5306,38 +4412,6 @@ export async function registerRoutes(
           actorUserId: Number(req.session.userId || 0),
         });
       } catch {}
-
-      try {
-        const beforeStatus = String((before as any)?.status || "");
-        const afterStatus = String((lead as any)?.status || "");
-        if (beforeStatus !== afterStatus) {
-          const teamId = await getOrInitActiveTeamId(req, user.id);
-          if (teamId) {
-            await dispatchAutomationEvent({
-              eventType: "lead.status_changed",
-              teamId,
-              actorUserId: user.id,
-              entity: { type: "lead", id: lead.id },
-              payload: { leadId: lead.id, beforeStatus: beforeStatus || null, afterStatus: afterStatus || null, lead },
-            });
-            try {
-              await writeAuditEvent({
-                teamId,
-                actorUserId: user.id,
-                entityType: "lead",
-                entityId: lead.id,
-                action: "lead_status_changed",
-                before: { status: beforeStatus || null },
-                after: { status: afterStatus || null },
-                kind: "update",
-                ip: req.ip,
-                userAgent: String(req.headers["user-agent"] || ""),
-                requestId: (res.locals as any)?.requestId || null,
-              });
-            } catch {}
-          }
-        }
-      } catch {}
       
       res.json(lead);
     } catch (error: any) {
@@ -5349,6 +4423,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
+      if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
       const lead = await storage.getLeadById(parseInt(req.params.id));
       await storage.deleteLead(parseInt(req.params.id));
       
@@ -5377,6 +4452,11 @@ export async function registerRoutes(
       
       if (!lead) {
         return res.status(404).json({ message: "Lead not found" });
+      }
+      if (!isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((lead as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) return res.status(404).json({ message: "Lead not found" });
       }
       
       // Normalize status check (case-insensitive, trim whitespace)
@@ -5424,34 +4504,6 @@ export async function registerRoutes(
           }),
         });
       }
-
-      try {
-        const teamId = await getOrInitActiveTeamId(req, user.id);
-        if (teamId) {
-          await dispatchAutomationEvent({
-            eventType: "opportunity.created",
-            teamId,
-            actorUserId: user.id,
-            entity: { type: "opportunity", id: property.id },
-            payload: { opportunity: property, source: "lead.convert_to_property", leadId: lead.id },
-          });
-          try {
-            await writeAuditEvent({
-              teamId,
-              actorUserId: user.id,
-              entityType: "opportunity",
-              entityId: property.id,
-              action: "opportunity_created",
-              before: null,
-              after: property,
-              kind: "create",
-              ip: req.ip,
-              userAgent: String(req.headers["user-agent"] || ""),
-              requestId: (res.locals as any)?.requestId || null,
-            });
-          } catch {}
-        }
-      } catch {}
       
       res.status(201).json({ 
         message: "Lead successfully converted to property",
@@ -5472,9 +4524,7 @@ export async function registerRoutes(
       const user = await requireAuth(req, res);
       if (!user) return;
       const { limit, offset } = parseLimitOffset(req.query);
-      const assignedToRaw = typeof req.query?.assignedTo === "string" ? req.query.assignedTo : "";
-      const assignedTo = assignedToRaw ? parseInt(assignedToRaw, 10) : undefined;
-      const allProperties = await storage.getProperties(limit, offset, assignedTo);
+      const allProperties = await storage.getProperties(limit, offset);
       res.json(
         (allProperties || []).map((p: any) => ({
           ...p,
@@ -5505,94 +4555,13 @@ export async function registerRoutes(
         } catch {}
       }
 
+      if (lead && !isAdminUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        const assignedTo = Number((lead as any).assignedTo);
+        if (!Number.isFinite(assignedTo) || !allowed.includes(assignedTo)) return res.status(404).json({ message: "Opportunity not found" });
+      }
+
       res.json({ property: { ...(property as any), images: resolvePropertyImages((property as any).images) }, lead });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/opportunities/:id/companies", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
-      if (!ctx) return;
-      const opportunityId = parseInt(req.params.id, 10);
-      const links = await storage.listCompanyLinksForEntity({ teamId: ctx.teamId, entityType: "opportunity", entityId: opportunityId });
-      res.json(links);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/opportunities/:id/companies", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
-      if (!ctx) return;
-      const opportunityId = parseInt(req.params.id, 10);
-      const schema = insertCompanyLinkSchema.omit({ teamId: true, entityType: true, entityId: true } as any);
-      const validated: any = schema.parse(req.body || {});
-
-      const companyId = Number(validated.companyId);
-      const company = await storage.getCompanyById(companyId);
-      if (!company || company.teamId !== ctx.teamId) return res.status(404).json({ message: "Company not found" });
-
-      const link = await storage.createCompanyLink({
-        teamId: ctx.teamId,
-        companyId,
-        entityType: "opportunity",
-        entityId: opportunityId,
-        role: typeof validated.role === "string" ? validated.role : null,
-      } as any);
-
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "opportunity",
-          entityId: opportunityId,
-          action: "opportunity_company_link_added",
-          before: null,
-          after: link,
-          kind: "update",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-
-      res.status(201).json(link);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.delete("/api/opportunities/:id/companies/:linkId", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
-      if (!ctx) return;
-      const opportunityId = parseInt(req.params.id, 10);
-      const linkId = parseInt(req.params.linkId, 10);
-      const existing = await storage.listCompanyLinksForEntity({ teamId: ctx.teamId, entityType: "opportunity", entityId: opportunityId });
-      const target = existing.find((r: any) => Number(r.link?.id) === linkId);
-      if (!target) return res.status(404).json({ message: "Not found" });
-      await storage.deleteCompanyLinkForTeam(ctx.teamId, linkId);
-
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "opportunity",
-          entityId: opportunityId,
-          action: "opportunity_company_link_removed",
-          before: target.link,
-          after: null,
-          kind: "update",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-
-      res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -5626,11 +4595,19 @@ export async function registerRoutes(
 
       const existingRaw = Array.isArray((property as any).images) ? (property as any).images.filter(Boolean) : [];
       const uploaded: string[] = [];
+      const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
       for (const f of files) {
+        const contentType = String(f.mimetype || "").trim().toLowerCase();
+        if (!allowedTypes.has(contentType)) {
+          return res.status(400).json({ message: "Unsupported file type" });
+        }
+        if (!f.buffer || !Buffer.isBuffer(f.buffer) || f.buffer.length <= 0) {
+          return res.status(400).json({ message: "Invalid upload" });
+        }
         const out = await uploadPropertyPhoto({
           opportunityId,
-          contentType: String(f.mimetype || "application/octet-stream"),
+          contentType,
           body: f.buffer,
           originalName: String(f.originalname || "photo"),
         });
@@ -5674,14 +4651,148 @@ export async function registerRoutes(
       if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
 
       const propertyId = parseInt(req.params.id);
-      const ownerNameOverride = req.body?.ownerName ? String(req.body.ownerName).trim() : null;
-      const out = await runProviderSkipTraceForEntity({ entityType: "opportunity", entityId: propertyId, requestedByUserId: user.id, ownerNameOverride });
-      if ("pending" in out && out.pending) {
-        return res.json({ pending: true, result: hydrateSkipTraceResultForApi(out.providerResult as any) });
+      const property = await storage.getPropertyById(propertyId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+
+      let lead: any = null;
+      if ((property as any).sourceLeadId) {
+        try {
+          lead = await storage.getLeadById((property as any).sourceLeadId);
+        } catch {}
       }
-      return res.json({ cached: out.cached, result: hydrateSkipTraceResultForApi(out.providerResult as any) });
+
+      const ownerName = String((lead?.ownerName ?? req.body?.ownerName ?? "")).trim();
+      const address = String((property as any).address || "").trim();
+      const city = String((property as any).city || "").trim();
+      const state = String((property as any).state || "").trim();
+      const zipCode = String((property as any).zipCode || "").trim();
+      if (!ownerName || !address || !city || !state || !zipCode) return res.status(400).json({ message: "Opportunity is missing required fields" });
+
+      const cacheKey = skipTraceCacheKey({ ownerName, address, city, state, zipCode });
+      const existing = await storage.getLatestSkipTraceByCacheKey(cacheKey);
+
+      const now = Date.now();
+      const ms90d = 1000 * 60 * 60 * 24 * 90;
+      const ms5m = 1000 * 60 * 5;
+
+      if (existing && String((existing as any).status || "") === "success" && (existing as any).completedAt) {
+        const completedAtMs = new Date((existing as any).completedAt).getTime();
+        if (Number.isFinite(completedAtMs) && now - completedAtMs < ms90d) {
+          await storage.createGlobalActivity({
+            userId: user.id,
+            action: "skip_trace_cached",
+            description: `Skip trace cache hit: ${address}`,
+            metadata: JSON.stringify({ propertyId, skipTraceId: (existing as any).id }),
+          } as any);
+          return res.json({
+            cached: true,
+            result: {
+              ...existing,
+              phones: parseJsonArrayText((existing as any).phonesJson),
+              emails: parseJsonArrayText((existing as any).emailsJson),
+            },
+          });
+        }
+      }
+
+      if (existing && String((existing as any).status || "") === "pending" && (existing as any).requestedAt) {
+        const requestedAtMs = new Date((existing as any).requestedAt).getTime();
+        if (Number.isFinite(requestedAtMs) && now - requestedAtMs < ms5m) {
+          return res.json({
+            pending: true,
+            result: {
+              ...existing,
+              phones: parseJsonArrayText((existing as any).phonesJson),
+              emails: parseJsonArrayText((existing as any).emailsJson),
+            },
+          });
+        }
+      }
+
+      const provider = getSkipTraceProvider();
+      const pending = await storage.createSkipTraceResult({
+        propertyId,
+        leadId: lead?.id ?? null,
+        providerName: provider.name,
+        status: "pending",
+        phonesJson: "[]",
+        emailsJson: "[]",
+        cacheKey,
+        requestedAt: new Date(),
+      } as any);
+
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "skip_trace_requested",
+        description: `Skip trace requested: ${address}`,
+        metadata: JSON.stringify({ propertyId, leadId: lead?.id ?? null, skipTraceId: pending.id, provider: provider.name }),
+      } as any);
+
+      let updated: any = pending;
+      try {
+        const out = await provider.skipTrace({ ownerName, address, city, state, zipCode });
+        if (out.status === "success") {
+          updated = await storage.updateSkipTraceResult(pending.id, {
+            status: "success",
+            phonesJson: JSON.stringify(out.phones || []),
+            emailsJson: JSON.stringify(out.emails || []),
+            costCents: out.costCents,
+            completedAt: new Date(),
+            rawResponseJson: JSON.stringify(out.raw ?? null),
+          } as any);
+
+          if (lead?.id) {
+            const leadPatch: any = {};
+            if (!String(lead?.ownerPhone || "").trim() && out.phones?.[0]) leadPatch.ownerPhone = out.phones[0];
+            if (!String(lead?.ownerEmail || "").trim() && out.emails?.[0]) leadPatch.ownerEmail = out.emails[0];
+            if (Object.keys(leadPatch).length) await storage.updateLead(lead.id, leadPatch);
+          }
+
+          await storage.createGlobalActivity({
+            userId: user.id,
+            action: "skip_trace_success",
+            description: `Skip trace success: ${address}`,
+            metadata: JSON.stringify({ propertyId, leadId: lead?.id ?? null, skipTraceId: pending.id, phones: out.phones?.length || 0, emails: out.emails?.length || 0, costCents: out.costCents }),
+          } as any);
+        } else {
+          updated = await storage.updateSkipTraceResult(pending.id, {
+            status: "fail",
+            phonesJson: JSON.stringify(out.phones || []),
+            emailsJson: JSON.stringify(out.emails || []),
+            costCents: out.costCents,
+            completedAt: new Date(),
+            rawResponseJson: JSON.stringify(out.raw ?? null),
+          } as any);
+          await storage.createGlobalActivity({
+            userId: user.id,
+            action: "skip_trace_failed",
+            description: `Skip trace failed: ${address}`,
+            metadata: JSON.stringify({ propertyId, leadId: lead?.id ?? null, skipTraceId: pending.id, error: (out as any).errorMessage || "failed", costCents: out.costCents }),
+          } as any);
+        }
+      } catch (e: any) {
+        updated = await storage.updateSkipTraceResult(pending.id, {
+          status: "fail",
+          completedAt: new Date(),
+          rawResponseJson: JSON.stringify({ error: String(e?.message || e) }),
+        } as any);
+        await storage.createGlobalActivity({
+          userId: user.id,
+          action: "skip_trace_failed",
+          description: `Skip trace failed: ${address}`,
+          metadata: JSON.stringify({ propertyId, leadId: lead?.id ?? null, skipTraceId: pending.id, error: String(e?.message || e) }),
+        } as any);
+      }
+
+      return res.json({
+        cached: false,
+        result: {
+          ...updated,
+          phones: parseJsonArrayText(updated.phonesJson),
+          emails: parseJsonArrayText(updated.emailsJson),
+        },
+      });
     } catch (error: any) {
-      if (isHttpError(error)) return res.status(error.statusCode).json({ message: error.message });
       res.status(500).json({ message: error.message });
     }
   });
@@ -5961,16 +5072,8 @@ export async function registerRoutes(
 
   app.post("/api/opportunities", async (req, res) => {
     try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
       const validated = insertPropertySchema.parse(req.body);
       const dedupeKey = computeOpportunityDedupeKey(validated as any);
-
-      const assignedTo = (validated as any).assignedTo;
-      if (typeof assignedTo === "number") {
-        const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
-        if (!ok) return;
-      }
 
       try {
         const dupRows: any = await db.execute(sql`
@@ -5994,34 +5097,6 @@ export async function registerRoutes(
           metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
         });
       }
-
-      try {
-        const teamId = await getOrInitActiveTeamId(req, user.id);
-        if (teamId) {
-          await dispatchAutomationEvent({
-            eventType: "opportunity.created",
-            teamId,
-            actorUserId: user.id,
-            entity: { type: "opportunity", id: property.id },
-            payload: { opportunity: property },
-          });
-          try {
-            await writeAuditEvent({
-              teamId,
-              actorUserId: user.id,
-              entityType: "opportunity",
-              entityId: property.id,
-              action: "opportunity_created",
-              before: null,
-              after: property,
-              kind: "create",
-              ip: req.ip,
-              userAgent: String(req.headers["user-agent"] || ""),
-              requestId: (res.locals as any)?.requestId || null,
-            });
-          } catch {}
-        }
-      } catch {}
       
       res.status(201).json(property);
     } catch (error: any) {
@@ -6031,16 +5106,8 @@ export async function registerRoutes(
 
   app.patch("/api/opportunities/:id", async (req, res) => {
     try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
       const partial = insertPropertySchema.partial().parse(req.body);
       const id = parseInt(req.params.id);
-
-      const assignedTo = (partial as any).assignedTo;
-      if (typeof assignedTo === "number") {
-        const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
-        if (!ok) return;
-      }
       const before = await storage.getPropertyById(id);
       if (before) {
         const merged: any = { ...(before as any), ...(partial as any) };
@@ -6061,38 +5128,6 @@ export async function registerRoutes(
           metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
         });
       }
-
-      try {
-        const beforeStatus = String((before as any)?.status || "");
-        const afterStatus = String((property as any)?.status || "");
-        if (beforeStatus !== afterStatus) {
-          const teamId = await getOrInitActiveTeamId(req, user.id);
-          if (teamId) {
-            await dispatchAutomationEvent({
-              eventType: "opportunity.status_changed",
-              teamId,
-              actorUserId: user.id,
-              entity: { type: "opportunity", id: property.id },
-              payload: { opportunityId: property.id, beforeStatus: beforeStatus || null, afterStatus: afterStatus || null, opportunity: property },
-            });
-            try {
-              await writeAuditEvent({
-                teamId,
-                actorUserId: user.id,
-                entityType: "opportunity",
-                entityId: property.id,
-                action: "opportunity_status_changed",
-                before: { status: beforeStatus || null },
-                after: { status: afterStatus || null },
-                kind: "update",
-                ip: req.ip,
-                userAgent: String(req.headers["user-agent"] || ""),
-                requestId: (res.locals as any)?.requestId || null,
-              });
-            } catch {}
-          }
-        }
-      } catch {}
       
       res.json(property);
     } catch (error: any) {
@@ -6102,8 +5137,6 @@ export async function registerRoutes(
 
   app.delete("/api/opportunities/:id", async (req, res) => {
     try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
       const property = await storage.getPropertyById(parseInt(req.params.id));
       await storage.deleteProperty(parseInt(req.params.id));
       
@@ -6125,9 +5158,8 @@ export async function registerRoutes(
   // PROPERTIES ENDPOINTS (Legacy Proxies)
   app.get("/api/properties", async (req, res) => {
     try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const allProperties = await storage.getProperties(limit, offset);
       res.json(allProperties);
     } catch (error: any) {
@@ -6488,48 +5520,6 @@ export async function registerRoutes(
             description: `Follow-up scheduled: ${followUpAt.toLocaleString()}`,
             metadata: JSON.stringify({ leadId: effectiveLeadId, callLogId: updated.id }),
           } as any);
-
-          try {
-            const dueFrom = new Date(followUpAt.getTime() - 60 * 1000);
-            const dueTo = new Date(followUpAt.getTime() + 60 * 1000);
-            const existing = await storage.listTasks(
-              { userId: user.id, isManager: isManagerUser(user) },
-              {
-                relatedEntityType: "lead",
-                relatedEntityId: effectiveLeadId,
-                type: "follow_up",
-                dueFrom,
-                dueTo,
-                includeCompleted: true,
-                limit: 5,
-                offset: 0,
-              },
-            );
-            const alreadyExists = Array.isArray((existing as any)?.items) && (existing as any).items.length > 0;
-            if (!alreadyExists) {
-              const task = await createTask({
-                title: "Follow up",
-                description: `Follow up from call: ${String(updated.number || "")}`,
-                type: "follow_up",
-                relatedEntityType: "lead",
-                relatedEntityId: effectiveLeadId,
-                dueAt: followUpAt,
-                priority: "high",
-                status: "open",
-                assignedToUserId: user.id,
-                isRecurring: false,
-                recurrenceRule: null,
-                isPrivate: false,
-                createdBy: user.id,
-              });
-              await storage.createGlobalActivity({
-                userId: user.id,
-                action: "followup_task_created",
-                description: `Follow-up task created: ${followUpAt.toLocaleString()}`,
-                metadata: JSON.stringify({ leadId: effectiveLeadId, callLogId: updated.id, taskId: task.id }),
-              } as any);
-            }
-          } catch {}
         }
       }
 
@@ -6720,8 +5710,11 @@ export async function registerRoutes(
   });
 
   // SYSTEM HEALTH (Aggregated diagnostics)
-  app.get("/api/system/health", async (_req, res) => {
+  app.get("/api/system/health", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
       // DB connectivity
       let dbStatus = "disconnected";
       try {
@@ -6746,15 +5739,16 @@ export async function registerRoutes(
       }
 
       // Env vars presence
-      const required = [
-        "DATABASE_URL",
-        "SESSION_SECRET",
-        "EMPLOYEE_ACCESS_CODE",
-        "SIGNALWIRE_SPACE_URL",
-        "SIGNALWIRE_PROJECT_ID",
-        "SIGNALWIRE_API_TOKEN",
-      ];
-      const missing = required.filter((k) => !process.env[k] || String(process.env[k]).trim() === "");
+      const requiredCore = ["DATABASE_URL", "SESSION_SECRET"];
+      const missingCore = requiredCore.filter((k) => !process.env[k] || String(process.env[k]).trim() === "");
+
+      const roleKeys = ["ADMIN_ROLE_CODE", "TEAM_LEADER_ROLE_CODE", "AGENT_ROLE_CODE", "VA_ROLE_CODE"];
+      const legacyKey = "EMPLOYEE_ACCESS_CODE";
+      const hasRoleCodes = roleKeys.every((k) => String(process.env[k] || "").trim());
+      const hasLegacy = String(process.env[legacyKey] || "").trim().length > 0;
+      const missingSignup = hasRoleCodes || hasLegacy ? [] : [...roleKeys, legacyKey];
+
+      const missing = [...missingCore, ...missingSignup];
 
       // Sessions store check (ensure table exists)
       let sessionsOk = true;
@@ -6772,20 +5766,6 @@ export async function registerRoutes(
       if (dbStatus !== "connected") nextSteps.push("Verify DATABASE_URL and Neon availability");
       if (!process.env.DIALER_DEFAULT_FROM_NUMBER) nextSteps.push("Set DIALER_DEFAULT_FROM_NUMBER for outbound caller ID");
 
-      let releaseGate: { ok: boolean; blockingCritical: number } = { ok: true, blockingCritical: 0 };
-      try {
-        const gateRows: any = await db.execute(sql`
-          SELECT COUNT(*)::int as "count"
-          FROM app_audit_findings
-          WHERE severity = 'critical'
-            AND status IN ('open', 'in_progress')
-        `);
-        const n = Number((gateRows as any).rows?.[0]?.count ?? 0);
-        releaseGate = { ok: n === 0, blockingCritical: Number.isFinite(n) ? n : 0 };
-      } catch {}
-
-      if (!releaseGate.ok) nextSteps.push(`Release gate blocked: ${releaseGate.blockingCritical} Critical findings are still open`);
-
       res.json({
         status: missing.length === 0 && dbStatus === "connected" && signalwireStatus === "reachable" ? "ok" : "warn",
         env: { nodeEnv: process.env.NODE_ENV || "", missing },
@@ -6794,7 +5774,6 @@ export async function registerRoutes(
         numbers: process.env.DIALER_NUMBERS_JSON ? JSON.parse(process.env.DIALER_NUMBERS_JSON) : [],
         defaultFrom: process.env.DIALER_DEFAULT_FROM_NUMBER || null,
         sessions: { ok: sessionsOk },
-        releaseGate,
         nextSteps,
         timestamp: new Date().toISOString(),
       });
@@ -6955,18 +5934,27 @@ export async function registerRoutes(
     return row?.id ? Number(row.id) : null;
   }
 
+  function requireTelephonyWebhookToken(req: any, res: any): boolean {
+    const expected = String(process.env.TELEPHONY_WEBHOOK_TOKEN || "").trim();
+    if (!expected) {
+      if (process.env.NODE_ENV === "production") {
+        res.status(503).send("Webhook is not configured");
+        return false;
+      }
+      return true;
+    }
+    const provided = String(req.query?.token || req.headers["x-webhook-token"] || "").trim();
+    if (!provided || provided !== expected) {
+      res.status(401).send("Unauthorized");
+      return false;
+    }
+    return true;
+  }
+
   // Inbound SMS webhook with cXML auto-reply
   app.post("/api/telephony/sms/webhook", async (req, res) => {
     try {
-      // Verify SignalWire signature if configured
-      const signature = req.headers["x-signalwire-signature"] as string;
-      const url = req.protocol + "://" + req.get("host") + req.originalUrl;
-      
-      if (signature && process.env.SIGNALWIRE_API_TOKEN) {
-        // Simple signature verification (can be enhanced with crypto)
-        // For now, we'll accept the webhook
-      }
-      
+      if (!requireTelephonyWebhookToken(req, res)) return;
       const { To, From, Body } = req.body;
       
       // Send cXML response for auto-reply
@@ -7028,6 +6016,7 @@ export async function registerRoutes(
   // Inbound voice webhook with cXML IVR
   app.post("/api/telephony/voice/webhook", async (req, res) => {
     try {
+      if (!requireTelephonyWebhookToken(req, res)) return;
       const { To, From, CallSid } = req.body;
       
       setImmediate(() => {
@@ -7095,6 +6084,7 @@ export async function registerRoutes(
   // Voice gather webhook for speech recognition
   app.post("/api/telephony/voice/gather", async (req, res) => {
     try {
+      if (!requireTelephonyWebhookToken(req, res)) return;
       const { To, From, CallSid, SpeechResult, Confidence } = req.body;
       
       console.log(`[Voice Gather] From: ${From}, Speech: ${SpeechResult}, Confidence: ${Confidence}`);
@@ -7149,6 +6139,7 @@ export async function registerRoutes(
   // Voice recording webhook
   app.post("/api/telephony/voice/recording", async (req, res) => {
     try {
+      if (!requireTelephonyWebhookToken(req, res)) return;
       const { To, From, CallSid, RecordingUrl, RecordingSid, RecordingDuration } = req.body;
       
       if (process.env.NODE_ENV !== "production") {
@@ -7349,7 +6340,8 @@ export async function registerRoutes(
   app.get("/api/contracts", async (req, res) => {
     try {
       const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       if (propertyId) {
         const items = await storage.getContractsByPropertyId(propertyId, limit, offset);
         return res.json(items);
@@ -7375,9 +6367,6 @@ export async function registerRoutes(
     try {
       const validated = insertContractSchema.parse(req.body);
       const contract = await storage.createContract(validated);
-      try {
-        await syncCommissionEventsForContract(contract);
-      } catch {}
       res.status(201).json(contract);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -7388,9 +6377,6 @@ export async function registerRoutes(
     try {
       const partial = insertContractSchema.partial().parse(req.body);
       const contract = await storage.updateContract(parseInt(req.params.id), partial);
-      try {
-        await syncCommissionEventsForContract(contract);
-      } catch {}
       res.json(contract);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -7409,9 +6395,8 @@ export async function registerRoutes(
   // CONTACTS ENDPOINTS
   app.get("/api/contacts", async (req, res) => {
     try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const query = String((req.query as any).query || "").trim().toLowerCase();
       const allContacts = await storage.getContacts(limit, offset);
       if (!query) return res.json(allContacts);
@@ -7437,8 +6422,6 @@ export async function registerRoutes(
 
   app.get("/api/contacts/:id", async (req, res) => {
     try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
       const contact = await storage.getContactById(parseInt(req.params.id));
       if (!contact) return res.status(404).json({ message: "Contact not found" });
       res.json(contact);
@@ -7449,8 +6432,6 @@ export async function registerRoutes(
 
   app.post("/api/contacts", async (req, res) => {
     try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
       const validated = insertContactSchema.parse(req.body);
       const contact = await storage.createContact(validated);
       res.status(201).json(contact);
@@ -7461,8 +6442,6 @@ export async function registerRoutes(
 
   app.patch("/api/contacts/:id", async (req, res) => {
     try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
       const partial = insertContactSchema.partial().parse(req.body);
       const contact = await storage.updateContact(parseInt(req.params.id), partial);
       res.json(contact);
@@ -7473,733 +6452,8 @@ export async function registerRoutes(
 
   app.delete("/api/contacts/:id", async (req, res) => {
     try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
       await storage.deleteContact(parseInt(req.params.id));
       res.json({ message: "Contact deleted" });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/companies", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
-      if (!ctx) return;
-      const { limit, offset } = parseLimitOffset(req.query);
-      const q = typeof req.query?.q === "string" ? req.query.q : "";
-      const companyType = typeof req.query?.type === "string" ? req.query.type : "";
-      const out = await storage.listCompanies({ teamId: ctx.teamId, q, companyType, limit, offset });
-      res.json(out);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/companies", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
-      if (!ctx) return;
-      const schema = insertCompanySchema.omit({ teamId: true } as any);
-      const validated: any = schema.parse(req.body || {});
-      const company = await storage.createCompany({ ...validated, teamId: ctx.teamId } as any);
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "company",
-          entityId: company.id,
-          action: "company_created",
-          before: null,
-          after: company,
-          kind: "create",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-      res.status(201).json(company);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/companies/:id", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
-      if (!ctx) return;
-      const id = parseInt(req.params.id, 10);
-      const company = await storage.getCompanyById(id);
-      if (!company || company.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-      res.json(company);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.patch("/api/companies/:id", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
-      if (!ctx) return;
-      const id = parseInt(req.params.id, 10);
-      const before = await storage.getCompanyById(id);
-      if (!before || before.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-      const patchSchema = insertCompanySchema.partial().omit({ teamId: true } as any);
-      const patch: any = patchSchema.parse(req.body || {});
-      const updated = await storage.updateCompany(id, patch);
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "company",
-          entityId: id,
-          action: "company_updated",
-          before,
-          after: updated,
-          kind: "update",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-      res.json(updated);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.delete("/api/companies/:id", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
-      if (!ctx) return;
-      const id = parseInt(req.params.id, 10);
-      const before = await storage.getCompanyById(id);
-      if (!before || before.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-      await storage.deleteCompany(id);
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "company",
-          entityId: id,
-          action: "company_deleted",
-          before,
-          after: null,
-          kind: "delete",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-      res.json({ ok: true });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/companies/:id/people", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
-      if (!ctx) return;
-      const companyId = parseInt(req.params.id, 10);
-      const company = await storage.getCompanyById(companyId);
-      if (!company || company.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-      const people = await storage.getCompanyPeople(companyId);
-      res.json(people);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/companies/:id/people", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
-      if (!ctx) return;
-      const companyId = parseInt(req.params.id, 10);
-      const company = await storage.getCompanyById(companyId);
-      if (!company || company.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-      const schema = insertCompanyPersonSchema.omit({ teamId: true, companyId: true } as any);
-      const validated: any = schema.parse(req.body || {});
-      const contactId = Number(validated.contactId);
-      const contact = await storage.getContactById(contactId);
-      if (!contact) return res.status(404).json({ message: "Contact not found" });
-      const row = await storage.createCompanyPerson({ ...validated, teamId: ctx.teamId, companyId } as any);
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "company",
-          entityId: companyId,
-          action: "company_person_added",
-          before: null,
-          after: { companyPerson: row, contactId },
-          kind: "update",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-      res.status(201).json(row);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.delete("/api/companies/:companyId/people/:companyPersonId", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
-      if (!ctx) return;
-      const companyId = parseInt(req.params.companyId, 10);
-      const company = await storage.getCompanyById(companyId);
-      if (!company || company.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-      const companyPersonId = parseInt(req.params.companyPersonId, 10);
-      await storage.deleteCompanyPerson(companyPersonId);
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "company",
-          entityId: companyId,
-          action: "company_person_removed",
-          before: { companyPersonId },
-          after: null,
-          kind: "update",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-      res.json({ ok: true });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/documents", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
-      if (!ctx) return;
-
-      const { limit, offset } = parseLimitOffset(req.query);
-      const q = typeof req.query?.q === "string" ? req.query.q : "";
-      const tag = typeof req.query?.tag === "string" ? req.query.tag : "";
-      const entityType = typeof req.query?.entityType === "string" ? req.query.entityType : "";
-      const entityIdRaw = typeof req.query?.entityId === "string" ? req.query.entityId : "";
-      const entityId = entityIdRaw ? parseInt(entityIdRaw, 10) : undefined;
-
-      const out = await storage.listDocuments({
-        teamId: ctx.teamId,
-        q,
-        tag,
-        entityType,
-        entityId,
-        limit,
-        offset,
-      });
-      res.json(out);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  function canViewVaultDocument(ctx: { user: any; membership: any }, document: any) {
-    if (!document) return false;
-    if (!document.isPrivate) return true;
-    if (Number(document.createdBy) === Number(ctx.user.id)) return true;
-    return teamRoleRank(ctx.membership?.role) >= teamRoleRank("admin") || isManagerUser(ctx.user);
-  }
-
-  app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
-      if (!ctx) return;
-      if (!isDocumentVaultConfigured()) {
-        return res.status(503).json({ code: "document_vault_not_configured", message: "Document vault is not configured" });
-      }
-      const file: any = (req as any).file;
-      if (!file) return res.status(400).json({ message: "Missing file" });
-
-      const titleRaw = typeof req.body?.title === "string" ? req.body.title : "";
-      const title = titleRaw.trim() || String(file.originalname || "Document");
-      const kind = typeof req.body?.kind === "string" ? req.body.kind.trim() : null;
-
-      const isPrivateRaw = (req.body as any)?.isPrivate;
-      const isPrivate =
-        isPrivateRaw === true || String(isPrivateRaw || "").trim().toLowerCase() === "true" || String(isPrivateRaw || "").trim() === "1";
-
-      const tagsRaw = (req.body as any)?.tags;
-      let tags: string[] | null = null;
-      if (Array.isArray(tagsRaw)) {
-        tags = tagsRaw.map((t) => String(t || "").trim()).filter(Boolean);
-      } else if (typeof tagsRaw === "string" && tagsRaw.trim()) {
-        try {
-          const parsed = JSON.parse(tagsRaw);
-          if (Array.isArray(parsed)) tags = parsed.map((t) => String(t || "").trim()).filter(Boolean);
-          else tags = tagsRaw.split(",").map((t) => t.trim()).filter(Boolean);
-        } catch {
-          tags = tagsRaw.split(",").map((t) => t.trim()).filter(Boolean);
-        }
-      }
-
-      const buf = Buffer.from(file.buffer);
-      const storageKey = makeDocumentStorageKey({ teamId: ctx.teamId, originalName: String(file.originalname || "file") });
-      const sha = sha256Hex(buf);
-      await uploadDocumentObject({ storageKey, contentType: String(file.mimetype || "application/octet-stream"), body: buf });
-
-      const doc = await storage.createDocument({
-        teamId: ctx.teamId,
-        title,
-        kind,
-        mimeType: String(file.mimetype || "application/octet-stream"),
-        sizeBytes: typeof file.size === "number" ? file.size : buf.length,
-        storageKey,
-        sha256: sha,
-        tags: tags && tags.length ? tags : null,
-        isPrivate,
-        createdBy: ctx.user.id,
-      } as any);
-
-      const v1 = await storage.createVaultDocumentVersion({
-        teamId: ctx.teamId,
-        documentId: doc.id,
-        version: 1,
-        storageKey,
-        mimeType: String(file.mimetype || "application/octet-stream"),
-        sizeBytes: typeof file.size === "number" ? file.size : buf.length,
-        sha256: sha,
-        createdBy: ctx.user.id,
-      } as any);
-
-      const entityType = typeof req.body?.entityType === "string" ? req.body.entityType.trim() : "";
-      const entityIdRaw = typeof req.body?.entityId === "string" ? req.body.entityId.trim() : "";
-      const entityId = entityIdRaw ? parseInt(entityIdRaw, 10) : NaN;
-      const relation = typeof req.body?.relation === "string" ? req.body.relation.trim() : null;
-
-      const links: any[] = [];
-      if (entityType && Number.isFinite(entityId) && entityId > 0) {
-        const link = await storage.createDocumentLink({
-          teamId: ctx.teamId,
-          documentId: doc.id,
-          entityType,
-          entityId,
-          relation,
-        } as any);
-        links.push(link);
-      }
-
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "document",
-          entityId: doc.id,
-          action: "document_uploaded",
-          before: null,
-          after: doc,
-          kind: "create",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-
-      res.status(201).json({ document: doc, links, versions: [v1] });
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/documents/:id", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
-      if (!ctx) return;
-      const id = parseInt(req.params.id, 10);
-      const doc = await storage.getDocumentById(id);
-      if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-      if (!canViewVaultDocument(ctx, doc)) return res.status(403).json({ message: "Forbidden" });
-      const links = await storage.getDocumentLinksByDocumentId(id);
-      const versions = await storage.getVaultDocumentVersions(id);
-      res.json({ document: doc, links, versions });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/documents/:id/download", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
-      if (!ctx) return;
-      const id = parseInt(req.params.id, 10);
-      const doc = await storage.getDocumentById(id);
-      if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-      if (!canViewVaultDocument(ctx, doc)) return res.status(403).json({ message: "Forbidden" });
-      const url = await getDocumentSignedUrl({ storageKey: String(doc.storageKey), expiresInSeconds: 60 * 10 });
-      if (!url) return res.status(503).json({ message: "Document vault is not configured" });
-      res.redirect(url);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/documents/:id/link", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
-      if (!ctx) return;
-      const documentId = parseInt(req.params.id, 10);
-      const doc = await storage.getDocumentById(documentId);
-      if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-
-      const schema = insertDocumentLinkSchema.omit({ id: true, createdAt: true, teamId: true, documentId: true } as any);
-      const validated: any = schema.parse(req.body || {});
-
-      const link = await storage.createDocumentLink({
-        teamId: ctx.teamId,
-        documentId,
-        entityType: validated.entityType,
-        entityId: validated.entityId,
-        relation: typeof validated.relation === "string" ? validated.relation : null,
-      } as any);
-
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "document",
-          entityId: documentId,
-          action: "document_link_added",
-          before: null,
-          after: link,
-          kind: "update",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-
-      res.status(201).json(link);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.delete("/api/documents/:id/link/:linkId", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
-      if (!ctx) return;
-      const documentId = parseInt(req.params.id, 10);
-      const doc = await storage.getDocumentById(documentId);
-      if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-
-      const linkId = parseInt(req.params.linkId, 10);
-      const link = await storage.getDocumentLinkById(linkId);
-      if (!link || link.teamId !== ctx.teamId || link.documentId !== documentId) return res.status(404).json({ message: "Not found" });
-      await storage.deleteDocumentLinkForTeam(ctx.teamId, linkId);
-
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "document",
-          entityId: documentId,
-          action: "document_link_removed",
-          before: link,
-          after: null,
-          kind: "update",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-
-      res.json({ ok: true });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/documents/:id/versions", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
-      if (!ctx) return;
-      const documentId = parseInt(req.params.id, 10);
-      const doc = await storage.getDocumentById(documentId);
-      if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-      if (!canViewVaultDocument(ctx, doc)) return res.status(403).json({ message: "Forbidden" });
-      const versions = await storage.getVaultDocumentVersions(documentId);
-      res.json(versions);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/documents/:id/versions", upload.single("file"), async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "member" });
-      if (!ctx) return;
-      if (!isDocumentVaultConfigured()) {
-        return res.status(503).json({ code: "document_vault_not_configured", message: "Document vault is not configured" });
-      }
-      const documentId = parseInt(req.params.id, 10);
-      const doc = await storage.getDocumentById(documentId);
-      if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-      if (!canViewVaultDocument(ctx, doc)) return res.status(403).json({ message: "Forbidden" });
-
-      const file: any = (req as any).file;
-      if (!file) return res.status(400).json({ message: "Missing file" });
-
-      const versions = await storage.getVaultDocumentVersions(documentId);
-      const nextVersion = versions.length ? Math.max(...versions.map((v: any) => Number(v.version) || 0)) + 1 : 1;
-
-      const buf = Buffer.from(file.buffer);
-      const storageKey = makeDocumentStorageKey({ teamId: ctx.teamId, originalName: String(file.originalname || "file") });
-      const sha = sha256Hex(buf);
-      await uploadDocumentObject({ storageKey, contentType: String(file.mimetype || "application/octet-stream"), body: buf });
-
-      const v = await storage.createVaultDocumentVersion({
-        teamId: ctx.teamId,
-        documentId,
-        version: nextVersion,
-        storageKey,
-        mimeType: String(file.mimetype || "application/octet-stream"),
-        sizeBytes: typeof file.size === "number" ? file.size : buf.length,
-        sha256: sha,
-        createdBy: ctx.user.id,
-      } as any);
-
-      const updated = await storage.updateDocument(documentId, {
-        storageKey,
-        mimeType: String(file.mimetype || "application/octet-stream"),
-        sizeBytes: typeof file.size === "number" ? file.size : buf.length,
-        sha256: sha,
-        updatedAt: new Date(),
-      } as any);
-
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "document",
-          entityId: documentId,
-          action: "document_version_uploaded",
-          before: doc,
-          after: updated,
-          kind: "update",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-
-      res.status(201).json({ document: updated, version: v });
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/automations", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
-      if (!ctx) return;
-      const { limit, offset } = parseLimitOffset(req.query);
-      const items = await storage.listAutomations(ctx.teamId, limit, offset);
-      res.json(items);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/automations", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
-      if (!ctx) return;
-
-      const baseSchema = insertAutomationSchema.omit({ teamId: true } as any);
-      const base: any = baseSchema.parse(req.body || {});
-      const automation = await storage.createAutomation({ ...base, teamId: ctx.teamId } as any);
-
-      const triggersRaw = Array.isArray(req.body?.triggers) ? req.body.triggers : [];
-      const triggers = triggersRaw
-        .map((t: any) => ({
-          eventType: String(t?.eventType || "").trim(),
-          configJson: typeof t?.configJson === "string" ? t.configJson : JSON.stringify(t?.config || {}),
-        }))
-        .filter((t: any) => t.eventType);
-      await storage.replaceAutomationTriggers(ctx.teamId, automation.id, triggers);
-
-      const conditionRaw = req.body?.condition;
-      const conditionJson =
-        typeof conditionRaw?.configJson === "string"
-          ? String(conditionRaw.configJson)
-          : typeof conditionRaw === "object" && conditionRaw
-            ? JSON.stringify(conditionRaw)
-            : "{}";
-      await storage.upsertAutomationCondition(ctx.teamId, automation.id, conditionJson);
-
-      const actionsRaw = Array.isArray(req.body?.actions) ? req.body.actions : [];
-      const actions = actionsRaw
-        .map((a: any, idx: number) => ({
-          actionType: String(a?.actionType || "").trim(),
-          configJson: typeof a?.configJson === "string" ? a.configJson : JSON.stringify(a?.config || {}),
-          sortOrder: typeof a?.sortOrder === "number" ? a.sortOrder : idx,
-        }))
-        .filter((a: any) => a.actionType);
-      await storage.replaceAutomationActions(ctx.teamId, automation.id, actions);
-
-      const out = {
-        automation,
-        triggers: await storage.getAutomationTriggers(automation.id),
-        condition: await storage.getAutomationCondition(automation.id),
-        actions: await storage.getAutomationActions(automation.id),
-      };
-
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "automation",
-          entityId: automation.id,
-          action: "automation_created",
-          before: null,
-          after: out,
-          kind: "create",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-
-      res.status(201).json(out);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/automations/:id", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
-      if (!ctx) return;
-      const id = parseInt(req.params.id, 10);
-      const automation = await storage.getAutomationById(id);
-      if (!automation || automation.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-      res.json({
-        automation,
-        triggers: await storage.getAutomationTriggers(id),
-        condition: await storage.getAutomationCondition(id),
-        actions: await storage.getAutomationActions(id),
-      });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.patch("/api/automations/:id", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
-      if (!ctx) return;
-      const id = parseInt(req.params.id, 10);
-      const before = await storage.getAutomationById(id);
-      if (!before || before.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-
-      const baseSchema = insertAutomationSchema.partial().omit({ teamId: true } as any);
-      const patch: any = baseSchema.parse(req.body || {});
-      const updated = await storage.updateAutomation(id, { ...patch, updatedAt: new Date() } as any);
-
-      if (Array.isArray(req.body?.triggers)) {
-        const triggers = (req.body.triggers as any[])
-          .map((t: any) => ({
-            eventType: String(t?.eventType || "").trim(),
-            configJson: typeof t?.configJson === "string" ? t.configJson : JSON.stringify(t?.config || {}),
-          }))
-          .filter((t: any) => t.eventType);
-        await storage.replaceAutomationTriggers(ctx.teamId, id, triggers);
-      }
-
-      if (typeof req.body?.condition !== "undefined") {
-        const c = req.body.condition;
-        const conditionJson =
-          typeof c?.configJson === "string" ? String(c.configJson) : typeof c === "object" && c ? JSON.stringify(c) : "{}";
-        await storage.upsertAutomationCondition(ctx.teamId, id, conditionJson);
-      }
-
-      if (Array.isArray(req.body?.actions)) {
-        const actions = (req.body.actions as any[])
-          .map((a: any, idx: number) => ({
-            actionType: String(a?.actionType || "").trim(),
-            configJson: typeof a?.configJson === "string" ? a.configJson : JSON.stringify(a?.config || {}),
-            sortOrder: typeof a?.sortOrder === "number" ? a.sortOrder : idx,
-          }))
-          .filter((a: any) => a.actionType);
-        await storage.replaceAutomationActions(ctx.teamId, id, actions);
-      }
-
-      const out = {
-        automation: updated,
-        triggers: await storage.getAutomationTriggers(id),
-        condition: await storage.getAutomationCondition(id),
-        actions: await storage.getAutomationActions(id),
-      };
-
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "automation",
-          entityId: id,
-          action: "automation_updated",
-          before,
-          after: out,
-          kind: "update",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-
-      res.json(out);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.delete("/api/automations/:id", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
-      if (!ctx) return;
-      const id = parseInt(req.params.id, 10);
-      const before = await storage.getAutomationById(id);
-      if (!before || before.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-      await storage.deleteAutomation(id);
-      try {
-        await writeAuditEvent({
-          teamId: ctx.teamId,
-          actorUserId: ctx.user.id,
-          entityType: "automation",
-          entityId: id,
-          action: "automation_deleted",
-          before,
-          after: null,
-          kind: "delete",
-          ip: req.ip,
-          userAgent: String(req.headers["user-agent"] || ""),
-          requestId: (res.locals as any)?.requestId || null,
-        });
-      } catch {}
-      res.json({ ok: true });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/automations/:id/runs", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
-      if (!ctx) return;
-      const id = parseInt(req.params.id, 10);
-      const automation = await storage.getAutomationById(id);
-      if (!automation || automation.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-      const { limit, offset } = parseLimitOffset(req.query);
-      const items = await storage.listAutomationRuns(ctx.teamId, id, limit, offset);
-      res.json(items);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -8208,7 +6462,8 @@ export async function registerRoutes(
   // CONTRACT TEMPLATES ENDPOINTS
   app.get("/api/contract-templates", async (req, res) => {
     try {
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const templates = await storage.getContractTemplates(limit, offset);
       res.json(templates);
     } catch (error: any) {
@@ -8258,7 +6513,8 @@ export async function registerRoutes(
   // CONTRACT DOCUMENTS ENDPOINTS
   app.get("/api/contract-documents", async (req, res) => {
     try {
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const documents = await storage.getContractDocuments(limit, offset);
       res.json(documents);
     } catch (error: any) {
@@ -8673,7 +6929,8 @@ export async function registerRoutes(
   // LOIS ENDPOINTS
   app.get("/api/lois", async (req, res) => {
     try {
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const allLois = await storage.getLois(limit, offset);
       res.json(allLois);
     } catch (error: any) {
@@ -8723,9 +6980,23 @@ export async function registerRoutes(
   // USERS ENDPOINTS
   app.get("/api/users", async (req, res) => {
     try {
-      const { limit, offset } = parseLimitOffset(req.query);
-      const users = await storage.getUsers(limit, offset);
-      res.json(users);
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
+      if (isAdminUser(me)) {
+        const users = await storage.getUsers(limit, offset);
+        return res.json(users.map((u: any) => {
+          const { passwordHash, ...rest } = u as any;
+          return rest;
+        }));
+      }
+      const allowedIds = await allowedLeadAssigneeUserIds(me.id);
+      const users = await storage.getUsersByIds(allowedIds, limit, offset);
+      res.json(users.map((u: any) => {
+        const { passwordHash, ...rest } = u as any;
+        return rest;
+      }));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -8733,9 +7004,17 @@ export async function registerRoutes(
 
   app.get("/api/users/:id", async (req, res) => {
     try {
-      const user = await storage.getUserById(parseInt(req.params.id));
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const id = parseInt(req.params.id);
+      if (!isAdminUser(me)) {
+        const allowedIds = await allowedLeadAssigneeUserIds(me.id);
+        if (!allowedIds.includes(id)) return res.status(404).json({ message: "User not found" });
+      }
+      const user = await storage.getUserById(id);
       if (!user) return res.status(404).json({ message: "User not found" });
-      res.json(user);
+      const { passwordHash, ...rest } = user as any;
+      res.json(rest);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -8743,9 +7022,13 @@ export async function registerRoutes(
 
   app.post("/api/users", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      if (!isAdminUser(me)) return res.status(403).json({ message: "Forbidden" });
       const validated = insertUserSchema.parse(req.body);
       const user = await storage.createUser(validated);
-      res.status(201).json(user);
+      const { passwordHash, ...rest } = user as any;
+      res.status(201).json(rest);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -8753,20 +7036,19 @@ export async function registerRoutes(
 
   // Change password
   app.patch("/api/users/:id/password", async (req, res) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Not authenticated" });
-    }
+    const me = await requireAuth(req, res);
+    if (!me) return;
 
     const userId = parseInt(req.params.id);
-    if (req.session.userId !== userId) {
+    if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
       return res.status(403).json({ message: "Forbidden" });
     }
 
     try {
       const { currentPassword, newPassword } = req.body;
 
-      if (!currentPassword || !newPassword) {
-        return res.status(400).json({ message: "Current and new password are required" });
+      if (!newPassword) {
+        return res.status(400).json({ message: "New password is required" });
       }
 
       if (newPassword.length < 8) {
@@ -8778,9 +7060,14 @@ export async function registerRoutes(
         return res.status(404).json({ message: "User not found" });
       }
 
-      const isValid = await bcrypt.compare(currentPassword, user.passwordHash);
-      if (!isValid) {
-        return res.status(401).json({ message: "Current password is incorrect" });
+      if (!isAdminUser(me)) {
+        if (!currentPassword) {
+          return res.status(400).json({ message: "Current password is required" });
+        }
+        const isValid = await bcrypt.compare(currentPassword, user.passwordHash);
+        if (!isValid) {
+          return res.status(401).json({ message: "Current password is incorrect" });
+        }
       }
 
       const newPasswordHash = await bcrypt.hash(newPassword, 12);
@@ -8795,9 +7082,16 @@ export async function registerRoutes(
 
   app.patch("/api/users/:id", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.id);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       const partial = insertUserSchema.partial().parse(req.body);
-      const user = await storage.updateUser(parseInt(req.params.id), partial);
-      res.json(user);
+      const user = await storage.updateUser(userId, partial);
+      const { passwordHash, ...rest } = user as any;
+      res.json(rest);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -8806,6 +7100,12 @@ export async function registerRoutes(
   // TWO FACTOR AUTH ENDPOINTS
   app.get("/api/users/:userId/2fa", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       const auth = await storage.getTwoFactorAuthByUserId(parseInt(req.params.userId));
       res.json(auth || { isEnabled: false });
     } catch (error: any) {
@@ -8815,6 +7115,12 @@ export async function registerRoutes(
 
   app.post("/api/users/:userId/2fa", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       const validated = insertTwoFactorAuthSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
       const auth = await storage.createTwoFactorAuth(validated);
       res.status(201).json(auth);
@@ -8825,6 +7131,12 @@ export async function registerRoutes(
 
   app.patch("/api/users/:userId/2fa", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       const partial = insertTwoFactorAuthSchema.partial().parse(req.body);
       const auth = await storage.updateTwoFactorAuth(parseInt(req.params.userId), partial);
       res.json(auth);
@@ -8835,6 +7147,12 @@ export async function registerRoutes(
 
   app.delete("/api/users/:userId/2fa", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       await storage.deleteTwoFactorAuth(parseInt(req.params.userId));
       res.json({ message: "2FA disabled" });
     } catch (error: any) {
@@ -8845,6 +7163,12 @@ export async function registerRoutes(
   // BACKUP CODES ENDPOINTS
   app.get("/api/users/:userId/backup-codes", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       const codes = await storage.getBackupCodesByUserId(parseInt(req.params.userId));
       res.json(codes);
     } catch (error: any) {
@@ -8854,6 +7178,12 @@ export async function registerRoutes(
 
   app.post("/api/users/:userId/backup-codes", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       const validated = insertBackupCodeSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
       const code = await storage.createBackupCode(validated);
       res.status(201).json(code);
@@ -8940,13 +7270,9 @@ export async function registerRoutes(
   app.get("/api/activity", async (req, res) => {
     try {
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
-      const group = String(req.query.group || "").trim().toLowerCase() === "true";
-      const windowMinutesRaw = req.query.windowMinutes ? parseInt(req.query.windowMinutes as string) : 15;
-      const windowMinutes = Number.isFinite(windowMinutesRaw) ? Math.min(Math.max(windowMinutesRaw, 1), 60) : 15;
       const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
       const leadId = req.query.leadId ? parseInt(req.query.leadId as string) : undefined;
-      const playgroundSessionIdRaw = req.query.playgroundSessionId ?? req.query.sessionId;
-      const playgroundSessionId = playgroundSessionIdRaw ? parseInt(playgroundSessionIdRaw as string) : undefined;
+      const playgroundSessionId = req.query.playgroundSessionId ? parseInt(req.query.playgroundSessionId as string) : undefined;
       const logs = await storage.getGlobalActivityLogs(limit);
 
       const parsed = logs.map((log) => {
@@ -8964,49 +7290,9 @@ export async function registerRoutes(
         return true;
       });
 
-      const filteredOrGrouped = !group
-        ? filtered
-        : (() => {
-            const out: any[] = [];
-            const windowMs = windowMinutes * 60 * 1000;
-            for (const log of filtered) {
-              const createdAtMs = new Date(log.createdAt as any).getTime();
-              const meta = log.metadataParsed || {};
-              const key = [
-                String(log.userId ?? ""),
-                String(log.action ?? ""),
-                String(log.description ?? ""),
-                String(meta?.leadId ?? ""),
-                String(meta?.propertyId ?? ""),
-                String(meta?.playgroundSessionId ?? ""),
-              ].join("|");
-              const last = out[out.length - 1];
-              if (
-                last &&
-                last.__groupKey === key &&
-                Number.isFinite(last.__createdAtMs) &&
-                Number.isFinite(createdAtMs) &&
-                last.__createdAtMs - createdAtMs <= windowMs
-              ) {
-                last.groupCount = Number(last.groupCount || 1) + 1;
-                continue;
-              }
-              out.push({
-                ...log,
-                groupCount: 1,
-                __groupKey: key,
-                __createdAtMs: createdAtMs,
-              });
-            }
-            return out.map((l: any) => {
-              const { __groupKey, __createdAtMs, ...rest } = l;
-              return rest;
-            });
-          })();
-
       const userIds = Array.from(
         new Set(
-          filteredOrGrouped
+          filtered
             .map((log: any) => (typeof log.userId === "number" ? log.userId : null))
             .filter((id: any) => typeof id === "number" && Number.isFinite(id) && id !== 0),
         ),
@@ -9028,7 +7314,7 @@ export async function registerRoutes(
 
       const usersById = new Map<number, any>(userRows.map((u: any) => [u.id, u]));
 
-      const out = filteredOrGrouped.map((log: any) => {
+      const out = filtered.map((log: any) => {
         const user =
           log.userId === 0
             ? {
@@ -9071,168 +7357,22 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/audit", async (req, res) => {
-    try {
-      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
-      if (!ctx) return;
-
-      const { limit, offset } = parseLimitOffset(req.query);
-      const schema = z.object({
-        entityType: z.string().trim().min(1).optional(),
-        entityId: z.coerce.number().int().positive().optional(),
-        actorUserId: z.coerce.number().int().positive().optional(),
-        action: z.string().trim().min(1).optional(),
-        from: z.coerce.date().optional(),
-        to: z.coerce.date().optional(),
-      });
-      const q = schema.parse(req.query || {});
-
-      const whereParts: any[] = [eq(auditEvents.teamId, ctx.teamId)];
-      if (q.entityType) whereParts.push(eq(auditEvents.entityType, q.entityType));
-      if (typeof q.entityId === "number") whereParts.push(eq(auditEvents.entityId, q.entityId));
-      if (typeof q.actorUserId === "number") whereParts.push(eq(auditEvents.actorUserId, q.actorUserId));
-      if (q.action) whereParts.push(eq(auditEvents.action, q.action));
-      if (q.from) whereParts.push(gte(auditEvents.createdAt, q.from));
-      if (q.to) whereParts.push(lte(auditEvents.createdAt, q.to));
-
-      const whereClause = and(...whereParts);
-
-      const rows: any[] = await db
-        .select()
-        .from(auditEvents)
-        .where(whereClause)
-        .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
-        .limit(limit)
-        .offset(offset);
-
-      const countRows = await db.select({ count: sql<number>`count(*)::int` }).from(auditEvents).where(whereClause);
-      const total = Number((countRows as any)?.[0]?.count || 0);
-
-      const actorIds = Array.from(
-        new Set(
-          rows
-            .map((r: any) => (typeof r.actorUserId === "number" ? r.actorUserId : null))
-            .filter((id: any) => typeof id === "number" && Number.isFinite(id)),
-        ),
-      ) as number[];
-
-      const actorRows =
-        actorIds.length > 0
-          ? await db
-              .select({
-                id: users.id,
-                firstName: users.firstName,
-                lastName: users.lastName,
-                email: users.email,
-                profilePicture: users.profilePicture,
-              })
-              .from(users)
-              .where(inArray(users.id, actorIds))
-          : [];
-
-      const actorsById = new Map<number, any>((actorRows as any[]).map((u) => [u.id, u]));
-
-      const items = rows.map((r: any) => {
-        const parsed: any = { ...r, actor: r.actorUserId ? actorsById.get(r.actorUserId) || null : null };
-        for (const key of ["beforeJson", "afterJson", "diffJson"] as const) {
-          try {
-            const raw = (parsed as any)[key];
-            (parsed as any)[`${key}Parsed`] = raw ? JSON.parse(raw) : null;
-          } catch {
-            (parsed as any)[`${key}Parsed`] = null;
-          }
-        }
-        return parsed;
-      });
-
-      res.json({ items, total });
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/teams/my", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      const teams = await storage.getTeamsForUser(user.id);
-      res.json(teams);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/teams/active", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      const teamId = await getOrInitActiveTeamId(req, user.id);
-      if (!teamId) return res.json({ teamId: null, team: null });
-      const team = await storage.getTeamById(teamId);
-      return res.json({ teamId, team: team || null });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.put("/api/teams/active", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      const teamId = typeof req.body?.teamId === "number" ? req.body.teamId : parseInt(String(req.body?.teamId || ""), 10);
-      if (!Number.isFinite(teamId) || teamId <= 0) return res.status(400).json({ message: "Invalid teamId" });
-      if (!user.isSuperAdmin) {
-        const m = await storage.getTeamMemberByTeamAndUser(teamId, user.id);
-        if (!m || String(m.status || "").toLowerCase() !== "active") return res.status(403).json({ message: "Forbidden" });
-      }
-      req.session.activeTeamId = teamId;
-      const team = await storage.getTeamById(teamId);
-      return res.json({ teamId, team: team || null });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/teams/join", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      const inviteCode = String(req.body?.inviteCode || "").trim();
-      if (!inviteCode) return res.status(400).json({ message: "Missing inviteCode" });
-      const team = await storage.getTeamByInviteCode(inviteCode);
-      if (!team) return res.status(404).json({ message: "Team not found" });
-      const existing = await storage.getTeamMemberByTeamAndUser(team.id, user.id);
-      if (!existing) {
-        await storage.createTeamMember({
-          teamId: team.id,
-          userId: user.id,
-          role: "member",
-          permissions: null as any,
-          invitedBy: null as any,
-          joinedAt: new Date(),
-          status: "active",
-        } as any);
-        await storage.createTeamActivityLog({
-          teamId: team.id,
-          userId: user.id,
-          action: "team_joined",
-          description: `${user.email} joined`,
-          metadata: null as any,
-        } as any);
-      }
-      if (!req.session.activeTeamId) req.session.activeTeamId = team.id;
-      res.json({ team });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
+  // TEAMS ENDPOINTS
   app.get("/api/teams", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      const teams = await storage.getTeamsForUser(user.id);
-      res.json(teams);
+      if (isAdminUser(user)) {
+        const teams = await storage.getTeams();
+        return res.json(teams);
+      }
+      const [memberTeams, ownerTeams] = await Promise.all([
+        storage.getTeamsForUser(user.id),
+        storage.getTeamsByOwnerId(user.id),
+      ]);
+      const byId = new Map<number, any>();
+      for (const t of [...memberTeams, ...ownerTeams]) byId.set(Number((t as any).id), t);
+      res.json(Array.from(byId.values()));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -9240,11 +7380,15 @@ export async function registerRoutes(
 
   app.get("/api/teams/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const teamId = parseInt(req.params.id);
-      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "viewer" });
-      if (!ctx) return;
       const team = await storage.getTeamById(teamId);
       if (!team) return res.status(404).json({ message: "Team not found" });
+      if (!isAdminUser(user)) {
+        const ok = await canAccessTeam(user, teamId);
+        if (!ok) return res.status(404).json({ message: "Team not found" });
+      }
       res.json(team);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -9255,26 +7399,23 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      const name = String(req.body?.name || "").trim();
-      if (!name) return res.status(400).json({ message: "Missing team name" });
-      const inviteCode = makeInviteCode();
+      if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const body = z
+        .object({
+          name: z.string().min(1),
+          description: z.string().optional().nullable(),
+          joinCode: z.string().optional().nullable(),
+          isActive: z.boolean().optional().nullable(),
+        })
+        .parse(req.body);
+      const joinCode = String(body.joinCode || "").trim() || crypto.randomBytes(6).toString("hex");
       const team = await storage.createTeam({
-        name,
-        description: typeof req.body?.description === "string" ? req.body.description : null,
+        name: body.name,
+        description: body.description ?? null,
         ownerId: user.id,
-        inviteCode,
-        isActive: true,
+        joinCode,
+        isActive: typeof body.isActive === "boolean" ? body.isActive : true,
       } as any);
-      await storage.createTeamMember({
-        teamId: team.id,
-        userId: user.id,
-        role: "owner",
-        permissions: null as any,
-        invitedBy: user.id,
-        joinedAt: new Date(),
-        status: "active",
-      } as any);
-      req.session.activeTeamId = team.id;
       res.status(201).json(team);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -9283,14 +7424,23 @@ export async function registerRoutes(
 
   app.patch("/api/teams/:id", async (req, res) => {
     try {
-      const teamId = parseInt(req.params.id);
-      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
-      if (!ctx) return;
-      const partial = insertTeamSchema.partial().parse(req.body);
-      const patch: any = { ...partial };
-      delete patch.ownerId;
-      delete patch.inviteCode;
-      const team = await storage.updateTeam(teamId, patch);
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+      const partial = z
+        .object({
+          name: z.string().min(1).optional(),
+          description: z.string().optional().nullable(),
+          joinCode: z.string().optional().nullable(),
+          isActive: z.boolean().optional().nullable(),
+        })
+        .parse(req.body);
+      const clean: any = {};
+      if (typeof partial.name === "string") clean.name = partial.name;
+      if (typeof partial.description !== "undefined") clean.description = partial.description ?? null;
+      if (typeof partial.isActive === "boolean") clean.isActive = partial.isActive;
+      if (typeof partial.joinCode === "string") clean.joinCode = String(partial.joinCode || "").trim();
+      const team = await storage.updateTeam(parseInt(req.params.id), clean);
       res.json(team);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -9299,68 +7449,38 @@ export async function registerRoutes(
 
   app.delete("/api/teams/:id", async (req, res) => {
     try {
-      const teamId = parseInt(req.params.id);
-      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
-      if (!ctx) return;
-      await storage.deleteTeam(teamId);
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+      await storage.deleteTeam(parseInt(req.params.id));
       res.json({ message: "Team deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
 
+  // TEAM MEMBERS ENDPOINTS
   app.get("/api/teams/:teamId/members", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const teamId = parseInt(req.params.teamId);
-      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "viewer" });
-      if (!ctx) return;
-      const members = await storage.getTeamMembersWithUsers(teamId);
+      const ok = await canAccessTeam(user, teamId);
+      if (!ok) return res.status(404).json({ message: "Team not found" });
+      const members = await storage.getTeamMembers(teamId);
       res.json(members);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
 
-  app.post("/api/teams/:teamId/invite", async (req, res) => {
-    try {
-      const teamId = parseInt(req.params.teamId);
-      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
-      if (!ctx) return;
-      const email = String(req.body?.email || "").trim().toLowerCase();
-      if (!email) return res.status(400).json({ message: "Missing email" });
-      const role = String(req.body?.role || "member").trim().toLowerCase();
-      if (teamRoleRank(role) < 1) return res.status(400).json({ message: "Invalid role" });
-      const user = await storage.getUserByEmail(email);
-      if (!user) return res.status(404).json({ message: "User not found" });
-      const existing = await storage.getTeamMemberByTeamAndUser(teamId, user.id);
-      if (existing) return res.json(existing);
-      const member = await storage.createTeamMember({
-        teamId,
-        userId: user.id,
-        role,
-        permissions: null as any,
-        invitedBy: ctx.user.id,
-        joinedAt: new Date(),
-        status: "active",
-      } as any);
-      await storage.createTeamActivityLog({
-        teamId,
-        userId: ctx.user.id,
-        action: "member_invited",
-        description: `${email} invited`,
-        metadata: JSON.stringify({ invitedUserId: user.id, role }),
-      } as any);
-      res.status(201).json(member);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
   app.post("/api/teams/:teamId/members", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const teamId = parseInt(req.params.teamId);
-      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
-      if (!ctx) return;
+      const ok = await isTeamLeaderForTeam(user, teamId);
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
       const validated = insertTeamMemberSchema.parse({ ...req.body, teamId });
       const member = await storage.createTeamMember(validated);
       res.status(201).json(member);
@@ -9374,10 +7494,9 @@ export async function registerRoutes(
       const user = await requireAuth(req, res);
       if (!user) return;
       const existing = await storage.getTeamMemberById(parseInt(req.params.id));
-      if (!existing) return res.status(404).json({ message: "Not found" });
-      const teamId = Number(existing.teamId);
-      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
-      if (!ctx) return;
+      if (!existing) return res.status(404).json({ message: "Team member not found" });
+      const ok = await isTeamLeaderForTeam(user, Number((existing as any).teamId));
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
       const partial = insertTeamMemberSchema.partial().parse(req.body);
       const member = await storage.updateTeamMember(parseInt(req.params.id), partial);
       res.json(member);
@@ -9388,11 +7507,12 @@ export async function registerRoutes(
 
   app.delete("/api/team-members/:id", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const existing = await storage.getTeamMemberById(parseInt(req.params.id));
-      if (!existing) return res.status(404).json({ message: "Not found" });
-      const teamId = Number(existing.teamId);
-      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
-      if (!ctx) return;
+      if (!existing) return res.status(404).json({ message: "Team member not found" });
+      const ok = await isTeamLeaderForTeam(user, Number((existing as any).teamId));
+      if (!ok) return res.status(403).json({ message: "Forbidden" });
       await storage.deleteTeamMember(parseInt(req.params.id));
       res.json({ message: "Team member removed" });
     } catch (error: any) {
@@ -9400,12 +7520,15 @@ export async function registerRoutes(
     }
   });
 
+  // TEAM ACTIVITY LOGS ENDPOINTS
   app.get("/api/teams/:teamId/activity", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const teamId = parseInt(req.params.teamId);
-      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "viewer" });
-      if (!ctx) return;
-      const { limit } = parseLimitOffset(req.query);
+      const ok = await canAccessTeam(user, teamId);
+      if (!ok) return res.status(404).json({ message: "Team not found" });
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
       const logs = await storage.getTeamActivityLogs(teamId, limit);
       res.json(logs);
     } catch (error: any) {
@@ -9415,11 +7538,13 @@ export async function registerRoutes(
 
   app.post("/api/teams/:teamId/activity", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
       const teamId = parseInt(req.params.teamId);
-      const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
-      if (!ctx) return;
+      const ok = await canAccessTeam(user, teamId);
+      if (!ok) return res.status(404).json({ message: "Team not found" });
       const validated = insertTeamActivityLogSchema.parse({ ...req.body, teamId });
-      const log = await storage.createTeamActivityLog({ ...validated, userId: ctx.user.id } as any);
+      const log = await storage.createTeamActivityLog(validated);
       res.status(201).json(log);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -9429,6 +7554,10 @@ export async function registerRoutes(
   // NOTIFICATION PREFERENCES ENDPOINTS
   app.get("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
       const prefs = await storage.getNotificationPreferencesByUserId(parseInt(req.params.userId));
       res.json(prefs || {});
     } catch (error: any) {
@@ -9438,6 +7567,10 @@ export async function registerRoutes(
 
   app.post("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
       const validated = insertNotificationPreferenceSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
       const prefs = await storage.createNotificationPreferences(validated);
       res.status(201).json(prefs);
@@ -9448,6 +7581,10 @@ export async function registerRoutes(
 
   app.patch("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
       const partial = insertNotificationPreferenceSchema.partial().parse(req.body);
       const prefs = await storage.updateNotificationPreferences(parseInt(req.params.userId), partial);
       res.json(prefs);
@@ -9459,7 +7596,12 @@ export async function registerRoutes(
   // USER NOTIFICATIONS ENDPOINTS (actual notification messages)
   app.get("/api/users/:userId/notifications", async (req, res) => {
     try {
-      const { limit, offset } = parseLimitOffset(req.query);
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const notifications = await storage.getUserNotifications(parseInt(req.params.userId), limit, offset);
       res.json(notifications);
     } catch (error: any) {
@@ -9469,6 +7611,10 @@ export async function registerRoutes(
 
   app.post("/api/users/:userId/notifications", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
       const validated = insertUserNotificationSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
       const notification = await storage.createUserNotification(validated);
       res.status(201).json(notification);
@@ -9479,7 +7625,15 @@ export async function registerRoutes(
 
   app.patch("/api/notifications/:id/read", async (req, res) => {
     try {
-      const notification = await storage.markNotificationAsRead(parseInt(req.params.id));
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const id = parseInt(req.params.id);
+      const existing = await storage.getUserNotificationById(id);
+      if (!existing) return res.status(404).json({ message: "Notification not found" });
+      if (!isAdminUser(me) && Number(me.id) !== Number((existing as any).userId)) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      const notification = await storage.markNotificationAsRead(id);
       res.json(notification);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -9488,7 +7642,15 @@ export async function registerRoutes(
 
   app.delete("/api/notifications/:id", async (req, res) => {
     try {
-      await storage.deleteUserNotification(parseInt(req.params.id));
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const id = parseInt(req.params.id);
+      const existing = await storage.getUserNotificationById(id);
+      if (!existing) return res.status(404).json({ message: "Notification not found" });
+      if (!isAdminUser(me) && Number(me.id) !== Number((existing as any).userId)) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      await storage.deleteUserNotification(id);
       res.json({ message: "Notification deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -9497,6 +7659,10 @@ export async function registerRoutes(
 
   app.delete("/api/users/:userId/notifications", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
       await storage.deleteAllUserNotifications(parseInt(req.params.userId));
       res.json({ message: "All notifications deleted" });
     } catch (error: any) {
@@ -9506,6 +7672,10 @@ export async function registerRoutes(
 
   app.patch("/api/users/:userId/notifications/read-all", async (req, res) => {
     try {
+      const me = await requireAuth(req, res);
+      if (!me) return;
+      const userId = parseInt(req.params.userId);
+      if (!isAdminUser(me) && Number(me.id) !== Number(userId)) return res.status(403).json({ message: "Forbidden" });
       await storage.markAllNotificationsAsRead(parseInt(req.params.userId));
       res.json({ message: "All notifications marked as read" });
     } catch (error: any) {
@@ -9551,11 +7721,6 @@ export async function registerRoutes(
       });
 
       const q = schema.parse(req.query || {});
-
-      if (typeof q.assignedToUserId === "number") {
-        const ok = await requireAssigneeInActiveTeam(req, res, user, q.assignedToUserId);
-        if (!ok) return;
-      }
       const out = await storage.listTasks(
         { userId: user.id, isManager: isManagerUser(user) },
         {
@@ -9590,8 +7755,10 @@ export async function registerRoutes(
       const assignedToUserId =
         typeof validated.assignedToUserId === "number" ? validated.assignedToUserId : user.id;
 
-      const ok = await requireAssigneeInActiveTeam(req, res, user, assignedToUserId);
-      if (!ok) return;
+      if (!isManagerUser(user)) {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        if (!allowed.includes(Number(assignedToUserId))) return res.status(403).json({ message: "Forbidden" });
+      }
 
       const task = await createTask({
         ...validated,
@@ -9618,9 +7785,9 @@ export async function registerRoutes(
       const patchSchema = insertTaskSchema.partial().omit({ createdBy: true } as any);
       const patch: any = patchSchema.parse(req.body || {});
 
-      if (typeof patch.assignedToUserId === "number") {
-        const ok = await requireAssigneeInActiveTeam(req, res, user, patch.assignedToUserId);
-        if (!ok) return;
+      if (!isManagerUser(user) && typeof patch.assignedToUserId !== "undefined") {
+        const allowed = await allowedLeadAssigneeUserIds(user.id);
+        if (!allowed.includes(Number(patch.assignedToUserId))) return res.status(403).json({ message: "Forbidden" });
       }
       const updated = await storage.updateTask(id, patch);
       res.json(updated);
@@ -9850,7 +8017,8 @@ export async function registerRoutes(
     try {
       const userId = req.query.userId ? parseInt(req.query.userId as string) : undefined;
       const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       
       if (userId) {
         const offers = await storage.getOffersByUserId(userId, limit, offset);
@@ -9906,74 +8074,11 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/work-categories", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      const includeInactive = String(req.query.includeInactive || "").trim() === "true";
-      const rows = await storage.getWorkCategories({ includeInactive });
-      res.json(rows);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/work-categories", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const validated = insertWorkCategorySchema.parse(req.body);
-      const created = await storage.createWorkCategory(validated);
-      res.status(201).json(created);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.patch("/api/work-categories/:id", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const id = parseInt(req.params.id);
-      const patch = insertWorkCategorySchema.partial().parse(req.body);
-      const updated = await storage.updateWorkCategory(id, patch);
-      res.json(updated);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.delete("/api/work-categories/:id", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const id = parseInt(req.params.id);
-      const updated = await storage.updateWorkCategory(id, { isActive: false } as any);
-      res.json(updated);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
   app.get("/api/timeclock/current", async (req, res) => {
     try {
       if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
       const session = await storage.getOpenTimeClockSession(req.session.userId);
-      if (!session?.id) return res.json(null);
-      const clockInMs = new Date(session.clockInAt as any).getTime();
-      const ageHours = (Date.now() - clockInMs) / 3_600_000;
-      if (ageHours > MAX_TIME_ENTRY_HOURS) {
-        try {
-          const result = await storage.closeOpenTimeClockSessionAndCreateEntry(req.session.userId, { clockOutAt: new Date(), tzOffsetMinutes: Number(session.tzOffsetMinutes || 0) });
-          return res.json(result?.session ? null : session);
-        } catch {
-          return res.json(session);
-        }
-      }
-      res.json(session);
+      res.json(session || null);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -10057,7 +8162,8 @@ export async function registerRoutes(
       const from = typeof req.query.from === "string" ? req.query.from : undefined;
       const to = typeof req.query.to === "string" ? req.query.to : undefined;
       const userId = typeof req.query.userId === "string" ? parseInt(req.query.userId) : undefined;
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = typeof req.query.limit === "string" ? parseInt(req.query.limit) : undefined;
+      const offset = typeof req.query.offset === "string" ? parseInt(req.query.offset) : 0;
 
       const effectiveUserId = manager ? userId : req.session.userId;
       const entries = await storage.getTimesheetEntriesFiltered({ userId: effectiveUserId, from, to, limit, offset });
@@ -10070,7 +8176,8 @@ export async function registerRoutes(
   // TIMESHEET ENTRIES ENDPOINTS
   app.get("/api/users/:userId/timesheet", async (req, res) => {
     try {
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const entries = await storage.getTimesheetEntries(parseInt(req.params.userId), limit, offset);
       res.json(entries);
     } catch (error: any) {
@@ -10090,27 +8197,8 @@ export async function registerRoutes(
 
   app.post("/api/users/:userId/timesheet", async (req, res) => {
     try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      const targetUserId = parseInt(req.params.userId);
-      if (!Number.isFinite(targetUserId)) return res.status(400).json({ message: "Invalid userId" });
-      if (!isManagerUser(user) && user.id !== targetUserId) return res.status(403).json({ message: "Forbidden" });
-
-      const raw = { ...(req.body || {}), userId: targetUserId };
-      const validated: any = insertTimesheetEntrySchema.parse(raw);
-      const computed = computeManualTimeEntry({ date: validated.date, startTime: validated.startTime, endTime: validated.endTime });
-      if (!computed.ok) return res.status(400).json({ message: computed.error });
-
-      const entry = await storage.createTimesheetEntry({
-        ...validated,
-        hours: computed.hours.toFixed(2) as any,
-        status: computed.status as any,
-        payableHours: computed.payableHours === null ? null : (Number(computed.payableHours.toFixed(2)) as any),
-        anomalyFlags: computed.flags.length ? (computed.flags as any) : null,
-        approvedByUserId: null,
-        approvedAt: null,
-        paidAt: null,
-      } as any);
+      const validated = insertTimesheetEntrySchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const entry = await storage.createTimesheetEntry(validated);
       res.status(201).json(entry);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -10136,296 +8224,13 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/timesheet/:id/submit", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      const id = parseInt(req.params.id);
-      const entry = await storage.getTimesheetEntryById(id);
-      if (!entry) return res.status(404).json({ message: "Entry not found" });
-      if (!isManagerUser(user) && Number(entry.userId) !== user.id) return res.status(403).json({ message: "Forbidden" });
-      const updated = await storage.updateTimesheetEntry(id, { status: "submitted" } as any);
-      await storage.createApprovalEvent({ entityType: "timesheet_entry", entityId: id, action: "submitted", byUserId: user.id } as any);
-      res.json(updated);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/timesheet/:id/approve", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const id = parseInt(req.params.id);
-      const updated = await storage.updateTimesheetEntry(id, { status: "approved", approvedByUserId: user.id, approvedAt: new Date() } as any);
-      await storage.createApprovalEvent({ entityType: "timesheet_entry", entityId: id, action: "approved", byUserId: user.id } as any);
-      res.json(updated);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/timesheet/:id/dispute", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const id = parseInt(req.params.id);
-      const { reason } = req.body || {};
-      const updated = await storage.updateTimesheetEntry(id, { status: "disputed", anomalyFlags: ["manager_disputed"], payableHours: 0 } as any);
-      await storage.createApprovalEvent({ entityType: "timesheet_entry", entityId: id, action: "disputed", byUserId: user.id, notes: typeof reason === "string" ? reason : null } as any);
-      res.json(updated);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/timesheet/:id/mark-paid", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const id = parseInt(req.params.id);
-      const updated = await storage.updateTimesheetEntry(id, { status: "paid", paidAt: new Date() } as any);
-      await storage.createApprovalEvent({ entityType: "timesheet_entry", entityId: id, action: "paid", byUserId: user.id } as any);
-      res.json(updated);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/approvals/timesheet", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const from = typeof req.query.from === "string" ? req.query.from : undefined;
-      const to = typeof req.query.to === "string" ? req.query.to : undefined;
-      if (!from || !to) return res.status(400).json({ message: "from and to are required" });
-      const statuses = typeof req.query.status === "string" && req.query.status.trim()
-        ? req.query.status.split(",").map((s: string) => s.trim()).filter(Boolean)
-        : ["submitted", "disputed"];
-      const rows = await storage.getTimesheetEntriesFiltered({ from, to, limit: 500, offset: 0 });
-      res.json(rows.filter((r) => statuses.includes(String((r as any).status || "draft"))));
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/payroll/summary", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const from = typeof req.query.from === "string" ? req.query.from : undefined;
-      const to = typeof req.query.to === "string" ? req.query.to : undefined;
-      if (!from || !to) return res.status(400).json({ message: "from and to are required" });
-      const userId = typeof req.query.userId === "string" ? parseInt(req.query.userId) : undefined;
-      const summary = await storage.getPayrollSummary({ from, to, userId });
-      res.json(summary);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/worker-profiles", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const usersRows = await storage.getUsers(500, 0);
-      const profiles = await storage.listWorkerProfiles();
-      const byUserId = new Map<number, any>();
-      for (const p of profiles) byUserId.set(Number(p.userId), p);
-      res.json(usersRows.map((u) => ({ user: u, profile: byUserId.get(Number(u.id)) || null })));
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.put("/api/worker-profiles/:userId", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const targetUserId = parseInt(req.params.userId);
-      if (!Number.isFinite(targetUserId)) return res.status(400).json({ message: "Invalid userId" });
-      const patch = insertWorkerProfileSchema.partial().parse(req.body);
-      const upserted = await storage.upsertWorkerProfile(targetUserId, patch);
-      res.json(upserted);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/category-rate-overrides", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const userId = typeof req.query.userId === "string" ? parseInt(req.query.userId) : undefined;
-      if (!userId) return res.status(400).json({ message: "userId is required" });
-      const rows = await storage.getCategoryRateOverridesByUser(userId);
-      res.json(rows);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.put("/api/category-rate-overrides/:userId/:categoryId", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const userId = parseInt(req.params.userId);
-      const categoryId = parseInt(req.params.categoryId);
-      if (!userId || !categoryId) return res.status(400).json({ message: "Invalid userId/categoryId" });
-      const patch = insertCategoryRateOverrideSchema.partial().parse(req.body);
-      const upserted = await storage.upsertCategoryRateOverride(userId, categoryId, patch);
-      res.json(upserted);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.delete("/api/category-rate-overrides/:userId/:categoryId", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const userId = parseInt(req.params.userId);
-      const categoryId = parseInt(req.params.categoryId);
-      if (!userId || !categoryId) return res.status(400).json({ message: "Invalid userId/categoryId" });
-      await storage.deleteCategoryRateOverride(userId, categoryId);
-      res.json({ ok: true });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/commissions/events", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const from = typeof req.query.from === "string" ? new Date(req.query.from) : undefined;
-      const to = typeof req.query.to === "string" ? new Date(req.query.to) : undefined;
-      const sourceType = typeof req.query.sourceType === "string" ? req.query.sourceType : undefined;
-      const sourceId = typeof req.query.sourceId === "string" ? parseInt(req.query.sourceId) : undefined;
-      const { limit, offset } = parseLimitOffset(req.query);
-      const events = await storage.listCommissionEvents({ from, to, sourceType, sourceId, limit, offset });
-      res.json(events);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/commissions/participants", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const sourceType = typeof req.query.sourceType === "string" ? req.query.sourceType : "";
-      const sourceId = typeof req.query.sourceId === "string" ? parseInt(req.query.sourceId) : NaN;
-      if (!sourceType || !Number.isFinite(sourceId)) return res.status(400).json({ message: "sourceType and sourceId are required" });
-      const rows = await storage.listDealParticipants({ sourceType, sourceId });
-      res.json(rows);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/commissions/participants", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const validated = insertDealParticipantSchema.parse(req.body);
-      const row = await storage.upsertDealParticipant(validated);
-      res.status(201).json(row);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.delete("/api/commissions/participants/:id", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      await storage.deleteDealParticipant(parseInt(req.params.id));
-      res.json({ ok: true });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.get("/api/commissions/ledger", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const userId = typeof req.query.userId === "string" ? parseInt(req.query.userId) : undefined;
-      const status = typeof req.query.status === "string" ? req.query.status : undefined;
-      const eventId = typeof req.query.eventId === "string" ? parseInt(req.query.eventId) : undefined;
-      const { limit, offset } = parseLimitOffset(req.query);
-      const rows = await storage.listCommissionLedgerEntries({ userId, status, eventId, limit, offset });
-      res.json(rows);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/commissions/ledger/:id/approve", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const id = parseInt(req.params.id);
-      const updated = await storage.updateCommissionLedgerEntry(id, { status: "approved", approvedByUserId: user.id, approvedAt: new Date() } as any);
-      await storage.createApprovalEvent({ entityType: "commission_ledger_entry", entityId: id, action: "approved", byUserId: user.id } as any);
-      res.json(updated);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/commissions/ledger/:id/dispute", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const id = parseInt(req.params.id);
-      const { reason } = req.body || {};
-      const updated = await storage.updateCommissionLedgerEntry(id, { status: "disputed", disputedReason: typeof reason === "string" ? reason : null } as any);
-      await storage.createApprovalEvent({ entityType: "commission_ledger_entry", entityId: id, action: "disputed", byUserId: user.id, notes: typeof reason === "string" ? reason : null } as any);
-      res.json(updated);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/commissions/ledger/:id/mark-paid", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-      const id = parseInt(req.params.id);
-      const updated = await storage.updateCommissionLedgerEntry(id, { status: "paid", paidAt: new Date() } as any);
-      await storage.createApprovalEvent({ entityType: "commission_ledger_entry", entityId: id, action: "paid", byUserId: user.id } as any);
-      res.json(updated);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
   // BUYERS ENDPOINTS
   app.get("/api/buyers", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const buyers = await storage.getBuyers(limit, offset);
       res.json(buyers);
     } catch (error: any) {
@@ -10486,7 +8291,8 @@ export async function registerRoutes(
   // BUYER COMMUNICATIONS ENDPOINTS
   app.get("/api/buyers/:buyerId/communications", async (req, res) => {
     try {
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const comms = await storage.getBuyerCommunications(parseInt(req.params.buyerId), limit, offset);
       res.json(comms);
     } catch (error: any) {
@@ -10519,7 +8325,8 @@ export async function registerRoutes(
   // DEAL ASSIGNMENTS ENDPOINTS
   app.get("/api/deal-assignments", async (req, res) => {
     try {
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const assignments = await storage.getDealAssignments(limit, offset);
       res.json(assignments);
     } catch (error: any) {
@@ -10539,7 +8346,8 @@ export async function registerRoutes(
 
   app.get("/api/properties/:propertyId/assignments", async (req, res) => {
     try {
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const assignments = await storage.getDealAssignmentsByPropertyId(parseInt(req.params.propertyId), limit, offset);
       res.json(assignments);
     } catch (error: any) {
@@ -10549,7 +8357,8 @@ export async function registerRoutes(
 
   app.get("/api/buyers/:buyerId/assignments", async (req, res) => {
     try {
-      const { limit, offset } = parseLimitOffset(req.query);
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       const assignments = await storage.getDealAssignmentsByBuyerId(parseInt(req.params.buyerId), limit, offset);
       res.json(assignments);
     } catch (error: any) {
@@ -10561,9 +8370,6 @@ export async function registerRoutes(
     try {
       const validated = insertDealAssignmentSchema.parse(req.body);
       const assignment = await storage.createDealAssignment(validated);
-      try {
-        await syncCommissionEventsForDealAssignment(assignment);
-      } catch {}
       res.status(201).json(assignment);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -10574,9 +8380,6 @@ export async function registerRoutes(
     try {
       const partial = insertDealAssignmentSchema.partial().parse(req.body);
       const assignment = await storage.updateDealAssignment(parseInt(req.params.id), partial);
-      try {
-        await syncCommissionEventsForDealAssignment(assignment);
-      } catch {}
       res.json(assignment);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -10680,6 +8483,7 @@ export async function registerRoutes(
     }
   });
 
+  const mode = opts?.mode ?? "server";
   if (mode === "serverless") return null;
 
   const httpServer = createServer(app);

@@ -44,7 +44,20 @@ if (!(globalThis as any).__stackk_process_handlers_installed) {
 }
 
 app.use(helmet({
-  contentSecurityPolicy: false, // Disabled for simplicity with Vite dev server scripts
+  contentSecurityPolicy: process.env.NODE_ENV === "production" ? {
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "https:"],
+      fontSrc: ["'self'", "data:"],
+      connectSrc: ["'self'", "https:"],
+      mediaSrc: ["'self'", "https:", "data:", "blob:"],
+    },
+  } : false,
 }));
 
 declare module 'http' {
@@ -57,7 +70,6 @@ declare module 'express-session' {
   interface SessionData {
     userId?: number;
     email?: string;
-    activeTeamId?: number;
   }
 }
 
@@ -73,53 +85,20 @@ if (!sessionSecret) {
   console.error('SESSION_SECRET must be set');
 }
 
-if (process.env.NODE_ENV === 'production' && !process.env.EMPLOYEE_ACCESS_CODE) {
-  console.error('EMPLOYEE_ACCESS_CODE environment variable is required in production');
+if (process.env.NODE_ENV === "production") {
+  const legacyEmployeeCode = String(process.env.EMPLOYEE_ACCESS_CODE || "").trim();
+  const adminCode = String(process.env.ADMIN_ROLE_CODE || "").trim();
+  const teamLeaderCode = String(process.env.TEAM_LEADER_ROLE_CODE || "").trim();
+  const agentCode = String(process.env.AGENT_ROLE_CODE || "").trim();
+  const vaCode = String(process.env.VA_ROLE_CODE || "").trim();
+  const hasRoleCodes = Boolean(adminCode && teamLeaderCode && agentCode && vaCode);
+  if (!legacyEmployeeCode && !hasRoleCodes) {
+    console.error("Signup codes are not configured. Set EMPLOYEE_ACCESS_CODE (legacy) or all *_ROLE_CODE env vars.");
+  }
 }
 
 // Use PostgreSQL-backed session store for production-ready persistence
 const PgSession = connectPgSimple(session);
-
-export function installErrorHandling(target: Express) {
-  if (process.env.SENTRY_DSN) {
-    Sentry.setupExpressErrorHandler(target);
-  }
-  target.use((err: any, req: Request, res: Response, _next: NextFunction) => {
-    const rawMessage = String(err?.message || "Internal Server Error");
-    const quotaExceeded = /exceeded the .*quota/i.test(rawMessage) || String(err?.code || "") === "XX000";
-    const status = quotaExceeded ? 503 : err.status || err.statusCode || 500;
-    const message = quotaExceeded ? "Database is over quota" : rawMessage;
-    const requestId =
-      (res.locals as any).requestId ||
-      (req.headers["x-request-id"] as string) ||
-      null;
-
-    if (process.env.NODE_ENV === "production") {
-      console.error(
-        JSON.stringify({
-          ts: new Date().toISOString(),
-          event: "http_error",
-          requestId,
-          method: req.method,
-          path: req.path,
-          message: String(message),
-          code: err?.code ? String(err.code) : null,
-          status,
-        }),
-      );
-    } else {
-      console.error(err);
-    }
-
-    const clientMessage =
-      process.env.NODE_ENV === "production" && status >= 500 && !quotaExceeded
-        ? "Internal Server Error"
-        : message;
-    const payload: any = { message: clientMessage, requestId };
-    if (quotaExceeded) payload.code = "DB_QUOTA_EXCEEDED";
-    res.status(status).json(payload);
-  });
-}
 
 app.set("trust proxy", 1);
 
@@ -187,8 +166,7 @@ if (!sessionSecret) {
     ? new PgSession({
         pool,
         tableName: "session",
-        createTableIfMissing: false,
-        disableTouch: true,
+        createTableIfMissing: true,
       })
     : undefined;
 
@@ -200,10 +178,6 @@ if (!sessionSecret) {
       resave: false,
       saveUninitialized: false,
       cookie: {
-        domain:
-          process.env.NODE_ENV === "production" && String(process.env.COOKIE_DOMAIN || "").trim()
-            ? String(process.env.COOKIE_DOMAIN).trim()
-            : undefined,
         secure: process.env.NODE_ENV === "production",
         httpOnly: true,
         maxAge: 1000 * 60 * 60 * 24 * 7,
@@ -212,34 +186,58 @@ if (!sessionSecret) {
     }),
   );
 
-  if (process.env.DEBUG_ENDPOINTS === "1") {
-    app.get("/api/debug/config", (_req: Request, res: Response) => {
-      const cookieDomain =
-        process.env.NODE_ENV === "production" && String(process.env.COOKIE_DOMAIN || "").trim()
-          ? String(process.env.COOKIE_DOMAIN).trim()
-          : null;
-      res.json({
-        hasSessionSecret: Boolean(sessionSecret && String(sessionSecret).trim()),
-        hasDatabaseUrl,
-        hasEmployeeAccessCode: Boolean(
-          process.env.EMPLOYEE_ACCESS_CODE && String(process.env.EMPLOYEE_ACCESS_CODE).trim(),
-        ),
-        cookieDomain,
-        env: process.env.NODE_ENV || "development",
-      });
-    });
-    app.get("/api/debug/session", (req: Request, res: Response) => {
-      const cookieHeader = String(req.headers.cookie || "");
-      res.json({
-        host: req.hostname,
-        path: req.path,
-        cookieHeaderPresent: Boolean(cookieHeader),
-        sessionID: (req as any).sessionID || null,
-        hasSession: Boolean((req as any).session),
-        sessionKeys: (req as any).session ? Object.keys((req as any).session) : [],
-      });
-    });
-  }
+  app.use("/api", (req, res, next) => {
+    const method = String(req.method || "").toUpperCase();
+    if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
+
+    const path = String(req.path || "");
+    if (path.startsWith("/telephony/") && (path.includes("/webhook") || path.startsWith("/telephony/voice/") || path.startsWith("/telephony/sms/"))) {
+      return next();
+    }
+
+    const cookie = String(req.headers.cookie || "").trim();
+    if (!cookie) return next();
+
+    const allowedFromEnv = String(process.env.ALLOWED_ORIGINS || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    const host = String(req.headers.host || "").trim();
+    const allowed: string[] = [];
+    if (host) {
+      allowed.push(`https://${host}`);
+      allowed.push(`http://${host}`);
+    }
+    if (process.env.NODE_ENV !== "production") {
+      allowed.push("http://localhost:3000");
+      allowed.push("http://127.0.0.1:3000");
+    }
+    for (const o of allowedFromEnv) allowed.push(o);
+
+    const origin = String(req.headers.origin || "").trim();
+    if (origin) {
+      if (!allowed.includes(origin)) return res.status(403).json({ code: "csrf_origin_forbidden", message: "Forbidden" });
+      return next();
+    }
+
+    const referer = String(req.headers.referer || "").trim();
+    if (referer) {
+      try {
+        const u = new URL(referer);
+        const refOrigin = `${u.protocol}//${u.host}`;
+        if (!allowed.includes(refOrigin)) return res.status(403).json({ code: "csrf_origin_forbidden", message: "Forbidden" });
+        return next();
+      } catch {
+        return res.status(403).json({ code: "csrf_origin_forbidden", message: "Forbidden" });
+      }
+    }
+
+    const secFetchSite = String(req.headers["sec-fetch-site"] || "").trim().toLowerCase();
+    if (secFetchSite === "same-origin" || secFetchSite === "same-site") return next();
+
+    return res.status(403).json({ code: "csrf_origin_forbidden", message: "Forbidden" });
+  });
 }
 
 app.use((req, res, next) => {
@@ -286,7 +284,6 @@ import { startAutomationWorker } from "./cron/lead-automation.js";
 import { startCampaignScheduler } from "./cron/campaign-scheduler.js";
 import { startRvmPoller } from "./cron/rvm-poller.js";
 import { startTaskReminders } from "./cron/task-reminders.js";
-import { startSkipTraceWorker } from "./cron/skip-trace-worker.js";
 
 export default async function runApp(
   setup: (app: Express, server: Server) => Promise<void>,
@@ -327,7 +324,6 @@ export default async function runApp(
       : !isServerless && process.env.NODE_ENV !== "test" && hasDatabaseUrl;
   if (enableAutomationWorker) {
     startAutomationWorker(60000); // Run every minute
-    startSkipTraceWorker(15000);
   }
 
   const enableCampaignScheduler = String(process.env.FEATURE_CAMPAIGNS || "").trim().toLowerCase() === "true";
@@ -358,7 +354,40 @@ export default async function runApp(
     res.send(text);
   });
 
-  installErrorHandling(app);
+  if (process.env.SENTRY_DSN) {
+    Sentry.setupExpressErrorHandler(app);
+  }
+  app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+    const status = err.status || err.statusCode || 500;
+    const message = err.message || "Internal Server Error";
+    const requestId =
+      (res.locals as any).requestId ||
+      (req.headers["x-request-id"] as string) ||
+      null;
+
+    if (process.env.NODE_ENV === "production") {
+      console.error(
+        JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "http_error",
+          requestId,
+          method: req.method,
+          path: req.path,
+          message: String(message),
+          code: err?.code ? String(err.code) : null,
+          status,
+        }),
+      );
+    } else {
+      console.error(err);
+    }
+
+    const clientMessage =
+      process.env.NODE_ENV === "production" && status >= 500
+        ? "Internal Server Error"
+        : message;
+    res.status(status).json({ message: clientMessage, requestId });
+  });
 
   // importantly run the final setup after setting up all the other routes so
   // the catch-all route doesn't interfere with the other routes

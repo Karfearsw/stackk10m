@@ -26,7 +26,6 @@ A comprehensive real estate wholesaler CRM built with React, Express, and Postgr
    ```env
    DATABASE_URL="postgresql://..."
    SESSION_SECRET="your-secret"
-   EMPLOYEE_ACCESS_CODE="your-employee-code"
    ORG_EMAIL_DOMAIN="oceanluxe.org"
    ADMIN_ROLE_CODE="..."
    TEAM_LEADER_ROLE_CODE="..."
@@ -94,7 +93,6 @@ Optional env vars:
    - `EMPLOYEE_ACCESS_CODE`: your internal employee access code.
    - `CONCIERGE_ROLE_CODE`: access code to allow concierge-role signups (optional).
    - `NODE_ENV`: `production`.
-   - `COOKIE_DOMAIN`: Optional. Set only when you need a shared session cookie across `*.oceanluxe.org` (use `.oceanluxe.org`). Leave unset for `*.vercel.app` deployments.
    - `AUTO_APPLY_MIGRATIONS`: `true` (Production only; runs SQL migrations at build time).
 4. Deploy.
 
@@ -103,6 +101,18 @@ If you encounter `500 INTERNAL_SERVER_ERROR` on signup/login:
 - Verify `DATABASE_URL` does not have `channel_binding=require`.
 - Ensure `SESSION_SECRET` and `EMPLOYEE_ACCESS_CODE` are set.
 - Check Vercel Function logs for startup errors.
+
+## GitHub Push Script (PAT)
+
+If you use `scripts/push-to-github.ts`, authenticate with a standard GitHub token:
+
+```bash
+GITHUB_TOKEN=your_pat_here node --import tsx scripts/push-to-github.ts
+```
+
+- `GITHUB_TOKEN` is the primary env var (`GITHUB_PAT` is also accepted as a fallback).
+- For private repos, ensure the token has `repo` scope.
+- Never commit tokens to git or save them in tracked files; provide them via shell env or your secret manager.
 
 ## CI/CD
 

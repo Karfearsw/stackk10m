@@ -4,12 +4,12 @@ import {
   Users, 
   Building2, 
   FileText, 
-  FolderOpen,
   Settings, 
   PieChart, 
   LogOut,
   Calculator,
   Clock,
+  ClipboardList,
   Bell,
   ChevronLeft,
   ChevronRight,
@@ -23,10 +23,7 @@ import {
   CheckSquare,
   CalendarDays,
   CalendarCheck2,
-  Ticket,
-  Zap,
-  ScrollText,
-  Shield,
+  Ticket
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -41,6 +38,7 @@ export const navigation = [
   { name: "Calendar", href: "/calendar", icon: CalendarDays },
   { name: "XP Booking", href: "/xp", icon: Ticket },
   { name: "Leads Pipeline", href: "/leads", icon: Users },
+  { name: "Teams", href: "/teams", icon: Users },
   { name: "Campaigns", href: "/campaigns", icon: Send },
   { name: "RVM", href: "/rvm", icon: Voicemail },
   { name: "Field Mode", href: "/field", icon: MapPin },
@@ -48,15 +46,11 @@ export const navigation = [
   { name: "Phone", href: "/phone", icon: Phone },
   { name: "Dialer Workspace", href: "/dialer/workspace", icon: Phone },
   { name: "Contacts", href: "/contacts", icon: Users },
-  { name: "Companies", href: "/companies", icon: Building2 },
-  { name: "Documents", href: "/documents", icon: FolderOpen },
   { name: "Buyers", href: "/buyers", icon: UserCheck },
   { name: "Contracts", href: "/contracts", icon: FileText },
   { name: "Analytics", href: "/analytics", icon: PieChart },
-  { name: "Automations", href: "/automations", icon: Zap },
-  { name: "Audit Log", href: "/audit-log", icon: ScrollText },
+  { name: "Audit", href: "/audit", icon: ClipboardList },
   { name: "Playground", href: "/playground", icon: Lightbulb },
-  { name: "Audit", href: "/audit", icon: Shield },
   { name: "Calculator", href: "/calculator", icon: Calculator },
   { name: "Timesheet", href: "/timesheet", icon: Clock },
   { name: "Notifications", href: "/notifications", icon: Bell },
@@ -71,10 +65,6 @@ export function Sidebar() {
   const { data: userData } = useQuery<any>({
     queryKey: [`/api/users/${user?.id}`],
     enabled: !!user?.id,
-  });
-
-  const { data: versionInfo } = useQuery<any>({
-    queryKey: ["/api/version"],
   });
 
   const { data: goals = [] } = useQuery<any[]>({
@@ -328,13 +318,6 @@ export function Sidebar() {
               <LogOut className="h-5 w-5" />
               Sign Out
             </button>
-          ) : null}
-
-          {showLabels ? (
-            <div className="mt-3 text-[11px] text-sidebar-foreground/50 truncate">
-              v{String(versionInfo?.version || "0.0.0")}
-              {versionInfo?.commitSha ? ` (${String(versionInfo.commitSha).slice(0, 7)})` : ""}
-            </div>
           ) : null}
         </div>
       </div>

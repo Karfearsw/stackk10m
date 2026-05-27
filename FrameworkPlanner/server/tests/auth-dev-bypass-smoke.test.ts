@@ -15,7 +15,16 @@ const shouldRun =
   Boolean(process.env.TEST_DEV_BYPASS_ENABLED);
 
 (shouldRun ? describe : describe.skip)("/api/auth/dev-bypass smoke", () => {
-  it("dev-bypass grants a session+token for an existing user", async () => {
+  function sessionCookieFrom(res: Response): string {
+    const h: any = res.headers as any;
+    const raw =
+      typeof h?.getSetCookie === "function"
+        ? String((h.getSetCookie() as string[])[0] || "")
+        : String(res.headers.get("set-cookie") || "");
+    return raw ? raw.split(";")[0] : "";
+  }
+
+  it("dev-bypass grants a session for an existing user", async () => {
     const email = `smoke-dev-bypass-${Date.now()}@example.com`;
     const employeeCode = requiredEnv("TEST_EMPLOYEE_CODE");
     const password = requiredEnv("TEST_PASSWORD");
@@ -41,10 +50,11 @@ const shouldRun =
     expect(bypassRes.status).toBe(200);
     const bypassJson = await bypassRes.json();
     expect(bypassJson?.user?.email).toBe(email);
-    expect(typeof bypassJson?.token).toBe("string");
+    const cookie = sessionCookieFrom(bypassRes);
+    expect(cookie).not.toBe("");
 
     const meRes = await fetch(`${baseUrl()}/api/auth/me`, {
-      headers: { Authorization: `Bearer ${bypassJson.token}` },
+      headers: { cookie },
     });
     expect(meRes.status).toBe(200);
     const meJson = await meRes.json();

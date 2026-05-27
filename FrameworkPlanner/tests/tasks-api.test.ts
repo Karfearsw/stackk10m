@@ -26,6 +26,8 @@ describe("Tasks API", () => {
       role: "user",
       isSuperAdmin: false,
     })) as any;
+    storage.getUserTeamIds = (async () => []) as any;
+    storage.getTeamMemberUserIds = (async () => []) as any;
   });
 
   it("GET /api/tasks returns items + total", async () => {

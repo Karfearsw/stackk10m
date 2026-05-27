@@ -3,11 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { PipelineColumn } from "./types";
 import { Clock, Mail, MessageSquare, Phone, StickyNote, Lightbulb } from "lucide-react";
-import { playgroundUrl } from "@/lib/deepLinks";
 
 type LeadLike = {
   id: number;
-  linkedPropertyId?: number | null;
   address?: string | null;
   city?: string | null;
   state?: string | null;
@@ -17,14 +15,18 @@ type LeadLike = {
   ownerEmail?: string | null;
   estimatedValue?: string | number | null;
   status?: string | null;
-  notesCount?: number | null;
-  lastNotePreview?: string | null;
+  notes?: string | null;
+  assignedTo?: number | null;
 };
 
 export function LeadPipelineCard({
   lead,
   columns,
   onUpdateStatus,
+  users,
+  usersById,
+  canAssign,
+  onAssign,
   onAddNote,
   onOpenActivity,
   onCall,
@@ -34,6 +36,10 @@ export function LeadPipelineCard({
   lead: LeadLike;
   columns: PipelineColumn[];
   onUpdateStatus: (leadId: number, status: string) => void;
+  users: Array<{ id: number; firstName?: string | null; lastName?: string | null; email?: string | null }>;
+  usersById: Map<number, any>;
+  canAssign: boolean;
+  onAssign: (leadId: number, assignedTo: number | null) => void;
   onAddNote: (lead: LeadLike) => void;
   onOpenActivity: (lead: LeadLike) => void;
   onCall: (lead: LeadLike) => void;
@@ -44,9 +50,15 @@ export function LeadPipelineCard({
   const email = String(lead.ownerEmail || "").trim();
   const status = String(lead.status || "").trim();
   const addressLine = [lead.address, lead.city, lead.state, lead.zipCode].filter(Boolean).join(", ");
-  const notePreview = String(lead.lastNotePreview || "").trim();
-  const notesCount = Number(lead.notesCount || 0);
+  const notePreview = String(lead.notes || "").trim().split("\n").filter(Boolean).slice(-1)[0] || "";
   const playgroundAddress = addressLine || String(lead.address || "").trim();
+  const assignedTo = typeof lead.assignedTo === "number" ? lead.assignedTo : null;
+  const assignedUser = assignedTo ? usersById.get(assignedTo) : null;
+  const assignedLabel = assignedUser
+    ? String(`${assignedUser?.firstName || ""} ${assignedUser?.lastName || ""}`).trim() || String(assignedUser?.email || `User ${assignedTo}`)
+    : assignedTo
+      ? `User ${assignedTo}`
+      : "Unassigned";
 
   return (
     <Card>
@@ -73,6 +85,34 @@ export function LeadPipelineCard({
         </div>
 
         <div className="flex items-center justify-between gap-2">
+          {canAssign ? (
+            <div className="w-[200px]">
+              <Select
+                value={assignedTo ? String(assignedTo) : "unassigned"}
+                onValueChange={(value) => onAssign(lead.id, value === "unassigned" ? null : parseInt(value, 10))}
+              >
+                <SelectTrigger className="h-8">
+                  <SelectValue placeholder="Assign" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unassigned">Unassigned</SelectItem>
+                  {users.map((u) => (
+                    <SelectItem key={u.id} value={String(u.id)}>
+                      {String(`${u.firstName || ""} ${u.lastName || ""}`).trim() || u.email || `User ${u.id}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : (
+            <div className="text-xs text-muted-foreground truncate">Assigned: {assignedLabel}</div>
+          )}
+          <div className="text-xs text-muted-foreground whitespace-nowrap">
+            {lead.estimatedValue ? `$${lead.estimatedValue}` : ""}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-2">
           <div className="text-xs">
             <div className="truncate">{lead.ownerName || "—"}</div>
             <div className="flex gap-2 text-muted-foreground">
@@ -90,12 +130,8 @@ export function LeadPipelineCard({
               ) : null}
             </div>
           </div>
-          <div className="text-xs text-muted-foreground whitespace-nowrap">
-            {lead.estimatedValue ? `$${lead.estimatedValue}` : ""}
-          </div>
         </div>
 
-        {notesCount ? <div className="text-xs text-muted-foreground">{notesCount.toLocaleString()} note{notesCount === 1 ? "" : "s"}</div> : null}
         {notePreview ? <div className="text-xs text-muted-foreground line-clamp-2">{notePreview}</div> : null}
 
         <div className="flex flex-wrap gap-2 pt-1">
@@ -105,11 +141,7 @@ export function LeadPipelineCard({
             className="h-8 px-2"
             onClick={() => {
               if (!playgroundAddress) return;
-              window.location.href = playgroundUrl({
-                address: playgroundAddress,
-                leadId: lead.id,
-                propertyId: typeof lead.linkedPropertyId === "number" ? lead.linkedPropertyId : null,
-              });
+              window.location.href = `/playground?address=${encodeURIComponent(playgroundAddress)}&leadId=${lead.id}`;
             }}
             disabled={!playgroundAddress}
           >

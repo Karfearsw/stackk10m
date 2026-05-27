@@ -5,8 +5,6 @@ import session from 'express-session';
 import { registerRoutes } from '../server/routes';
 import { storage } from '../server/storage';
 
-storage.getUserById = async () => ({ id: 1, email: "test@example.com", isSuperAdmin: true } as any);
-
 storage.listLeads = async ({ limit }: any) => ({
   items: Array.from({ length: limit ?? 10 }).map((_, i) => ({ id: i + 1 })),
   total: limit ?? 10,
@@ -25,6 +23,7 @@ describe('List Endpoints Pagination', () => {
       (req.session as any).userId = 1;
       next();
     });
+    storage.getUserById = async (_id: number) => ({ id: 1, role: "admin", isSuperAdmin: true, isActive: true } as any);
     await registerRoutes(app);
   });
 

@@ -17,11 +17,19 @@ export const leads = pgTable("leads", {
   relasScore: integer("relas_score"),
   motivation: varchar("motivation", { length: 50 }),
   status: varchar("status", { length: 50 }).default("new"),
+  archivedAt: timestamp("archived_at"),
+  statusChangedAt: timestamp("status_changed_at"),
+  leadType: varchar("lead_type", { length: 50 }),
+  county: varchar("county", { length: 100 }),
+  ownerOccupied: boolean("owner_occupied"),
   notes: text("notes"),
   source: varchar("source", { length: 100 }),
   assignedTo: integer("assigned_to"),
   doNotCall: boolean("do_not_call").notNull().default(false),
   doNotText: boolean("do_not_text").notNull().default(false),
+  doNotEmail: boolean("do_not_email").notNull().default(false),
+  lastTouchAt: timestamp("last_touch_at"),
+  nextTouchAt: timestamp("next_touch_at"),
   nextFollowUpAt: timestamp("next_follow_up_at"),
   tags: text("tags").array(),
   dedupeKey: varchar("dedupe_key", { length: 400 }),
@@ -311,12 +319,15 @@ export const teams = pgTable("teams", {
   name: varchar("name", { length: 255 }).notNull(),
   description: text("description"),
   ownerId: integer("owner_id").notNull(),
+  joinCode: varchar("join_code", { length: 64 }).notNull(),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertTeamSchema = createInsertSchema(teams).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export const insertTeamSchema = createInsertSchema(teams)
+  .omit({ id: true, createdAt: true, updatedAt: true } as any)
+  .extend({ joinCode: z.string().optional() } as any);
 export type Team = typeof teams.$inferSelect;
 export type InsertTeam = z.infer<typeof insertTeamSchema>;
 

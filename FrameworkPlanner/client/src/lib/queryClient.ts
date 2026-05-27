@@ -1,30 +1,7 @@
 import { QueryClient, QueryFunction } from "@tanstack/react-query";
-import { fetchJson } from "./fetchJson";
-
-function getAuthToken(): string | null {
-  try {
-    return localStorage.getItem("authToken") || localStorage.getItem("token");
-  } catch {
-    return null;
-  }
-}
-
-function authHeaders(): Record<string, string> {
-  const token = getAuthToken();
-  if (!token) return {};
-  return { Authorization: `Bearer ${token}` };
-}
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
-    const ct = res.headers.get("content-type") || "";
-    if (ct.includes("application/json")) {
-      try {
-        const json = await res.json();
-        const msg = typeof (json as any)?.message === "string" && (json as any).message.trim() ? (json as any).message : "";
-        throw new Error(`${res.status}: ${msg || JSON.stringify(json)}`);
-      } catch {}
-    }
     const text = (await res.text()) || res.statusText;
     throw new Error(`${res.status}: ${text}`);
   }
@@ -39,7 +16,6 @@ export async function apiRequest(
     method,
     headers: {
       ...(data ? { "Content-Type": "application/json" } : {}),
-      ...authHeaders(),
     },
     body: data ? JSON.stringify(data) : undefined,
     credentials: "include",
@@ -56,9 +32,6 @@ export async function apiUpload(
 ): Promise<Response> {
   const res = await fetch(url, {
     method,
-    headers: {
-      ...authHeaders(),
-    },
     body: data,
     credentials: "include",
   });
@@ -71,9 +44,18 @@ type UnauthorizedBehavior = "returnNull" | "throw";
 export const getQueryFn: <T>(options: {
   on401: UnauthorizedBehavior;
 }) => QueryFunction<T> =
-  <T,>(opts: { on401: UnauthorizedBehavior }) =>
+  ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    return await fetchJson<T>(queryKey.join("/") as string, undefined, { on401: opts.on401 });
+    const res = await fetch(queryKey.join("/") as string, {
+      credentials: "include",
+    });
+
+    if (unauthorizedBehavior === "returnNull" && res.status === 401) {
+      return null;
+    }
+
+    await throwIfResNotOk(res);
+    return await res.json();
   };
 
 export const queryClient = new QueryClient({

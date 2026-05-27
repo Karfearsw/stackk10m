@@ -14,7 +14,6 @@ describe("List endpoints DB and pagination handling", () => {
 
   beforeAll(async () => {
     process.env.DATABASE_URL = "postgresql://user:pass@db.invalid/db?sslmode=require";
-    storage.getUserById = async () => ({ id: 1, email: "test@example.com", isSuperAdmin: true } as any);
 
     app = express();
     app.use(express.json());
@@ -23,6 +22,8 @@ describe("List endpoints DB and pagination handling", () => {
       (req.session as any).userId = 1;
       next();
     });
+
+    storage.getUserById = async (_id: number) => ({ id: 1, role: "admin", isSuperAdmin: true, isActive: true } as any);
 
     await registerRoutes(app);
   });
@@ -74,7 +75,7 @@ describe("List endpoints DB and pagination handling", () => {
 
     const res = await request(app).get("/api/leads?limit=abc&offset=-10");
     expect(res.status).toBe(200);
-    expect(received).toEqual({ limit: 50, offset: 0 });
+    expect(received).toEqual({ limit: undefined, offset: 0 });
     expect(Array.isArray(res.body?.items)).toBe(true);
     expect(typeof res.body?.total).toBe("number");
   });

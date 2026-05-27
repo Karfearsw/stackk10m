@@ -1,344 +1,206 @@
 import { Layout } from "@/components/layout/Layout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import { apiRequest } from "@/lib/queryClient";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-type AuditRun = {
-  id: number;
-  createdAt: string;
-  scopeJson: any;
-};
-
+type AuditRun = { id: number; scopeJson: any; createdAt: string };
 type AuditFinding = {
   id: number;
   runId: number;
-  severity: string;
+  severity: "critical" | "major" | "minor" | "polish";
   area: string;
   title: string;
   description: string;
   recommendation: string | null;
   technicalNotes: string | null;
-  affectedPages: string[];
-  fixPlan: string | null;
-  ownerUserId: number | null;
-  prdSection: string | null;
-  status: string;
+  status: "open" | "accepted" | "fixed" | "wontfix";
   createdAt: string;
   updatedAt: string;
 };
 
 export default function AuditPage() {
-  const queryClient = useQueryClient();
-  const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
+  const { toast } = useToast();
+  const [activeRunId, setActiveRunId] = useState<number | null>(null);
+  const [severity, setSeverity] = useState<AuditFinding["severity"]>("major");
+  const [area, setArea] = useState("Leads");
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [recommendation, setRecommendation] = useState("");
+  const [technicalNotes, setTechnicalNotes] = useState("");
 
-  const [newRunScope, setNewRunScope] = useState<string>('{"area":"app","notes":""}');
-  const [seedMode, setSeedMode] = useState<"append" | "replace">("append");
-
-  const { data: runsResp } = useQuery<{ items: AuditRun[] }>({
+  const runsQuery = useQuery<{ items: AuditRun[] }>({
     queryKey: ["/api/audit/runs"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/audit/runs");
+      const res = await apiRequest("GET", "/api/audit/runs?limit=50");
       return await res.json();
     },
   });
 
-  const runs = useMemo(() => (Array.isArray(runsResp?.items) ? runsResp!.items : []), [runsResp]);
+  const runs = useMemo(() => (Array.isArray(runsQuery.data?.items) ? runsQuery.data?.items : []), [runsQuery.data?.items]);
+  const activeRun = useMemo(() => runs.find((r) => r.id === activeRunId) || null, [runs, activeRunId]);
 
-  const activeRunId = selectedRunId ?? (runs[0]?.id ?? null);
+  const createRunMutation = useMutation({
+    mutationFn: async () => {
+      const scopeJson = { modules: ["Leads", "Opps", "Phone", "Contacts", "Shared UI"], createdAt: new Date().toISOString() };
+      const res = await apiRequest("POST", "/api/audit/runs", { scopeJson });
+      return await res.json();
+    },
+    onSuccess: async (row: any) => {
+      await runsQuery.refetch();
+      setActiveRunId(Number(row?.id) || null);
+      toast({ title: "Audit run created", description: "Add findings as you review the app." });
+    },
+    onError: (e: any) => toast({ title: "Create failed", description: String(e?.message || e), variant: "destructive" }),
+  });
 
-  const { data: findingsResp } = useQuery<{ items: AuditFinding[] }>({
+  const findingsQuery = useQuery<{ items: AuditFinding[] }>({
     queryKey: ["/api/audit/runs", activeRunId, "findings"],
-    enabled: !!activeRunId,
+    enabled: Boolean(activeRunId),
     queryFn: async () => {
       const res = await apiRequest("GET", `/api/audit/runs/${activeRunId}/findings`);
       return await res.json();
     },
   });
 
-  const findings = useMemo(() => (Array.isArray(findingsResp?.items) ? findingsResp!.items : []), [findingsResp]);
+  const findings = useMemo(() => (Array.isArray(findingsQuery.data?.items) ? findingsQuery.data?.items : []), [findingsQuery.data?.items]);
 
-  const { data: releaseGateResp } = useQuery<{ ok: boolean; blockingCount: number; blockingItems: any[] }>({
-    queryKey: ["/api/audit/release-gate"],
-    queryFn: async () => {
-      const res = await apiRequest("GET", "/api/audit/release-gate");
-      return await res.json();
-    },
-  });
-
-  const createRun = useMutation({
+  const createFindingMutation = useMutation({
     mutationFn: async () => {
-      let scopeJson: any = {};
-      try {
-        scopeJson = JSON.parse(newRunScope || "{}");
-      } catch {
-        scopeJson = { raw: newRunScope };
-      }
-      const res = await apiRequest("POST", "/api/audit/runs", { scopeJson });
-      return await res.json();
-    },
-    onSuccess: async (row: AuditRun) => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/audit/runs"] });
-      setSelectedRunId(row.id);
-    },
-  });
-
-  const [newFinding, setNewFinding] = useState({
-    severity: "medium",
-    area: "leads",
-    title: "",
-    description: "",
-    recommendation: "",
-    technicalNotes: "",
-    affectedPages: "",
-    fixPlan: "",
-    prdSection: "",
-  });
-
-  const parsedAffectedPages = useMemo(() => {
-    return newFinding.affectedPages
-      ? newFinding.affectedPages
-          .split(",")
-          .map((p) => p.trim())
-          .filter(Boolean)
-      : [];
-  }, [newFinding.affectedPages]);
-
-  const canCreateFinding =
-    !!activeRunId &&
-    newFinding.area.trim().length > 0 &&
-    newFinding.title.trim().length > 0 &&
-    newFinding.description.trim().length > 0 &&
-    parsedAffectedPages.length > 0 &&
-    newFinding.fixPlan.trim().length > 0;
-
-  const createFinding = useMutation({
-    mutationFn: async () => {
-      if (!activeRunId) throw new Error("Select a run");
+      if (!activeRunId) throw new Error("No active run");
       const res = await apiRequest("POST", `/api/audit/runs/${activeRunId}/findings`, {
-        severity: newFinding.severity,
-        area: newFinding.area,
-        title: newFinding.title,
-        description: newFinding.description,
-        recommendation: newFinding.recommendation || null,
-        technicalNotes: newFinding.technicalNotes || null,
-        affectedPages: parsedAffectedPages,
-        fixPlan: newFinding.fixPlan.trim(),
-        prdSection: newFinding.prdSection || null,
+        severity,
+        area,
+        title: title.trim(),
+        description: description.trim(),
+        recommendation: recommendation.trim() || null,
+        technicalNotes: technicalNotes.trim() || null,
       });
       return await res.json();
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/audit/runs", activeRunId, "findings"] });
-      setNewFinding((v) => ({ ...v, title: "", description: "", recommendation: "", technicalNotes: "", affectedPages: "", fixPlan: "", prdSection: "" }));
+      await findingsQuery.refetch();
+      setTitle("");
+      setDescription("");
+      setRecommendation("");
+      setTechnicalNotes("");
+      toast({ title: "Finding saved", description: "Recorded in this audit run." });
     },
-  });
-
-  const seedPages = useMutation({
-    mutationFn: async () => {
-      if (!activeRunId) throw new Error("Select a run");
-      const res = await apiRequest("POST", `/api/audit/runs/${activeRunId}/seed-pages`, { mode: seedMode });
-      return await res.json();
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/audit/runs", activeRunId, "findings"] });
-    },
-  });
-
-  const patchFinding = useMutation({
-    mutationFn: async (input: { id: number; patch: Partial<AuditFinding> }) => {
-      const res = await apiRequest("PATCH", `/api/audit/findings/${input.id}`, input.patch);
-      return await res.json();
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["/api/audit/runs", activeRunId, "findings"] });
-    },
+    onError: (e: any) => toast({ title: "Save failed", description: String(e?.message || e), variant: "destructive" }),
   });
 
   return (
     <Layout>
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold">Audit</h1>
-          <p className="text-sm text-muted-foreground">Runs and findings to track app issues and fixes.</p>
+      <div className="flex flex-col gap-6">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Audit</h1>
+            <p className="text-muted-foreground">Create runs, log issues, and track fixes.</p>
+          </div>
+          <Button onClick={() => createRunMutation.mutate()} disabled={createRunMutation.isPending}>
+            {createRunMutation.isPending ? "Creating…" : "New run"}
+          </Button>
         </div>
-      </div>
 
-      <div className="mt-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>Release Gate</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm">
-            {releaseGateResp?.ok ? (
-              <div className="flex items-center justify-between">
-                <div className="font-medium">Clear to ship</div>
-                <Badge variant="secondary">No open Critical findings</Badge>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between">
-                <div className="font-medium">Blocked</div>
-                <Badge variant="destructive">{releaseGateResp?.blockingCount ?? 0} open Critical</Badge>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-        <Card className="lg:col-span-1">
-          <CardHeader>
-            <CardTitle>Runs</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Textarea value={newRunScope} onChange={(e) => setNewRunScope(e.target.value)} rows={4} />
-              <Button onClick={() => createRun.mutate()} disabled={createRun.isPending}>
-                Create Run
-              </Button>
-            </div>
-            {activeRunId && (
-              <div className="space-y-2">
-                <div className="text-sm font-medium">Seed Backlog</div>
-                <Select value={seedMode} onValueChange={(v: any) => setSeedMode(v)}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="append">Append</SelectItem>
-                    <SelectItem value="replace">Replace</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button variant="outline" onClick={() => seedPages.mutate()} disabled={seedPages.isPending}>
-                  {seedPages.isPending ? "Seeding..." : "Seed Page Inventory"}
-                </Button>
-              </div>
-            )}
-            <div className="space-y-2">
-              {runs.length === 0 && <div className="text-sm text-muted-foreground">No runs yet.</div>}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <Card className="lg:col-span-1">
+            <CardHeader>
+              <CardTitle>Runs</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
               {runs.map((r) => (
-                <button
+                <Button
                   key={r.id}
-                  className={`w-full rounded-md border px-3 py-2 text-left text-sm ${activeRunId === r.id ? "border-primary" : "border-border"}`}
-                  onClick={() => setSelectedRunId(r.id)}
+                  type="button"
+                  variant={r.id === activeRunId ? "default" : "outline"}
+                  className="w-full justify-start"
+                  onClick={() => setActiveRunId(r.id)}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="font-medium">Run #{r.id}</div>
-                    <div className="text-xs text-muted-foreground">{new Date(r.createdAt).toLocaleString()}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle>Findings</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <div className="space-y-2">
-                <div className="text-sm font-medium">Severity</div>
-                <Select value={newFinding.severity} onValueChange={(v) => setNewFinding((s) => ({ ...s, severity: v }))}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="low">Low</SelectItem>
-                    <SelectItem value="medium">Medium</SelectItem>
-                    <SelectItem value="high">High</SelectItem>
-                    <SelectItem value="critical">Critical</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <div className="text-sm font-medium">Area</div>
-                <Input value={newFinding.area} onChange={(e) => setNewFinding((s) => ({ ...s, area: e.target.value }))} />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <div className="text-sm font-medium">Title</div>
-                <Input value={newFinding.title} onChange={(e) => setNewFinding((s) => ({ ...s, title: e.target.value }))} />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <div className="text-sm font-medium">Description</div>
-                <Textarea value={newFinding.description} onChange={(e) => setNewFinding((s) => ({ ...s, description: e.target.value }))} rows={4} />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <div className="text-sm font-medium">Recommendation</div>
-                <Textarea value={newFinding.recommendation} onChange={(e) => setNewFinding((s) => ({ ...s, recommendation: e.target.value }))} rows={3} />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <div className="text-sm font-medium">Technical Notes</div>
-                <Textarea value={newFinding.technicalNotes} onChange={(e) => setNewFinding((s) => ({ ...s, technicalNotes: e.target.value }))} rows={3} />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <div className="text-sm font-medium">Affected Pages (comma-separated)</div>
-                <Input value={newFinding.affectedPages} onChange={(e) => setNewFinding((s) => ({ ...s, affectedPages: e.target.value }))} placeholder="/leads, /opportunities/:id" />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <div className="text-sm font-medium">Fix Plan</div>
-                <Textarea value={newFinding.fixPlan} onChange={(e) => setNewFinding((s) => ({ ...s, fixPlan: e.target.value }))} rows={3} />
-              </div>
-              <div className="space-y-2 md:col-span-2">
-                <div className="text-sm font-medium">PRD Section</div>
-                <Input value={newFinding.prdSection} onChange={(e) => setNewFinding((s) => ({ ...s, prdSection: e.target.value }))} placeholder="e.g. Leads PRD / Key upgrades" />
-              </div>
-              <div className="md:col-span-2">
-                <Button onClick={() => createFinding.mutate()} disabled={!canCreateFinding || createFinding.isPending}>
-                  Add Finding
+                  Run #{r.id}
                 </Button>
-              </div>
-            </div>
-
-            <div className="space-y-3">
-              {findings.length === 0 && <div className="text-sm text-muted-foreground">No findings for this run.</div>}
-              {findings.map((f) => (
-                <div key={f.id} className="rounded-md border border-border p-4 space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-semibold">{f.title}</div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="secondary">{f.severity}</Badge>
-                      <Badge variant="outline">{f.status}</Badge>
-                    </div>
-                  </div>
-                  <div className="text-sm text-muted-foreground">{f.area}</div>
-                  {Array.isArray(f.affectedPages) && f.affectedPages.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {f.affectedPages.slice(0, 8).map((p) => (
-                        <Badge key={p} variant="outline">
-                          {p}
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                  <div className="text-sm whitespace-pre-wrap">{f.description}</div>
-                  {f.recommendation && <div className="text-sm whitespace-pre-wrap"><span className="font-medium">Recommendation: </span>{f.recommendation}</div>}
-                  {f.technicalNotes && <div className="text-sm whitespace-pre-wrap"><span className="font-medium">Technical: </span>{f.technicalNotes}</div>}
-                  {f.fixPlan && <div className="text-sm whitespace-pre-wrap"><span className="font-medium">Fix plan: </span>{f.fixPlan}</div>}
-                  <div className="flex items-center gap-2">
-                    <Select value={f.status} onValueChange={(v) => patchFinding.mutate({ id: f.id, patch: { status: v } as any })}>
-                      <SelectTrigger className="w-[180px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="open">Open</SelectItem>
-                        <SelectItem value="in_progress">In Progress</SelectItem>
-                        <SelectItem value="resolved">Resolved</SelectItem>
-                        <SelectItem value="ignored">Ignored</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
               ))}
-            </div>
-          </CardContent>
-        </Card>
+              {!runs.length ? <div className="text-sm text-muted-foreground">No runs yet.</div> : null}
+            </CardContent>
+          </Card>
+
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <CardTitle>{activeRun ? `Run #${activeRun.id}` : "Select a run"}</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {activeRun ? (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <Label>Severity</Label>
+                      <Select value={severity} onValueChange={(v) => setSeverity(v as any)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="critical">Critical</SelectItem>
+                          <SelectItem value="major">Major</SelectItem>
+                          <SelectItem value="minor">Minor</SelectItem>
+                          <SelectItem value="polish">Polish</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Area</Label>
+                      <Input value={area} onChange={(e) => setArea(e.target.value)} placeholder="Leads, Phone, Contacts…" />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Title</Label>
+                    <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Short issue title" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Description</Label>
+                    <Textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Current issue + why it matters" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Recommendation</Label>
+                    <Textarea value={recommendation} onChange={(e) => setRecommendation(e.target.value)} placeholder="Recommended fix" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Technical notes</Label>
+                    <Textarea value={technicalNotes} onChange={(e) => setTechnicalNotes(e.target.value)} placeholder="Files, edge cases, data notes" />
+                  </div>
+                  <Button
+                    onClick={() => createFindingMutation.mutate()}
+                    disabled={!title.trim() || !description.trim() || createFindingMutation.isPending}
+                  >
+                    {createFindingMutation.isPending ? "Saving…" : "Add finding"}
+                  </Button>
+
+                  <div className="border-t pt-4 space-y-2">
+                    <div className="text-sm font-medium">Findings</div>
+                    {findings.map((f) => (
+                      <div key={f.id} className="rounded-md border p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-medium">{f.title}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {f.severity} · {f.status}
+                          </div>
+                        </div>
+                        <div className="text-sm text-muted-foreground whitespace-pre-wrap mt-1">{f.description}</div>
+                      </div>
+                    ))}
+                    {!findings.length ? <div className="text-sm text-muted-foreground">No findings yet.</div> : null}
+                  </div>
+                </>
+              ) : (
+                <div className="text-sm text-muted-foreground">Create a run or select one to start logging findings.</div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </Layout>
   );

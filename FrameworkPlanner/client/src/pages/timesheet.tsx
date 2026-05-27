@@ -186,7 +186,7 @@ export default function Timesheet() {
     mutationFn: async (data: any) => {
       const res = await fetch(`/api/users/${user?.id}/timesheet`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(localStorage.getItem("token") ? { Authorization: `Bearer ${localStorage.getItem("token")}` } : {}) },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           date: data.date,
           employee: data.employee,
@@ -231,7 +231,6 @@ export default function Timesheet() {
     mutationFn: async (id: number) => {
       const res = await fetch(`/api/timesheet/${id}`, {
         method: "DELETE",
-        headers: { ...(localStorage.getItem("token") ? { Authorization: `Bearer ${localStorage.getItem("token")}` } : {}) },
         credentials: "include",
       });
       if (!res.ok) {

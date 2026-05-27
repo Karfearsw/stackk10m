@@ -25,35 +25,38 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Filter, Plus, Search, Building2, MoreHorizontal, Pencil, Trash2, Lightbulb, ListFilter, Columns2, Mic } from "lucide-react";
+import { AdvancedFilterDrawer, type LeadFilters } from "@/components/leads/AdvancedFilterDrawer";
+import { BulkActionToolbar } from "@/components/leads/BulkActionToolbar";
+import { ColumnChooser, leadColumnsCatalog, type LeadColumnId } from "@/components/leads/ColumnChooser";
+import { LeadNotePreview } from "@/components/leads/LeadNotePreview";
+import { SavedViewsDropdown, type LeadSavedView } from "@/components/leads/SavedViewsDropdown";
+import { SortMenu, type LeadSortKey } from "@/components/leads/SortMenu";
+import { VoiceActionButton } from "@/components/ai/VoiceActionButton";
+import { Plus, Search, Building2, MoreHorizontal, Pencil, Trash2, Lightbulb } from "lucide-react";
 import { useLocation } from "wouter";
-import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 import { PipelineBoard } from "@/components/pipeline/PipelineBoard";
 import { LeadPipelineCard } from "@/components/pipeline/LeadPipelineCard";
 import { EntityActivity } from "@/components/activity/EntityActivity";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
-import { SkipTraceJobPanel } from "@/components/skipTrace/SkipTraceJobPanel";
-import { VoiceActionDialog } from "@/components/leads/VoiceActionDialog";
 import { apiRequest } from "@/lib/queryClient";
-import { calendarUrl, dialerUrl, opportunityUrl, playgroundUrl, tasksUrl } from "@/lib/deepLinks";
 
 const statusOptions = [
   { value: "new", label: "New" },
@@ -67,171 +70,134 @@ const statusOptions = [
 
 const CUSTOM_SOURCE_VALUE = "__custom__";
 
-type LeadViewConfig = {
-  filters: Record<string, any>;
-  sort?: { key?: string; dir?: "asc" | "desc" };
-  columns?: Record<string, boolean>;
-  density?: "luxury" | "dense";
+const defaultLeadFilters: LeadFilters = {
+  query: "",
+  status: "all",
+  owner: "",
+  zip: "",
+  state: "",
+  city: "",
+  assignedTo: "",
+  tags: "",
+  contactPresence: "",
+  archived: "exclude",
+  hasNotes: "",
+  createdFrom: "",
+  createdTo: "",
 };
 
-function hashString(input: string) {
-  let h = 5381;
-  for (let i = 0; i < input.length; i += 1) {
-    h = (h * 33) ^ input.charCodeAt(i);
-  }
-  return h >>> 0;
-}
-
-function parseLeadViewConfig(input: any): LeadViewConfig {
-  if (!input || typeof input !== "object") return { filters: {} };
-  const filters = input.filters && typeof input.filters === "object" ? input.filters : {};
-  const sortRaw = input.sort && typeof input.sort === "object" ? input.sort : {};
-  const sortKey = typeof sortRaw.key === "string" ? sortRaw.key : undefined;
-  const sortDir = sortRaw.dir === "asc" ? "asc" : sortRaw.dir === "desc" ? "desc" : undefined;
-  const columns = input.columns && typeof input.columns === "object" ? input.columns : undefined;
-  const density = input.density === "dense" ? "dense" : input.density === "luxury" ? "luxury" : undefined;
-  return { filters, sort: { key: sortKey, dir: sortDir }, columns, density };
-}
-
-function parseFiltersFromUrl() {
-  const p = new URLSearchParams(window.location.search);
-  const get = (k: string) => String(p.get(k) || "");
+function parseLeadFilters(params: URLSearchParams): LeadFilters {
   return {
-    query: get("q"),
-    status: get("status") || "all",
-    statusIn: get("statusIn"),
-    owner: get("owner"),
-    zip: get("zip"),
-    state: get("state"),
-    city: get("city"),
-    county: get("county"),
-    leadType: get("leadType"),
-    assignedTo: get("assignedTo") || "",
-    tags: get("tags"),
-    tagsMode: get("tagsMode") || "any",
-    contactPresence: get("contactPresence") || "",
-    scoreMin: get("scoreMin"),
-    scoreMax: get("scoreMax"),
-    archived: get("archived") || "exclude",
-    hasNotes: get("hasNotes"),
-    noteUpdatedWithinDays: get("noteUpdatedWithinDays"),
-    lastTouchFrom: get("lastTouchFrom"),
-    lastTouchTo: get("lastTouchTo"),
-    nextFollowUpFrom: get("nextFollowUpFrom"),
-    nextFollowUpTo: get("nextFollowUpTo"),
-    createdFrom: get("createdFrom"),
-    createdTo: get("createdTo"),
-    sortKey: get("sortKey") || "newest_imported",
-    sortDir: (get("sortDir") === "asc" ? "asc" : "desc") as "asc" | "desc",
-    viewToken: get("viewToken"),
+    query: params.get("q") || "",
+    status: params.get("status") || "all",
+    owner: params.get("owner") || "",
+    zip: params.get("zip") || "",
+    state: params.get("state") || "",
+    city: params.get("city") || "",
+    assignedTo: params.get("assignedTo") || "",
+    tags: params.get("tags") || "",
+    contactPresence: params.get("contactPresence") || "",
+    archived: params.get("archived") || "exclude",
+    hasNotes: params.get("hasNotes") || "",
+    createdFrom: params.get("createdFrom") ? new Date(String(params.get("createdFrom"))).toISOString().slice(0, 10) : "",
+    createdTo: params.get("createdTo") ? new Date(String(params.get("createdTo"))).toISOString().slice(0, 10) : "",
   };
 }
 
-function writeFiltersToUrl(filters: any) {
-  const p = new URLSearchParams();
-  const set = (k: string, v: any) => {
-    const s = String(v || "").trim();
-    if (!s) return;
-    p.set(k, s);
-  };
-  set("q", filters.query);
-  if (filters.status && filters.status !== "all") set("status", filters.status);
-  set("statusIn", filters.statusIn);
-  set("owner", filters.owner);
-  set("zip", filters.zip);
-  set("state", filters.state);
-  set("city", filters.city);
-  set("county", filters.county);
-  set("leadType", filters.leadType);
-  set("assignedTo", filters.assignedTo);
-  set("tags", filters.tags);
-  if (filters.tagsMode && filters.tagsMode !== "any") set("tagsMode", filters.tagsMode);
-  set("contactPresence", filters.contactPresence);
-  set("scoreMin", filters.scoreMin);
-  set("scoreMax", filters.scoreMax);
-  if (filters.archived && filters.archived !== "exclude") set("archived", filters.archived);
-  set("hasNotes", filters.hasNotes);
-  set("noteUpdatedWithinDays", filters.noteUpdatedWithinDays);
-  set("lastTouchFrom", filters.lastTouchFrom);
-  set("lastTouchTo", filters.lastTouchTo);
-  set("nextFollowUpFrom", filters.nextFollowUpFrom);
-  set("nextFollowUpTo", filters.nextFollowUpTo);
-  set("createdFrom", filters.createdFrom);
-  set("createdTo", filters.createdTo);
-  if (filters.sortKey && filters.sortKey !== "newest_imported") set("sortKey", filters.sortKey);
-  if (filters.sortDir && filters.sortDir !== "desc") set("sortDir", filters.sortDir);
-  set("viewToken", filters.viewToken);
-  const qs = p.toString();
-  const next = qs ? `?${qs}` : "";
-  window.history.replaceState({}, "", `/leads${next}`);
+function parseLeadSort(params: URLSearchParams): { sortKey: LeadSortKey; sortDir: "asc" | "desc" } {
+  const sortKey = (params.get("sortKey") || "newest_imported") as LeadSortKey;
+  const sortDir = params.get("sortDir") === "asc" ? "asc" : "desc";
+  return { sortKey, sortDir };
+}
+
+function parseLeadPagination(params: URLSearchParams): { pageIndex: number; pageSize: number } {
+  const pageIndexRaw = parseInt(String(params.get("page") || "1"), 10);
+  const pageSizeRaw = parseInt(String(params.get("pageSize") || "50"), 10);
+  const pageIndex = Number.isFinite(pageIndexRaw) ? Math.max(0, pageIndexRaw - 1) : 0;
+  const pageSize = Number.isFinite(pageSizeRaw) ? Math.max(10, Math.min(200, pageSizeRaw)) : 50;
+  return { pageIndex, pageSize };
+}
+
+function parseLeadColumns(params: URLSearchParams): Set<LeadColumnId> {
+  const raw = String(params.get("cols") || "").trim();
+  if (!raw) {
+    return new Set(leadColumnsCatalog.filter((c) => c.defaultVisible).map((c) => c.id));
+  }
+  const set = new Set<LeadColumnId>();
+  for (const part of raw.split(",")) {
+    const id = String(part || "").trim() as LeadColumnId;
+    if (leadColumnsCatalog.some((c) => c.id === id)) set.add(id);
+  }
+  if (!set.size) return new Set(leadColumnsCatalog.filter((c) => c.defaultVisible).map((c) => c.id));
+  return set;
+}
+
+function buildLeadsUrl(params: URLSearchParams) {
+  const qs = params.toString();
+  return qs ? `/leads?${qs}` : "/leads";
 }
 
 export default function Leads() {
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<any>(null);
   const [newLeadOtherSource, setNewLeadOtherSource] = useState("");
   const [editLeadOtherSource, setEditLeadOtherSource] = useState("");
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [filters, setFilters] = useState(() => parseFiltersFromUrl());
-  const [appliedFilters, setAppliedFilters] = useState(filters);
-  const [density, setDensity] = useState<"luxury" | "dense">("luxury");
-  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
-    address: true,
-    owner: true,
-    status: true,
-    score: true,
-    value: true,
-    contact: true,
-    notes: true,
-    actions: true,
-  });
-  const [selectedView, setSelectedView] = useState<any | null>(null);
-  const [saveViewOpen, setSaveViewOpen] = useState(false);
-  const [saveViewMode, setSaveViewMode] = useState<"create" | "update">("create");
-  const [saveViewName, setSaveViewName] = useState("");
-  const [saveViewVisibility, setSaveViewVisibility] = useState<"private" | "team" | "link">("private");
-  const [selectionMode, setSelectionMode] = useState<"explicit" | "all_filtered">("explicit");
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
-  const [excludedIds, setExcludedIds] = useState<Set<number>>(new Set());
-  const [selectAllConfirmOpen, setSelectAllConfirmOpen] = useState(false);
-  const [selectAllConfirmText, setSelectAllConfirmText] = useState("");
-  const selectionSignature = useMemo(() => {
-    const { viewToken, ...rest } = appliedFilters as any;
-    return JSON.stringify(rest || {});
-  }, [appliedFilters]);
-  const selectionSigLabel = useMemo(() => {
-    const h = hashString(selectionSignature);
-    return `SIG-${h.toString(16).padStart(8, "0").slice(-8).toUpperCase()}`;
-  }, [selectionSignature]);
+  const urlParams = useMemo(() => new URLSearchParams(location.split("?")[1] || ""), [location]);
+  const [filters, setFilters] = useState<LeadFilters>(() => parseLeadFilters(new URLSearchParams(window.location.search)));
+  const [appliedFilters, setAppliedFilters] = useState<LeadFilters>(filters);
+  const [{ sortKey, sortDir }, setSort] = useState<{ sortKey: LeadSortKey; sortDir: "asc" | "desc" }>(() =>
+    parseLeadSort(new URLSearchParams(window.location.search)),
+  );
+  const [{ pageIndex, pageSize }, setPagination] = useState<{ pageIndex: number; pageSize: number }>(() =>
+    parseLeadPagination(new URLSearchParams(window.location.search)),
+  );
+  const [visibleColumns, setVisibleColumns] = useState<Set<LeadColumnId>>(() => parseLeadColumns(new URLSearchParams(window.location.search)));
+
+  useEffect(() => {
+    setFilters(parseLeadFilters(urlParams));
+    setSort(parseLeadSort(urlParams));
+    setPagination(parseLeadPagination(urlParams));
+    setVisibleColumns(parseLeadColumns(urlParams));
+  }, [urlParams]);
+
   useEffect(() => {
     const id = setTimeout(() => setAppliedFilters(filters), 250);
     return () => clearTimeout(id);
   }, [filters]);
-  const leadsQueryKey = useMemo(() => ["leads", appliedFilters], [appliedFilters]);
-
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const add = params.get("add") || "";
-    if (add !== "1") return;
-    setIsAddDialogOpen(true);
-    params.delete("add");
-    const nextQs = params.toString();
-    window.history.replaceState({}, "", `/leads${nextQs ? `?${nextQs}` : ""}`);
-  }, []);
+    const p = new URLSearchParams();
+    if (appliedFilters.query.trim()) p.set("q", appliedFilters.query.trim());
+    if (appliedFilters.status && appliedFilters.status !== "all") p.set("status", appliedFilters.status);
+    if (appliedFilters.owner.trim()) p.set("owner", appliedFilters.owner.trim());
+    if (appliedFilters.zip.trim()) p.set("zip", appliedFilters.zip.trim());
+    if (appliedFilters.state.trim()) p.set("state", appliedFilters.state.trim());
+    if (appliedFilters.city.trim()) p.set("city", appliedFilters.city.trim());
+    if (appliedFilters.assignedTo) p.set("assignedTo", appliedFilters.assignedTo);
+    if (appliedFilters.tags.trim()) p.set("tags", appliedFilters.tags.trim());
+    if (appliedFilters.contactPresence) p.set("contactPresence", appliedFilters.contactPresence);
+    if (appliedFilters.archived && appliedFilters.archived !== "exclude") p.set("archived", appliedFilters.archived);
+    if (appliedFilters.hasNotes) p.set("hasNotes", appliedFilters.hasNotes);
+    if (appliedFilters.createdFrom) p.set("createdFrom", new Date(`${appliedFilters.createdFrom}T00:00:00`).toISOString());
+    if (appliedFilters.createdTo) p.set("createdTo", new Date(`${appliedFilters.createdTo}T00:00:00`).toISOString());
+    if (sortKey) p.set("sortKey", sortKey);
+    if (sortDir) p.set("sortDir", sortDir);
+    if (pageIndex > 0) p.set("page", String(pageIndex + 1));
+    if (pageSize !== 50) p.set("pageSize", String(pageSize));
+    const colsRaw = Array.from(visibleColumns.values()).join(",");
+    if (colsRaw) p.set("cols", colsRaw);
+    const next = buildLeadsUrl(p);
+    if (next !== location) setLocation(next);
+  }, [appliedFilters, sortKey, sortDir, pageIndex, pageSize, visibleColumns, setLocation, location]);
 
-  useEffect(() => {
-    setSelectionMode("explicit");
-    setSelectedIds(new Set());
-    setExcludedIds(new Set());
-  }, [selectionSignature]);
+  const leadsQueryKey = useMemo(() => ["leads", appliedFilters, sortKey, sortDir, pageIndex, pageSize], [appliedFilters, sortKey, sortDir, pageIndex, pageSize]);
   const [selectedLeadId, setSelectedLeadId] = useState<number | null>(null);
   const [isLeadSheetOpen, setIsLeadSheetOpen] = useState(false);
   const [highlightLeadId, setHighlightLeadId] = useState<number | null>(null);
   const [didApplyQueryLead, setDidApplyQueryLead] = useState(false);
-  const [forcedLead, setForcedLead] = useState<any | null>(null);
   const [noteLead, setNoteLead] = useState<any>(null);
   const [noteText, setNoteText] = useState("");
   const [isNoteDialogOpen, setIsNoteDialogOpen] = useState(false);
@@ -244,6 +210,9 @@ export default function Leads() {
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
   const [isEmailDialogOpen, setIsEmailDialogOpen] = useState(false);
+  const [saveViewDialogOpen, setSaveViewDialogOpen] = useState(false);
+  const [saveViewName, setSaveViewName] = useState("");
+  const [saveViewVisibility, setSaveViewVisibility] = useState<"private" | "team" | "link">("private");
   const leadIdFromQuery = useMemo(() => {
     const params = new URLSearchParams(window.location.search);
     const raw = params.get("leadId") || params.get("highlight") || "";
@@ -260,433 +229,99 @@ export default function Leads() {
     ownerEmail: "",
     estimatedValue: "",
     source: "",
-    status: "new",
-    assignedTo: ""
+    status: "new"
   });
 
-  const pageSize = 200;
-  const {
-    data: leadsPages,
-    isLoading,
-    fetchNextPage,
-    hasNextPage,
-    isFetchingNextPage,
-  } = useInfiniteQuery<any>({
+  const { data: leadsResp, isLoading } = useQuery<any>({
     queryKey: leadsQueryKey,
-    initialPageParam: 0,
-    queryFn: async ({ pageParam }) => {
+    queryFn: async () => {
       const p = new URLSearchParams();
       p.set("limit", String(pageSize));
-      p.set("offset", String(pageParam || 0));
-      if (appliedFilters.query?.trim()) p.set("q", appliedFilters.query.trim());
-      if (appliedFilters.statusIn?.trim()) p.set("statusIn", appliedFilters.statusIn.trim());
-      else if (appliedFilters.status && appliedFilters.status !== "all") p.set("status", appliedFilters.status);
-      if (appliedFilters.owner?.trim()) p.set("owner", appliedFilters.owner.trim());
-      if (appliedFilters.zip?.trim()) p.set("zip", appliedFilters.zip.trim());
-      if (appliedFilters.state?.trim()) p.set("state", appliedFilters.state.trim());
-      if (appliedFilters.city?.trim()) p.set("city", appliedFilters.city.trim());
-      if (appliedFilters.county?.trim()) p.set("county", appliedFilters.county.trim());
-      if (appliedFilters.leadType?.trim()) p.set("leadType", appliedFilters.leadType.trim());
-      if (appliedFilters.assignedTo?.trim()) p.set("assignedTo", appliedFilters.assignedTo.trim());
-      if (appliedFilters.tags?.trim()) p.set("tags", appliedFilters.tags.trim());
-      if (appliedFilters.tagsMode && appliedFilters.tagsMode !== "any") p.set("tagsMode", appliedFilters.tagsMode);
-      if (appliedFilters.contactPresence?.trim()) p.set("contactPresence", appliedFilters.contactPresence.trim());
-      if (appliedFilters.scoreMin?.trim()) p.set("scoreMin", appliedFilters.scoreMin.trim());
-      if (appliedFilters.scoreMax?.trim()) p.set("scoreMax", appliedFilters.scoreMax.trim());
-      if (appliedFilters.archived && appliedFilters.archived !== "exclude") p.set("archived", appliedFilters.archived);
-      if (appliedFilters.hasNotes === "true" || appliedFilters.hasNotes === "false") p.set("hasNotes", appliedFilters.hasNotes);
-      if (appliedFilters.noteUpdatedWithinDays?.trim()) p.set("noteUpdatedWithinDays", appliedFilters.noteUpdatedWithinDays.trim());
-      if (appliedFilters.lastTouchFrom?.trim()) p.set("lastTouchFrom", new Date(`${appliedFilters.lastTouchFrom}T00:00:00`).toISOString());
-      if (appliedFilters.lastTouchTo?.trim()) p.set("lastTouchTo", new Date(`${appliedFilters.lastTouchTo}T23:59:59`).toISOString());
-      if (appliedFilters.nextFollowUpFrom?.trim()) p.set("nextFollowUpFrom", new Date(`${appliedFilters.nextFollowUpFrom}T00:00:00`).toISOString());
-      if (appliedFilters.nextFollowUpTo?.trim()) p.set("nextFollowUpTo", new Date(`${appliedFilters.nextFollowUpTo}T23:59:59`).toISOString());
-      if (appliedFilters.createdFrom?.trim()) p.set("createdFrom", new Date(`${appliedFilters.createdFrom}T00:00:00`).toISOString());
-      if (appliedFilters.createdTo?.trim()) p.set("createdTo", new Date(`${appliedFilters.createdTo}T23:59:59`).toISOString());
-      if (appliedFilters.sortKey && appliedFilters.sortKey !== "newest_imported") p.set("sortKey", appliedFilters.sortKey);
-      if (appliedFilters.sortDir && appliedFilters.sortDir !== "desc") p.set("sortDir", appliedFilters.sortDir);
+      p.set("offset", String(pageIndex * pageSize));
+      if (appliedFilters.query.trim()) p.set("q", appliedFilters.query.trim());
+      if (appliedFilters.status && appliedFilters.status !== "all") p.set("status", appliedFilters.status);
+      if (appliedFilters.owner.trim()) p.set("owner", appliedFilters.owner.trim());
+      if (appliedFilters.zip.trim()) p.set("zip", appliedFilters.zip.trim());
+      if (appliedFilters.state.trim()) p.set("state", appliedFilters.state.trim());
+      if (appliedFilters.city.trim()) p.set("city", appliedFilters.city.trim());
+      if (appliedFilters.assignedTo) p.set("assignedTo", appliedFilters.assignedTo);
+      if (appliedFilters.tags.trim()) p.set("tags", appliedFilters.tags.trim());
+      if (appliedFilters.contactPresence) p.set("contactPresence", appliedFilters.contactPresence);
+      if (appliedFilters.archived) p.set("archived", appliedFilters.archived);
+      if (appliedFilters.hasNotes) p.set("hasNotes", appliedFilters.hasNotes);
+      if (appliedFilters.createdFrom) p.set("createdFrom", new Date(`${appliedFilters.createdFrom}T00:00:00`).toISOString());
+      if (appliedFilters.createdTo) p.set("createdTo", new Date(`${appliedFilters.createdTo}T23:59:59`).toISOString());
+      if (sortKey) p.set("sortKey", sortKey);
+      if (sortDir) p.set("sortDir", sortDir);
       const res = await apiRequest("GET", `/api/leads?${p.toString()}`);
       return await res.json();
     },
-    getNextPageParam: (lastPage, allPages) => {
-      const total = Number(lastPage?.total || 0);
-      const loaded = allPages.reduce((acc, p) => acc + (Array.isArray(p?.items) ? p.items.length : 0), 0);
-      if (!total) return undefined;
-      if (loaded >= total) return undefined;
-      return loaded;
-    },
   });
+  const leads = useMemo(() => (Array.isArray(leadsResp?.items) ? leadsResp.items : []), [leadsResp?.items]);
+  const leadsTotal = useMemo(() => Number(leadsResp?.total ?? leads.length ?? 0), [leads.length, leadsResp?.total]);
 
-  const leadsFlat = useMemo(() => {
-    const pages = leadsPages?.pages || [];
-    const out: any[] = [];
-    for (const p of pages) {
-      const items = Array.isArray(p?.items) ? p.items : [];
-      out.push(...items);
+  const selectionSignature = useMemo(() => {
+    const p = new URLSearchParams();
+    if (appliedFilters.query.trim()) p.set("q", appliedFilters.query.trim());
+    if (appliedFilters.status && appliedFilters.status !== "all") p.set("status", appliedFilters.status);
+    if (appliedFilters.owner.trim()) p.set("owner", appliedFilters.owner.trim());
+    if (appliedFilters.zip.trim()) p.set("zip", appliedFilters.zip.trim());
+    if (appliedFilters.state.trim()) p.set("state", appliedFilters.state.trim());
+    if (appliedFilters.city.trim()) p.set("city", appliedFilters.city.trim());
+    if (appliedFilters.assignedTo) p.set("assignedTo", appliedFilters.assignedTo);
+    if (appliedFilters.tags.trim()) p.set("tags", appliedFilters.tags.trim());
+    if (appliedFilters.contactPresence) p.set("contactPresence", appliedFilters.contactPresence);
+    if (appliedFilters.archived) p.set("archived", appliedFilters.archived);
+    if (appliedFilters.hasNotes) p.set("hasNotes", appliedFilters.hasNotes);
+    if (appliedFilters.createdFrom) p.set("createdFrom", appliedFilters.createdFrom);
+    if (appliedFilters.createdTo) p.set("createdTo", appliedFilters.createdTo);
+    p.set("sortKey", sortKey);
+    p.set("sortDir", sortDir);
+    return p.toString();
+  }, [appliedFilters, sortKey, sortDir]);
+
+  const [selectionMode, setSelectionMode] = useState<"explicit" | "all_filtered">("explicit");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [excludedIds, setExcludedIds] = useState<Set<number>>(new Set());
+  const [selectionModeSignature, setSelectionModeSignature] = useState<string>("");
+
+  useEffect(() => {
+    if (selectionMode !== "all_filtered") return;
+    if (!selectionModeSignature) return;
+    if (selectionModeSignature !== selectionSignature) {
+      setSelectionMode("explicit");
+      setSelectedIds(new Set());
+      setExcludedIds(new Set());
+      setSelectionModeSignature("");
     }
-    return out;
-  }, [leadsPages?.pages]);
+  }, [selectionMode, selectionModeSignature, selectionSignature]);
 
-  const leads = useMemo(() => {
-    if (!forcedLead) return leadsFlat;
-    const forcedId = Number(forcedLead?.id || 0);
-    if (!forcedId) return leadsFlat;
-    if (leadsFlat.some((l: any) => Number(l?.id || 0) === forcedId)) return leadsFlat;
-    return [forcedLead, ...leadsFlat];
-  }, [forcedLead, leadsFlat]);
+  const selectedCount = useMemo(() => {
+    if (selectionMode === "explicit") return selectedIds.size;
+    return Math.max(0, leadsTotal - excludedIds.size);
+  }, [selectionMode, selectedIds.size, leadsTotal, excludedIds.size]);
 
-  const selectedIdsArr = useMemo(() => Array.from(selectedIds), [selectedIds]);
-  const voiceSelectedLead = useMemo(() => {
-    if (selectionMode !== "explicit") return null;
-    if (selectedIdsArr.length !== 1) return null;
-    const id = Number(selectedIdsArr[0] || 0);
-    if (!id) return null;
-    return (leads || []).find((l: any) => Number(l?.id || 0) === id) || null;
-  }, [leads, selectedIdsArr, selectionMode]);
+  const canAssignLeads = useMemo(() => {
+    const role = String((user as any)?.role || "").toLowerCase();
+    return Boolean((user as any)?.isSuperAdmin) || role === "admin" || role === "team_leader";
+  }, [user]);
 
-  const leadsTotal = useMemo(() => {
-    const firstTotal = Number(leadsPages?.pages?.[0]?.total || 0);
-    return firstTotal || leads.length || 0;
-  }, [leads.length, leadsPages?.pages]);
-
-  useEffect(() => {
-    writeFiltersToUrl(filters);
-  }, [filters]);
-
-  useEffect(() => {
-    try {
-      const colsRaw = localStorage.getItem("leads.columns");
-      if (colsRaw) {
-        const parsed = JSON.parse(colsRaw);
-        if (parsed && typeof parsed === "object") setVisibleColumns(parsed);
-      }
-      const densityRaw = localStorage.getItem("leads.density");
-      if (densityRaw === "dense" || densityRaw === "luxury") setDensity(densityRaw);
-    } catch {}
-  }, []);
-
-  useEffect(() => {
-    try {
-      if (selectedView?.id) {
-        localStorage.setItem(`leads.columns.view.${String(selectedView.id)}`, JSON.stringify(visibleColumns));
-      } else {
-        localStorage.setItem("leads.columns", JSON.stringify(visibleColumns));
-      }
-    } catch {}
-  }, [selectedView?.id, visibleColumns]);
-
-  useEffect(() => {
-    try {
-      if (selectedView?.id) {
-        localStorage.setItem(`leads.density.view.${String(selectedView.id)}`, density);
-      } else {
-        localStorage.setItem("leads.density", density);
-      }
-    } catch {}
-  }, [selectedView?.id, density]);
-
-  const { data: savedViewsResp, refetch: refetchSavedViews } = useQuery<any>({
-    queryKey: ["/api/leads/views"],
+  const { data: usersList = [] } = useQuery<any[]>({
+    queryKey: ["/api/users", "scoped"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/leads/views");
+      const res = await apiRequest("GET", "/api/users?limit=500");
       return await res.json();
     },
   });
 
-  const savedViews = useMemo(() => (Array.isArray(savedViewsResp?.items) ? savedViewsResp.items : []), [savedViewsResp?.items]);
-
-  const createSavedViewMutation = useMutation({
-    mutationFn: async (input: { name: string; visibility: "private" | "team" | "link"; configJson: any }) => {
-      const res = await apiRequest("POST", "/api/leads/views", input);
-      return await res.json();
-    },
-    onSuccess: async (row: any) => {
-      await refetchSavedViews();
-      setSelectedView(row);
-    },
-  });
-
-  const updateSavedViewMutation = useMutation({
-    mutationFn: async (input: { id: number; name?: string; visibility?: "private" | "team" | "link"; configJson?: any }) => {
-      const { id, ...rest } = input;
-      const res = await apiRequest("PATCH", `/api/leads/views/${id}`, rest);
-      return await res.json();
-    },
-    onSuccess: async (row: any) => {
-      await refetchSavedViews();
-      setSelectedView(row);
-    },
-    onError: (error: any) => {
-      toast({ title: "View update failed", description: String(error?.message || error), variant: "destructive" });
-    },
-  });
-
-  const deleteSavedViewMutation = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await apiRequest("DELETE", `/api/leads/views/${id}`);
-      return await res.json();
-    },
-    onSuccess: async () => {
-      await refetchSavedViews();
-      setSelectedView(null);
-      setFilters((prev: any) => ({ ...prev, viewToken: "" }));
-    },
-  });
-
-  const [bulkOpen, setBulkOpen] = useState(false);
-  const [bulkAction, setBulkAction] = useState<"set_status" | "assign" | "archive" | "unarchive" | "export">("set_status");
-  const [bulkStatus, setBulkStatus] = useState("new");
-  const [bulkAssignedTo, setBulkAssignedTo] = useState("");
-  const [bulkJobId, setBulkJobId] = useState<number | null>(null);
-  const [bulkPreview, setBulkPreview] = useState<any | null>(null);
-
-  const bulkPreviewMutation = useMutation({
-    mutationFn: async () => {
-      const selectionScope = selectionMode === "all_filtered" ? "all_filtered" : "explicit";
-      const leadIds = selectionScope === "explicit" ? Array.from(selectedIds) : undefined;
-      const filter = selectionScope === "all_filtered" ? { ...appliedFilters, viewToken: "" } : undefined;
-      const res = await apiRequest("POST", "/api/leads/bulk/preview", { selectionScope, leadIds, filter, action: bulkAction, params: {} });
-      return await res.json();
-    },
-    onSuccess: (data) => setBulkPreview(data),
-  });
-
-  const bulkCreateJobMutation = useMutation({
-    mutationFn: async () => {
-      const selectionScope = selectionMode === "all_filtered" ? "all_filtered" : "explicit";
-      const leadIds = selectionScope === "explicit" ? Array.from(selectedIds) : undefined;
-      const filter = selectionScope === "all_filtered" ? { ...appliedFilters, viewToken: "" } : undefined;
-      const params =
-        bulkAction === "set_status"
-          ? { status: bulkStatus }
-          : bulkAction === "assign"
-            ? { assignedTo: Number(bulkAssignedTo) }
-            : {};
-      const res = await apiRequest("POST", "/api/leads/bulk/jobs", { selectionScope, leadIds, filter, action: bulkAction, params });
-      return await res.json();
-    },
-    onSuccess: (data) => {
-      const id = Number(data?.jobId || 0);
-      if (id) setBulkJobId(id);
-    },
-  });
-
-  const [voiceOpen, setVoiceOpen] = useState(false);
-  const [voiceTranscript, setVoiceTranscript] = useState("");
-  const [voiceParsed, setVoiceParsed] = useState<any | null>(null);
-  const [voicePreview, setVoicePreview] = useState<any | null>(null);
-  const [voiceActionLogId, setVoiceActionLogId] = useState<number | null>(null);
-
-  const toastVoiceError = (error: any) => {
-    const msg = String(error?.message || error || "");
-    if (msg.startsWith("404:")) {
-      toast({ title: "Voice", description: "Voice Playground is not enabled for your account." });
-      return;
+  const usersById = useMemo(() => {
+    const m = new Map<number, any>();
+    for (const u of usersList || []) {
+      const id = Number((u as any)?.id);
+      if (Number.isFinite(id) && id > 0) m.set(id, u);
     }
-    toast({ title: "Voice", description: msg || "Something went wrong." });
-  };
-
-  const buildFullAddress = (lead: any) => {
-    const address = String(lead?.address || "").trim();
-    const city = String(lead?.city || "").trim();
-    const state = String(lead?.state || "").trim();
-    const zip = String(lead?.zipCode || "").trim();
-    const left = [address, city].filter(Boolean).join(city ? ", " : "");
-    const right = [state, zip].filter(Boolean).join(" ");
-    return [left, right].filter(Boolean).join(right ? " " : "").trim();
-  };
-
-  const openVoiceForLeadId = (leadId: number) => {
-    const id = Number(leadId);
-    if (!Number.isFinite(id) || id <= 0) return;
-    setSelectionMode("explicit");
-    setSelectedIds(new Set([id]));
-    setExcludedIds(new Set());
-    setVoiceTranscript("");
-    setVoiceParsed(null);
-    setVoicePreview(null);
-    setVoiceActionLogId(null);
-    setVoiceOpen(true);
-  };
-
-  const voiceParseMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/ai/voice/parse", { transcript: voiceTranscript });
-      return await res.json();
-    },
-    onSuccess: (data) => {
-      setVoiceParsed(data);
-      setVoicePreview(null);
-      setVoiceActionLogId(null);
-    },
-    onError: toastVoiceError,
-  });
-
-  const voicePreviewMutation = useMutation({
-    mutationFn: async () => {
-      const parsedAction = String(voiceParsed?.action || "");
-      if (parsedAction === "playground_append_note") {
-        if (!voiceSelectedLead) throw new Error("Playground notes require exactly 1 selected lead");
-        const address = buildFullAddress(voiceSelectedLead);
-        if (!address) throw new Error("Missing lead address");
-        const res = await apiRequest("POST", "/api/ai/voice/preview", {
-          parsed: voiceParsed,
-          playground: { address, leadId: Number(voiceSelectedLead.id) },
-        });
-        return await res.json();
-      }
-      const leadIds = selectedIdsArr;
-      const res = await apiRequest("POST", "/api/ai/voice/preview", { parsed: voiceParsed, leadIds });
-      return await res.json();
-    },
-    onSuccess: (data) => setVoicePreview(data),
-    onError: toastVoiceError,
-  });
-
-  const voiceApplyMutation = useMutation({
-    mutationFn: async () => {
-      const parsedAction = String(voiceParsed?.action || "");
-      if (parsedAction === "playground_append_note") {
-        if (!voiceSelectedLead) throw new Error("Playground notes require exactly 1 selected lead");
-        const address = buildFullAddress(voiceSelectedLead);
-        if (!address) throw new Error("Missing lead address");
-        const res = await apiRequest("POST", "/api/ai/voice/apply", {
-          parsed: voiceParsed,
-          transcript: voiceTranscript,
-          playground: { address, leadId: Number(voiceSelectedLead.id) },
-        });
-        return await res.json();
-      }
-      const leadIds = selectedIdsArr;
-      const res = await apiRequest("POST", "/api/ai/voice/apply", { parsed: voiceParsed, transcript: voiceTranscript, leadIds });
-      return await res.json();
-    },
-    onSuccess: async (data: any) => {
-      const id = Number(data?.actionLogId || 0);
-      if (id) setVoiceActionLogId(id);
-      const exportId = Number(data?.exportId || 0);
-      const token = String(data?.token || "");
-      if (exportId && token) {
-        const url = `/api/crm/export/files/${exportId}/download?token=${encodeURIComponent(token)}`;
-        window.open(url, "_blank", "noopener,noreferrer");
-      }
-      await queryClient.invalidateQueries({ queryKey: leadsQueryKey });
-    },
-    onError: toastVoiceError,
-  });
-
-  const voiceUndoMutation = useMutation({
-    mutationFn: async () => {
-      if (!voiceActionLogId) throw new Error("Missing action id");
-      const res = await apiRequest("POST", "/api/ai/voice/undo", { aiActionLogId: voiceActionLogId });
-      return await res.json();
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: leadsQueryKey });
-    },
-    onError: toastVoiceError,
-  });
-
-  const { data: bulkJob } = useQuery<any>({
-    queryKey: ["/api/leads/bulk/jobs", bulkJobId],
-    enabled: !!bulkJobId,
-    queryFn: async () => {
-      const res = await apiRequest("GET", `/api/leads/bulk/jobs/${bulkJobId}`);
-      return await res.json();
-    },
-    refetchInterval: (q) => {
-      const s = String((q.state.data as any)?.status || "");
-      return s === "running" || s === "queued" ? 1500 : false;
-    },
-  });
-
-  const [didToastBulkJob, setDidToastBulkJob] = useState<number | null>(null);
-  useEffect(() => {
-    const id = Number(bulkJob?.id || bulkJobId || 0);
-    if (!id) return;
-    if (didToastBulkJob === id) return;
-    const status = String(bulkJob?.status || "");
-    if (status !== "completed" && status !== "failed") return;
-    setDidToastBulkJob(id);
-    if (status === "failed") {
-      toast({ title: "Bulk job failed", description: String(bulkJob?.resultJson?.error || "Something went wrong"), variant: "destructive" });
-      return;
-    }
-    if (String(bulkJob?.action || "") !== "export") {
-      toast({ title: "Bulk job completed", description: `${Number(bulkJob?.succeeded || 0).toLocaleString()} updated` });
-      queryClient.invalidateQueries({ queryKey: leadsQueryKey });
-    } else {
-      toast({ title: "Export ready", description: "Your export is downloading." });
-    }
-  }, [bulkJob, bulkJobId, didToastBulkJob, leadsQueryKey, queryClient, toast]);
-
-  useEffect(() => {
-    if (!bulkJob) return;
-    if (String(bulkJob.status) !== "completed") return;
-    if (String(bulkJob.action) !== "export") return;
-    const exportId = Number(bulkJob?.resultJson?.exportId || 0);
-    const token = String(bulkJob?.resultJson?.token || "");
-    if (!exportId || !token) return;
-    const url = `/api/crm/export/files/${exportId}/download?token=${encodeURIComponent(token)}`;
-    window.open(url, "_blank", "noopener,noreferrer");
-  }, [bulkJob]);
-
-  const savedViewToken = String(filters.viewToken || "").trim();
-  const { data: tokenViewResp } = useQuery<any>({
-    queryKey: ["/api/leads/views/by-token", savedViewToken],
-    enabled: !!savedViewToken,
-    queryFn: async () => {
-      const res = await apiRequest("GET", `/api/leads/views/by-token/${encodeURIComponent(savedViewToken)}`);
-      return await res.json();
-    },
-    retry: false,
-  });
-
-  useEffect(() => {
-    if (!tokenViewResp) return;
-    const cfg = parseLeadViewConfig((tokenViewResp as any).configJson);
-    setFilters((prev: any) => ({ ...prev, ...(cfg.filters || {}), viewToken: savedViewToken }));
-    if (cfg.sort?.key) setFilters((prev: any) => ({ ...prev, sortKey: cfg.sort?.key, sortDir: cfg.sort?.dir || "desc" }));
-    if (cfg.columns) {
-      setVisibleColumns(cfg.columns);
-    } else if ((tokenViewResp as any)?.id) {
-      try {
-        const colsRaw = localStorage.getItem(`leads.columns.view.${String((tokenViewResp as any).id)}`);
-        if (colsRaw) {
-          const parsed = JSON.parse(colsRaw);
-          if (parsed && typeof parsed === "object") setVisibleColumns(parsed);
-        }
-      } catch {}
-    }
-    if (cfg.density) {
-      setDensity(cfg.density);
-    } else if ((tokenViewResp as any)?.id) {
-      try {
-        const d = localStorage.getItem(`leads.density.view.${String((tokenViewResp as any).id)}`);
-        if (d === "dense" || d === "luxury") setDensity(d);
-      } catch {}
-    }
-    setSelectedView(tokenViewResp);
-  }, [savedViewToken, tokenViewResp]);
-
-  const [autosaveViewConfigKey, setAutosaveViewConfigKey] = useState<string>("");
-  useEffect(() => {
-    if (!selectedView?.id) return;
-    const id = Number(selectedView.id);
-    if (!id) return;
-    const baseCfg = parseLeadViewConfig(selectedView.configJson);
-    const nextCfg: LeadViewConfig = { ...baseCfg, columns: visibleColumns, density };
-    const key = JSON.stringify(nextCfg);
-    if (key === autosaveViewConfigKey) return;
-    const t = setTimeout(async () => {
-      try {
-        const res = await apiRequest("PATCH", `/api/leads/views/${id}`, { configJson: nextCfg });
-        const row = await res.json();
-        setSelectedView((prev: any) => (prev && Number(prev.id) === id ? row : prev));
-        setAutosaveViewConfigKey(key);
-      } catch {}
-    }, 750);
-    return () => clearTimeout(t);
-  }, [autosaveViewConfigKey, density, selectedView?.configJson, selectedView?.id, visibleColumns]);
+    return m;
+  }, [usersList]);
 
   const { data: leadPipelineConfig } = useQuery({
     queryKey: ["/api/pipeline-config", "lead"],
@@ -704,30 +339,6 @@ export default function Leads() {
     return statusOptions;
   }, [leadPipelineConfig]);
 
-  const missingPipelineStatuses = useMemo(() => {
-    const shown = new Set((pipelineColumns || []).map((c: any) => String(c.value || "")));
-    const missing = new Set<string>();
-    for (const l of leads) {
-      const s = String(l?.status || "").trim();
-      if (!s) continue;
-      if (!shown.has(s)) missing.add(s);
-    }
-    return Array.from(missing);
-  }, [leads, pipelineColumns]);
-
-  const pipelineColumnsWithMissing = useMemo(() => {
-    if (!missingPipelineStatuses.length) return pipelineColumns;
-    const append = missingPipelineStatuses.map((s) => ({
-      value: s,
-      label: s
-        .split("_")
-        .filter(Boolean)
-        .map((p) => p.slice(0, 1).toUpperCase() + p.slice(1))
-        .join(" "),
-    }));
-    return [...pipelineColumns, ...append];
-  }, [missingPipelineStatuses, pipelineColumns]);
-
   const { data: leadSourceOptions = [] } = useQuery<any[]>({
     queryKey: ["/api/lead-source-options"],
     queryFn: async () => {
@@ -740,22 +351,17 @@ export default function Leads() {
     },
   });
 
-  const { data: activeTeamResp } = useQuery<any>({
-    queryKey: ["/api/teams/active"],
-  });
-
-  const activeTeamId = typeof activeTeamResp?.teamId === "number" ? activeTeamResp.teamId : null;
-
-  const { data: teamMembers = [] } = useQuery<any[]>({
-    queryKey: ["/api/teams", activeTeamId, "members"],
-    enabled: !!activeTeamId,
-  });
-
-  const teamUsers = useMemo(() => (Array.isArray(teamMembers) ? teamMembers.map((m: any) => m?.user).filter(Boolean) : []), [teamMembers]);
-
   const leadSourceOptionValues = useMemo(() => {
     return new Set((leadSourceOptions || []).map((o: any) => String(o?.value || "")));
   }, [leadSourceOptions]);
+
+  const { data: viewsResp, refetch: refetchViews } = useQuery<any>({
+    queryKey: ["/api/leads/views"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/leads/views");
+      return await res.json();
+    },
+  });
 
   const openEditLead = (lead: any) => {
     const rawSource = String(lead?.source || "").trim();
@@ -765,7 +371,6 @@ export default function Leads() {
     setEditingLead({
       ...lead,
       estimatedValue: lead?.estimatedValue || "",
-      assignedTo: lead?.assignedTo ? String(lead.assignedTo) : "",
       source: shouldUseCustom ? CUSTOM_SOURCE_VALUE : rawSource,
     });
   };
@@ -787,7 +392,7 @@ export default function Leads() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
-      setNewLead({ address: "", city: "", state: "FL", zipCode: "", ownerName: "", ownerPhone: "", ownerEmail: "", estimatedValue: "", source: "", status: "new", assignedTo: "" });
+      setNewLead({ address: "", city: "", state: "FL", zipCode: "", ownerName: "", ownerPhone: "", ownerEmail: "", estimatedValue: "", source: "", status: "new" });
       setNewLeadOtherSource("");
       setIsAddDialogOpen(false);
       toast({
@@ -839,22 +444,6 @@ export default function Leads() {
         description: String(error?.message || error),
         variant: "destructive",
       });
-    },
-  });
-
-  const addNoteMutation = useMutation({
-    mutationFn: async ({ leadId, body }: { leadId: number; body: string }) => {
-      const res = await apiRequest("POST", `/api/leads/${leadId}/notes`, { body });
-      return await res.json();
-    },
-    onSuccess: async (_note: any, vars: any) => {
-      await queryClient.invalidateQueries({ queryKey: ["leads"] });
-      await queryClient.invalidateQueries({ queryKey: leadsQueryKey });
-      if (vars?.leadId) {
-        await queryClient.invalidateQueries({ queryKey: ["/api/leads", vars.leadId] });
-        await queryClient.invalidateQueries({ queryKey: ["/api/leads/notes", vars.leadId] });
-      }
-      queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
     },
   });
 
@@ -915,6 +504,167 @@ export default function Leads() {
     }
   });
 
+  const saveViewMutation = useMutation({
+    mutationFn: async (payload: { name: string; visibility: "private" | "team" | "link" }) => {
+      const configJson = {
+        filters: appliedFilters,
+        sortKey,
+        sortDir,
+        cols: Array.from(visibleColumns.values()),
+      };
+      const res = await apiRequest("POST", "/api/leads/views", { name: payload.name, visibility: payload.visibility, configJson });
+      return await res.json();
+    },
+    onSuccess: async () => {
+      await refetchViews();
+      setSaveViewDialogOpen(false);
+      setSaveViewName("");
+      setSaveViewVisibility("private");
+      toast({ title: "View saved", description: "Saved view is ready." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Save failed", description: String(error?.message || error), variant: "destructive" });
+    },
+  });
+
+  const [bulkDialogKind, setBulkDialogKind] = useState<null | "assign" | "add_tags" | "remove_tags" | "set_status" | "archive" | "export">(null);
+  const [bulkAssignTo, setBulkAssignTo] = useState<string>("");
+  const [bulkStatus, setBulkStatus] = useState<string>("new");
+  const [bulkTags, setBulkTags] = useState<string>("");
+  const [bulkExportFormat, setBulkExportFormat] = useState<"csv" | "xlsx">("csv");
+  const [bulkArchiveConfirm, setBulkArchiveConfirm] = useState(false);
+  const [activeBulkJobId, setActiveBulkJobId] = useState<number | null>(null);
+
+  const bulkSelectionScope = selectionMode === "explicit" ? "explicit" : "all_filtered";
+  const bulkLeadIds = useMemo(() => Array.from(selectedIds.values()), [selectedIds]);
+  const bulkQuery = useMemo(() => {
+    return {
+      q: appliedFilters.query.trim() || undefined,
+      status: appliedFilters.status && appliedFilters.status !== "all" ? appliedFilters.status : undefined,
+      owner: appliedFilters.owner.trim() || undefined,
+      zip: appliedFilters.zip.trim() || undefined,
+      state: appliedFilters.state.trim() || undefined,
+      city: appliedFilters.city.trim() || undefined,
+      assignedTo: appliedFilters.assignedTo || undefined,
+      tags: appliedFilters.tags.trim()
+        ? appliedFilters.tags
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean)
+        : undefined,
+      contactPresence: appliedFilters.contactPresence || undefined,
+      archived: appliedFilters.archived || undefined,
+      hasNotes: appliedFilters.hasNotes || undefined,
+      createdFrom: appliedFilters.createdFrom ? new Date(`${appliedFilters.createdFrom}T00:00:00`).toISOString() : undefined,
+      createdTo: appliedFilters.createdTo ? new Date(`${appliedFilters.createdTo}T23:59:59`).toISOString() : undefined,
+      sortKey,
+      sortDir,
+    };
+  }, [appliedFilters, sortKey, sortDir]);
+
+  const bulkPreviewQuery = useQuery<any>({
+    queryKey: ["leads-bulk-preview", bulkDialogKind, bulkSelectionScope, selectionSignature, bulkLeadIds],
+    enabled: Boolean(bulkDialogKind) && selectedCount > 0,
+    queryFn: async () => {
+      const action =
+        bulkDialogKind === "assign"
+          ? "assign"
+          : bulkDialogKind === "set_status"
+            ? "set_status"
+            : bulkDialogKind === "add_tags"
+              ? "add_tags"
+              : bulkDialogKind === "remove_tags"
+                ? "remove_tags"
+                : bulkDialogKind === "archive"
+                  ? "archive"
+                  : bulkDialogKind === "export"
+                    ? "export"
+                    : "";
+      const res = await apiRequest("POST", "/api/leads/bulk/preview", {
+        action,
+        selectionScope: bulkSelectionScope,
+        leadIds: bulkSelectionScope === "explicit" ? bulkLeadIds : undefined,
+        query: bulkSelectionScope === "all_filtered" ? bulkQuery : undefined,
+      });
+      return await res.json();
+    },
+  });
+
+  const createBulkJobMutation = useMutation({
+    mutationFn: async () => {
+      if (!bulkDialogKind) throw new Error("Missing action");
+      const action =
+        bulkDialogKind === "assign"
+          ? "assign"
+          : bulkDialogKind === "set_status"
+            ? "set_status"
+            : bulkDialogKind === "add_tags"
+              ? "add_tags"
+              : bulkDialogKind === "remove_tags"
+                ? "remove_tags"
+                : bulkDialogKind === "archive"
+                  ? "archive"
+                  : bulkDialogKind === "export"
+                    ? "export"
+                    : "";
+      const params: any = {};
+      if (bulkDialogKind === "assign") params.assignedTo = bulkAssignTo ? parseInt(bulkAssignTo, 10) : null;
+      if (bulkDialogKind === "set_status") params.status = bulkStatus;
+      if (bulkDialogKind === "add_tags" || bulkDialogKind === "remove_tags") params.tags = bulkTags;
+      if (bulkDialogKind === "export") {
+        params.format = bulkExportFormat;
+        params.columns = Array.from(visibleColumns.values());
+      }
+      const res = await apiRequest("POST", "/api/leads/bulk/jobs", {
+        action,
+        selectionScope: bulkSelectionScope,
+        leadIds: bulkSelectionScope === "explicit" ? bulkLeadIds : undefined,
+        query: bulkSelectionScope === "all_filtered" ? bulkQuery : undefined,
+        params,
+      });
+      return await res.json();
+    },
+    onSuccess: (data: any) => {
+      const jobId = Number(data?.jobId);
+      if (Number.isFinite(jobId) && jobId > 0) setActiveBulkJobId(jobId);
+      setBulkDialogKind(null);
+      toast({ title: "Bulk job started", description: "Processing in background." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Bulk action failed", description: String(error?.message || error), variant: "destructive" });
+    },
+  });
+
+  const bulkJobQuery = useQuery<any>({
+    queryKey: ["leads-bulk-job", activeBulkJobId],
+    enabled: Boolean(activeBulkJobId),
+    refetchInterval: 2000,
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/leads/bulk/jobs/${activeBulkJobId}`);
+      return await res.json();
+    },
+  });
+
+  useEffect(() => {
+    const status = String(bulkJobQuery.data?.status || "");
+    if (!activeBulkJobId) return;
+    if (status !== "completed" && status !== "failed") return;
+    const result = bulkJobQuery.data?.resultJson;
+    if (result?.downloadUrl) {
+      toast({ title: "Export ready", description: "Download is ready." });
+      window.open(String(result.downloadUrl), "_blank");
+    } else {
+      toast({ title: "Bulk job complete", description: `Succeeded: ${bulkJobQuery.data?.succeeded ?? 0}, Failed: ${bulkJobQuery.data?.failed ?? 0}` });
+    }
+    queryClient.invalidateQueries({ queryKey: ["leads"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+    setActiveBulkJobId(null);
+    if (selectionMode === "explicit") setSelectedIds(new Set());
+    else setExcludedIds(new Set());
+    setSelectionMode("explicit");
+    setSelectionModeSignature("");
+  }, [bulkJobQuery.data, activeBulkJobId]);
+
   const handleAddLead = async () => {
     if (!newLead.address || !newLead.city || !newLead.zipCode || !newLead.ownerName) {
       toast({ title: "Missing required fields", variant: "destructive" });
@@ -928,9 +678,7 @@ export default function Leads() {
       return;
     }
 
-    const assignedTo =
-      newLead.assignedTo && newLead.assignedTo !== "__unassigned__" ? parseInt(String(newLead.assignedTo), 10) : null;
-    createMutation.mutate({ ...newLead, source, assignedTo: Number.isFinite(assignedTo as any) ? assignedTo : null });
+    createMutation.mutate({ ...newLead, source });
   };
 
   const handleUpdateLead = async () => {
@@ -946,14 +694,7 @@ export default function Leads() {
 
       updateMutation.mutate({
         id: editingLead.id,
-        data: {
-          ...editingLead,
-          assignedTo:
-            editingLead.assignedTo && editingLead.assignedTo !== "__unassigned__"
-              ? parseInt(String(editingLead.assignedTo), 10)
-              : null,
-          source: source || null,
-        },
+        data: { ...editingLead, source: source || null },
       });
     }
   };
@@ -980,112 +721,91 @@ export default function Leads() {
     return leads || [];
   }, [leads]);
 
+  const isLeadSelected = (id: number) => {
+    if (selectionMode === "explicit") return selectedIds.has(id);
+    return !excludedIds.has(id);
+  };
+
+  const toggleLeadSelected = (id: number, nextChecked: boolean) => {
+    if (selectionMode === "explicit") {
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        if (nextChecked) next.add(id);
+        else next.delete(id);
+        return next;
+      });
+      return;
+    }
+    setExcludedIds((prev) => {
+      const next = new Set(prev);
+      if (nextChecked) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const pageSelection = useMemo(() => {
+    const ids = filteredLeads.map((l: any) => Number(l?.id)).filter((n: any) => Number.isFinite(n) && n > 0);
+    const selectedOnPage = ids.filter((id: number) => isLeadSelected(id)).length;
+    return { ids, selectedOnPage, allOnPage: ids.length > 0 && selectedOnPage === ids.length, someOnPage: selectedOnPage > 0 && selectedOnPage < ids.length };
+  }, [filteredLeads, selectionMode, selectedIds, excludedIds]);
+
   const selectedLead = useMemo(() => {
     if (!selectedLeadId) return null;
     return (leads || []).find((l: any) => l.id === selectedLeadId) || null;
   }, [leads, selectedLeadId]);
 
-  const selectedCount = useMemo(() => {
-    if (selectionMode === "all_filtered") return Math.max(0, leadsTotal - excludedIds.size);
-    return selectedIds.size;
-  }, [excludedIds.size, leadsTotal, selectedIds.size, selectionMode]);
+  const { data: skipTraceLatest } = useQuery<any>({
+    queryKey: ["/api/leads", selectedLeadId, "skip-trace-latest"],
+    enabled: !!selectedLeadId && isLeadSheetOpen,
+    queryFn: async () => {
+      try {
+        const res = await apiRequest("GET", `/api/leads/${selectedLeadId}/skip-trace/latest`);
+        return await res.json();
+      } catch (e: any) {
+        const msg = String(e?.message || e);
+        if (msg.startsWith("404:")) return null;
+        throw e;
+      }
+    },
+  });
 
-  const isSelected = (id: number) => {
-    if (selectionMode === "all_filtered") return !excludedIds.has(id);
-    return selectedIds.has(id);
-  };
-
-  const toggleRow = (id: number, checked: boolean) => {
-    if (selectionMode === "all_filtered") {
-      setExcludedIds((prev) => {
-        const next = new Set(prev);
-        if (checked) next.delete(id);
-        else next.add(id);
-        return next;
-      });
-      return;
-    }
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  };
-
-  const toggleAllLoaded = (checked: boolean) => {
-    const ids = (filteredLeads || []).map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n) && n > 0);
-    if (!ids.length) return;
-    setSelectionMode("explicit");
-    setExcludedIds(new Set());
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (checked) ids.forEach((id) => next.add(id));
-      else ids.forEach((id) => next.delete(id));
-      return next;
-    });
-  };
+  const skipTraceMutation = useMutation({
+    mutationFn: async (leadId: number) => {
+      try {
+        const res = await apiRequest("POST", `/api/leads/${leadId}/skip-trace`, {});
+        return await res.json();
+      } catch (e: any) {
+        const msg = String(e?.message || e);
+        if (msg.startsWith("404:")) throw new Error("Skip trace is disabled");
+        throw e;
+      }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/leads", selectedLeadId, "skip-trace-latest"] });
+      await queryClient.invalidateQueries({ queryKey: ["leads"] });
+      toast({ title: "Skip trace completed" });
+    },
+    onError: (e: any) => {
+      toast({ title: e?.message || "Skip trace failed", variant: "destructive" });
+    },
+  });
 
   useEffect(() => {
     if (didApplyQueryLead) return;
     if (!leadIdFromQuery) return;
     if (isLoading) return;
-    const apply = () => {
-      setFilters({
-        query: "",
-        status: "all",
-        statusIn: "",
-        owner: "",
-        zip: "",
-        state: "",
-        city: "",
-        county: "",
-        leadType: "",
-        assignedTo: "",
-        tags: "",
-        tagsMode: "any",
-        contactPresence: "",
-        scoreMin: "",
-        scoreMax: "",
-        archived: "exclude",
-        hasNotes: "",
-        noteUpdatedWithinDays: "",
-        lastTouchFrom: "",
-        lastTouchTo: "",
-        nextFollowUpFrom: "",
-        nextFollowUpTo: "",
-        createdFrom: "",
-        createdTo: "",
-        sortKey: "newest_imported",
-        sortDir: "desc",
-        viewToken: "",
-      });
-      setSelectedLeadId(leadIdFromQuery);
-      setHighlightLeadId(leadIdFromQuery);
-      setIsLeadSheetOpen(true);
-      setDidApplyQueryLead(true);
-      setTimeout(() => {
-        const el = document.querySelector(`[data-testid="row-lead-${leadIdFromQuery}"]`);
-        if (el) (el as HTMLElement).scrollIntoView({ block: "center" });
-      }, 0);
-    };
-
     const found = (leads || []).some((l: any) => l.id === leadIdFromQuery);
-    if (found) {
-      apply();
-      return;
-    }
-
-    (async () => {
-      try {
-        const res = await apiRequest("GET", `/api/leads/${leadIdFromQuery}`);
-        const lead = await res.json();
-        setForcedLead(lead);
-        apply();
-      } catch (e: any) {
-        toast({ title: e?.message || "Lead not found", variant: "destructive" });
-      }
-    })();
+    if (!found) return;
+    setFilters(defaultLeadFilters);
+    setSelectedLeadId(leadIdFromQuery);
+    setHighlightLeadId(leadIdFromQuery);
+    setIsLeadSheetOpen(true);
+    setDidApplyQueryLead(true);
+    setTimeout(() => {
+      const el = document.querySelector(`[data-testid="row-lead-${leadIdFromQuery}"]`);
+      if (el) (el as HTMLElement).scrollIntoView({ block: "center" });
+    }, 0);
   }, [didApplyQueryLead, isLoading, leadIdFromQuery, leads]);
 
   const openLead = (id: number) => {
@@ -1094,37 +814,30 @@ export default function Leads() {
     setIsLeadSheetOpen(true);
   };
 
+  const applySavedView = (view: LeadSavedView) => {
+    const cfg = (view as any)?.configJson;
+    const nextFilters = cfg?.filters && typeof cfg.filters === "object" ? { ...defaultLeadFilters, ...cfg.filters } : defaultLeadFilters;
+    const nextSortKey = cfg?.sortKey ? (cfg.sortKey as LeadSortKey) : sortKey;
+    const nextSortDir = cfg?.sortDir === "asc" ? "asc" : "desc";
+    const nextCols = Array.isArray(cfg?.cols) ? new Set<LeadColumnId>(cfg.cols) : visibleColumns;
+    setFilters(nextFilters);
+    setSort({ sortKey: nextSortKey, sortDir: nextSortDir });
+    setVisibleColumns(nextCols);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  };
+
+  const applySystemView = (systemId: string) => {
+    const today = new Date().toISOString().slice(0, 10);
+    if (systemId === "unassigned") setFilters({ ...defaultLeadFilters, assignedTo: "unassigned" });
+    else if (systemId === "no_contact") setFilters({ ...defaultLeadFilters, contactPresence: "none" });
+    else if (systemId === "new_today") setFilters({ ...defaultLeadFilters, createdFrom: today, createdTo: today });
+    else setFilters(defaultLeadFilters);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  };
+
   const clearFilters = () => {
-    setFilters((prev: any) => ({
-      ...prev,
-      query: "",
-      status: "all",
-      statusIn: "",
-      owner: "",
-      zip: "",
-      state: "",
-      city: "",
-      county: "",
-      leadType: "",
-      assignedTo: "",
-      tags: "",
-      tagsMode: "any",
-      contactPresence: "",
-      scoreMin: "",
-      scoreMax: "",
-      archived: "exclude",
-      hasNotes: "",
-      noteUpdatedWithinDays: "",
-      lastTouchFrom: "",
-      lastTouchTo: "",
-      nextFollowUpFrom: "",
-      nextFollowUpTo: "",
-      createdFrom: "",
-      createdTo: "",
-      sortKey: "newest_imported",
-      sortDir: "desc",
-      viewToken: "",
-    }));
+    setFilters(defaultLeadFilters);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
   };
 
   if (isLoading) {
@@ -1141,30 +854,6 @@ export default function Leads() {
         <div className="space-y-1">
           <h1 className="text-3xl font-bold tracking-tight">Leads Pipeline</h1>
           <p className="text-muted-foreground">Manage and track your active property leads.</p>
-          {leadsTotal ? (
-            <div className="text-xs text-muted-foreground">
-              Showing {Math.min(leads.length, leadsTotal).toLocaleString()} of {leadsTotal.toLocaleString()}
-            </div>
-          ) : null}
-          {filters.statusIn?.trim() ? (
-            <div className="flex items-center gap-2 text-xs">
-              <Badge variant="secondary">Multi-status</Badge>
-              <span className="text-muted-foreground">{filters.statusIn}</span>
-              <button
-                type="button"
-                className="text-primary hover:underline"
-                onClick={() =>
-                  setFilters((prev: any) => ({
-                    ...prev,
-                    statusIn: "",
-                    status: "all",
-                  }))
-                }
-              >
-                Clear
-              </button>
-            </div>
-          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <CrmImportExportDialog entityType="lead" />
@@ -1178,537 +867,33 @@ export default function Leads() {
               data-testid="input-leads-search"
             />
           </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
-                <ListFilter className="mr-2 h-4 w-4" />
-                {selectedView?.name ? selectedView.name : "Views"}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-[260px]">
-              <DropdownMenuItem
-                onClick={() => {
-                  setSelectedView(null);
-                  setAutosaveViewConfigKey("");
-                  setFilters((prev: any) => ({ ...prev, viewToken: "" }));
-                }}
-              >
-                Default (No view)
-              </DropdownMenuItem>
-              {savedViews.length ? <DropdownMenuSeparator /> : null}
-              {savedViews.map((v: any) => (
-                <DropdownMenuItem
-                  key={v.id}
-                  onClick={() => {
-                    const cfg = parseLeadViewConfig(v.configJson);
-                    setFilters((prev: any) => ({
-                      ...prev,
-                      ...(cfg.filters || {}),
-                      sortKey: cfg.sort?.key || prev.sortKey,
-                      sortDir: cfg.sort?.dir || prev.sortDir,
-                      viewToken: v.visibility === "link" ? String(v.shareToken || "") : "",
-                    }));
-                    if (cfg.columns) {
-                      setVisibleColumns(cfg.columns);
-                    } else {
-                      try {
-                        const colsRaw = localStorage.getItem(`leads.columns.view.${String(v.id)}`);
-                        if (colsRaw) {
-                          const parsed = JSON.parse(colsRaw);
-                          if (parsed && typeof parsed === "object") setVisibleColumns(parsed);
-                        }
-                      } catch {}
-                    }
-                    if (cfg.density) {
-                      setDensity(cfg.density);
-                    } else {
-                      try {
-                        const d = localStorage.getItem(`leads.density.view.${String(v.id)}`);
-                        if (d === "dense" || d === "luxury") setDensity(d);
-                      } catch {}
-                    }
-                    setSelectedView(v);
-                    setAutosaveViewConfigKey("");
-                  }}
-                >
-                  {v.name}
-                </DropdownMenuItem>
-              ))}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={() => {
-                  setSaveViewMode("create");
-                  setSaveViewName("");
-                  setSaveViewVisibility("private");
-                  setSaveViewOpen(true);
-                }}
-              >
-                Save as new view…
-              </DropdownMenuItem>
-              {selectedView?.id ? (
-                <DropdownMenuItem
-                  onClick={() => {
-                    setSaveViewMode("update");
-                    setSaveViewName(String(selectedView?.name || ""));
-                    setSaveViewVisibility((selectedView?.visibility as any) || "private");
-                    setSaveViewOpen(true);
-                  }}
-                >
-                  Update this view…
-                </DropdownMenuItem>
-              ) : null}
-              {selectedView?.shareToken ? (
-                <DropdownMenuItem
-                  onClick={async () => {
-                    const url = `${window.location.origin}/leads?viewToken=${encodeURIComponent(String(selectedView.shareToken))}`;
-                    try {
-                      await navigator.clipboard.writeText(url);
-                      toast({ title: "Link copied" });
-                    } catch {
-                      toast({ title: "Could not copy link", variant: "destructive" });
-                    }
-                  }}
-                >
-                  Copy share link
-                </DropdownMenuItem>
-              ) : null}
-              {selectedView?.id ? (
-                <DropdownMenuItem
-                  className="text-destructive focus:text-destructive"
-                  onClick={() => deleteSavedViewMutation.mutate(Number(selectedView.id))}
-                >
-                  Delete view
-                </DropdownMenuItem>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm">
-                <Columns2 className="mr-2 h-4 w-4" />
-                Columns
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-[220px]">
-              {[
-                { key: "address", label: "Address" },
-                { key: "owner", label: "Owner" },
-                { key: "status", label: "Status" },
-                { key: "score", label: "Score" },
-                { key: "value", label: "Value" },
-                { key: "contact", label: "Contact" },
-                { key: "notes", label: "Notes" },
-              ].map((c) => (
-                <DropdownMenuCheckboxItem
-                  key={c.key}
-                  checked={!!visibleColumns[c.key]}
-                  onCheckedChange={(checked) => setVisibleColumns((prev) => ({ ...prev, [c.key]: !!checked }))}
-                >
-                  {c.label}
-                </DropdownMenuCheckboxItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <Button variant="outline" size="sm" onClick={() => setDensity((d) => (d === "dense" ? "luxury" : "dense"))}>
-            {density === "dense" ? "Dense" : "Luxury"}
-          </Button>
-
-          <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
-            <SheetTrigger asChild>
-              <Button variant="outline" size="sm" data-testid="button-leads-filter">
-                <Filter className="mr-2 h-4 w-4" /> Filters
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="right" className="w-[min(520px,100vw)] overflow-y-auto">
-              <SheetHeader>
-                <SheetTitle>Filters</SheetTitle>
-              </SheetHeader>
-              <div className="mt-4 space-y-4">
-                <div className="space-y-2">
-                  <Label>Status</Label>
-                  <Select value={filters.status} onValueChange={(value) => setFilters((prev: any) => ({ ...prev, status: value }))}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All</SelectItem>
-                      {pipelineColumnsWithMissing.map((option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>ZIP</Label>
-                    <Input value={filters.zip} onChange={(e) => setFilters((prev: any) => ({ ...prev, zip: e.target.value }))} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>State</Label>
-                    <Input value={filters.state} onChange={(e) => setFilters((prev: any) => ({ ...prev, state: e.target.value }))} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>City</Label>
-                    <Input value={filters.city} onChange={(e) => setFilters((prev: any) => ({ ...prev, city: e.target.value }))} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>County</Label>
-                    <Input value={filters.county} onChange={(e) => setFilters((prev: any) => ({ ...prev, county: e.target.value }))} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Lead Type</Label>
-                    <Input value={filters.leadType} onChange={(e) => setFilters((prev: any) => ({ ...prev, leadType: e.target.value }))} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Assigned To</Label>
-                    <Input value={filters.assignedTo} onChange={(e) => setFilters((prev: any) => ({ ...prev, assignedTo: e.target.value }))} placeholder="user id or unassigned" />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Owner</Label>
-                  <Input value={filters.owner} onChange={(e) => setFilters((prev: any) => ({ ...prev, owner: e.target.value }))} />
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Tags (comma-separated)</Label>
-                  <Input value={filters.tags} onChange={(e) => setFilters((prev: any) => ({ ...prev, tags: e.target.value }))} />
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Tags Mode</Label>
-                    <Select value={filters.tagsMode || "any"} onValueChange={(v) => setFilters((prev: any) => ({ ...prev, tagsMode: v }))}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="any">Any</SelectItem>
-                        <SelectItem value="all">All</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Contact Presence</Label>
-                    <Select value={filters.contactPresence || ""} onValueChange={(v) => setFilters((prev: any) => ({ ...prev, contactPresence: v }))}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Any" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="">Any</SelectItem>
-                        <SelectItem value="phone_only">Phone only</SelectItem>
-                        <SelectItem value="email_only">Email only</SelectItem>
-                        <SelectItem value="both">Both</SelectItem>
-                        <SelectItem value="none">None</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label>Note updated within (days)</Label>
-                  <Input value={filters.noteUpdatedWithinDays} onChange={(e) => setFilters((prev: any) => ({ ...prev, noteUpdatedWithinDays: e.target.value }))} placeholder="e.g. 7" />
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Archived</Label>
-                    <Select value={filters.archived} onValueChange={(v) => setFilters((prev: any) => ({ ...prev, archived: v }))}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="exclude">Exclude</SelectItem>
-                        <SelectItem value="include">Include</SelectItem>
-                        <SelectItem value="only">Only</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Has Notes</Label>
-                    <Select value={filters.hasNotes || ""} onValueChange={(v) => setFilters((prev: any) => ({ ...prev, hasNotes: v }))}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Any" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="">Any</SelectItem>
-                        <SelectItem value="true">Yes</SelectItem>
-                        <SelectItem value="false">No</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Score Min</Label>
-                    <Input value={filters.scoreMin} onChange={(e) => setFilters((prev: any) => ({ ...prev, scoreMin: e.target.value }))} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Score Max</Label>
-                    <Input value={filters.scoreMax} onChange={(e) => setFilters((prev: any) => ({ ...prev, scoreMax: e.target.value }))} />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Created From</Label>
-                    <Input type="date" value={filters.createdFrom} onChange={(e) => setFilters((prev: any) => ({ ...prev, createdFrom: e.target.value }))} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Created To</Label>
-                    <Input type="date" value={filters.createdTo} onChange={(e) => setFilters((prev: any) => ({ ...prev, createdTo: e.target.value }))} />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Last Touch From</Label>
-                    <Input type="date" value={filters.lastTouchFrom} onChange={(e) => setFilters((prev: any) => ({ ...prev, lastTouchFrom: e.target.value }))} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Last Touch To</Label>
-                    <Input type="date" value={filters.lastTouchTo} onChange={(e) => setFilters((prev: any) => ({ ...prev, lastTouchTo: e.target.value }))} />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <Label>Next Follow-up From</Label>
-                    <Input type="date" value={filters.nextFollowUpFrom} onChange={(e) => setFilters((prev: any) => ({ ...prev, nextFollowUpFrom: e.target.value }))} />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Next Follow-up To</Label>
-                    <Input type="date" value={filters.nextFollowUpTo} onChange={(e) => setFilters((prev: any) => ({ ...prev, nextFollowUpTo: e.target.value }))} />
-                  </div>
-                </div>
-
-                <div className="flex justify-between">
-                  <Button variant="ghost" onClick={clearFilters}>
-                    Clear
-                  </Button>
-                  <Button variant="secondary" onClick={() => setFilterOpen(false)}>
-                    Done
-                  </Button>
-                </div>
-              </div>
-            </SheetContent>
-          </Sheet>
-
-          {hasNextPage ? (
-            <>
-              <Button variant="outline" size="sm" onClick={() => fetchNextPage()} disabled={isFetchingNextPage} data-testid="button-leads-load-more">
-                {isFetchingNextPage ? "Loading…" : "Load more"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  let guard = 0;
-                  while (guard < 50) {
-                    guard += 1;
-                    const res = await fetchNextPage();
-                    const pages = (res as any)?.data?.pages || [];
-                    const last = pages[pages.length - 1];
-                    const total = Number(last?.total || 0);
-                    const loaded = pages.reduce((acc: number, p: any) => acc + (Array.isArray(p?.items) ? p.items.length : 0), 0);
-                    if (!total || loaded >= total) break;
-                  }
-                }}
-                disabled={isFetchingNextPage}
-                data-testid="button-leads-load-all"
-              >
-                Load all
-              </Button>
-            </>
-          ) : null}
+          <SavedViewsDropdown
+            label="Views"
+            views={Array.isArray((viewsResp as any)?.items) ? ((viewsResp as any).items as LeadSavedView[]) : []}
+            onSelectSystem={(systemId) => applySystemView(systemId)}
+            onSelectView={(view) => applySavedView(view)}
+            onSaveCurrent={() => {
+              setSaveViewName("");
+              setSaveViewVisibility("private");
+              setSaveViewDialogOpen(true);
+            }}
+          />
+          <SortMenu sortKey={sortKey} sortDir={sortDir} onChange={(next) => { setSort(next); setPagination((p) => ({ ...p, pageIndex: 0 })); }} />
+          <AdvancedFilterDrawer value={filters} onChange={(next) => { setFilters(next); setPagination((p) => ({ ...p, pageIndex: 0 })); }} onClear={clearFilters} />
+          <ColumnChooser
+            visible={visibleColumns}
+            onToggle={(id) => {
+              setVisibleColumns((prev) => {
+                const next = new Set(prev);
+                if (next.has(id)) next.delete(id);
+                else next.add(id);
+                return next;
+              });
+            }}
+            onRestoreDefaults={() => setVisibleColumns(new Set(leadColumnsCatalog.filter((c) => c.defaultVisible).map((c) => c.id)))}
+          />
+          <VoiceActionButton selectionScope={bulkSelectionScope as any} leadIds={bulkLeadIds} query={bulkQuery} />
           
-          <Dialog open={saveViewOpen} onOpenChange={setSaveViewOpen}>
-            <DialogContent className="sm:max-w-[420px]">
-              <DialogHeader>
-                <DialogTitle>{saveViewMode === "update" ? "Update View" : "Save View"}</DialogTitle>
-                <DialogDescription>Save filters, sorting, columns, and density.</DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
-                <div className="space-y-2">
-                  <Label>Name</Label>
-                  <Input value={saveViewName} onChange={(e) => setSaveViewName(e.target.value)} placeholder="e.g. High Score Orlando" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Visibility</Label>
-                  <Select value={saveViewVisibility} onValueChange={(v: any) => setSaveViewVisibility(v)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="private">Private</SelectItem>
-                      <SelectItem value="team">Team</SelectItem>
-                      <SelectItem value="link">Link</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <DialogFooter>
-                <Button
-                  onClick={async () => {
-                    const name = saveViewName.trim();
-                    if (!name) {
-                      toast({ title: "Name is required", variant: "destructive" });
-                      return;
-                    }
-                    const cfg: LeadViewConfig = {
-                      filters: { ...filters, viewToken: "" },
-                      sort: { key: filters.sortKey, dir: filters.sortDir },
-                      columns: visibleColumns,
-                      density,
-                    };
-                    const row =
-                      saveViewMode === "update" && selectedView?.id
-                        ? await updateSavedViewMutation.mutateAsync({
-                            id: Number(selectedView.id),
-                            name,
-                            visibility: saveViewVisibility,
-                            configJson: cfg,
-                          })
-                        : await createSavedViewMutation.mutateAsync({ name, visibility: saveViewVisibility, configJson: cfg });
-                    if (saveViewVisibility === "link") {
-                      setFilters((prev: any) => ({ ...prev, viewToken: String(row?.shareToken || "") }));
-                    } else {
-                      setFilters((prev: any) => ({ ...prev, viewToken: "" }));
-                    }
-                    setSelectedView(row);
-                    setAutosaveViewConfigKey("");
-                    setSaveViewOpen(false);
-                  }}
-                  disabled={createSavedViewMutation.isPending || updateSavedViewMutation.isPending}
-                >
-                  {createSavedViewMutation.isPending || updateSavedViewMutation.isPending ? "Saving..." : "Save"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
-          <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
-            <DialogContent className="sm:max-w-[520px]">
-              <DialogHeader>
-                <DialogTitle>Bulk actions</DialogTitle>
-                <DialogDescription>Preview first, then run as an async job.</DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-2">
-                <div className="grid gap-2">
-                  <Label>Action</Label>
-                  <Select value={bulkAction} onValueChange={(v: any) => setBulkAction(v)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="set_status">Set status</SelectItem>
-                      <SelectItem value="assign">Assign</SelectItem>
-                      <SelectItem value="archive">Archive</SelectItem>
-                      <SelectItem value="unarchive">Unarchive</SelectItem>
-                      <SelectItem value="export">Export CSV</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {bulkAction === "set_status" ? (
-                  <div className="grid gap-2">
-                    <Label>Status</Label>
-                    <Select value={bulkStatus} onValueChange={(v) => setBulkStatus(v)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {pipelineColumnsWithMissing.map((o) => (
-                          <SelectItem key={o.value} value={o.value}>
-                            {o.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : null}
-
-                {bulkAction === "assign" ? (
-                  <div className="grid gap-2">
-                    <Label>Assign to</Label>
-                    <Select value={bulkAssignedTo} onValueChange={(v) => setBulkAssignedTo(v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select user" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {teamUsers.map((u: any) => (
-                          <SelectItem key={u.id} value={String(u.id)}>
-                            {u.firstName || u.lastName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.email}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : null}
-
-                <div className="rounded-md border px-3 py-2 text-sm">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-muted-foreground">Selection</div>
-                    <div className="font-medium">
-                      {selectedCount.toLocaleString()} {selectionMode === "all_filtered" ? "(all filtered)" : ""}
-                    </div>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-3">
-                    <div className="text-muted-foreground">Preview targets</div>
-                    <div className="font-medium">
-                      {bulkPreview ? Number(bulkPreview.totalTargets || 0).toLocaleString() : bulkPreviewMutation.isPending ? "…" : "—"}
-                    </div>
-                  </div>
-                </div>
-
-                {bulkJobId ? (
-                  <div className="rounded-md border px-3 py-2 text-sm">
-                    <div className="flex items-center justify-between">
-                      <div className="text-muted-foreground">Job</div>
-                      <div className="font-medium">#{bulkJobId}</div>
-                    </div>
-                    <div className="mt-1 flex items-center justify-between">
-                      <div className="text-muted-foreground">Status</div>
-                      <div className="font-medium">{String(bulkJob?.status || "—")}</div>
-                    </div>
-                    <div className="mt-1 flex items-center justify-between">
-                      <div className="text-muted-foreground">Progress</div>
-                      <div className="font-medium">
-                        {Number(bulkJob?.processed || 0).toLocaleString()} / {Number(bulkJob?.totalTargets || 0).toLocaleString()}
-                      </div>
-                    </div>
-                    {bulkJob?.resultJson?.error ? (
-                      <div className="mt-2 text-destructive whitespace-pre-wrap">{String(bulkJob.resultJson.error)}</div>
-                    ) : null}
-                  </div>
-                ) : null}
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => bulkPreviewMutation.mutate()} disabled={bulkPreviewMutation.isPending}>
-                  Refresh preview
-                </Button>
-                <Button
-                  onClick={() => bulkCreateJobMutation.mutate()}
-                  disabled={
-                    bulkCreateJobMutation.isPending ||
-                    bulkPreviewMutation.isPending ||
-                    (bulkAction === "assign" && !bulkAssignedTo) ||
-                    (bulkAction === "set_status" && !bulkStatus)
-                  }
-                  className="bg-primary hover:bg-primary/90 text-white"
-                >
-                  {bulkCreateJobMutation.isPending ? "Starting..." : "Run job"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
               <Button size="sm" className="bg-primary hover:bg-primary/90" data-testid="button-add-lead">
@@ -1784,24 +969,8 @@ export default function Leads() {
                       <SelectValue placeholder="Select status" />
                     </SelectTrigger>
                     <SelectContent>
-                      {pipelineColumnsWithMissing.map((option) => (
+                      {pipelineColumns.map((option) => (
                         <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid grid-cols-4 items-center gap-4">
-                  <Label htmlFor="assignedTo" className="text-right">Assigned To</Label>
-                  <Select value={newLead.assignedTo} onValueChange={(value) => setNewLead({ ...newLead, assignedTo: value })}>
-                    <SelectTrigger className="col-span-3" data-testid="select-lead-assigned-to">
-                      <SelectValue placeholder="Unassigned" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__unassigned__">Unassigned</SelectItem>
-                      {teamUsers.map((u: any) => (
-                        <SelectItem key={u.id} value={String(u.id)}>
-                          {u.firstName || u.lastName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.email}
-                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1816,141 +985,180 @@ export default function Leads() {
           </Dialog>
         </div>
       </div>
-      {missingPipelineStatuses.length ? (
-        <div className="mt-3 rounded-md border bg-amber-50 text-amber-950 px-4 py-3 text-sm">
-          Some leads are in statuses not shown in your pipeline config: {missingPipelineStatuses.join(", ")}
-        </div>
-      ) : null}
 
-      {selectedCount > 0 ? (
-        <div className="mt-4 rounded-md border bg-card px-4 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="text-sm">
-            <span className="font-medium">{selectedCount.toLocaleString()}</span> selected
-            {selectionMode === "all_filtered" ? <span className="text-muted-foreground"> (all filtered)</span> : null}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {selectionMode === "explicit" && leadsTotal > selectedCount ? (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setSelectAllConfirmText("");
-                  setSelectAllConfirmOpen(true);
-                }}
-              >
-                Select all filtered ({leadsTotal.toLocaleString()})
-              </Button>
-            ) : null}
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={selectionMode === "all_filtered" || selectedIds.size === 0 || selectedIds.size > 200}
-              onClick={() => {
-                setVoiceTranscript("");
-                setVoiceParsed(null);
-                setVoicePreview(null);
-                setVoiceActionLogId(null);
-                setVoiceOpen(true);
-              }}
-            >
-              <Mic className="mr-2 h-4 w-4" />
-              Voice
-            </Button>
-            <Button
-              size="sm"
-              className="bg-primary hover:bg-primary/90"
-              onClick={() => {
-                setBulkPreview(null);
-                setBulkJobId(null);
-                setBulkOpen(true);
-                bulkPreviewMutation.mutate();
-              }}
-            >
-              Bulk actions
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setSelectionMode("explicit");
-                setSelectedIds(new Set());
-                setExcludedIds(new Set());
-              }}
-            >
-              Clear selection
-            </Button>
-          </div>
-        </div>
-      ) : null}
+      <BulkActionToolbar
+        className="mt-4"
+        selectedCount={selectedCount}
+        onAssign={() => {
+          if (!canAssignLeads) {
+            toast({ title: "Not allowed", description: "You don't have permission to assign leads.", variant: "destructive" });
+            return;
+          }
+          setBulkAssignTo("");
+          setBulkDialogKind("assign");
+        }}
+        onAddTags={() => {
+          setBulkTags("");
+          setBulkDialogKind("add_tags");
+        }}
+        onRemoveTags={() => {
+          setBulkTags("");
+          setBulkDialogKind("remove_tags");
+        }}
+        onSetStatus={() => {
+          setBulkStatus("new");
+          setBulkDialogKind("set_status");
+        }}
+        onExport={() => {
+          setBulkExportFormat("csv");
+          setBulkDialogKind("export");
+        }}
+        onArchive={() => {
+          setBulkArchiveConfirm(false);
+          setBulkDialogKind("archive");
+        }}
+        onClear={() => {
+          setSelectionMode("explicit");
+          setSelectedIds(new Set());
+          setExcludedIds(new Set());
+          setSelectionModeSignature("");
+        }}
+      />
 
-      <Dialog open={selectAllConfirmOpen} onOpenChange={setSelectAllConfirmOpen}>
-        <DialogContent className="sm:max-w-[520px]">
+      <Dialog open={saveViewDialogOpen} onOpenChange={setSaveViewDialogOpen}>
+        <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
-            <DialogTitle>Select all filtered leads</DialogTitle>
-            <DialogDescription>
-              This will target all leads matching the current filters. Type {selectionSigLabel} to confirm.
-            </DialogDescription>
+            <DialogTitle>Save view</DialogTitle>
+            <DialogDescription>Save your current filters, sort, and columns.</DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="select-all-confirm">Confirmation</Label>
-            <Input
-              id="select-all-confirm"
-              value={selectAllConfirmText}
-              onChange={(e) => setSelectAllConfirmText(e.target.value)}
-              placeholder={selectionSigLabel}
-            />
+          <div className="grid gap-4 py-2">
+            <div className="space-y-2">
+              <Label>Name</Label>
+              <Input value={saveViewName} onChange={(e) => setSaveViewName(e.target.value)} placeholder="e.g. Florida absentee" />
+            </div>
+            <div className="space-y-2">
+              <Label>Visibility</Label>
+              <Select value={saveViewVisibility} onValueChange={(v) => setSaveViewVisibility(v as any)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="private">Private</SelectItem>
+                  <SelectItem value="team">Team</SelectItem>
+                  <SelectItem value="link">Link-share</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSelectAllConfirmOpen(false)}>
-              Cancel
-            </Button>
             <Button
-              className="bg-primary hover:bg-primary/90 text-white"
-              disabled={selectAllConfirmText.trim().toUpperCase() !== selectionSigLabel}
-              onClick={() => {
-                setSelectionMode("all_filtered");
-                setSelectedIds(new Set());
-                setExcludedIds(new Set());
-                setSelectAllConfirmOpen(false);
-              }}
+              onClick={() => saveViewMutation.mutate({ name: saveViewName.trim(), visibility: saveViewVisibility })}
+              disabled={!saveViewName.trim() || saveViewMutation.isPending}
             >
-              Confirm
+              {saveViewMutation.isPending ? "Saving..." : "Save view"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <VoiceActionDialog
-        open={voiceOpen}
-        onOpenChange={setVoiceOpen}
-        selectionMode={selectionMode}
-        selectedIds={selectedIdsArr}
-        selectedLead={
-          voiceSelectedLead
-            ? {
-                id: Number(voiceSelectedLead.id),
-                address: voiceSelectedLead.address,
-                city: voiceSelectedLead.city,
-                state: voiceSelectedLead.state,
-                zipCode: voiceSelectedLead.zipCode,
-              }
-            : null
-        }
-        voiceTranscript={voiceTranscript}
-        setVoiceTranscript={setVoiceTranscript}
-        voiceParsed={voiceParsed}
-        setVoiceParsed={setVoiceParsed}
-        voicePreview={voicePreview}
-        setVoicePreview={setVoicePreview}
-        voiceActionLogId={voiceActionLogId}
-        setVoiceActionLogId={setVoiceActionLogId}
-        mutations={{
-          parse: { mutate: () => voiceParseMutation.mutate(), isPending: voiceParseMutation.isPending },
-          preview: { mutate: () => voicePreviewMutation.mutate(), isPending: voicePreviewMutation.isPending },
-          apply: { mutate: () => voiceApplyMutation.mutate(), isPending: voiceApplyMutation.isPending },
-          undo: { mutate: () => voiceUndoMutation.mutate(), isPending: voiceUndoMutation.isPending },
+      <Dialog
+        open={bulkDialogKind !== null}
+        onOpenChange={(open) => {
+          if (!open) setBulkDialogKind(null);
         }}
-      />
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Bulk action</DialogTitle>
+            <DialogDescription>
+              {bulkPreviewQuery.isLoading
+                ? "Calculating targets…"
+                : `Targets: ${Number(bulkPreviewQuery.data?.totalTargets || 0).toLocaleString()}`}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            {bulkDialogKind === "assign" ? (
+              <div className="space-y-2">
+                <Label>Assign to</Label>
+                <Select value={bulkAssignTo} onValueChange={setBulkAssignTo}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select user" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(usersList || []).map((u: any) => (
+                      <SelectItem key={String(u.id)} value={String(u.id)}>
+                        {String(u.firstName || "")} {String(u.lastName || "")}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            {bulkDialogKind === "set_status" ? (
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <Select value={bulkStatus} onValueChange={setBulkStatus}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {pipelineColumns.map((s) => (
+                      <SelectItem key={s.value} value={s.value}>
+                        {s.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            {bulkDialogKind === "add_tags" || bulkDialogKind === "remove_tags" ? (
+              <div className="space-y-2">
+                <Label>Tags (comma separated)</Label>
+                <Input value={bulkTags} onChange={(e) => setBulkTags(e.target.value)} placeholder="vacant, high-equity" />
+              </div>
+            ) : null}
+            {bulkDialogKind === "export" ? (
+              <div className="space-y-2">
+                <Label>Format</Label>
+                <Select value={bulkExportFormat} onValueChange={(v) => setBulkExportFormat(v as any)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="csv">CSV</SelectItem>
+                    <SelectItem value="xlsx">XLSX</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            {bulkDialogKind === "archive" ? (
+              <div className="space-y-2">
+                <Label>Confirm</Label>
+                <div className="flex items-center gap-2">
+                  <Checkbox checked={bulkArchiveConfirm} onCheckedChange={(v) => setBulkArchiveConfirm(Boolean(v))} />
+                  <div className="text-sm">I understand this will archive the selected leads.</div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              variant={bulkDialogKind === "archive" ? "destructive" : "default"}
+              onClick={() => createBulkJobMutation.mutate()}
+              disabled={
+                createBulkJobMutation.isPending ||
+                bulkPreviewQuery.isLoading ||
+                Number(bulkPreviewQuery.data?.totalTargets || 0) <= 0 ||
+                (bulkDialogKind === "assign" && !bulkAssignTo) ||
+                ((bulkDialogKind === "add_tags" || bulkDialogKind === "remove_tags") && !bulkTags.trim()) ||
+                (bulkDialogKind === "archive" && !bulkArchiveConfirm)
+              }
+            >
+              {createBulkJobMutation.isPending ? "Starting..." : "Confirm"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Tabs defaultValue="list" className="mt-6">
         <TabsList>
@@ -1960,27 +1168,66 @@ export default function Leads() {
 
         <TabsContent value="list" className="mt-4">
           <div className="rounded-md border bg-card shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
+              <div className="text-sm text-muted-foreground">{Number.isFinite(leadsTotal) ? leadsTotal.toLocaleString() : leadsTotal} results</div>
+              <div className="flex flex-wrap items-center gap-2">
+                {selectedCount > 0 && selectionMode === "explicit" ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setSelectionMode("all_filtered");
+                      setSelectionModeSignature(selectionSignature);
+                      setExcludedIds(new Set());
+                    }}
+                  >
+                    Select all {leadsTotal.toLocaleString()} matching
+                  </Button>
+                ) : null}
+                {selectionMode === "all_filtered" ? (
+                  <Badge variant="secondary">All matching selected</Badge>
+                ) : null}
+              </div>
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[44px]">
                     <Checkbox
-                      checked={
-                        selectionMode === "explicit" &&
-                        (filteredLeads || []).length > 0 &&
-                        (filteredLeads || []).every((l: any) => selectedIds.has(Number(l.id)))
-                      }
-                      onCheckedChange={(v) => toggleAllLoaded(!!v)}
+                      checked={pageSelection.allOnPage ? true : pageSelection.someOnPage ? "indeterminate" : false}
+                      onCheckedChange={(checked) => {
+                        const next = Boolean(checked);
+                        if (selectionMode === "explicit") {
+                          setSelectedIds((prev) => {
+                            const s = new Set(prev);
+                            for (const id of pageSelection.ids) {
+                              if (next) s.add(id);
+                              else s.delete(id);
+                            }
+                            return s;
+                          });
+                        } else {
+                          setExcludedIds((prev) => {
+                            const s = new Set(prev);
+                            for (const id of pageSelection.ids) {
+                              if (next) s.delete(id);
+                              else s.add(id);
+                            }
+                            return s;
+                          });
+                        }
+                      }}
                       onClick={(e) => e.stopPropagation()}
                     />
                   </TableHead>
-                  {visibleColumns.address ? <TableHead>Address</TableHead> : null}
-                  {visibleColumns.owner ? <TableHead>Owner</TableHead> : null}
-                  {visibleColumns.status ? <TableHead>Status</TableHead> : null}
-                  {visibleColumns.score ? <TableHead>Score</TableHead> : null}
-                  {visibleColumns.value ? <TableHead>Value</TableHead> : null}
-                  {visibleColumns.contact ? <TableHead>Contact</TableHead> : null}
-                  {visibleColumns.notes ? <TableHead>Notes</TableHead> : null}
+                  {visibleColumns.has("address") ? <TableHead>Address</TableHead> : null}
+                  {visibleColumns.has("owner") ? <TableHead>Owner</TableHead> : null}
+                  {visibleColumns.has("status") ? <TableHead>Status</TableHead> : null}
+                  {visibleColumns.has("score") ? <TableHead>Score</TableHead> : null}
+                  {visibleColumns.has("value") ? <TableHead>Value</TableHead> : null}
+                  {visibleColumns.has("contact") ? <TableHead>Contact</TableHead> : null}
+                  {visibleColumns.has("notes") ? <TableHead>Notes</TableHead> : null}
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -1988,28 +1235,29 @@ export default function Leads() {
                 {filteredLeads.map((lead: any) => (
                   <TableRow
                     key={lead.id}
-                    className={`hover:bg-muted/50 transition-colors cursor-pointer ${density === "dense" ? "[&>td]:py-2" : "[&>td]:py-4"} ${highlightLeadId === lead.id ? "bg-accent/15" : ""}`}
+                    className={`hover:bg-muted/50 transition-colors cursor-pointer ${highlightLeadId === lead.id ? "bg-accent/15" : ""}`}
                     data-testid={`row-lead-${lead.id}`}
                     onClick={() => openLead(lead.id)}
                   >
                     <TableCell onClick={(e) => e.stopPropagation()}>
-                      <Checkbox
-                        checked={isSelected(Number(lead.id))}
-                        onCheckedChange={(v) => toggleRow(Number(lead.id), !!v)}
-                      />
+                      <Checkbox checked={isLeadSelected(Number(lead.id))} onCheckedChange={(checked) => toggleLeadSelected(Number(lead.id), Boolean(checked))} />
                     </TableCell>
-                    {visibleColumns.address ? <TableCell className="font-medium">{lead.address}, {lead.city}</TableCell> : null}
-                    {visibleColumns.owner ? <TableCell>{lead.ownerName}</TableCell> : null}
-                    {visibleColumns.status ? (
+                    {visibleColumns.has("address") ? (
+                      <TableCell className="font-medium">{lead.address}, {lead.city}</TableCell>
+                    ) : null}
+                    {visibleColumns.has("owner") ? <TableCell>{lead.ownerName}</TableCell> : null}
+                    {visibleColumns.has("status") ? (
                       <TableCell>
                         <Badge variant="outline" className={getStatusBadgeColor(lead.status)}>
-                          {pipelineColumnsWithMissing.find((s) => s.value === lead.status)?.label || lead.status}
+                          {pipelineColumns.find((s) => s.value === lead.status)?.label || lead.status}
                         </Badge>
                       </TableCell>
                     ) : null}
-                    {visibleColumns.score ? <TableCell>{lead.relasScore || "—"}</TableCell> : null}
-                    {visibleColumns.value ? <TableCell>${lead.estimatedValue ? parseInt(lead.estimatedValue).toLocaleString() : "—"}</TableCell> : null}
-                    {visibleColumns.contact ? (
+                    {visibleColumns.has("score") ? <TableCell>{lead.relasScore || "—"}</TableCell> : null}
+                    {visibleColumns.has("value") ? (
+                      <TableCell>${lead.estimatedValue ? parseInt(lead.estimatedValue).toLocaleString() : "—"}</TableCell>
+                    ) : null}
+                    {visibleColumns.has("contact") ? (
                       <TableCell className="text-muted-foreground">
                         <div className="flex flex-col">
                           {lead.ownerPhone ? (
@@ -2020,17 +1268,20 @@ export default function Leads() {
                             <span>—</span>
                           )}
                           {lead.ownerEmail ? (
-                            <a className="underline underline-offset-2 truncate max-w-[220px]" href={`mailto:${lead.ownerEmail}`} onClick={(e) => e.stopPropagation()}>
+                            <a
+                              className="underline underline-offset-2 truncate max-w-[220px]"
+                              href={`mailto:${lead.ownerEmail}`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
                               {lead.ownerEmail}
                             </a>
                           ) : null}
                         </div>
                       </TableCell>
                     ) : null}
-                    {visibleColumns.notes ? (
+                    {visibleColumns.has("notes") ? (
                       <TableCell>
-                        <div className="text-sm">{Number(lead.notesCount || 0) ? `${Number(lead.notesCount)} note${Number(lead.notesCount) === 1 ? "" : "s"}` : "—"}</div>
-                        {lead.lastNotePreview ? <div className="text-xs text-muted-foreground truncate max-w-[240px]" title={String(lead.lastNotePreview)}>{String(lead.lastNotePreview)}</div> : null}
+                        <LeadNotePreview count={Number(lead.notesCount || 0)} preview={lead.lastNotePreview || null} />
                       </TableCell>
                     ) : null}
                     <TableCell className="text-right">
@@ -2042,7 +1293,7 @@ export default function Leads() {
                             className="border-primary text-primary hover:bg-primary hover:text-white"
                             onClick={(e) => {
                               e.stopPropagation();
-                              setLocation(opportunityUrl(lead.linkedPropertyId));
+                              setLocation(`/opportunities/${lead.linkedPropertyId}`);
                             }}
                             data-testid={`button-view-opportunity-${lead.id}`}
                           >
@@ -2082,38 +1333,14 @@ export default function Leads() {
                               <Pencil className="mr-2 h-4 w-4" />
                               Edit
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => openVoiceForLeadId(lead.id)}>
-                              <Mic className="mr-2 h-4 w-4" />
-                              Voice
-                            </DropdownMenuItem>
                             <DropdownMenuItem
                               onClick={() => {
                                 const full = `${lead.address || ""}${lead.city ? `, ${lead.city}` : ""}${lead.state ? ` ${lead.state}` : ""}${lead.zipCode ? ` ${lead.zipCode}` : ""}`.trim();
-                                setLocation(
-                                  playgroundUrl({
-                                    leadId: lead.id,
-                                    propertyId: lead.linkedPropertyId ?? null,
-                                    address: full || String(lead.address || "").trim(),
-                                  }),
-                                );
+                                setLocation(`/playground?leadId=${lead.id}&address=${encodeURIComponent(full || String(lead.address || "").trim())}`);
                               }}
                             >
                               <Lightbulb className="mr-2 h-4 w-4" />
                               Open in Playground
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setLocation(tasksUrl({ relatedEntityType: "lead", relatedEntityId: lead.id }));
-                              }}
-                            >
-                              View Tasks
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              onClick={() => {
-                                setLocation(calendarUrl({ relatedEntityType: "lead", relatedEntityId: lead.id }));
-                              }}
-                            >
-                              View Calendar
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
@@ -2131,6 +1358,29 @@ export default function Leads() {
                 ))}
               </TableBody>
             </Table>
+            <div className="flex items-center justify-between gap-2 border-t px-3 py-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={pageIndex <= 0}
+                onClick={() => setPagination((p) => ({ ...p, pageIndex: Math.max(0, p.pageIndex - 1) }))}
+              >
+                Previous
+              </Button>
+              <div className="text-sm text-muted-foreground">
+                Page {pageIndex + 1} of {Math.max(1, Math.ceil(leadsTotal / pageSize))}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={pageIndex + 1 >= Math.max(1, Math.ceil(leadsTotal / pageSize))}
+                onClick={() => setPagination((p) => ({ ...p, pageIndex: p.pageIndex + 1 }))}
+              >
+                Next
+              </Button>
+            </div>
             {leads.length === 0 && (
               <div className="text-center py-8 text-muted-foreground">No leads yet. Create one to get started!</div>
             )}
@@ -2139,7 +1389,7 @@ export default function Leads() {
 
         <TabsContent value="pipeline" className="mt-4">
           <PipelineBoard
-            columns={pipelineColumnsWithMissing}
+            columns={pipelineColumns}
             items={filteredLeads}
             getId={(lead: any) => lead.id}
             getStatus={(lead: any) => lead.status}
@@ -2147,8 +1397,12 @@ export default function Leads() {
             renderItem={(lead: any) => (
               <LeadPipelineCard
                 lead={lead}
-                columns={pipelineColumnsWithMissing}
+                columns={pipelineColumns}
                 onUpdateStatus={(leadId, status) => updateMutation.mutate({ id: leadId, data: { status } })}
+                users={usersList}
+                usersById={usersById}
+                canAssign={canAssignLeads}
+                onAssign={(leadId, assignedTo) => updateMutation.mutate({ id: leadId, data: { assignedTo } })}
                 onAddNote={(l) => {
                   setNoteLead(l);
                   setNoteText("");
@@ -2158,15 +1412,7 @@ export default function Leads() {
                   setActivityLeadId(l.id);
                   setIsActivityDialogOpen(true);
                 }}
-                onCall={(l) =>
-                  setLocation(
-                    dialerUrl({
-                      number: String(l.ownerPhone || ""),
-                      leadId: l.id,
-                      propertyId: typeof (l as any).linkedPropertyId === "number" ? (l as any).linkedPropertyId : null,
-                    }),
-                  )
-                }
+                onCall={(l) => setLocation(`/dialer?number=${encodeURIComponent(String(l.ownerPhone || ""))}&leadId=${l.id}`)}
                 onSms={(l) => {
                   setSmsLead(l);
                   setSmsBody("");
@@ -2185,24 +1431,18 @@ export default function Leads() {
       </Tabs>
 
       <Sheet open={isLeadSheetOpen} onOpenChange={setIsLeadSheetOpen}>
-        <SheetContent className="sm:max-w-md overflow-hidden">
+        <SheetContent className="sm:max-w-md">
           <SheetHeader>
             <SheetTitle>{selectedLead ? `${selectedLead.address}, ${selectedLead.city}` : "Lead Details"}</SheetTitle>
             <SheetDescription>{selectedLead ? selectedLead.ownerName : ""}</SheetDescription>
           </SheetHeader>
           {selectedLead ? (
-            <div className="mt-6 flex-1 min-h-0 space-y-4 pr-2 scroll-y-container">
-              <div className="flex items-center justify-between gap-2">
+            <div className="mt-6 space-y-4">
+              <div className="flex items-center justify-between">
                 <Badge variant="outline" className={getStatusBadgeColor(selectedLead.status)}>
-                  {pipelineColumnsWithMissing.find((s) => s.value === selectedLead.status)?.label || selectedLead.status}
+                  {pipelineColumns.find((s) => s.value === selectedLead.status)?.label || selectedLead.status}
                 </Badge>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => openVoiceForLeadId(selectedLead.id)}>
-                    <Mic className="mr-2 h-4 w-4" />
-                    Voice
-                  </Button>
-                  <div className="text-sm text-muted-foreground">Score: {selectedLead.relasScore || "—"}</div>
-                </div>
+                <div className="text-sm text-muted-foreground">Score: {selectedLead.relasScore || "—"}</div>
               </div>
 
               <div className="grid grid-cols-2 gap-3 text-sm">
@@ -2244,7 +1484,50 @@ export default function Leads() {
                 </div>
               </div>
 
-              <SkipTraceJobPanel entityType="lead" entityId={selectedLead.id} />
+              <div className="space-y-2">
+                <Button
+                  variant="secondary"
+                  className="w-full"
+                  disabled={skipTraceMutation.isPending}
+                  onClick={() => skipTraceMutation.mutate(selectedLead.id)}
+                >
+                  Skip Trace Owner
+                </Button>
+                {skipTraceLatest && (
+                  <div className="border rounded-md p-3 text-sm bg-muted/20">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs text-muted-foreground">Last Result</div>
+                      <div className="text-xs text-muted-foreground">
+                        {skipTraceLatest.completedAt
+                          ? new Date(skipTraceLatest.completedAt).toLocaleString()
+                          : skipTraceLatest.requestedAt
+                            ? new Date(skipTraceLatest.requestedAt).toLocaleString()
+                            : "—"}
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-1 gap-1">
+                      <div>
+                        <span className="text-muted-foreground">Status:</span>{" "}
+                        <span className="font-medium">{String(skipTraceLatest.status || "—")}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Phones:</span>{" "}
+                        <span className="font-medium">{Array.isArray(skipTraceLatest.phones) && skipTraceLatest.phones.length ? skipTraceLatest.phones.join(", ") : "—"}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Emails:</span>{" "}
+                        <span className="font-medium">{Array.isArray(skipTraceLatest.emails) && skipTraceLatest.emails.length ? skipTraceLatest.emails.join(", ") : "—"}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Cost:</span>{" "}
+                        <span className="font-medium">
+                          {typeof skipTraceLatest.costCents === "number" ? `$${(skipTraceLatest.costCents / 100).toFixed(2)}` : "—"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <EntityTasksWidget entityType="lead" entityId={selectedLead.id} />
 
@@ -2373,24 +1656,8 @@ export default function Leads() {
                     <SelectValue placeholder="Select status" />
                   </SelectTrigger>
                   <SelectContent>
-                    {pipelineColumnsWithMissing.map((option) => (
+                    {pipelineColumns.map((option) => (
                       <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid grid-cols-4 items-center gap-4">
-                <Label htmlFor="edit-assignedTo" className="text-right">Assigned To</Label>
-                <Select value={String(editingLead.assignedTo || "")} onValueChange={(value) => setEditingLead({ ...editingLead, assignedTo: value })}>
-                  <SelectTrigger className="col-span-3" data-testid="select-edit-assigned-to">
-                    <SelectValue placeholder="Unassigned" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__unassigned__">Unassigned</SelectItem>
-                    {teamUsers.map((u: any) => (
-                      <SelectItem key={u.id} value={String(u.id)}>
-                        {u.firstName || u.lastName ? `${u.firstName || ""} ${u.lastName || ""}`.trim() : u.email}
-                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -2428,18 +1695,21 @@ export default function Leads() {
             <Button variant="outline" onClick={() => setIsNoteDialogOpen(false)}>Cancel</Button>
             <Button
               className="bg-primary hover:bg-primary/90 text-white"
-              disabled={!noteLead || !noteText.trim() || addNoteMutation.isPending}
+              disabled={!noteLead || !noteText.trim() || updateMutation.isPending}
               onClick={async () => {
                 if (!noteLead) return;
                 try {
-                  await addNoteMutation.mutateAsync({ leadId: noteLead.id, body: noteText.trim() });
+                  const res = await apiRequest("POST", `/api/leads/${noteLead.id}/notes`, { body: noteText.trim() });
+                  await res.json();
+                  queryClient.invalidateQueries({ queryKey: ["leads"] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
                   setIsNoteDialogOpen(false);
                   setNoteLead(null);
                   setNoteText("");
                 } catch {}
               }}
             >
-              {addNoteMutation.isPending ? "Saving..." : "Save Note"}
+              Save Note
             </Button>
           </DialogFooter>
         </DialogContent>

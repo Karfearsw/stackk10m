@@ -1,15 +1,22 @@
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { XpExperienceCard, type XpExperienceCardModel } from "@/components/xp/XpExperienceCard";
-import { XpPublicShell } from "@/components/xp/XpPublicShell";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { Link } from "wouter";
+
+type XpExperience = {
+  id: number;
+  slug: string;
+  title: string;
+  description?: string | null;
+  mode?: string | null;
+  currency?: string | null;
+  priceTotal?: string | number | null;
+  depositAmount?: string | number | null;
+  images?: string[] | null;
+};
 
 export default function XpLandingPage() {
-  const [q, setQ] = useState("");
-  const [mode, setMode] = useState<string>("all");
-
-  const { data, isLoading, error } = useQuery<{ items: XpExperienceCardModel[] }>({
+  const { data, isLoading, error } = useQuery<{ items: XpExperience[] }>({
     queryKey: ["/api/xp/experiences"],
     queryFn: async () => {
       const res = await fetch("/api/xp/experiences");
@@ -21,87 +28,37 @@ export default function XpLandingPage() {
 
   const items = Array.isArray(data?.items) ? data?.items : [];
 
-  const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return items.filter((x) => {
-      if (mode !== "all") {
-        const m = String(x.mode || "").trim();
-        if (m !== mode) return false;
-      }
-      if (!needle) return true;
-      const hay = `${x.title || ""} ${x.description || ""} ${x.location || ""}`.toLowerCase();
-      return hay.includes(needle);
-    });
-  }, [items, mode, q]);
-
   return (
-    <XpPublicShell>
-      <div className="space-y-10">
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-12 lg:items-end">
-          <div className="space-y-3 lg:col-span-7">
-            <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/60 px-3 py-1 text-xs text-muted-foreground backdrop-blur">
-              Experiences
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/60" />
-              Book in minutes
-            </div>
-            <h1 className="text-4xl font-semibold tracking-tight md:text-5xl">
-              Experiences
-            </h1>
-            <p className="max-w-prose text-sm leading-relaxed text-muted-foreground md:text-base">
-              Book an Ocean Luxe experience in minutes. Choose a curated time slot or reserve a custom date range—then confirm with a deposit or full payment.
-            </p>
-          </div>
-
-          <div className="space-y-3 lg:col-span-5">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Search</div>
-                <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Try: yacht, dinner, Nassau…" />
-              </div>
-              <div className="space-y-2">
-                <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Mode</div>
-                <Select value={mode} onValueChange={setMode}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    <SelectItem value="time_slot">Time slot</SelectItem>
-                    <SelectItem value="date_range">Date range</SelectItem>
-                    <SelectItem value="both">Both</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Showing {filtered.length} of {items.length}
-            </div>
-          </div>
+    <div className="min-h-screen bg-muted/30 px-4 py-12">
+      <div className="mx-auto w-full max-w-5xl space-y-8">
+        <div className="space-y-2">
+          <h1 className="text-3xl font-bold tracking-tight">Experiences</h1>
+          <p className="text-muted-foreground">Book an experience in minutes.</p>
         </div>
 
-        {isLoading ? (
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-[360px] rounded-xl border border-border/60 bg-muted/20" />
-            ))}
-          </div>
-        ) : error ? (
-          <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-            {String((error as any)?.message || error)}
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="rounded-xl border border-border/60 bg-background/60 p-8 text-center">
-            <div className="text-base font-semibold">No experiences found</div>
-            <div className="mt-2 text-sm text-muted-foreground">Try a different search or clear filters.</div>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
-            {filtered.map((x) => (
-              <XpExperienceCard key={x.id} experience={x} />
-            ))}
-          </div>
-        )}
+        {isLoading && <div className="text-sm text-muted-foreground">Loading…</div>}
+        {!isLoading && error && <div className="text-sm text-destructive">{String((error as any)?.message || error)}</div>}
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {items.map((x) => (
+            <Card key={x.id}>
+              <CardHeader>
+                <CardTitle>{x.title}</CardTitle>
+                {x.description ? <CardDescription>{x.description}</CardDescription> : null}
+              </CardHeader>
+              <CardContent className="flex items-center justify-between gap-3">
+                <div className="text-sm text-muted-foreground">
+                  Deposit: {x.depositAmount ?? "—"} {String(x.currency || "USD").toUpperCase()}
+                </div>
+                <Link href={`/xp/${encodeURIComponent(x.slug)}`}>
+                  <Button>Book</Button>
+                </Link>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
-    </XpPublicShell>
+    </div>
   );
 }
+

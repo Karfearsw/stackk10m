@@ -28,8 +28,8 @@ interface AuthContextType {
     lastName: string;
     email: string;
     password: string;
-    employeeCode: string;
-    teamInviteCode?: string;
+    roleCode: string;
+    teamCode: string;
   }) => Promise<void>;
   logout: () => Promise<void>;
   isAuthenticated: boolean;
@@ -42,28 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [, setLocation] = useLocation();
 
-  const setToken = (token: string | null) => {
-    try {
-      if (!token) {
-        localStorage.removeItem('authToken');
-        localStorage.removeItem('token');
-      } else {
-        localStorage.setItem('authToken', token);
-        localStorage.setItem('token', token);
-      }
-    } catch {}
-  };
-
-  const getToken = () => {
-    try {
-      return localStorage.getItem('authToken') || localStorage.getItem('token');
-    } catch {
-      return null;
-    }
-  };
-
   const postTimeclock = async (path: string) => {
-    const token = getToken();
     const payload = {
       clientNow: new Date().toISOString(),
       tzOffsetMinutes: new Date().getTimezoneOffset(),
@@ -72,7 +51,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify(payload),
       credentials: 'include',
@@ -85,10 +63,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const checkAuth = async () => {
     try {
-      const token = getToken();
       const res = await fetch('/api/auth/me', {
         credentials: 'include',
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
       });
       if (res.ok) {
         const userData = await res.json();
@@ -116,8 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new AuthApiError(res.status, body, 'Login failed');
     }
 
-    const { user: userData, token } = await res.json();
-    if (token) setToken(token);
+    const { user: userData } = await res.json();
     setUser(userData);
     try {
       await postTimeclock('/api/timeclock/auto-start');
@@ -172,8 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new AuthApiError(res.status, body, 'Dev bypass failed');
     }
 
-    const { user: userData, token } = await res.json();
-    if (token) setToken(token);
+    const { user: userData } = await res.json();
     setUser(userData);
     try {
       await postTimeclock('/api/timeclock/auto-start');
@@ -181,7 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLocation('/');
   };
 
-  const signup: AuthContextType['signup'] = async ({ firstName, lastName, email, password, employeeCode, teamInviteCode }) => {
+  const signup: AuthContextType['signup'] = async ({ firstName, lastName, email, password, roleCode, teamCode }) => {
     const res = await fetch('/api/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -190,11 +164,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         lastName,
         email,
         password,
-        employeeCode,
-        teamInviteCode,
-        role: 'employee',
-        isSuperAdmin: false,
-        isActive: true,
+        roleCode,
+        teamCode,
       }),
       credentials: 'include',
     });
@@ -204,8 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new AuthApiError(res.status, body, 'Signup failed');
     }
 
-    const { user: userData, token } = await res.json();
-    if (token) setToken(token);
+    const { user: userData } = await res.json();
     setUser(userData);
     try {
       await postTimeclock('/api/timeclock/auto-start');
@@ -223,7 +193,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         credentials: 'include',
       });
     } catch {}
-    setToken(null);
     setUser(null);
     setLocation('/login');
   };
