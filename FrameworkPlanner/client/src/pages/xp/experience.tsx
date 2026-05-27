@@ -30,6 +30,16 @@ type XpExperience = {
   capacity?: number | null;
   images?: string[] | null;
   location?: string | null;
+  locationId?: number | null;
+  destination?: {
+    id: number;
+    name: string;
+    slug?: string | null;
+    heroImage?: string | null;
+    images?: string[] | null;
+    description?: string | null;
+    highlights?: string[] | null;
+  } | null;
   durationMinutes?: number | null;
   highlights?: string[] | null;
   inclusions?: string[] | null;
@@ -67,6 +77,14 @@ export default function XpExperiencePage() {
   const paymentMode = String(experience?.paymentMode || "deposit").toLowerCase();
   const currency = String(experience?.currency || "USD").toUpperCase();
   const itinerary = useMemo(() => coerceXpItinerary(experience?.itinerary), [experience?.itinerary]);
+  const destinationName = String(experience?.destination?.name || experience?.location || "").trim();
+  const galleryImages = useMemo(() => {
+    const exp = (Array.isArray(experience?.images) ? experience?.images : []).map((x) => String(x || "").trim()).filter(Boolean);
+    if (exp.length) return exp;
+    const hero = String(experience?.destination?.heroImage || "").trim();
+    const dest = (Array.isArray(experience?.destination?.images) ? experience?.destination?.images : []).map((x) => String(x || "").trim()).filter(Boolean);
+    return Array.from(new Set([hero, ...dest].filter(Boolean)));
+  }, [experience?.destination?.heroImage, experience?.destination?.images, experience?.images]);
 
   const [kind, setKind] = useState<"time_slot" | "date_range">("time_slot");
   useEffect(() => {
@@ -209,10 +227,10 @@ export default function XpExperiencePage() {
               <Badge variant="secondary" className="bg-background/60 backdrop-blur">
                 Experiences
               </Badge>
-              {experience?.location ? (
+              {destinationName ? (
                 <Badge variant="outline" className="bg-background/40">
                   <MapPin className="mr-1 h-3.5 w-3.5" />
-                  {experience.location}
+                  {destinationName}
                 </Badge>
               ) : null}
               {experience?.durationMinutes ? (
@@ -246,15 +264,11 @@ export default function XpExperiencePage() {
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
           <div className="space-y-6 lg:col-span-7">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {(Array.isArray(experience?.images) ? experience?.images : [])
-                ?.map((src) => String(src || "").trim())
-                .filter(Boolean)
-                .slice(0, 4)
-                .map((src) => (
-                  <div key={src} className="aspect-[16/10] overflow-hidden rounded-xl border border-border/60 bg-muted/30">
-                    <img src={src} alt={experience?.title || "Experience"} className="h-full w-full object-cover" loading="lazy" />
-                  </div>
-                ))}
+              {galleryImages.slice(0, 4).map((src) => (
+                <div key={src} className="aspect-[16/10] overflow-hidden rounded-xl border border-border/60 bg-muted/30">
+                  <img src={src} alt={experience?.title || "Experience"} className="h-full w-full object-cover" loading="lazy" />
+                </div>
+              ))}
             </div>
 
             {Array.isArray(experience?.highlights) && experience?.highlights?.length ? (

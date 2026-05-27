@@ -39,6 +39,7 @@ type XpExperience = {
   images?: string[] | null;
   itinerary?: any;
   location?: string | null;
+  locationId?: number | null;
   durationMinutes?: number | null;
   highlights?: string[] | null;
   inclusions?: string[] | null;
@@ -89,7 +90,14 @@ type XpBooking = {
 type XpLocation = {
   id: number;
   name: string;
+  slug?: string | null;
   type?: string | null;
+  heroImage?: string | null;
+  images?: string[] | null;
+  description?: string | null;
+  highlights?: string[] | null;
+  city?: string | null;
+  state?: string | null;
   active?: boolean | null;
 };
 
@@ -177,6 +185,7 @@ export default function XpAdminPage() {
     capacity: "1",
     active: true,
     location: "",
+    locationId: "none",
     durationMinutes: "",
     images: "",
     highlights: "",
@@ -198,6 +207,7 @@ export default function XpAdminPage() {
         capacity: "1",
         active: true,
         location: "",
+        locationId: "none",
         durationMinutes: "",
         images: "",
         highlights: "",
@@ -218,6 +228,7 @@ export default function XpAdminPage() {
       capacity: selectedExperience.capacity != null ? String(selectedExperience.capacity) : "1",
       active: selectedExperience.active !== false,
       location: String(selectedExperience.location || ""),
+      locationId: selectedExperience.locationId != null ? String(selectedExperience.locationId) : "none",
       durationMinutes: selectedExperience.durationMinutes != null ? String(selectedExperience.durationMinutes) : "",
       images: listToLines(selectedExperience.images),
       highlights: listToLines(selectedExperience.highlights),
@@ -241,6 +252,7 @@ export default function XpAdminPage() {
     capacity: "1",
     active: true,
     location: "",
+    locationId: "none",
     durationMinutes: "",
     images: "",
     highlights: "",
@@ -262,6 +274,10 @@ export default function XpAdminPage() {
         capacity: parseInt(form.capacity, 10) || 1,
         active: !!form.active,
         location: form.location.trim() || undefined,
+        locationId: (() => {
+          const n = form.locationId === "none" ? NaN : parseInt(form.locationId, 10);
+          return Number.isFinite(n) ? n : null;
+        })(),
         durationMinutes: form.durationMinutes.trim() ? parseInt(form.durationMinutes, 10) : undefined,
         images: linesToList(form.images),
         highlights: linesToList(form.highlights),
@@ -286,6 +302,7 @@ export default function XpAdminPage() {
         capacity: "1",
         active: true,
         location: "",
+        locationId: "none",
         durationMinutes: "",
         images: "",
         highlights: "",
@@ -473,24 +490,41 @@ export default function XpAdminPage() {
 
   const [locationDialogOpen, setLocationDialogOpen] = useState(false);
   const [editingLocationId, setEditingLocationId] = useState<number | null>(null);
-  const [locationForm, setLocationForm] = useState<{ name: string; type: string }>({ name: "", type: "resort" });
+  const [locationForm, setLocationForm] = useState<{
+    name: string;
+    type: string;
+    slug: string;
+    heroImage: string;
+    images: string;
+    description: string;
+    highlights: string;
+  }>({ name: "", type: "resort", slug: "", heroImage: "", images: "", description: "", highlights: "" });
 
   const upsertLocation = useMutation({
     mutationFn: async () => {
       const name = locationForm.name.trim();
       if (!name) throw new Error("Name required");
+      const payload: any = {
+        name,
+        type: locationForm.type,
+        slug: locationForm.slug.trim() || null,
+        heroImage: locationForm.heroImage.trim() || null,
+        images: linesToList(locationForm.images),
+        description: locationForm.description.trim() || null,
+        highlights: linesToList(locationForm.highlights),
+      };
       if (editingLocationId) {
-        const res = await apiRequest("PATCH", `/api/xp/admin/locations/${editingLocationId}`, { name, type: locationForm.type });
+        const res = await apiRequest("PATCH", `/api/xp/admin/locations/${editingLocationId}`, payload);
         return res.json();
       }
-      const res = await apiRequest("POST", "/api/xp/admin/locations", { name, type: locationForm.type });
+      const res = await apiRequest("POST", "/api/xp/admin/locations", payload);
       return res.json();
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/xp/admin/locations"] });
       setLocationDialogOpen(false);
       setEditingLocationId(null);
-      setLocationForm({ name: "", type: "resort" });
+      setLocationForm({ name: "", type: "resort", slug: "", heroImage: "", images: "", description: "", highlights: "" });
       toast({ title: "Location saved" });
     },
     onError: (err: any) => {
@@ -797,6 +831,28 @@ export default function XpAdminPage() {
                     <Label>Price total (optional)</Label>
                     <Input value={form.priceTotal} onChange={(e) => setForm((p) => ({ ...p, priceTotal: e.target.value }))} placeholder="500.00" />
                   </div>
+                  <div className="space-y-2">
+                    <Label>Destination</Label>
+                    <Select value={form.locationId} onValueChange={(v) => setForm((p) => ({ ...p, locationId: v }))}>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Not set</SelectItem>
+                        {locations
+                          .filter((l) => String(l.type || "resort") === "resort")
+                          .map((l) => (
+                            <SelectItem key={l.id} value={String(l.id)}>
+                              {l.name}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Location label</Label>
+                    <Input value={form.location} onChange={(e) => setForm((p) => ({ ...p, location: e.target.value }))} placeholder="e.g., Westgate Lakes" />
+                  </div>
                 </div>
                 <Button disabled={createExperience.isPending} onClick={() => createExperience.mutate()}>
                   Create
@@ -861,6 +917,10 @@ export default function XpAdminPage() {
                       capacity: editForm.capacity.trim() ? parseInt(editForm.capacity, 10) : 1,
                       active: !!editForm.active,
                       location: editForm.location.trim() || null,
+                      locationId: (() => {
+                        const n = editForm.locationId === "none" ? NaN : parseInt(editForm.locationId, 10);
+                        return Number.isFinite(n) ? n : null;
+                      })(),
                       durationMinutes: editForm.durationMinutes.trim() ? parseInt(editForm.durationMinutes, 10) : null,
                       images: linesToList(editForm.images),
                       highlights: linesToList(editForm.highlights),
@@ -933,6 +993,24 @@ export default function XpAdminPage() {
               <div className="space-y-2">
                 <Label>Capacity (date range)</Label>
                 <Input value={editForm.capacity} onChange={(e) => setEditForm((p) => ({ ...p, capacity: e.target.value }))} placeholder="1" />
+              </div>
+              <div className="space-y-2">
+                <Label>Destination</Label>
+                <Select value={editForm.locationId} onValueChange={(v) => setEditForm((p) => ({ ...p, locationId: v }))}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Not set</SelectItem>
+                    {locations
+                      .filter((l) => String(l.type || "resort") === "resort")
+                      .map((l) => (
+                        <SelectItem key={l.id} value={String(l.id)}>
+                          {l.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <Label>Location</Label>
@@ -1146,7 +1224,7 @@ export default function XpAdminPage() {
                     setLocationDialogOpen(v);
                     if (!v) {
                       setEditingLocationId(null);
-                      setLocationForm({ name: "", type: "resort" });
+                      setLocationForm({ name: "", type: "resort", slug: "", heroImage: "", images: "", description: "", highlights: "" });
                     }
                   }}
                 >
@@ -1155,7 +1233,7 @@ export default function XpAdminPage() {
                       size="sm"
                       onClick={() => {
                         setEditingLocationId(null);
-                        setLocationForm({ name: "", type: "resort" });
+                        setLocationForm({ name: "", type: "resort", slug: "", heroImage: "", images: "", description: "", highlights: "" });
                       }}
                     >
                       Add location
@@ -1171,6 +1249,10 @@ export default function XpAdminPage() {
                         <Input value={locationForm.name} onChange={(e) => setLocationForm((p) => ({ ...p, name: e.target.value }))} />
                       </div>
                       <div className="space-y-2">
+                        <Label>Slug</Label>
+                        <Input value={locationForm.slug} onChange={(e) => setLocationForm((p) => ({ ...p, slug: e.target.value }))} placeholder="westgate-lakes" />
+                      </div>
+                      <div className="space-y-2">
                         <Label>Type</Label>
                         <Select value={locationForm.type} onValueChange={(v) => setLocationForm((p) => ({ ...p, type: v }))}>
                           <SelectTrigger>
@@ -1182,6 +1264,26 @@ export default function XpAdminPage() {
                             <SelectItem value="service_area">Service area</SelectItem>
                           </SelectContent>
                         </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Hero image path</Label>
+                        <Input
+                          value={locationForm.heroImage}
+                          onChange={(e) => setLocationForm((p) => ({ ...p, heroImage: e.target.value }))}
+                          placeholder="/images/westgate-lakes-hero.jpg"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Gallery image paths (one per line)</Label>
+                        <Textarea value={locationForm.images} onChange={(e) => setLocationForm((p) => ({ ...p, images: e.target.value }))} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Description</Label>
+                        <Textarea value={locationForm.description} onChange={(e) => setLocationForm((p) => ({ ...p, description: e.target.value }))} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Highlights (one per line)</Label>
+                        <Textarea value={locationForm.highlights} onChange={(e) => setLocationForm((p) => ({ ...p, highlights: e.target.value }))} />
                       </div>
                       <Button disabled={upsertLocation.isPending} onClick={() => upsertLocation.mutate()}>
                         Save
@@ -1195,6 +1297,7 @@ export default function XpAdminPage() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Name</TableHead>
+                      <TableHead>Slug</TableHead>
                       <TableHead>Type</TableHead>
                       <TableHead></TableHead>
                     </TableRow>
@@ -1203,6 +1306,7 @@ export default function XpAdminPage() {
                     {locations.map((l) => (
                       <TableRow key={l.id}>
                         <TableCell>{l.name}</TableCell>
+                        <TableCell>{l.slug || ""}</TableCell>
                         <TableCell>{l.type || "resort"}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
@@ -1211,7 +1315,15 @@ export default function XpAdminPage() {
                               variant="secondary"
                               onClick={() => {
                                 setEditingLocationId(l.id);
-                                setLocationForm({ name: l.name, type: String(l.type || "resort") });
+                                setLocationForm({
+                                  name: l.name,
+                                  slug: String(l.slug || ""),
+                                  type: String(l.type || "resort"),
+                                  heroImage: String(l.heroImage || ""),
+                                  images: listToLines(l.images),
+                                  description: String(l.description || ""),
+                                  highlights: listToLines(l.highlights),
+                                });
                                 setLocationDialogOpen(true);
                               }}
                             >
@@ -1231,7 +1343,7 @@ export default function XpAdminPage() {
                     ))}
                     {locations.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={3} className="py-8 text-center text-sm text-muted-foreground">
+                        <TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">
                           No locations yet.
                         </TableCell>
                       </TableRow>

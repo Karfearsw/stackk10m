@@ -59,7 +59,7 @@ describe("XP booking API", () => {
   });
 
   beforeEach(() => {
-    storage.listXpExperiences = (async () => [{ id: 1, slug: "ocean", title: "Ocean", active: true, depositAmount: "100.00", currency: "USD", mode: "both" }]) as any;
+    storage.listXpExperiencesWithDestinations = (async () => [{ id: 1, slug: "ocean", title: "Ocean", active: true, depositAmount: "100.00", currency: "USD", mode: "both", destination: null }]) as any;
     storage.getXpExperienceBySlug = (async () => ({ id: 1, slug: "ocean", title: "Ocean", active: true, depositAmount: "100.00", currency: "USD", mode: "both", capacity: 1 })) as any;
     storage.listXpTimeSlots = (async () => [{ id: 10, experienceId: 1, startAt: new Date("2026-05-15T10:00:00Z"), endAt: new Date("2026-05-15T11:00:00Z"), capacity: 1, active: true }]) as any;
     storage.hasXpBlackoutOverlap = (async () => false) as any;

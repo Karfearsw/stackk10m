@@ -18,6 +18,13 @@ export type XpExperienceCardModel = {
   images?: string[] | null;
   location?: string | null;
   durationMinutes?: number | null;
+  destination?: {
+    id: number;
+    name: string;
+    slug?: string | null;
+    heroImage?: string | null;
+    images?: string[] | null;
+  } | null;
 };
 
 function moneyLabel(v: any) {
@@ -35,7 +42,11 @@ function durationLabel(minutes?: number | null) {
 }
 
 export function XpExperienceCard({ experience }: { experience: XpExperienceCardModel }) {
-  const image = Array.isArray(experience.images) ? experience.images.find((x) => String(x || "").trim()) : null;
+  const image =
+    (Array.isArray(experience.images) ? experience.images.find((x) => String(x || "").trim()) : null) ||
+    (experience.destination?.heroImage ? String(experience.destination.heroImage || "").trim() : null) ||
+    (Array.isArray(experience.destination?.images) ? experience.destination?.images?.find((x) => String(x || "").trim()) : null) ||
+    null;
   const currency = String(experience.currency || "USD").toUpperCase();
   const paymentMode = String(experience.paymentMode || "deposit").toLowerCase();
   const dueNow = paymentMode === "full" ? moneyLabel(experience.priceTotal) : moneyLabel(experience.depositAmount);
@@ -120,4 +131,3 @@ export function XpExperienceCard({ experience }: { experience: XpExperienceCardM
     </Card>
   );
 }
-

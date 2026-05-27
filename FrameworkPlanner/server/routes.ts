@@ -738,15 +738,30 @@ export async function registerRoutes(
   }
 
   app.get("/api/xp/experiences", async (_req, res) => {
-    const items = await storage.listXpExperiences({ activeOnly: true });
+    const items = await storage.listXpExperiencesWithDestinations({ activeOnly: true });
     return res.json({ items });
   });
 
   app.get("/api/xp/experiences/:slug", async (req, res) => {
     const slug = String(req.params.slug || "").trim();
-    const experience = await storage.getXpExperienceBySlug(slug);
+    const all = await storage.listXpExperiencesWithDestinations({ activeOnly: true });
+    const experience = all.find((x: any) => String((x as any).slug || "").trim() === slug) as any;
     if (!experience || !(experience as any).active) return res.status(404).json({ message: "Not found" });
     return res.json({ experience });
+  });
+
+  app.get("/api/xp/destinations", async (_req, res) => {
+    const items = await storage.listXpDestinations({ activeOnly: true });
+    return res.json({ items });
+  });
+
+  app.get("/api/xp/destinations/:slug", async (req, res) => {
+    const slug = String(req.params.slug || "").trim();
+    const destination = await storage.getXpDestinationBySlug(slug);
+    if (!destination || !(destination as any).active) return res.status(404).json({ message: "Not found" });
+    const experiencesAll = await storage.listXpExperiencesWithDestinations({ activeOnly: true });
+    const experiences = experiencesAll.filter((x: any) => Number((x as any).locationId || 0) === Number((destination as any).id));
+    return res.json({ destination, experiences });
   });
 
   app.get("/api/xp/experiences/:slug/availability", async (req, res) => {
@@ -1024,6 +1039,7 @@ export async function registerRoutes(
         active: z.boolean().default(true),
         images: z.array(z.string()).optional().nullable(),
         location: z.string().optional().nullable(),
+        locationId: z.number().int().optional().nullable(),
         durationMinutes: z.number().int().positive().optional().nullable(),
         highlights: z.any().optional().nullable(),
         inclusions: z.any().optional().nullable(),
@@ -1064,6 +1080,7 @@ export async function registerRoutes(
       active: body.active !== false,
       images: Array.isArray(body.images) ? body.images.map((x) => String(x || "").trim()).filter(Boolean) : null,
       location: body.location ? String(body.location).trim() : null,
+      locationId: typeof body.locationId === "number" ? body.locationId : null,
       durationMinutes: typeof body.durationMinutes === "number" ? body.durationMinutes : null,
       highlights: xpStringList(body.highlights),
       inclusions: xpStringList(body.inclusions),
@@ -1102,6 +1119,7 @@ export async function registerRoutes(
       patch.images = Array.isArray(body.images) ? body.images.map((x: any) => String(x || "").trim()).filter(Boolean) : null;
     }
     if (Object.prototype.hasOwnProperty.call(body, "location")) patch.location = body.location ? String(body.location).trim() : null;
+    if (Object.prototype.hasOwnProperty.call(body, "locationId")) patch.locationId = parseNullableInt(body.locationId);
     if (Object.prototype.hasOwnProperty.call(body, "durationMinutes")) {
       patch.durationMinutes = typeof body.durationMinutes === "number" ? body.durationMinutes : null;
     }
@@ -1892,17 +1910,29 @@ export async function registerRoutes(
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
     const name = String(req.body?.name || "").trim();
     if (!name) return res.status(400).json({ message: "Missing name" });
-    const row = await storage.createXpLocation({
-      name,
-      type: String(req.body?.type || "resort").trim() || "resort",
-      address1: String(req.body?.address1 || "").trim() || null,
-      address2: String(req.body?.address2 || "").trim() || null,
-      city: String(req.body?.city || "").trim() || null,
-      state: String(req.body?.state || "").trim() || null,
-      zip: String(req.body?.zip || "").trim() || null,
-      active: true,
-    } as any);
-    return res.status(201).json({ location: row });
+    const slugRaw = req.body?.slug;
+    const slug = slugRaw === undefined ? null : xpNormalizeSlug(slugRaw) || null;
+    try {
+      const row = await storage.createXpLocation({
+        name,
+        slug,
+        heroImage: String(req.body?.heroImage || "").trim() || null,
+        images: xpStringList(req.body?.images),
+        description: String(req.body?.description || "").trim() || null,
+        highlights: xpStringList(req.body?.highlights),
+        type: String(req.body?.type || "resort").trim() || "resort",
+        address1: String(req.body?.address1 || "").trim() || null,
+        address2: String(req.body?.address2 || "").trim() || null,
+        city: String(req.body?.city || "").trim() || null,
+        state: String(req.body?.state || "").trim() || null,
+        zip: String(req.body?.zip || "").trim() || null,
+        active: true,
+      } as any);
+      return res.status(201).json({ location: row });
+    } catch (error: any) {
+      if (error?.code === "23505") return res.status(409).json({ message: "Slug already exists" });
+      return res.status(500).json({ message: error?.message || "Failed to create location" });
+    }
   });
 
   app.patch("/api/xp/admin/locations/:id", async (req, res) => {
@@ -1913,6 +1943,11 @@ export async function registerRoutes(
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
     const patch: any = {};
     if (req.body?.name !== undefined) patch.name = String(req.body?.name || "").trim();
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "slug")) patch.slug = xpNormalizeSlug(req.body?.slug) || null;
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "heroImage")) patch.heroImage = String(req.body?.heroImage || "").trim() || null;
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "images")) patch.images = xpStringList(req.body?.images);
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "description")) patch.description = String(req.body?.description || "").trim() || null;
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, "highlights")) patch.highlights = xpStringList(req.body?.highlights);
     if (req.body?.type !== undefined) patch.type = String(req.body?.type || "").trim() || "resort";
     if (req.body?.address1 !== undefined) patch.address1 = String(req.body?.address1 || "").trim() || null;
     if (req.body?.address2 !== undefined) patch.address2 = String(req.body?.address2 || "").trim() || null;
@@ -1920,8 +1955,13 @@ export async function registerRoutes(
     if (req.body?.state !== undefined) patch.state = String(req.body?.state || "").trim() || null;
     if (req.body?.zip !== undefined) patch.zip = String(req.body?.zip || "").trim() || null;
     if (req.body?.active !== undefined) patch.active = Boolean(req.body?.active);
-    const row = await storage.updateXpLocation(id, patch);
-    return res.json({ location: row });
+    try {
+      const row = await storage.updateXpLocation(id, patch);
+      return res.json({ location: row });
+    } catch (error: any) {
+      if (error?.code === "23505") return res.status(409).json({ message: "Slug already exists" });
+      return res.status(500).json({ message: error?.message || "Failed to update location" });
+    }
   });
 
   app.delete("/api/xp/admin/locations/:id", async (req, res) => {

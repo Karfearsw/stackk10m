@@ -35,6 +35,11 @@ export function XpPublicShell({
                 Browse
               </Button>
             </Link>
+            <Link href="/xp/destinations">
+              <Button variant="ghost" size="sm">
+                Destinations
+              </Button>
+            </Link>
             {isAuthenticated ? (
               <>
                 <Link href="/dashboard">

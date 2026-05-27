@@ -8,6 +8,7 @@ import { useMemo, useState } from "react";
 export default function XpLandingPage() {
   const [q, setQ] = useState("");
   const [mode, setMode] = useState<string>("all");
+  const [destinationSlug, setDestinationSlug] = useState<string>("all");
 
   const { data, isLoading, error } = useQuery<{ items: XpExperienceCardModel[] }>({
     queryKey: ["/api/xp/experiences"],
@@ -21,9 +22,31 @@ export default function XpLandingPage() {
 
   const items = Array.isArray(data?.items) ? data?.items : [];
 
+  const destinationsQuery = useQuery<{ items: Array<{ id: number; name: string; slug?: string | null; heroImage?: string | null }> }>({
+    queryKey: ["/api/xp/destinations"],
+    queryFn: async () => {
+      const res = await fetch("/api/xp/destinations");
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((json as any).message || "Failed to load destinations");
+      return json;
+    },
+  });
+
+  const destinations = useMemo(() => {
+    const raw = Array.isArray(destinationsQuery.data?.items) ? destinationsQuery.data.items : [];
+    return raw
+      .map((d) => ({ ...d, slug: d.slug ? String(d.slug).trim() : null }))
+      .filter((d) => !!d.slug)
+      .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  }, [destinationsQuery.data?.items]);
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return items.filter((x) => {
+      if (destinationSlug !== "all") {
+        const dslug = String((x as any)?.destination?.slug || "").trim();
+        if (dslug !== destinationSlug) return false;
+      }
       if (mode !== "all") {
         const m = String(x.mode || "").trim();
         if (m !== mode) return false;
@@ -32,7 +55,7 @@ export default function XpLandingPage() {
       const hay = `${x.title || ""} ${x.description || ""} ${x.location || ""}`.toLowerCase();
       return hay.includes(needle);
     });
-  }, [items, mode, q]);
+  }, [destinationSlug, items, mode, q]);
 
   return (
     <XpPublicShell>
@@ -53,10 +76,26 @@ export default function XpLandingPage() {
           </div>
 
           <div className="space-y-3 lg:col-span-5">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div className="space-y-2">
                 <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Search</div>
                 <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Try: yacht, dinner, Nassau…" />
+              </div>
+              <div className="space-y-2">
+                <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Destination</div>
+                <Select value={destinationSlug} onValueChange={setDestinationSlug}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    {destinations.map((d) => (
+                      <SelectItem key={d.id} value={String(d.slug)}>
+                        {d.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-2">
                 <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Mode</div>

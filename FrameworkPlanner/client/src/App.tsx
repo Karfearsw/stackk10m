@@ -42,6 +42,8 @@ const DialerWorkspace = React.lazy(() => import("@/pages/dialer-workspace"));
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
 const TeamsPage = React.lazy(() => import("@/pages/teams"));
 const XpLandingPage = React.lazy(() => import("@/pages/xp/index"));
+const XpDestinationsPage = React.lazy(() => import("@/pages/xp/destinations"));
+const XpDestinationPage = React.lazy(() => import("@/pages/xp/destination"));
 const XpExperiencePage = React.lazy(() => import("@/pages/xp/experience"));
 const XpAdminPage = React.lazy(() => import("@/pages/xp/admin"));
 const XpCheckoutSuccessPage = React.lazy(() => import("@/pages/xp/checkout-success"));
@@ -107,6 +109,16 @@ function Router() {
         <Route path="/xp/checkout/cancel">
           <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-border" /></div>}>
             <XpCheckoutCancelPage />
+          </Suspense>
+        </Route>
+        <Route path="/xp/destinations/:slug">
+          <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-border" /></div>}>
+            <XpDestinationPage />
+          </Suspense>
+        </Route>
+        <Route path="/xp/destinations">
+          <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-border" /></div>}>
+            <XpDestinationsPage />
           </Suspense>
         </Route>
         <Route path="/xp/:slug">
