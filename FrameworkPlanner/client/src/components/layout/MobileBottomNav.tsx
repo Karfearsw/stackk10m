@@ -1,4 +1,4 @@
-import { Building2, Menu, Phone, Users } from "lucide-react";
+import { Building2, Hash, Menu, Users } from "lucide-react";
 import { useLocation, Link } from "wouter";
 import { cn } from "@/lib/utils";
 
@@ -12,7 +12,7 @@ export function MobileBottomNav({ onMore }: MobileBottomNavProps) {
   const items = [
     { label: "Leads", href: "/leads", icon: Users },
     { label: "Opps", href: "/opportunities", icon: Building2 },
-    { label: "Phone", href: "/phone", icon: Phone },
+    { label: "Dialer", href: "/dialer", icon: Hash },
     { label: "Contacts", href: "/contacts", icon: Users },
   ] as const;
 
