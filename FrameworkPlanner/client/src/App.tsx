@@ -199,6 +199,9 @@ function Router() {
         <Route path="/phone">
           {() => <ProtectedRoute component={PhoneWorkspace} />}
         </Route>
+        <Route path="/dialer/workspace">
+          {() => <Redirect to="/dialer" />}
+        </Route>
         <Route path="/dialer">
           {() => <ProtectedRoute component={DialerWorkspace} />}
         </Route>
