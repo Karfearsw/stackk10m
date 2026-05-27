@@ -104,7 +104,7 @@ function Router() {
       <Route path="/xp/checkout-cancel" component={() => <ProtectedRoute component={XpCheckoutCancelPage} />} />
 
       {/* Core Protected Routes */}
-      <Route path="/" component={() => (isAuthenticated ? <ProtectedRoute component={Dashboard} /> : <Redirect to="/login" />)} />
+      <Route path="/" component={() => (appVariant === "xp" ? <Redirect to="/xp" /> : (isAuthenticated ? <ProtectedRoute component={Dashboard} /> : <Redirect to="/login" />))} />
       <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
       <Route path="/leads" component={() => <ProtectedRoute component={Leads} />} />
       <Route path="/campaigns" component={() => <ProtectedRoute component={Campaigns} />} />
@@ -130,9 +130,9 @@ function Router() {
       <Route path="/sign-contract/:id" component={() => <ProtectedRoute component={SignContractPage} />} />
       <Route path="/field" component={() => <ProtectedRoute component={FieldModePage} />} />
       <Route path="/phone" component={() => <ProtectedRoute component={PhoneWorkspace} />} />
-      <Route path="/dialer" component={() => <ProtectedRoute component={Dialer} />} />
-      <Route path="/dialer-workspace" component={() => <ProtectedRoute component={DialerWorkspace} />} />
-      <Route path="/dialer/workspace" component={() => <ProtectedRoute component={DialerWorkspace} />} />
+      <Route path="/dialer" component={() => <ProtectedRoute component={DialerWorkspace} />} />
+      <Route path="/dialer-workspace" component={() => <Redirect to="/dialer" />} />
+      <Route path="/dialer/workspace" component={() => <Redirect to="/dialer" />} />
       <Route path="/system-health" component={() => <ProtectedRoute component={SystemHealthPage} />} />
       <Route path="/teams" component={() => <ProtectedRoute component={TeamsPage} />} />
       <Route path="/companies" component={() => <ProtectedRoute component={CompaniesPage} />} />
