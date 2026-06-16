@@ -1,4 +1,4 @@
-import { Switch, Route, Redirect, useLocation } from "wouter";
+import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -31,102 +31,58 @@ import SearchPage from "@/pages/search";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
-  const [location] = useLocation();
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="h-8 w-8 animate-spin text-border" />
+        <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );
   }
+
   if (!isAuthenticated) {
     return <Redirect to="/login" />;
   }
+
   return <Component />;
 }
 
 function Router() {
   const { isAuthenticated, loading } = useAuth();
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="h-8 w-8 animate-spin text-border" />
+        <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );
   }
+
   return (
     <Switch>
-      <Route path="/login">
-        {() => (isAuthenticated ? <Redirect to="/" /> : <Login />)}
-      </Route>
-      <Route path="/signup">
-        {() => (isAuthenticated ? <Redirect to="/" /> : <Signup />)}
-      </Route>
-      <Route path="/forgot-password" component={ForgotPassword} />
-      <Route path="/reset-password" component={ResetPassword} />
-      <Route path="/">
-        {() => <ProtectedRoute component={Dashboard} />}
-      </Route>
-      <Route path="/leads">
-        {() => <ProtectedRoute component={Leads} />}
-      </Route>
-      <Route path="/opportunities">
-        {() => <ProtectedRoute component={Properties} />}
-      </Route>
-      <Route path="/properties">
-        {() => <Redirect to="/opportunities" />}
-      </Route>
-      <Route path="/opportunities/:id">
-        {() => <ProtectedRoute component={PropertyDetail} />}
-      </Route>
-      <Route path="/properties/:id">
-        {() => {
-          const [location] = useLocation();
-          return <Redirect to={location.replace('/properties', '/opportunities')} />;
-        }}
-      </Route>
-      <Route path="/contracts">
-        {() => <ProtectedRoute component={ContractGenerator} />}
-      </Route>
-      <Route path="/contracts-old">
-        {() => <ProtectedRoute component={Contracts} />}
-      </Route>
-      <Route path="/analytics">
-        {() => <ProtectedRoute component={Analytics} />}
-      </Route>
-      <Route path="/settings">
-        {() => <ProtectedRoute component={Settings} />}
-      </Route>
-      <Route path="/calculator">
-        {() => <ProtectedRoute component={Calculator} />}
-      </Route>
-      <Route path="/timesheet">
-        {() => <ProtectedRoute component={Timesheet} />}
-      </Route>
-      <Route path="/notifications">
-        {() => <ProtectedRoute component={Notifications} />}
-      </Route>
-      <Route path="/playground">
-        {() => <ProtectedRoute component={Playground} />}
-      </Route>
-      <Route path="/dialer">
-        {() => <ProtectedRoute component={Dialer} />}
-      </Route>
-      <Route path="/buyers">
-        {() => <ProtectedRoute component={Buyers} />}
-      </Route>
-      <Route path="/contacts">
-        {() => <ProtectedRoute component={Contacts} />}
-      </Route>
-      <Route path="/history">
-        {() => <ProtectedRoute component={History} />}
-      </Route>
-      <Route path="/voicemail">
-        {() => <ProtectedRoute component={VoicemailPage} />}
-      </Route>
-      <Route path="/search">
-        {() => <ProtectedRoute component={SearchPage} />}
-      </Route>
+      <Route path="/" component={() => (isAuthenticated ? <Dashboard /> : <Login />)} />
+      <Route path="/login" component={() => (isAuthenticated ? <Dashboard /> : <Login />)} />
+      <Route path="/signup" component={() => <Signup />} />
+      <Route path="/forgot-password" component={() => <ForgotPassword />} />
+      <Route path="/reset-password" component={() => <ResetPassword />} />
+      <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
+      <Route path="/leads" component={() => <ProtectedRoute component={Leads} />} />
+      <Route path="/properties" component={() => <ProtectedRoute component={Properties} />} />
+      <Route path="/property/:id" component={() => <ProtectedRoute component={PropertyDetail} />} />
+      <Route path="/contracts" component={() => <ProtectedRoute component={Contracts} />} />
+      <Route path="/contract-generator" component={() => <ProtectedRoute component={ContractGenerator} />} />
+      <Route path="/analytics" component={() => <ProtectedRoute component={Analytics} />} />
+      <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
+      <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
+      <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />
+      <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
+      <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />
+      <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />
+      <Route path="/dialer" component={() => <ProtectedRoute component={Dialer} />} />
+      <Route path="/contacts" component={() => <ProtectedRoute component={Contacts} />} />
+      <Route path="/history" component={() => <ProtectedRoute component={History} />} />
+      <Route path="/voicemail" component={() => <ProtectedRoute component={VoicemailPage} />} />
+      <Route path="/search" component={() => <ProtectedRoute component={SearchPage} />} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -137,8 +93,8 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <TooltipProvider>
-          <Toaster />
           <Router />
+          <Toaster />
         </TooltipProvider>
       </AuthProvider>
     </QueryClientProvider>
