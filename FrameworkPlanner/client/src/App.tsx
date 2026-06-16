@@ -38,6 +38,7 @@ const SearchPage = React.lazy(() => import("@/pages/search"));
 const SignContractPage = React.lazy(() => import("@/pages/sign-contract"));
 const FieldModePage = React.lazy(() => import("@/pages/field"));
 const PhoneWorkspace = React.lazy(() => import("@/pages/phone"));
+const Dialer = React.lazy(() => import("@/pages/dialer"));
 const DialerWorkspace = React.lazy(() => import("@/pages/dialer-workspace"));
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
 const TeamsPage = React.lazy(() => import("@/pages/teams"));
@@ -54,19 +55,21 @@ const AuditLogPage = React.lazy(() => import("@/pages/audit-log"));
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
-  const [location] = useLocation();
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="h-8 w-8 animate-spin text-border" />
+        <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );
   }
+
   if (!isAuthenticated) {
     return <Redirect to="/login" />;
   }
+
   return (
-    <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-border" /></div>}>
+    <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin" /></div>}>
       <Component />
     </Suspense>
   );
@@ -74,163 +77,70 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
 
 function Router() {
   const { isAuthenticated, loading } = useAuth();
-  const variant = getAppVariant();
+  const appVariant = getAppVariant();
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="h-8 w-8 animate-spin text-border" />
+        <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );
   }
+
   return (
-    <AppErrorBoundary>
-      <Switch>
-        <Route path="/login">
-          {isAuthenticated ? <Redirect to="/dashboard" /> : <Login />}
-        </Route>
-        <Route path="/signup">
-          {isAuthenticated ? <Redirect to="/login" /> : <Signup />}
-        </Route>
-        <Route path="/forgot-password">
-          {isAuthenticated ? <Redirect to="/dashboard" /> : <ForgotPassword />}
-        </Route>
-        <Route path="/reset-password">
-          {isAuthenticated ? <Redirect to="/dashboard" /> : <ResetPassword />}
-        </Route>
-        <Route path="/magic-link">
-          {isAuthenticated ? <Redirect to="/dashboard" /> : <MagicLink />}
-        </Route>
-        <Route path="/xp/admin">
-          {() => <ProtectedRoute component={XpAdminPage} />}
-        </Route>
-        <Route path="/xp/checkout/success">
-          <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-border" /></div>}>
-            <XpCheckoutSuccessPage />
-          </Suspense>
-        </Route>
-        <Route path="/xp/checkout/cancel">
-          <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-border" /></div>}>
-            <XpCheckoutCancelPage />
-          </Suspense>
-        </Route>
-        <Route path="/xp/:slug">
-          <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-border" /></div>}>
-            <XpExperiencePage />
-          </Suspense>
-        </Route>
-        <Route path="/xp">
-          <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin text-border" /></div>}>
-            <XpLandingPage />
-          </Suspense>
-        </Route>
-        <Route path="/dashboard">
-          {() => <ProtectedRoute component={Dashboard} />}
-        </Route>
-        <Route path="/">
-          {() => (variant === "xp" ? <Redirect to="/xp" /> : (isAuthenticated ? <Redirect to="/dashboard" /> : <Redirect to="/login" />))}
-        </Route>
-        <Route path="/leads">
-          {() => <ProtectedRoute component={Leads} />}
-        </Route>
-        <Route path="/campaigns">
-          {() => <ProtectedRoute component={Campaigns} />}
-        </Route>
-        <Route path="/rvm">
-          {() => <ProtectedRoute component={RvmPage} />}
-        </Route>
-        <Route path="/opportunities">
-          {() => <ProtectedRoute component={Properties} />}
-        </Route>
-        <Route path="/properties">
-          {() => <Redirect to="/opportunities" />}
-        </Route>
-        <Route path="/opportunities/:id">
-          {() => <ProtectedRoute component={PropertyDetail} />}
-        </Route>
-        <Route path="/properties/:id">
-          {() => {
-            const [location] = useLocation();
-            return <Redirect to={location.replace('/properties', '/opportunities')} />;
-          }}
-        </Route>
-        <Route path="/contracts">
-          {() => <ProtectedRoute component={ContractGenerator} />}
-        </Route>
-        <Route path="/contracts-old">
-          {() => <ProtectedRoute component={Contracts} />}
-        </Route>
-        <Route path="/sign-contract/:token">
-          {() => <ProtectedRoute component={SignContractPage} />}
-        </Route>
-        <Route path="/analytics">
-          {() => <ProtectedRoute component={Analytics} />}
-        </Route>
-        <Route path="/settings">
-          {() => <ProtectedRoute component={Settings} />}
-        </Route>
-        <Route path="/calculator">
-          {() => <ProtectedRoute component={Calculator} />}
-        </Route>
-        <Route path="/timesheet">
-          {() => <ProtectedRoute component={Timesheet} />}
-        </Route>
-        <Route path="/notifications">
-          {() => <ProtectedRoute component={Notifications} />}
-        </Route>
-        <Route path="/playground">
-          {() => <ProtectedRoute component={Playground} />}
-        </Route>
-        <Route path="/audit">
-          {() => <ProtectedRoute component={AuditPage} />}
-        </Route>
-        <Route path="/audit-log">
-          {() => <ProtectedRoute component={AuditLogPage} />}
-        </Route>
-        <Route path="/buyers">
-          {() => <ProtectedRoute component={Buyers} />}
-        </Route>
-        <Route path="/tasks">
-          {() => <ProtectedRoute component={TasksPage} />}
-        </Route>
-        <Route path="/calendar">
-          {() => <ProtectedRoute component={CalendarPage} />}
-        </Route>
-        <Route path="/today">
-          {() => <ProtectedRoute component={TodayPage} />}
-        </Route>
-        <Route path="/contacts">
-          {() => <ProtectedRoute component={Contacts} />}
-        </Route>
-        <Route path="/companies">
-          {() => <ProtectedRoute component={CompaniesPage} />}
-        </Route>
-        <Route path="/documents">
-          {() => <ProtectedRoute component={DocumentsPage} />}
-        </Route>
-        <Route path="/automations">
-          {() => <ProtectedRoute component={AutomationsPage} />}
-        </Route>
-        <Route path="/search">
-          {() => <ProtectedRoute component={SearchPage} />}
-        </Route>
-        <Route path="/field">
-          {() => <ProtectedRoute component={FieldModePage} />}
-        </Route>
-        <Route path="/phone">
-          {() => <ProtectedRoute component={PhoneWorkspace} />}
-        </Route>
-        <Route path="/dialer">
-          {() => <ProtectedRoute component={DialerWorkspace} />}
-        </Route>
-        <Route path="/system-health">
-          {() => <ProtectedRoute component={SystemHealthPage} />}
-        </Route>
-        <Route path="/teams">
-          {() => <ProtectedRoute component={TeamsPage} />}
-        </Route>
-        <Route component={NotFound} />
-      </Switch>
-    </AppErrorBoundary>
+    <Switch>
+      {/* Auth Routes */}
+      <Route path="/login" component={() => (isAuthenticated ? <Redirect to="/" /> : <Login />)} />
+      <Route path="/signup" component={() => (isAuthenticated ? <Redirect to="/" /> : <Signup />)} />
+      <Route path="/forgot-password" component={() => <ForgotPassword />} />
+      <Route path="/reset-password" component={() => <ResetPassword />} />
+      <Route path="/magic-link" component={() => <MagicLink />} />
+
+      {/* XP Routes */}
+      <Route path="/xp" component={() => <ProtectedRoute component={XpLandingPage} />} />
+      <Route path="/xp/experience" component={() => <ProtectedRoute component={XpExperiencePage} />} />
+      <Route path="/xp/admin" component={() => <ProtectedRoute component={XpAdminPage} />} />
+      <Route path="/xp/checkout-success" component={() => <ProtectedRoute component={XpCheckoutSuccessPage} />} />
+      <Route path="/xp/checkout-cancel" component={() => <ProtectedRoute component={XpCheckoutCancelPage} />} />
+
+      {/* Core Protected Routes */}
+      <Route path="/" component={() => (isAuthenticated ? <ProtectedRoute component={Dashboard} /> : <Redirect to="/login" />)} />
+      <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
+      <Route path="/leads" component={() => <ProtectedRoute component={Leads} />} />
+      <Route path="/campaigns" component={() => <ProtectedRoute component={Campaigns} />} />
+      <Route path="/rvm" component={() => <ProtectedRoute component={RvmPage} />} />
+      <Route path="/property/:id" component={() => <ProtectedRoute component={PropertyDetail} />} />
+      <Route path="/properties" component={() => <ProtectedRoute component={Properties} />} />
+      <Route path="/contracts" component={() => <ProtectedRoute component={Contracts} />} />
+      <Route path="/contract-generator" component={() => <ProtectedRoute component={ContractGenerator} />} />
+      <Route path="/analytics" component={() => <ProtectedRoute component={Analytics} />} />
+      <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
+      <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
+      <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />
+      <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
+      <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />
+      <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />
+      <Route path="/tasks" component={() => <ProtectedRoute component={TasksPage} />} />
+      <Route path="/calendar" component={() => <ProtectedRoute component={CalendarPage} />} />
+      <Route path="/today" component={() => <ProtectedRoute component={TodayPage} />} />
+      <Route path="/contacts" component={() => <ProtectedRoute component={Contacts} />} />
+      <Route path="/search" component={() => <ProtectedRoute component={SearchPage} />} />
+      <Route path="/sign-contract/:id" component={() => <ProtectedRoute component={SignContractPage} />} />
+      <Route path="/field" component={() => <ProtectedRoute component={FieldModePage} />} />
+      <Route path="/phone" component={() => <ProtectedRoute component={PhoneWorkspace} />} />
+      <Route path="/dialer" component={() => <ProtectedRoute component={Dialer} />} />
+      <Route path="/dialer-workspace" component={() => <ProtectedRoute component={DialerWorkspace} />} />
+      <Route path="/system-health" component={() => <ProtectedRoute component={SystemHealthPage} />} />
+      <Route path="/teams" component={() => <ProtectedRoute component={TeamsPage} />} />
+      <Route path="/companies" component={() => <ProtectedRoute component={CompaniesPage} />} />
+      <Route path="/documents" component={() => <ProtectedRoute component={DocumentsPage} />} />
+      <Route path="/automations" component={() => <ProtectedRoute component={AutomationsPage} />} />
+      <Route path="/audit" component={() => <ProtectedRoute component={AuditPage} />} />
+      <Route path="/audit-log" component={() => <ProtectedRoute component={AuditLogPage} />} />
+
+      {/* Fallback */}
+      <Route component={NotFound} />
+    </Switch>
   );
 }
 
@@ -238,10 +148,12 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Router />
-        </TooltipProvider>
+        <AppErrorBoundary>
+          <TooltipProvider>
+            <Router />
+            <Toaster />
+          </TooltipProvider>
+        </AppErrorBoundary>
       </AuthProvider>
     </QueryClientProvider>
   );
