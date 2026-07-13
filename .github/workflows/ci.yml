@@ -14,6 +14,21 @@ jobs:
       matrix:
         node-version: [20.x]
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
     - uses: actions/checkout@v4
     
@@ -36,6 +51,34 @@ jobs:
       working-directory: FrameworkPlanner
       run: npm run build
 
+    - name: Database Push
+      working-directory: FrameworkPlanner
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      run: npm run db:push
+
     - name: Run Tests
       working-directory: FrameworkPlanner
-      run: npx vitest run
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      run: npm run test:unit
+
+    - name: Install Playwright Browsers
+      working-directory: FrameworkPlanner
+      run: npx playwright install --with-deps
+
+    - name: Run E2E Tests
+      working-directory: FrameworkPlanner
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        SESSION_SECRET: test-secret
+        EMPLOYEE_ACCESS_CODE: "3911"
+        NODE_ENV: development
+        E2E_EMPLOYEE_CODE: "3911"
+        E2E_PASSWORD: test-password
+        E2E_DEV_BYPASS_ENABLED: "1"
+        PLAYWRIGHT_BASE_URL: http://localhost:3000
+      run: |
+        npm run dev > dev_server.log 2>&1 &
+        npx wait-on http://localhost:3000/api/health
+        npm run test:e2e

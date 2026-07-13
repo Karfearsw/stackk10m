@@ -10,3 +10,5 @@ FrameworkPlanner/dist-server
 .trae/
 .local/
 FrameworkPlanner/node_modules__old_*/
+playwright-report/
+test-results/
