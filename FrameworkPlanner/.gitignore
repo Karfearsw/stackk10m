@@ -9,3 +9,5 @@ vite.config.ts.*
 backups/
 node_modules__old_*/
 FrameworkPlanner/
+playwright-report/
+test-results/
