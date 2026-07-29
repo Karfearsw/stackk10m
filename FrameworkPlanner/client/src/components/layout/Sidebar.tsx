@@ -46,7 +46,7 @@ export const navigation = [
   { name: "Field Mode", href: "/field", icon: MapPin },
   { name: "Opportunities", href: "/opportunities", icon: Building2 },
   { name: "Phone", href: "/phone", icon: Phone },
-  { name: "Dialer Workspace", href: "/dialer/workspace", icon: Phone },
+  { name: "Dialer Workspace", href: "/dialer-workspace", icon: Phone },
   { name: "Contacts", href: "/contacts", icon: Users },
   { name: "Companies", href: "/companies", icon: Building2 },
   { name: "Documents", href: "/documents", icon: FolderOpen },

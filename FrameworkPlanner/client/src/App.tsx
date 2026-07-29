@@ -110,7 +110,9 @@ function Router() {
       <Route path="/campaigns" component={() => <ProtectedRoute component={Campaigns} />} />
       <Route path="/rvm" component={() => <ProtectedRoute component={RvmPage} />} />
       <Route path="/property/:id" component={() => <ProtectedRoute component={PropertyDetail} />} />
+      <Route path="/opportunities/:id" component={() => <ProtectedRoute component={PropertyDetail} />} />
       <Route path="/properties" component={() => <ProtectedRoute component={Properties} />} />
+      <Route path="/opportunities" component={() => <ProtectedRoute component={Properties} />} />
       <Route path="/contracts" component={() => <ProtectedRoute component={Contracts} />} />
       <Route path="/contract-generator" component={() => <ProtectedRoute component={ContractGenerator} />} />
       <Route path="/analytics" component={() => <ProtectedRoute component={Analytics} />} />
@@ -130,6 +132,7 @@ function Router() {
       <Route path="/phone" component={() => <ProtectedRoute component={PhoneWorkspace} />} />
       <Route path="/dialer" component={() => <ProtectedRoute component={Dialer} />} />
       <Route path="/dialer-workspace" component={() => <ProtectedRoute component={DialerWorkspace} />} />
+      <Route path="/dialer/workspace" component={() => <ProtectedRoute component={DialerWorkspace} />} />
       <Route path="/system-health" component={() => <ProtectedRoute component={SystemHealthPage} />} />
       <Route path="/teams" component={() => <ProtectedRoute component={TeamsPage} />} />
       <Route path="/companies" component={() => <ProtectedRoute component={CompaniesPage} />} />
