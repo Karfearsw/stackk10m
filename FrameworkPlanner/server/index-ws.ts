@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./load-env.js";
 
 import express from "express";
 import { createServer } from "node:http";
@@ -48,4 +48,3 @@ main().catch((e) => {
   console.error(e);
   process.exitCode = 1;
 });
-

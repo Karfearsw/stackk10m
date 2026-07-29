@@ -1,3 +1,5 @@
+import "./load-env.js";
+
 import { app, installErrorHandling } from "./app.js";
 import { registerRoutes } from "./routes.js";
 
