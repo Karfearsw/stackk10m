@@ -4,7 +4,7 @@ import {
   leads, leadNotes, savedViews, leadBulkActionJobs, aiActionLogs, aiActionUndo, appAuditRuns, appAuditFindings, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, workCategories, timesheetEntries, timeClockSessions, workerProfiles, categoryRateOverrides, payPeriods, approvalEvents, commissionEvents, dealParticipants, commissionLedgerEntries, globalActivityLogs,
   buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents,
-  companies, companyPeople, companyLinks, documents, documentLinks, vaultDocumentVersions, automations, automationTriggers, automationConditions, automationActions, automationRuns, auditEvents
+  companies, companyPeople, companyLinks, documents, documentLinks, vaultDocumentVersions, automations, automationTriggers, automationConditions, automationActions, automationRuns, auditEvents, opsAgents, opsAgentHeartbeats
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -97,9 +97,13 @@ import {
   type AutomationCondition, type InsertAutomationCondition,
   type AutomationAction, type InsertAutomationAction,
   type AutomationRun, type InsertAutomationRun,
-  type AuditEvent, type InsertAuditEvent
+  type AuditEvent, type InsertAuditEvent,
+  type OpsAgent, type InsertOpsAgent,
+  type OpsAgentHeartbeat, type InsertOpsAgentHeartbeat
 } from "./shared-schema.js";
 import { eq, and, gte, lte, isNull, inArray, or, ne, isNotNull } from "drizzle-orm";
+
+export type OpsAgentListItem = OpsAgent & { teamName: string | null };
 
 export interface IStorage {
   // Leads
@@ -398,6 +402,21 @@ export interface IStorage {
   // Team Activity Logs
   getTeamActivityLogs(teamId: number, limit?: number): Promise<TeamActivityLog[]>;
   createTeamActivityLog(log: InsertTeamActivityLog): Promise<TeamActivityLog>;
+
+  listOpsAgents(input: {
+    teamIds?: number[];
+    q?: string;
+    status?: string;
+    teamId?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: OpsAgentListItem[]; total: number }>;
+  getOpsAgentById(id: number): Promise<OpsAgent | undefined>;
+  getOpsAgentBySlug(slug: string): Promise<OpsAgent | undefined>;
+  createOpsAgent(input: InsertOpsAgent): Promise<OpsAgent>;
+  updateOpsAgent(id: number, patch: Partial<OpsAgent>): Promise<OpsAgent>;
+  createOpsAgentHeartbeat(input: InsertOpsAgentHeartbeat): Promise<OpsAgentHeartbeat>;
+  listRecentOpsAgentHeartbeats(agentId: number, limit?: number): Promise<OpsAgentHeartbeat[]>;
 
   // Notification Preferences
   getNotificationPreferencesByUserId(userId: number): Promise<NotificationPreference | undefined>;
@@ -2228,6 +2247,106 @@ export class DatabaseStorage implements IStorage {
   async createTeamActivityLog(log: InsertTeamActivityLog): Promise<TeamActivityLog> {
     const result = await db.insert(teamActivityLogs).values(log as any).returning();
     return result[0];
+  }
+
+  async listOpsAgents(input: {
+    teamIds?: number[];
+    q?: string;
+    status?: string;
+    teamId?: number;
+    limit?: number;
+    offset?: number;
+  }): Promise<{ items: OpsAgentListItem[]; total: number }> {
+    const limit = typeof input.limit === "number" && input.limit > 0 ? input.limit : 50;
+    const offset = typeof input.offset === "number" && input.offset >= 0 ? input.offset : 0;
+    const whereParts: any[] = [];
+    const q = String(input.q || "").trim().toLowerCase();
+    const status = String(input.status || "").trim().toLowerCase();
+    const scopedTeamIds = Array.isArray(input.teamIds)
+      ? input.teamIds.map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0)
+      : [];
+    const selectedTeamId = Number(input.teamId);
+
+    if (scopedTeamIds.length > 0) whereParts.push(inArray(opsAgents.teamId, scopedTeamIds));
+    if (Number.isFinite(selectedTeamId) && selectedTeamId > 0) whereParts.push(eq(opsAgents.teamId, selectedTeamId));
+    if (status) whereParts.push(eq(opsAgents.lastStatus, status));
+    if (q) {
+      const term = `%${q}%`;
+      whereParts.push(
+        sql`(
+          lower(${opsAgents.slug}) LIKE ${term}
+          OR lower(${opsAgents.displayName}) LIKE ${term}
+          OR lower(coalesce(${opsAgents.hostname}, '')) LIKE ${term}
+          OR lower(coalesce(${opsAgents.model}, '')) LIKE ${term}
+          OR lower(coalesce(${teams.name}, '')) LIKE ${term}
+        )`,
+      );
+    }
+
+    const where = whereParts.length ? and(...whereParts) : undefined;
+    const baseItems = db
+      .select({
+        agent: opsAgents,
+        teamName: teams.name,
+      })
+      .from(opsAgents)
+      .leftJoin(teams, eq(opsAgents.teamId, teams.id));
+    const baseCount = db
+      .select({
+        count: sql<number>`count(*)::int`,
+      })
+      .from(opsAgents)
+      .leftJoin(teams, eq(opsAgents.teamId, teams.id));
+
+    const rows = await (where
+      ? baseItems.where(where).orderBy(desc(opsAgents.lastHeartbeatAt), asc(opsAgents.displayName)).limit(limit).offset(offset)
+      : baseItems.orderBy(desc(opsAgents.lastHeartbeatAt), asc(opsAgents.displayName)).limit(limit).offset(offset));
+    const countRows = await (where ? baseCount.where(where) : baseCount);
+
+    return {
+      items: rows.map((row: any) => ({ ...(row.agent as OpsAgent), teamName: row.teamName ? String(row.teamName) : null })),
+      total: Number((countRows as any)[0]?.count ?? 0),
+    };
+  }
+
+  async getOpsAgentById(id: number): Promise<OpsAgent | undefined> {
+    const result = await db.select().from(opsAgents).where(eq(opsAgents.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getOpsAgentBySlug(slug: string): Promise<OpsAgent | undefined> {
+    const normalized = String(slug || "").trim();
+    if (!normalized) return undefined;
+    const result = await db.select().from(opsAgents).where(eq(opsAgents.slug, normalized)).limit(1);
+    return result[0];
+  }
+
+  async createOpsAgent(input: InsertOpsAgent): Promise<OpsAgent> {
+    const result = await db.insert(opsAgents).values({ ...input, updatedAt: new Date() } as any).returning();
+    return result[0];
+  }
+
+  async updateOpsAgent(id: number, patch: Partial<OpsAgent>): Promise<OpsAgent> {
+    const result = await db
+      .update(opsAgents)
+      .set({ ...patch, updatedAt: new Date() } as any)
+      .where(eq(opsAgents.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async createOpsAgentHeartbeat(input: InsertOpsAgentHeartbeat): Promise<OpsAgentHeartbeat> {
+    const result = await db.insert(opsAgentHeartbeats).values(input as any).returning();
+    return result[0];
+  }
+
+  async listRecentOpsAgentHeartbeats(agentId: number, limit: number = 20): Promise<OpsAgentHeartbeat[]> {
+    return db
+      .select()
+      .from(opsAgentHeartbeats)
+      .where(eq(opsAgentHeartbeats.agentId, agentId))
+      .orderBy(desc(opsAgentHeartbeats.receivedAt))
+      .limit(limit);
   }
 
   // Notification Preferences

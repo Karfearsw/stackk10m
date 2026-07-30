@@ -1,0 +1,17 @@
+[Unit]
+Description=Hermes Agent
+After=network-online.target ollama.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/hermes
+WorkingDirectory=/opt/hermes
+ExecStart=/usr/local/bin/hermes start --config /etc/hermes/config.yaml
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

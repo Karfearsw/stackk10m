@@ -1,0 +1,11 @@
+[Unit]
+Description=Send VPS agent heartbeat to Stackk Ops
+After=network-online.target ollama.service hermes.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/default/ops-agent
+ExecStart=/usr/local/bin/agent-health.sh
+User=root
+Group=root

@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { Link, useLocation } from "wouter";
 import { LogOut } from "lucide-react";
-import { navigation } from "./Sidebar";
+import { getNavigationItems } from "./Sidebar";
 
 type MobileNavDrawerProps = {
   open: boolean;
@@ -13,6 +13,7 @@ type MobileNavDrawerProps = {
 export function MobileNavDrawer({ open, onOpenChange }: MobileNavDrawerProps) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
+  const navigation = getNavigationItems(user);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>

@@ -1710,3 +1710,68 @@ export const auditEvents = pgTable("audit_events", {
 export const insertAuditEventSchema = createInsertSchema(auditEvents).omit({ id: true, createdAt: true } as any);
 export type AuditEvent = typeof auditEvents.$inferSelect;
 export type InsertAuditEvent = z.infer<typeof insertAuditEventSchema>;
+
+export const opsAgents = pgTable("ops_agents", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  slug: varchar("slug", { length: 80 }).notNull().unique(),
+  displayName: varchar("display_name", { length: 120 }).notNull(),
+  hostname: varchar("hostname", { length: 120 }),
+  provider: varchar("provider", { length: 80 }),
+  region: varchar("region", { length: 80 }),
+  environment: varchar("environment", { length: 40 }).notNull().default("production"),
+  agentType: varchar("agent_type", { length: 40 }).notNull().default("hermes"),
+  model: varchar("model", { length: 120 }),
+  expectedHeartbeatIntervalSeconds: integer("expected_heartbeat_interval_seconds").notNull().default(60),
+  heartbeatSecretHash: varchar("heartbeat_secret_hash", { length: 128 }).notNull(),
+  configRefCiphertext: text("config_ref_ciphertext"),
+  configRefIv: varchar("config_ref_iv", { length: 128 }),
+  lastStatus: varchar("last_status", { length: 20 }).notNull().default("offline"),
+  lastHeartbeatAt: timestamp("last_heartbeat_at"),
+  lastError: text("last_error"),
+  lastTask: text("last_task"),
+  latestMetricsJson: jsonb("latest_metrics_json").notNull().default(sql`'{}'::jsonb`),
+  createdBy: integer("created_by").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertOpsAgentSchema = createInsertSchema(opsAgents).omit({
+  id: true,
+  lastStatus: true,
+  lastHeartbeatAt: true,
+  lastError: true,
+  lastTask: true,
+  latestMetricsJson: true,
+  createdAt: true,
+  updatedAt: true,
+} as any);
+export type OpsAgent = typeof opsAgents.$inferSelect;
+export type InsertOpsAgent = z.infer<typeof insertOpsAgentSchema>;
+
+export const opsAgentHeartbeats = pgTable("ops_agent_heartbeats", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  agentId: integer("agent_id").notNull(),
+  reportedAt: timestamp("reported_at").notNull(),
+  status: varchar("status", { length: 20 }).notNull(),
+  cpuPercent: integer("cpu_percent"),
+  ramUsedMb: integer("ram_used_mb"),
+  ramTotalMb: integer("ram_total_mb"),
+  diskUsedMb: integer("disk_used_mb"),
+  diskTotalMb: integer("disk_total_mb"),
+  uptimeSeconds: integer("uptime_seconds"),
+  hermesStatus: varchar("hermes_status", { length: 20 }),
+  ollamaStatus: varchar("ollama_status", { length: 20 }),
+  model: varchar("model", { length: 120 }),
+  latestTask: text("latest_task"),
+  lastError: text("last_error"),
+  payloadJson: jsonb("payload_json").notNull().default(sql`'{}'::jsonb`),
+  receivedAt: timestamp("received_at").defaultNow(),
+});
+
+export const insertOpsAgentHeartbeatSchema = createInsertSchema(opsAgentHeartbeats).omit({
+  id: true,
+  receivedAt: true,
+} as any);
+export type OpsAgentHeartbeat = typeof opsAgentHeartbeats.$inferSelect;
+export type InsertOpsAgentHeartbeat = z.infer<typeof insertOpsAgentHeartbeatSchema>;

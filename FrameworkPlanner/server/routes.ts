@@ -71,6 +71,8 @@ import {
   insertAutomationConditionSchema,
   insertAutomationActionSchema,
   insertAutomationRunSchema,
+  insertOpsAgentSchema,
+  insertOpsAgentHeartbeatSchema,
   crmExportFiles,
   crmImportJobs,
   auditEvents,
@@ -91,6 +93,8 @@ import crypto from "node:crypto";
 import { createIsFeatureEnabled } from "./featureFlags.js";
 import { writeAuditEvent } from "./services/audit/writeAuditEvent.js";
 import { dispatchAutomationEvent } from "./services/automations/engine.js";
+import { generateOpsAgentSecret, hashOpsAgentSecret, opsAgentSecretMatches, readBearerToken } from "./ops/auth.js";
+import { computeOpsAgentStatus } from "./ops/status.js";
 
 const require = createRequire(import.meta.url);
 const packageJson: any = (() => {
@@ -365,6 +369,87 @@ async function requireActiveTeam(req: any, res: any, input?: { minRole?: "viewer
     return null;
   }
   return { user, membership, teamId };
+}
+
+async function requireOpsViewer(req: any, res: any) {
+  const user = await requireAuth(req, res);
+  if (!user) return null;
+  if (user.isSuperAdmin) return { user, isSuperAdmin: true as const, teamId: null as number | null };
+  const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
+  if (!ctx) return null;
+  return { user: ctx.user, isSuperAdmin: false as const, teamId: ctx.teamId };
+}
+
+async function requireOpsAdmin(req: any, res: any) {
+  const user = await requireAuth(req, res);
+  if (!user) return null;
+  if (!user.isSuperAdmin) {
+    res.status(403).json({ message: "Forbidden" });
+    return null;
+  }
+  return user;
+}
+
+const opsAgentCreateBodySchema = z.object({
+  teamId: z.coerce.number().int().positive(),
+  slug: z
+    .string()
+    .trim()
+    .min(3)
+    .max(80)
+    .regex(/^[a-z0-9-]+$/, "Slug must use lowercase letters, numbers, and hyphens"),
+  displayName: z.string().trim().min(2).max(120),
+  hostname: z.string().trim().max(120).optional().nullable(),
+  provider: z.string().trim().max(80).optional().nullable(),
+  region: z.string().trim().max(80).optional().nullable(),
+  environment: z.string().trim().max(40).default("production"),
+  agentType: z.string().trim().max(40).default("hermes"),
+  model: z.string().trim().max(120).optional().nullable(),
+  expectedHeartbeatIntervalSeconds: z.coerce.number().int().min(30).max(600).default(60),
+});
+
+const opsAgentPatchBodySchema = opsAgentCreateBodySchema.partial().extend({
+  teamId: z.coerce.number().int().positive().optional(),
+});
+
+const opsAgentHeartbeatBodySchema = insertOpsAgentHeartbeatSchema
+  .omit({
+    agentId: true,
+    reportedAt: true,
+    status: true,
+    hermesStatus: true,
+    ollamaStatus: true,
+    payloadJson: true,
+  } as any)
+  .extend({
+    agentId: z.string().trim().min(3).max(80),
+    status: z.string().trim().max(20).default("online"),
+    cpuPercent: z.coerce.number().min(0).max(100).optional().nullable(),
+    ramUsedMb: z.coerce.number().min(0).max(1024 * 1024).optional().nullable(),
+    ramTotalMb: z.coerce.number().min(0).max(1024 * 1024).optional().nullable(),
+    diskUsedMb: z.coerce.number().min(0).max(1024 * 1024 * 1024).optional().nullable(),
+    diskTotalMb: z.coerce.number().min(0).max(1024 * 1024 * 1024).optional().nullable(),
+    uptimeSeconds: z.coerce.number().min(0).max(60 * 60 * 24 * 365 * 20).optional().nullable(),
+    hermes: z.string().trim().max(20).default("unknown"),
+    ollama: z.string().trim().max(20).default("unknown"),
+    model: z.string().trim().max(120).optional().nullable(),
+    latestTask: z.string().trim().max(500).optional().nullable(),
+    lastError: z.string().trim().max(4000).optional().nullable(),
+    reportedAt: z.coerce.date().optional(),
+  });
+
+function toNullableRoundedNumber(value: unknown) {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
+function sanitizeOpsAgent(agent: any, teamName?: string | null) {
+  if (!agent) return null;
+  const { heartbeatSecretHash, configRefCiphertext, configRefIv, ...rest } = agent;
+  return {
+    ...rest,
+    teamName: typeof teamName === "string" ? teamName : null,
+  };
 }
 
 function makeInviteCode() {
@@ -6803,6 +6888,265 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/ops/agents/heartbeat", async (req, res) => {
+    try {
+      const bearer = readBearerToken(req.headers.authorization);
+      if (!bearer) return res.status(401).json({ message: "Missing bearer token" });
+
+      const payload = opsAgentHeartbeatBodySchema.parse(req.body || {});
+      const agent = await storage.getOpsAgentBySlug(payload.agentId);
+      if (!agent || !opsAgentSecretMatches(bearer, agent.heartbeatSecretHash)) {
+        return res.status(401).json({ message: "Invalid agent credentials" });
+      }
+
+      const reportedAt = payload.reportedAt || new Date();
+      const latestTask = typeof payload.latestTask === "string" && payload.latestTask.trim() ? payload.latestTask.trim() : null;
+      const lastError = typeof payload.lastError === "string" && payload.lastError.trim() ? payload.lastError.trim() : null;
+      const model = typeof payload.model === "string" && payload.model.trim() ? payload.model.trim() : agent.model || null;
+      const computedStatus = computeOpsAgentStatus({
+        lastHeartbeatAt: reportedAt,
+        reportedStatus: payload.status,
+        hermesStatus: payload.hermes,
+        ollamaStatus: payload.ollama,
+        lastError,
+      });
+
+      await storage.createOpsAgentHeartbeat({
+        agentId: agent.id,
+        reportedAt,
+        status: computedStatus,
+        cpuPercent: toNullableRoundedNumber(payload.cpuPercent),
+        ramUsedMb: toNullableRoundedNumber(payload.ramUsedMb),
+        ramTotalMb: toNullableRoundedNumber(payload.ramTotalMb),
+        diskUsedMb: toNullableRoundedNumber(payload.diskUsedMb),
+        diskTotalMb: toNullableRoundedNumber(payload.diskTotalMb),
+        uptimeSeconds: toNullableRoundedNumber(payload.uptimeSeconds),
+        hermesStatus: payload.hermes,
+        ollamaStatus: payload.ollama,
+        model,
+        latestTask,
+        lastError,
+        payloadJson: payload as any,
+      } as any);
+
+      await storage.updateOpsAgent(agent.id, {
+        lastStatus: computedStatus,
+        lastHeartbeatAt: reportedAt,
+        lastError,
+        lastTask: latestTask,
+        model,
+        latestMetricsJson: {
+          cpuPercent: toNullableRoundedNumber(payload.cpuPercent),
+          ramUsedMb: toNullableRoundedNumber(payload.ramUsedMb),
+          ramTotalMb: toNullableRoundedNumber(payload.ramTotalMb),
+          diskUsedMb: toNullableRoundedNumber(payload.diskUsedMb),
+          diskTotalMb: toNullableRoundedNumber(payload.diskTotalMb),
+          uptimeSeconds: toNullableRoundedNumber(payload.uptimeSeconds),
+          hermesStatus: payload.hermes,
+          ollamaStatus: payload.ollama,
+          model,
+          reportedStatus: String(payload.status || "online").trim().toLowerCase(),
+          reportedAt: reportedAt.toISOString(),
+        } as any,
+      } as any);
+
+      return res.status(202).json({ ok: true, status: computedStatus, receivedAt: new Date().toISOString() });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid heartbeat payload", issues: error.issues });
+      }
+      return res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/ops/agents", async (req, res) => {
+    try {
+      const scope = await requireOpsViewer(req, res);
+      if (!scope) return;
+
+      const { limit, offset } = parseLimitOffset(req.query);
+      const teamIdRaw = parseInt(String(req.query.teamId || ""), 10);
+      const selectedTeamId = scope.isSuperAdmin && Number.isFinite(teamIdRaw) && teamIdRaw > 0 ? teamIdRaw : undefined;
+      const q = typeof req.query.q === "string" ? req.query.q : undefined;
+      const status = typeof req.query.status === "string" ? req.query.status : undefined;
+      const result = await storage.listOpsAgents({
+        teamIds: scope.isSuperAdmin ? undefined : scope.teamId ? [scope.teamId] : [],
+        teamId: selectedTeamId,
+        q,
+        status,
+        limit,
+        offset,
+      });
+
+      return res.json({
+        items: result.items.map((item) => sanitizeOpsAgent(item, item.teamName)),
+        total: result.total,
+      });
+    } catch (error: any) {
+      return res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/ops/agents/:slug", async (req, res) => {
+    try {
+      const scope = await requireOpsViewer(req, res);
+      if (!scope) return;
+
+      const agent = await storage.getOpsAgentBySlug(String(req.params.slug || ""));
+      if (!agent) return res.status(404).json({ message: "Not found" });
+      if (!scope.isSuperAdmin && scope.teamId !== agent.teamId) return res.status(404).json({ message: "Not found" });
+
+      const recentHeartbeats = await storage.listRecentOpsAgentHeartbeats(agent.id, 20);
+      const team = await storage.getTeamById(agent.teamId);
+      return res.json({
+        agent: sanitizeOpsAgent(agent, team?.name || null),
+        recentHeartbeats,
+      });
+    } catch (error: any) {
+      return res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/ops/agents", async (req, res) => {
+    try {
+      const user = await requireOpsAdmin(req, res);
+      if (!user) return;
+
+      const payload = opsAgentCreateBodySchema.parse(req.body || {});
+      const team = await storage.getTeamById(payload.teamId);
+      if (!team) return res.status(404).json({ message: "Team not found" });
+
+      const existing = await storage.getOpsAgentBySlug(payload.slug);
+      if (existing) return res.status(409).json({ message: "Agent slug already exists" });
+
+      const heartbeatSecret = generateOpsAgentSecret();
+      const created = await storage.createOpsAgent({
+        ...payload,
+        slug: payload.slug.trim(),
+        displayName: payload.displayName.trim(),
+        hostname: payload.hostname ? payload.hostname.trim() : null,
+        provider: payload.provider ? payload.provider.trim() : null,
+        region: payload.region ? payload.region.trim() : null,
+        environment: payload.environment.trim(),
+        agentType: payload.agentType.trim(),
+        model: payload.model ? payload.model.trim() : null,
+        heartbeatSecretHash: hashOpsAgentSecret(heartbeatSecret),
+        createdBy: user.id,
+      } as any);
+
+      await writeAuditEvent({
+        teamId: created.teamId,
+        actorUserId: user.id,
+        entityType: "ops_agent",
+        entityId: created.id,
+        action: "ops_agent.created",
+        after: sanitizeOpsAgent(created, team.name),
+        ip: req.ip,
+        userAgent: req.headers["user-agent"] || null,
+        kind: "create",
+      });
+
+      return res.status(201).json({
+        agent: sanitizeOpsAgent(created, team.name),
+        heartbeatSecret,
+      });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid agent payload", issues: error.issues });
+      }
+      return res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/ops/agents/:id", async (req, res) => {
+    try {
+      const user = await requireOpsAdmin(req, res);
+      if (!user) return;
+
+      const id = parseInt(String(req.params.id || ""), 10);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ message: "Invalid id" });
+      const before = await storage.getOpsAgentById(id);
+      if (!before) return res.status(404).json({ message: "Not found" });
+
+      const payload = opsAgentPatchBodySchema.parse(req.body || {});
+      if (typeof payload.teamId === "number") {
+        const team = await storage.getTeamById(payload.teamId);
+        if (!team) return res.status(404).json({ message: "Team not found" });
+      }
+      if (typeof payload.slug === "string" && payload.slug !== before.slug) {
+        const existing = await storage.getOpsAgentBySlug(payload.slug);
+        if (existing && existing.id !== before.id) return res.status(409).json({ message: "Agent slug already exists" });
+      }
+
+      const updated = await storage.updateOpsAgent(id, {
+        ...payload,
+        slug: typeof payload.slug === "string" ? payload.slug.trim() : undefined,
+        displayName: typeof payload.displayName === "string" ? payload.displayName.trim() : undefined,
+        hostname: typeof payload.hostname === "string" ? payload.hostname.trim() : payload.hostname,
+        provider: typeof payload.provider === "string" ? payload.provider.trim() : payload.provider,
+        region: typeof payload.region === "string" ? payload.region.trim() : payload.region,
+        environment: typeof payload.environment === "string" ? payload.environment.trim() : payload.environment,
+        agentType: typeof payload.agentType === "string" ? payload.agentType.trim() : payload.agentType,
+        model: typeof payload.model === "string" ? payload.model.trim() : payload.model,
+      } as any);
+      const team = await storage.getTeamById(updated.teamId);
+
+      await writeAuditEvent({
+        teamId: updated.teamId,
+        actorUserId: user.id,
+        entityType: "ops_agent",
+        entityId: updated.id,
+        action: "ops_agent.updated",
+        before: sanitizeOpsAgent(before),
+        after: sanitizeOpsAgent(updated, team?.name || null),
+        ip: req.ip,
+        userAgent: req.headers["user-agent"] || null,
+        kind: "update",
+      });
+
+      return res.json({ agent: sanitizeOpsAgent(updated, team?.name || null) });
+    } catch (error: any) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ message: "Invalid agent patch", issues: error.issues });
+      }
+      return res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/ops/agents/:id/rotate-secret", async (req, res) => {
+    try {
+      const user = await requireOpsAdmin(req, res);
+      if (!user) return;
+
+      const id = parseInt(String(req.params.id || ""), 10);
+      if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ message: "Invalid id" });
+      const agent = await storage.getOpsAgentById(id);
+      if (!agent) return res.status(404).json({ message: "Not found" });
+
+      const heartbeatSecret = generateOpsAgentSecret();
+      await storage.updateOpsAgent(id, {
+        heartbeatSecretHash: hashOpsAgentSecret(heartbeatSecret),
+      } as any);
+
+      await writeAuditEvent({
+        teamId: agent.teamId,
+        actorUserId: user.id,
+        entityType: "ops_agent",
+        entityId: agent.id,
+        action: "ops_agent.secret_rotated",
+        before: { secretRotatedAt: null },
+        after: { secretRotatedAt: new Date().toISOString() },
+        ip: req.ip,
+        userAgent: req.headers["user-agent"] || null,
+        kind: "update",
+      });
+
+      return res.json({ heartbeatSecret });
+    } catch (error: any) {
+      return res.status(500).json({ message: error.message });
+    }
+  });
+
   app.post("/api/telephony/signalwire/token", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9231,7 +9575,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      const teams = await storage.getTeamsForUser(user.id);
+      const teams = user.isSuperAdmin ? await storage.getTeams() : await storage.getTeamsForUser(user.id);
       res.json(teams);
     } catch (error: any) {
       res.status(500).json({ message: error.message });

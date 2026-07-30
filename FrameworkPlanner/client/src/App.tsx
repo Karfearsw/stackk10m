@@ -52,6 +52,8 @@ const DocumentsPage = React.lazy(() => import("@/pages/documents"));
 const AutomationsPage = React.lazy(() => import("@/pages/automations"));
 const AuditPage = React.lazy(() => import("@/pages/audit"));
 const AuditLogPage = React.lazy(() => import("@/pages/audit-log"));
+const OpsAgentsPage = React.lazy(() => import("@/pages/ops-agents"));
+const OpsAgentDetailPage = React.lazy(() => import("@/pages/ops-agent-detail"));
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -140,6 +142,8 @@ function Router() {
       <Route path="/automations" component={() => <ProtectedRoute component={AutomationsPage} />} />
       <Route path="/audit" component={() => <ProtectedRoute component={AuditPage} />} />
       <Route path="/audit-log" component={() => <ProtectedRoute component={AuditLogPage} />} />
+      <Route path="/ops/agents" component={() => <ProtectedRoute component={OpsAgentsPage} />} />
+      <Route path="/ops/agents/:slug" component={() => <ProtectedRoute component={OpsAgentDetailPage} />} />
 
       {/* Fallback */}
       <Route component={NotFound} />

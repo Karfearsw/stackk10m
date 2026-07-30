@@ -27,6 +27,7 @@ import {
   Zap,
   ScrollText,
   Shield,
+  ServerCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -63,6 +64,16 @@ export const navigation = [
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
+function canViewOps(user: any) {
+  const role = String(user?.role || "").trim().toLowerCase();
+  return Boolean(user?.isSuperAdmin) || role === "admin" || role === "manager" || role === "owner" || role === "team_leader";
+}
+
+export function getNavigationItems(user: any) {
+  if (!canViewOps(user)) return navigation;
+  return [...navigation, { name: "Agent Control", href: "/ops/agents", icon: ServerCog }];
+}
+
 export function Sidebar() {
   const [location, setLocation] = useLocation();
   const { user, logout } = useAuth();
@@ -91,6 +102,7 @@ export function Sidebar() {
   const showLabels = isExpanded;
   
   const profileImage = userData?.profilePicture || userData?.avatarUrl;
+  const navItems = getNavigationItems(user);
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -137,7 +149,7 @@ export function Sidebar() {
           isHidden && "opacity-0"
         )}>
           <nav className={cn("space-y-1.5", showIconsOnly ? "px-2" : "px-3")}>
-            {navigation.map((item) => {
+            {navItems.map((item) => {
               const isActive = location === item.href || (item.href !== '/' && location.startsWith(item.href));
               
               const navItem = (
