@@ -291,7 +291,7 @@ import { startSkipTraceWorker } from "./cron/skip-trace-worker.js";
 export default async function runApp(
   setup: (app: Express, server: Server) => Promise<void>,
 ) {
-  // Ensure required tables exist (call_logs)
+  // Ensure required telephony and CRM columns exist in preview/prod even if a migration lags.
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS call_logs (
@@ -310,9 +310,36 @@ export default async function runApp(
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
+    await pool.query(`
+      ALTER TABLE call_logs
+        ADD COLUMN IF NOT EXISTS lead_id INTEGER,
+        ADD COLUMN IF NOT EXISTS note TEXT,
+        ADD COLUMN IF NOT EXISTS disposition VARCHAR(64),
+        ADD COLUMN IF NOT EXISTS follow_up_at TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS provider VARCHAR(32),
+        ADD COLUMN IF NOT EXISTS provider_call_id VARCHAR(128),
+        ADD COLUMN IF NOT EXISTS provider_leg_id VARCHAR(128),
+        ADD COLUMN IF NOT EXISTS provider_status VARCHAR(64);
+    `);
     log("[Startup] Verified call_logs table", "db");
   } catch (e) {
     console.error("Failed to ensure call_logs table:", e);
+  }
+
+  try {
+    await pool.query(`
+      ALTER TABLE buyers
+        ADD COLUMN IF NOT EXISTS zip_codes TEXT[],
+        ADD COLUMN IF NOT EXISTS min_price NUMERIC,
+        ADD COLUMN IF NOT EXISTS max_price NUMERIC,
+        ADD COLUMN IF NOT EXISTS min_beds INTEGER,
+        ADD COLUMN IF NOT EXISTS max_beds INTEGER,
+        ADD COLUMN IF NOT EXISTS property_types TEXT[],
+        ADD COLUMN IF NOT EXISTS dedupe_key VARCHAR(400);
+    `);
+    log("[Startup] Verified buyers columns", "db");
+  } catch (e) {
+    console.error("Failed to ensure buyers columns:", e);
   }
 
   const server = await registerRoutes(app, { mode: "server" });
