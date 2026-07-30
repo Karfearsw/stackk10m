@@ -342,6 +342,91 @@ export default async function runApp(
     console.error("Failed to ensure buyers columns:", e);
   }
 
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS contract_templates (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        category VARCHAR(100),
+        content TEXT NOT NULL,
+        merge_fields TEXT[],
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS contract_documents (
+        id SERIAL PRIMARY KEY,
+        template_id INTEGER,
+        property_id INTEGER,
+        title VARCHAR(255) NOT NULL,
+        document_type VARCHAR(50) DEFAULT 'contract',
+        status VARCHAR(50) DEFAULT 'draft',
+        content TEXT NOT NULL,
+        merge_data TEXT,
+        pdf_url VARCHAR(500),
+        version INTEGER DEFAULT 1,
+        created_by VARCHAR(255),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS document_versions (
+        id SERIAL PRIMARY KEY,
+        document_id INTEGER NOT NULL,
+        version_number INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        changes TEXT,
+        created_by VARCHAR(255),
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS contract_envelopes (
+        id SERIAL PRIMARY KEY,
+        document_id INTEGER NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'draft',
+        signer_name VARCHAR(255),
+        signer_email VARCHAR(255),
+        token_hash VARCHAR(64) NOT NULL,
+        expires_at TIMESTAMP,
+        sent_at TIMESTAMP,
+        viewed_at TIMESTAMP,
+        signed_at TIMESTAMP,
+        declined_at TIMESTAMP,
+        signature_type VARCHAR(20),
+        signature_text VARCHAR(255),
+        signature_image_base64 TEXT,
+        audit_json TEXT NOT NULL DEFAULT '[]',
+        signed_pdf_base64 TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS lois (
+        id SERIAL PRIMARY KEY,
+        property_id INTEGER NOT NULL,
+        buyer_name VARCHAR(255) NOT NULL,
+        seller_name VARCHAR(255) NOT NULL,
+        offer_amount NUMERIC(12, 2) NOT NULL,
+        earnest_money NUMERIC(12, 2),
+        closing_date TIMESTAMP,
+        contingencies TEXT[],
+        special_terms TEXT,
+        status VARCHAR(50) DEFAULT 'draft',
+        sent_date TIMESTAMP,
+        response_date TIMESTAMP,
+        content TEXT,
+        pdf_url VARCHAR(500),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    log("[Startup] Verified contract and LOI tables", "db");
+  } catch (e) {
+    console.error("Failed to ensure contract/LOI tables:", e);
+  }
+
   const server = await registerRoutes(app, { mode: "server" });
   if (!server) throw new Error("registerRoutes returned null in server mode");
 
