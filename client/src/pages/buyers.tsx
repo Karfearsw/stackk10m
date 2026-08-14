@@ -320,8 +320,7 @@ export default function Buyers() {
     proofOfFundsNotes: "",
     isVip: false,
     notes: "",
-    tags: "",
-    zipCodes: ""
+    tags: ""
   });
 
   const { data: buyers = [], isLoading } = useQuery<Buyer[]>({
@@ -410,8 +409,7 @@ export default function Buyers() {
       proofOfFundsNotes: "",
       isVip: false,
       notes: "",
-      tags: "",
-      zipCodes: ""
+      tags: ""
     });
   };
 
@@ -431,8 +429,7 @@ export default function Buyers() {
       proofOfFundsNotes: buyer.proofOfFundsNotes || "",
       isVip: buyer.isVip || false,
       notes: buyer.notes || "",
-      tags: buyer.tags?.join(", ") || "",
-      zipCodes: buyer.zipCodes || ""
+      tags: buyer.tags?.join(", ") || ""
     });
     setSelectedBuyer(buyer);
     setIsEditDialogOpen(true);
