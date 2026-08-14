@@ -1,5 +1,5 @@
 [build]
-  command = "npm run build"
+  command = "npm --prefix FrameworkPlanner ci && npm --prefix FrameworkPlanner run build"
   publish = "FrameworkPlanner/dist"
 
 [build.environment]
@@ -13,7 +13,8 @@
 
 [[headers]]
   for = "/*"
-    [headers.values]
+  [headers.values]
     X-Frame-Options = "DENY"
     X-XSS-Protection = "1; mode=block"
     X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
