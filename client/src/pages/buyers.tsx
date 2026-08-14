@@ -440,6 +440,7 @@ export default function Buyers() {
       phone: formData.phone || null,
       preferredPropertyTypes: formData.preferredPropertyTypes.length > 0 ? formData.preferredPropertyTypes : null,
       preferredAreas: formData.preferredAreas ? formData.preferredAreas.split(",").map(s => s.trim()) : null,
+      zipCodes: formData.zipCodes ? formData.zipCodes.split(",").map(s => s.trim()) : null,
       minBudget: formData.minBudget || null,
       maxBudget: formData.maxBudget || null,
       dealsPerMonth: formData.dealsPerMonth ? parseInt(formData.dealsPerMonth) : null,
