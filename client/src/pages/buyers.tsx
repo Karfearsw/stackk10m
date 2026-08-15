@@ -55,6 +55,7 @@ interface Buyer {
   notes: string | null;
   tags: string[] | null;
   lastContactDate: string | null;
+  zipCodes: string | null;
   createdAt: string;
 }
 
@@ -421,7 +422,7 @@ export default function Buyers() {
       phone: buyer.phone || "",
       preferredPropertyTypes: buyer.preferredPropertyTypes || [],
       preferredAreas: buyer.preferredAreas?.join(", ") || "",
-      zipCodes: (buyer as any).zipCodes?.join(", ") || "",
+      zipCodes: buyer.zipCodes?.join(", ") || "",
       minBudget: buyer.minBudget || "",
       maxBudget: buyer.maxBudget || "",
       dealsPerMonth: buyer.dealsPerMonth?.toString() || "",
