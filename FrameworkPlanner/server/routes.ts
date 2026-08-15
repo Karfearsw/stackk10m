@@ -112,6 +112,80 @@ function authJwtSecret() {
   return new TextEncoder().encode(String(secret));
 }
 
+const MAGIC_SIGNATURES: { mime: string; patterns: [number, number[]][] }[] = [
+  {
+    mime: "application/pdf",
+    patterns: [
+      [0, [0x25, 0x50, 0x44, 0x46]],
+    ],
+  },
+  {
+    mime: "image/png",
+    patterns: [
+      [0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
+    ],
+  },
+  {
+    mime: "image/jpeg",
+    patterns: [
+      [0, [0xff, 0xd8, 0xff]],
+    ],
+  },
+  {
+    mime: "image/gif",
+    patterns: [
+      [0, [0x47, 0x49, 0x46, 0x38, 0x37, 0x61]],
+      [0, [0x47, 0x49, 0x46, 0x38, 0x39, 0x61]],
+    ],
+  },
+  {
+    mime: "image/webp",
+    patterns: [
+      [8, [0x57, 0x45, 0x42, 0x50]],
+    ],
+  },
+  {
+    mime: "application/zip",
+    patterns: [
+      [0, [0x50, 0x4b, 0x03, 0x04]],
+      [0, [0x50, 0x4b, 0x05, 0x06]],
+      [0, [0x50, 0x4b, 0x07, 0x08]],
+    ],
+  },
+  {
+    mime: "application/x-rar-compressed",
+    patterns: [
+      [0, [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00]],
+      [0, [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x01, 0x00]],
+    ],
+  },
+  {
+    mime: "text/plain",
+    patterns: [
+      [0, [0xef, 0xbb, 0xbf]],
+      [0, []],
+    ],
+  },
+];
+
+function detectMimeFromMagic(buf: Buffer): string | null {
+  for (const entry of MAGIC_SIGNATURES) {
+    for (const [offset, bytes] of entry.patterns) {
+      if (offset + bytes.length > buf.length) continue;
+      if (bytes.length === 0) continue;
+      let match = true;
+      for (let i = 0; i < bytes.length; i++) {
+        if (buf[offset + i] !== bytes[i]) {
+          match = false;
+          break;
+        }
+      }
+      if (match) return entry.mime;
+    }
+  }
+  return null;
+}
+
 function isDbConnectivityError(error: any): boolean {
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
@@ -491,6 +565,28 @@ export async function registerRoutes(
   const upload = multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      const allowed = new Set([
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "text/plain",
+        "text/csv",
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+      ]);
+      if (allowed.has(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new Error(`Unsupported file type: ${file.mimetype}`));
+      }
+    },
   });
   const mode = opts?.mode ?? "server";
 
@@ -7742,6 +7838,13 @@ export async function registerRoutes(
       }
 
       const buf = Buffer.from(file.buffer);
+      
+      // Magic byte validation
+      const detectedMime = detectMimeFromMagic(buf);
+      if (detectedMime && detectedMime !== file.mimetype) {
+        return res.status(400).json({ message: `File content does not match declared type. Expected ${file.mimetype}, detected ${detectedMime}` });
+      }
+      
       const storageKey = makeDocumentStorageKey({ teamId: ctx.teamId, originalName: String(file.originalname || "file") });
       const sha = sha256Hex(buf);
       await uploadDocumentObject({ storageKey, contentType: String(file.mimetype || "application/octet-stream"), body: buf });

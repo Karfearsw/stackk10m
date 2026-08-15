@@ -47,9 +47,38 @@ function tagsToString(tags: string[] | null) {
   return (tags || []).join(", ");
 }
 
+const ALLOWED_MIME_TYPES = new Set([
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-powerpoint",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  "text/plain",
+  "text/csv",
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+]);
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+
+function validateFile(file: File | null): string | null {
+  if (!file) return "Select a file";
+  if (file.size > MAX_FILE_SIZE) {
+    return `File is too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max size is 10MB.`;
+  }
+  if (!ALLOWED_MIME_TYPES.has(file.type)) {
+    return `File type "${file.type || "unknown"}" is not allowed.`;
+  }
+  return null;
+}
+
 export default function DocumentsPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const [q, setQ] = useState("");
   const [tag, setTag] = useState("");
@@ -91,6 +120,8 @@ export default function DocumentsPage() {
   const uploadMutation = useMutation({
     mutationFn: async () => {
       if (!file) throw new Error("Select a file");
+      const validationError = validateFile(file);
+      if (validationError) throw new Error(validationError);
       const fd = new FormData();
       fd.set("file", file);
       if (uploadForm.title.trim()) fd.set("title", uploadForm.title.trim());
@@ -107,6 +138,7 @@ export default function DocumentsPage() {
       toast.success("Uploaded");
       setOpen(false);
       setFile(null);
+      setFileError(null);
       setUploadForm({ title: "", kind: "", tags: "", isPrivate: false, entityType: "", entityId: "", relation: "" });
       await qc.invalidateQueries({ queryKey: [listKey] });
     },
@@ -141,7 +173,16 @@ export default function DocumentsPage() {
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <Label>File</Label>
-                    <Input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+                    <Input
+                      type="file"
+                      onChange={(e) => {
+                        const selected = e.target.files?.[0] || null;
+                        const error = validateFile(selected);
+                        setFileError(error);
+                        setFile(selected);
+                      }}
+                    />
+                    {fileError && <p className="text-sm text-destructive">{fileError}</p>}
                   </div>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-2">

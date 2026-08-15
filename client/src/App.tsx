@@ -14,7 +14,6 @@ import Contracts from "@/pages/contracts";
 import ContractGenerator from "@/pages/contract-generator";
 import Analytics from "@/pages/analytics";
 import Settings from "@/pages/settings";
-import Calculator from "@/pages/calculator";
 import Timesheet from "@/pages/timesheet";
 import Login from "@/pages/login";
 import Signup from "@/pages/signup";
@@ -73,7 +72,6 @@ function Router() {
       <Route path="/contract-generator" component={() => <ProtectedRoute component={ContractGenerator} />} />
       <Route path="/analytics" component={() => <ProtectedRoute component={Analytics} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
-      <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
       <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />
       <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
       <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />
