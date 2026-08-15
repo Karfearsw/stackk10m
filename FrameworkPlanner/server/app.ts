@@ -291,7 +291,7 @@ import { startSkipTraceWorker } from "./cron/skip-trace-worker.js";
 export default async function runApp(
   setup: (app: Express, server: Server) => Promise<void>,
 ) {
-  // Ensure required tables exist (call_logs)
+  // Ensure required telephony and CRM columns exist in preview/prod even if a migration lags.
   try {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS call_logs (
@@ -310,9 +310,121 @@ export default async function runApp(
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
+    await pool.query(`
+      ALTER TABLE call_logs
+        ADD COLUMN IF NOT EXISTS lead_id INTEGER,
+        ADD COLUMN IF NOT EXISTS note TEXT,
+        ADD COLUMN IF NOT EXISTS disposition VARCHAR(64),
+        ADD COLUMN IF NOT EXISTS follow_up_at TIMESTAMP,
+        ADD COLUMN IF NOT EXISTS provider VARCHAR(32),
+        ADD COLUMN IF NOT EXISTS provider_call_id VARCHAR(128),
+        ADD COLUMN IF NOT EXISTS provider_leg_id VARCHAR(128),
+        ADD COLUMN IF NOT EXISTS provider_status VARCHAR(64);
+    `);
     log("[Startup] Verified call_logs table", "db");
   } catch (e) {
     console.error("Failed to ensure call_logs table:", e);
+  }
+
+  try {
+    await pool.query(`
+      ALTER TABLE buyers
+        ADD COLUMN IF NOT EXISTS zip_codes TEXT[],
+        ADD COLUMN IF NOT EXISTS min_price NUMERIC,
+        ADD COLUMN IF NOT EXISTS max_price NUMERIC,
+        ADD COLUMN IF NOT EXISTS min_beds INTEGER,
+        ADD COLUMN IF NOT EXISTS max_beds INTEGER,
+        ADD COLUMN IF NOT EXISTS property_types TEXT[],
+        ADD COLUMN IF NOT EXISTS dedupe_key VARCHAR(400);
+    `);
+    log("[Startup] Verified buyers columns", "db");
+  } catch (e) {
+    console.error("Failed to ensure buyers columns:", e);
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS contract_templates (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        category VARCHAR(100),
+        content TEXT NOT NULL,
+        merge_fields TEXT[],
+        is_active BOOLEAN DEFAULT TRUE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS contract_documents (
+        id SERIAL PRIMARY KEY,
+        template_id INTEGER,
+        property_id INTEGER,
+        title VARCHAR(255) NOT NULL,
+        document_type VARCHAR(50) DEFAULT 'contract',
+        status VARCHAR(50) DEFAULT 'draft',
+        content TEXT NOT NULL,
+        merge_data TEXT,
+        pdf_url VARCHAR(500),
+        version INTEGER DEFAULT 1,
+        created_by VARCHAR(255),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS document_versions (
+        id SERIAL PRIMARY KEY,
+        document_id INTEGER NOT NULL,
+        version_number INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        changes TEXT,
+        created_by VARCHAR(255),
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS contract_envelopes (
+        id SERIAL PRIMARY KEY,
+        document_id INTEGER NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'draft',
+        signer_name VARCHAR(255),
+        signer_email VARCHAR(255),
+        token_hash VARCHAR(64) NOT NULL,
+        expires_at TIMESTAMP,
+        sent_at TIMESTAMP,
+        viewed_at TIMESTAMP,
+        signed_at TIMESTAMP,
+        declined_at TIMESTAMP,
+        signature_type VARCHAR(20),
+        signature_text VARCHAR(255),
+        signature_image_base64 TEXT,
+        audit_json TEXT NOT NULL DEFAULT '[]',
+        signed_pdf_base64 TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS lois (
+        id SERIAL PRIMARY KEY,
+        property_id INTEGER NOT NULL,
+        buyer_name VARCHAR(255) NOT NULL,
+        seller_name VARCHAR(255) NOT NULL,
+        offer_amount NUMERIC(12, 2) NOT NULL,
+        earnest_money NUMERIC(12, 2),
+        closing_date TIMESTAMP,
+        contingencies TEXT[],
+        special_terms TEXT,
+        status VARCHAR(50) DEFAULT 'draft',
+        sent_date TIMESTAMP,
+        response_date TIMESTAMP,
+        content TEXT,
+        pdf_url VARCHAR(500),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    log("[Startup] Verified contract and LOI tables", "db");
+  } catch (e) {
+    console.error("Failed to ensure contract/LOI tables:", e);
   }
 
   const server = await registerRoutes(app, { mode: "server" });

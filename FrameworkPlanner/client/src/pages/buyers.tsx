@@ -45,8 +45,12 @@ interface Buyer {
   phone: string | null;
   preferredPropertyTypes: string[] | null;
   preferredAreas: string[] | null;
+  zipCodes: string[] | null;
   minBudget: string | null;
   maxBudget: string | null;
+  minBeds: number | null;
+  maxBeds: number | null;
+  propertyTypes: string[] | null;
   dealsPerMonth: number | null;
   proofOfFunds: boolean | null;
   proofOfFundsVerifiedAt: string | null;
@@ -459,11 +463,11 @@ export default function Buyers() {
       phone: buyer.phone || "",
       preferredPropertyTypes: buyer.preferredPropertyTypes || [],
       preferredAreas: buyer.preferredAreas?.join(", ") || "",
-      zipCodes: (buyer as any).zipCodes?.join(", ") || "",
+      zipCodes: buyer.zipCodes?.join(", ") || "",
       minBudget: buyer.minBudget || "",
       maxBudget: buyer.maxBudget || "",
-      minBeds: (buyer as any).minBeds?.toString() || "",
-      maxBeds: (buyer as any).maxBeds?.toString() || "",
+      minBeds: buyer.minBeds?.toString() || "",
+      maxBeds: buyer.maxBeds?.toString() || "",
       dealsPerMonth: buyer.dealsPerMonth?.toString() || "",
       proofOfFunds: buyer.proofOfFunds || false,
       proofOfFundsNotes: buyer.proofOfFundsNotes || "",
