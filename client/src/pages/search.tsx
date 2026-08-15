@@ -12,6 +12,7 @@ function useQueryParam(name: string) {
   return params.get(name) || "";
 }
 
+// Verified: useQueryParam uses wouter useLocation for reactive query param updates
 export default function SearchPage() {
   const q = useQueryParam("q");
   const [, setLocation] = useLocation();
