@@ -1,6 +1,7 @@
 [build]
   command = "cp -r FrameworkPlanner/node_modules . && npm --prefix FrameworkPlanner run build && npx --prefix . vite build && cp -r dist/index.html dist/assets FrameworkPlanner/dist/ && rm -rf dist dist-server"
   publish = "FrameworkPlanner/dist"
+  install = "npm --prefix FrameworkPlanner ci"
 
 [build.environment]
   NODE_VERSION = "20.x"
