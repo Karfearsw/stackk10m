@@ -2,7 +2,7 @@ import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Server, Database, Phone, Shield, ActivitySquare } from "lucide-react";
+import { Loader2, Server, Database, Phone, Shield, ActivitySquare, Key } from "lucide-react";
 
 export default function SystemHealthPage() {
   const { data, refetch, isFetching, error } = useQuery<any>({
@@ -92,11 +92,31 @@ export default function SystemHealthPage() {
               <CardTitle className="flex items-center gap-2"><Phone className="w-5 h-5" /> Telephony</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
-              <div className="flex justify-between"><span>SignalWire</span><span className={data.signalwire === "reachable" ? "text-green-600" : data.signalwire === "unconfigured" ? "text-yellow-600" : "text-red-600"}>{data.signalwire}</span></div>
+              <div className="flex justify-between"><span>Telnyx</span><span className={data.telnyx?.status === "reachable" ? "text-green-600" : data.telnyx?.status === "unconfigured" ? "text-yellow-600" : "text-red-600"}>{data.telnyx?.status || "unknown"}</span></div>
+              <div className="flex justify-between"><span>HTTP Status</span><span className="text-muted-foreground">{String(data.telnyx?.httpStatus ?? data.telnyx?.code ?? "-")}</span></div>
+              <div className="flex justify-between"><span>Message</span><span className="text-muted-foreground">{String(data.telnyx?.message || "-")}</span></div>
               <div><p className="text-xs text-muted-foreground">Default From</p><p className="text-xs">{data.defaultFrom || "not set"}</p></div>
               <div><p className="text-xs text-muted-foreground">Numbers</p><p className="text-xs">{Array.isArray(data.numbers) && data.numbers.length ? data.numbers.join(", ") : "-"}</p></div>
             </CardContent>
           </Card>
+
+          {data.telnyxDiag && (
+            <Card className="md:col-span-2 lg:col-span-3">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2"><Key className="w-5 h-5" /> Telnyx Diagnostics</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div className="flex justify-between"><span>Configured</span><span className={data.telnyxDiag.telnyxConfigured ? "text-green-600" : "text-red-600"}>{String(data.telnyxDiag.telnyxConfigured)}</span></div>
+                <div className="flex justify-between"><span>API Key Prefix</span><span className="text-muted-foreground">{String(data.telnyxDiag.apiKeyPrefix || "-")}...</span></div>
+                <div className="flex justify-between"><span>Used Public Key Instead</span><span className={data.telnyxDiag.usedPublicKey ? "text-red-600" : "text-green-600"}>{String(data.telnyxDiag.usedPublicKey)}</span></div>
+                <div className="flex justify-between"><span>Base URL</span><span className="text-muted-foreground">{String(data.telnyxDiag.baseUrl || "-")}</span></div>
+                <div className="flex justify-between"><span>Connection ID</span><span className="text-muted-foreground">{String(data.telnyxDiag.connectionId || "-")}</span></div>
+                <div className="flex justify-between"><span>Messaging Profile ID</span><span className="text-muted-foreground">{String(data.telnyxDiag.messagingProfileId || "-")}</span></div>
+                <div className="flex justify-between"><span>Default From</span><span className="text-muted-foreground">{String(data.telnyxDiag.defaultFrom || "-")}</span></div>
+                <div className="flex justify-between"><span>Webhook URL</span><span className="text-muted-foreground">{String(data.telnyxDiag.webhookUrl || "-")}</span></div>
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardHeader>

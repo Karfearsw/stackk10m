@@ -28,7 +28,7 @@ export default function Dialer() {
   const wasConnectedRef = useRef(false);
   const lastPatchedStatusRef = useRef<string | null>(null);
   const queryClient = useQueryClient();
-  const { ready: signalWireReady, call: activeCall, makeCall, endCall: endSignalWireCall, toggleMute, toggleHold } = useSignalWire();
+  const { ready, call: activeCall, makeCall, endCall, toggleMute, toggleHold } = useSignalWire();
   const [, navigate] = useLocation();
   const initialNumber = useMemo(() => {
     if (typeof window === "undefined") return "";
@@ -106,12 +106,12 @@ export default function Dialer() {
       if (!res.ok) throw new Error(await res.text());
       const log = await res.json();
       
-      // Then make the actual SignalWire call (connects if not ready)
+      // Then make the actual Telnyx call (connects if not ready)
       if (direction === "outbound") {
         try {
           await makeCall(number);
         } catch (error) {
-          console.error("SignalWire call failed:", error);
+          console.error("Telnyx call failed:", error);
           // Update call log to failed status
           await patchCallLog(log.id, { status: "failed", endedAt: new Date().toISOString() });
           throw error;
@@ -130,15 +130,13 @@ export default function Dialer() {
     },
   });
 
-  const endCall = useMutation({
+  const endCallMutation = useMutation({
     mutationFn: async ({ id, succeeded }: { id: number; succeeded: boolean }) => {
-      // First end the SignalWire call
-      if (activeCall) {
-        try {
-          await endSignalWireCall();
-        } catch (error) {
-          console.error("Failed to end SignalWire call:", error);
-        }
+      // First end the Telnyx call
+      try {
+        await endCall();
+      } catch (error) {
+        console.error("Failed to end Telnyx call:", error);
       }
       
       const durationMs = startTs ? Date.now() - startTs : 0;
@@ -254,7 +252,7 @@ export default function Dialer() {
                 <Button onClick={() => createCall.mutate({ direction: "outbound", number: formatted })} disabled={!formatted || status === "dialing" || status === "connected"} aria-label="Call">
                   <Phone className="w-4 h-4 mr-2" /> Call
                 </Button>
-                <Button variant="destructive" onClick={() => callId && endCall.mutate({ id: callId, succeeded: true })} disabled={!callId} aria-label="End Call">
+                <Button variant="destructive" onClick={() => callId && endCallMutation.mutate({ id: callId, succeeded: true })} disabled={!callId} aria-label="End Call">
                   <PhoneOff className="w-4 h-4 mr-2" /> End
                 </Button>
                 {activeCall && (
@@ -275,7 +273,7 @@ export default function Dialer() {
               </div>
 
               <div className="text-sm text-muted-foreground mt-2" aria-live="polite">
-                Status: {status} | SignalWire: {signalWireReady ? "Connected" : "Connecting…"}
+                Status: {status} | Telnyx: {ready ? "Connected" : "Connecting…"}
               </div>
             </div>
           </CardContent>

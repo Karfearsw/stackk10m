@@ -5,6 +5,7 @@ import { jwtVerify } from "jose";
 export type TelephonyEvent =
   | { type: "call_log_created"; payload: any }
   | { type: "call_log_updated"; payload: any }
+  | { type: "call_state_changed"; payload: any }
   | { type: "voicemail_updated"; payload: any }
   | { type: "spam_flag_updated"; payload: any }
   | { type: "recording_ready"; payload: any }

@@ -57,7 +57,7 @@ export default function PhoneWorkspace() {
   const wasConnectedRef = useRef(false);
   const lastPatchedStatusRef = useRef<string | null>(null);
 
-  const { ready: signalWireReady, call: activeCall, makeCall, endCall: endSignalWireCall, toggleMute, toggleHold } = useSignalWire();
+  const { ready, call: activeCall, makeCall, endCall, toggleMute, toggleHold } = useSignalWire();
 
   const initialNumber = useMemo(() => {
     if (typeof window === "undefined") return "";
@@ -151,13 +151,11 @@ export default function PhoneWorkspace() {
     },
   });
 
-  const endCall = useMutation({
+  const endCallMutation = useMutation({
     mutationFn: async ({ id, succeeded }: { id: number; succeeded: boolean }) => {
-      if (activeCall) {
-        try {
-          await endSignalWireCall();
-        } catch {}
-      }
+      try {
+        await endCall();
+      } catch {}
       const durationMs = startTs ? Date.now() - startTs : 0;
       const nextStatus = succeeded ? (wasConnectedRef.current ? "answered" : "missed") : "failed";
       lastPatchedStatusRef.current = nextStatus;
@@ -333,7 +331,7 @@ export default function PhoneWorkspace() {
                           <Button onClick={() => createCall.mutate({ direction: "outbound", number: formatted })} disabled={!formatted || status === "dialing" || status === "connected"} aria-label="Call">
                             <Phone className="w-4 h-4 mr-2" /> Call
                           </Button>
-                          <Button variant="destructive" onClick={() => callId && endCall.mutate({ id: callId, succeeded: true })} disabled={!callId} aria-label="End Call">
+                          <Button variant="destructive" onClick={() => callId && endCallMutation.mutate({ id: callId, succeeded: true })} disabled={!callId} aria-label="End Call">
                             <PhoneOff className="w-4 h-4 mr-2" /> End
                           </Button>
                           {activeCall && (
@@ -351,7 +349,7 @@ export default function PhoneWorkspace() {
                         </div>
 
                         <div className="text-sm text-muted-foreground mt-2" aria-live="polite">
-                          Status: {status} {status === "connected" ? `• ${durationLabel}` : ""} • SignalWire: {signalWireReady ? "Connected" : "Connecting…"} • Live: {telephonyWsConnected ? "On" : "Off"}
+                          Status: {status} {status === "connected" ? `• ${durationLabel}` : ""} • Telnyx: {ready ? "Connected" : "Connecting…"} • Live: {telephonyWsConnected ? "On" : "Off"}
                         </div>
                       </div>
                     </CardContent>

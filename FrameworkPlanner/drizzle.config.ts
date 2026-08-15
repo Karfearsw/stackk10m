@@ -1,8 +1,15 @@
 import { defineConfig } from "drizzle-kit";
 import "dotenv/config";
+import { config } from "dotenv";
+
+// Force load from FrameworkPlanner/.env
+config({ path: "./.env" });
+
+console.log("DATABASE_URL loaded:", !!process.env.DATABASE_URL);
+console.log("DATABASE_URL length:", process.env.DATABASE_URL?.length);
 
 if (!process.env.DATABASE_URL) {
-  throw new Error("DATABASE_URL, ensure the database is provisioned");
+  throw new Error("DATABASE_URL missing");
 }
 
 function sanitizeDatabaseUrl(input: string): string {
@@ -11,6 +18,7 @@ function sanitizeDatabaseUrl(input: string): string {
     const channelBinding = (u.searchParams.get("channel_binding") || "").toLowerCase();
     if (channelBinding === "require") {
       u.searchParams.delete("channel_binding");
+      console.log("Removed channel_binding from URL");
       return u.toString();
     }
     return input;
@@ -19,11 +27,18 @@ function sanitizeDatabaseUrl(input: string): string {
   }
 }
 
+const sanitized = sanitizeDatabaseUrl(process.env.DATABASE_URL);
+console.log("Sanitized URL:", sanitized);
+
 export default defineConfig({
   out: "./migrations",
   schema: "./server/shared-schema.ts",
   dialect: "postgresql",
   dbCredentials: {
-    url: sanitizeDatabaseUrl(process.env.DATABASE_URL),
+    url: sanitized,
   },
+  // Increase timeout for Neon
+  databaseConfig: {
+    connectTimeoutSeconds: 60,
+  }
 });

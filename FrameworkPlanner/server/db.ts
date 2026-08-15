@@ -1,7 +1,6 @@
-import { drizzle } from "drizzle-orm/node-postgres";
-import pg from "pg";
+import { drizzle } from "drizzle-orm/neon-serverless";
+import { Pool } from "@neondatabase/serverless";
 import crypto from "node:crypto";
-const { Pool } = pg;
 
 type DatabaseUrlIssue = { name: string; reason: string };
 type DatabaseUrlResolution = { url: string | undefined; source: string | null; issues: DatabaseUrlIssue[] };
@@ -47,10 +46,10 @@ export function databaseUrlResolution(): DatabaseUrlResolution {
   if (cachedDbUrlResolution) return cachedDbUrlResolution;
 
   const candidates: Array<{ name: string; value: string | undefined }> = [
-        { name: "POSTGRES_URL", value: process.env.POSTGRES_URL },
-        { name: "DATABASE_URL", value: process.env.DATABASE_URL },
+    { name: "POSTGRES_URL_NON_POOLING", value: process.env.POSTGRES_URL_NON_POOLING },
+    { name: "POSTGRES_URL", value: process.env.POSTGRES_URL },
+    { name: "DATABASE_URL", value: process.env.DATABASE_URL },
     { name: "POSTGRES_PRISMA_URL", value: process.env.POSTGRES_PRISMA_URL },
-        { name: "POSTGRES_URL_NON_POOLING", value: process.env.POSTGRES_URL_NON_POOLING },
   ];
 
   const issues: DatabaseUrlIssue[] = [];
@@ -105,44 +104,6 @@ export function databaseUrl(): string | undefined {
   return databaseUrlResolution().url;
 }
 
-function shouldUseSsl(connectionString: string | undefined) {
-  if (!connectionString) return false;
-  try {
-    const u = new URL(connectionString);
-    const sslmode = (u.searchParams.get("sslmode") || process.env.PGSSLMODE || "").toLowerCase();
-    if (sslmode === "require" || sslmode === "verify-full" || sslmode === "verify-ca") return true;
-    if (u.hostname.endsWith(".neon.tech")) return true;
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-export function pgSslOptions() {
-  const useSsl = shouldUseSsl(databaseUrl());
-  if (!useSsl) return undefined;
-  const raw = String(process.env.DB_SSL_REJECT_UNAUTHORIZED ?? "").trim().toLowerCase();
-  const rejectUnauthorized = raw ? raw === "1" || raw === "true" || raw === "yes" || raw === "on" : true;
-  return { rejectUnauthorized };
-}
-
-function intEnv(name: string, fallback: number) {
-  const raw = String(process.env[name] ?? "").trim();
-  if (!raw) return fallback;
-  const n = parseInt(raw, 10);
-  return Number.isFinite(n) ? n : fallback;
-}
-
-function boolEnv(name: string, fallback: boolean) {
-  const raw = String(process.env[name] ?? "").trim().toLowerCase();
-  if (!raw) return fallback;
-  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function getSqlText(input: unknown): string {
   if (!input) return "";
   if (typeof input === "string") return input;
@@ -171,7 +132,7 @@ function isSelectSql(sqlText: string): boolean {
   return s.startsWith("select") || s.startsWith("with");
 }
 
-function poolSnapshot(p: pg.Pool) {
+function poolSnapshot(p: Pool) {
   return { total: p.totalCount, idle: p.idleCount, waiting: p.waitingCount };
 }
 
@@ -182,30 +143,28 @@ function logDbEvent(level: "info" | "warn" | "error", payload: Record<string, un
   else console.log(line);
 }
 
-const isVercel = boolEnv("VERCEL", false) || !!process.env.VERCEL_ENV;
-const defaultPoolMax = isVercel ? 1 : 10;
-const poolMax = intEnv("DB_POOL_MAX", defaultPoolMax);
-const poolIdleTimeoutMs = intEnv("DB_POOL_IDLE_TIMEOUT_MS", 10000);
-const poolConnTimeoutMs = intEnv(
-  "DB_POOL_CONN_TIMEOUT_MS",
-  process.env.DB_CONNECTION_TIMEOUT_MS ? intEnv("DB_CONNECTION_TIMEOUT_MS", 20000) : 20000,
+const isVercel = Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
+const poolMax = parseInt(process.env.DB_POOL_MAX || (isVercel ? "1" : "10"), 10);
+const poolIdleTimeoutMs = parseInt(process.env.DB_POOL_IDLE_TIMEOUT_MS || "10000", 10);
+const poolConnTimeoutMs = parseInt(
+  process.env.DB_POOL_CONN_TIMEOUT_MS || process.env.DB_CONNECTION_TIMEOUT_MS || "20000",
+  10
 );
-const statementTimeoutMs = intEnv("DB_STATEMENT_TIMEOUT_MS", 15000);
-const idleInTxTimeoutMs = intEnv("DB_IDLE_IN_TX_TIMEOUT_MS", 15000);
-const slowQueryMs = intEnv("DB_SLOW_QUERY_MS", 250);
-const enableQueryTiming = boolEnv("DB_QUERY_TIMING", true);
-const enableSelectRetry = boolEnv("DB_RETRY_SELECTS", true);
-const enableStartupTest = boolEnv("DB_STARTUP_TEST", !isVercel);
+const statementTimeoutMs = parseInt(process.env.DB_STATEMENT_TIMEOUT_MS || "15000", 10);
+const idleInTxTimeoutMs = parseInt(process.env.DB_IDLE_IN_TX_TIMEOUT_MS || "15000", 10);
+const slowQueryMs = parseInt(process.env.DB_SLOW_QUERY_MS || "250", 10);
+const enableQueryTiming = process.env.DB_QUERY_TIMING !== "false";
+const enableSelectRetry = process.env.DB_RETRY_SELECTS !== "false";
+const enableStartupTest = process.env.DB_STARTUP_TEST !== "false" && !isVercel;
 
 export const pool = new Pool({
   connectionString: databaseUrl(),
-  ssl: pgSslOptions(),
   max: poolMax,
   idleTimeoutMillis: poolIdleTimeoutMs,
   connectionTimeoutMillis: poolConnTimeoutMs,
 });
 
-pool.on('error', (err: any) => {
+pool.on("error", (err: any) => {
   logDbEvent("error", { kind: "pool_error", message: String(err?.message || err), code: err?.code || null, pool: poolSnapshot(pool) });
 });
 
@@ -253,7 +212,7 @@ pool.query = (async (...args: any[]) => {
     });
 
     if (enableSelectRetry && isRetryableDbError(err) && isSelectSql(sqlText)) {
-      await sleep(150);
+      await new Promise((resolve) => setTimeout(resolve, 150));
       return await originalQuery(...args);
     }
     throw err;

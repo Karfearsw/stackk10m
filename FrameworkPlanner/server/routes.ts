@@ -81,7 +81,7 @@ import { computeArvFromComps, computeDealMath, computeRepairTotal, underwritingS
 import { createSkipTraceJob, isHttpError, runProviderSkipTraceForEntity, runSkipTraceJob } from "./services/skipTrace/orchestrator.js";
 import { hydrateSkipTraceResultForApi, mergeSkipTraceResult } from "./services/skipTrace/merge.js";
 import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
-import { sendSignalWireSms } from "./services/messaging/signalwire.js";
+import { telnyx, createTelnyxWebhookRouter } from "./services/telecom/telnyx-client.js";
 import { sendResendEmail } from "./services/messaging/resend.js";
 import { getAuthStatusSnapshot, getEmailProviderMissing } from "./auth/config.js";
 import { isEmailNotConfiguredError, sendAuthError } from "./auth/errors.js";
@@ -611,6 +611,8 @@ export async function registerRoutes(
       next();
     }
   });
+
+  app.use("/api/v1/telecom/webhooks/telnyx", createTelnyxWebhookRouter());
 
   app.get("/api/crm/fields", async (req, res) => {
     const user = await requireAuth(req, res);
@@ -6773,43 +6775,26 @@ export async function registerRoutes(
       // Check database connectivity
       await storage.getUserByEmail("test@example.com");
       
-      // Check SignalWire connectivity
-      const space = process.env.SIGNALWIRE_SPACE_URL?.replace(/^https?:\/\//, "");
-      const project = process.env.SIGNALWIRE_PROJECT_ID;
-      const token = process.env.SIGNALWIRE_API_TOKEN;
-      
-      let signalwireStatus = "unconfigured";
-      if (space && project && token) {
-        try {
-          const url = `https://${space}/api/laml/2010-04-01/Accounts/${project}.json`;
-          const auth = Buffer.from(`${project}:${token}`).toString("base64");
-          const resp = await fetch(url, { 
-            method: "GET", 
-            headers: { "Authorization": `Basic ${auth}` },
-            signal: AbortSignal.timeout(5000) // 5 second timeout
-          });
-          signalwireStatus = resp.ok ? "reachable" : "unreachable";
-        } catch (error) {
-          signalwireStatus = "error";
-          console.error("SignalWire health check failed:", error);
-        }
-      }
+      // Check Telnyx connectivity
+      const telnyxResult = await telnyx.healthCheck();
+      const telnyxDiag = telnyx.diagnostics();
       
       res.json({ 
         status: "ok", 
         db: "connected", 
-        signalwire: signalwireStatus,
+        telnyx: telnyxResult,
+        telnyxDiag,
         timestamp: new Date().toISOString(),
         numbers: process.env.DIALER_NUMBERS_JSON ? JSON.parse(process.env.DIALER_NUMBERS_JSON) : [],
-        defaultFrom: process.env.DIALER_DEFAULT_FROM_NUMBER || null
+        defaultFrom: process.env.TELNYX_DEFAULT_FROM_NUMBER || null
       });
     } catch (error: any) {
       console.error("Telephony health check failed:", error);
       res.status(500).json({ 
         status: "error", 
         db: "disconnected", 
-        signalwire: "error",
-        message: error.message,
+        telnyx: { status: "error", code: null, message: error?.message || "Health check failed", connectionFound: false, connectionActive: false, httpStatus: null },
+        telnyxDiag: telnyx.diagnostics(),
         timestamp: new Date().toISOString()
       });
     }
@@ -6825,30 +6810,21 @@ export async function registerRoutes(
         dbStatus = "connected";
       } catch (_e) {}
 
-      // SignalWire reachability (reuse logic)
-      const space = process.env.SIGNALWIRE_SPACE_URL?.replace(/^https?:\/\//, "");
-      const project = process.env.SIGNALWIRE_PROJECT_ID;
-      const token = process.env.SIGNALWIRE_API_TOKEN;
-      let signalwireStatus = "unconfigured";
-      if (space && project && token) {
-        try {
-          const url = `https://${space}/api/laml/2010-04-01/Accounts/${project}.json`;
-          const auth = Buffer.from(`${project}:${token}`).toString("base64");
-          const resp = await fetch(url, { method: "GET", headers: { "Authorization": `Basic ${auth}` }, signal: AbortSignal.timeout(5000) });
-          signalwireStatus = resp.ok ? "reachable" : "unreachable";
-        } catch (_e) {
-          signalwireStatus = "error";
-        }
-      }
+      // Telnyx reachability
+      const telnyxResult = await telnyx.healthCheck();
+      const telnyxStatus = telnyxResult.status;
+      const telnyxDiag = telnyx.diagnostics();
 
       // Env vars presence
       const required = [
         "DATABASE_URL",
         "SESSION_SECRET",
         "EMPLOYEE_ACCESS_CODE",
-        "SIGNALWIRE_SPACE_URL",
-        "SIGNALWIRE_PROJECT_ID",
-        "SIGNALWIRE_API_TOKEN",
+        "TELNYX_API_KEY",
+        "TELNYX_CONNECTION_ID",
+        "TELNYX_MESSAGING_PROFILE_ID",
+        "TELNYX_PUBLIC_KEY",
+        "TELNYX_DEFAULT_FROM_NUMBER",
       ];
       const missing = required.filter((k) => !process.env[k] || String(process.env[k]).trim() === "");
 
@@ -6864,9 +6840,9 @@ export async function registerRoutes(
       // Next steps
       const nextSteps: string[] = [];
       if (missing.length) nextSteps.push(`Add missing env vars: ${missing.join(", ")}`);
-      if (signalwireStatus !== "reachable") nextSteps.push("Verify SignalWire credentials and number capabilities");
+      if (telnyxStatus !== "reachable") nextSteps.push("Verify Telnyx credentials and number capabilities");
       if (dbStatus !== "connected") nextSteps.push("Verify DATABASE_URL and Neon availability");
-      if (!process.env.DIALER_DEFAULT_FROM_NUMBER) nextSteps.push("Set DIALER_DEFAULT_FROM_NUMBER for outbound caller ID");
+      if (!process.env.TELNYX_DEFAULT_FROM_NUMBER) nextSteps.push("Set TELNYX_DEFAULT_FROM_NUMBER for outbound caller ID");
 
       let releaseGate: { ok: boolean; blockingCritical: number } = { ok: true, blockingCritical: 0 };
       try {
@@ -6883,102 +6859,18 @@ export async function registerRoutes(
       if (!releaseGate.ok) nextSteps.push(`Release gate blocked: ${releaseGate.blockingCritical} Critical findings are still open`);
 
       res.json({
-        status: missing.length === 0 && dbStatus === "connected" && signalwireStatus === "reachable" ? "ok" : "warn",
+        status: missing.length === 0 && dbStatus === "connected" && telnyxStatus === "reachable" ? "ok" : "warn",
         env: { nodeEnv: process.env.NODE_ENV || "", missing },
         db: dbStatus,
-        signalwire: signalwireStatus,
+        telnyx: telnyxResult,
+        telnyxDiag,
         numbers: process.env.DIALER_NUMBERS_JSON ? JSON.parse(process.env.DIALER_NUMBERS_JSON) : [],
-        defaultFrom: process.env.DIALER_DEFAULT_FROM_NUMBER || null,
+        defaultFrom: process.env.TELNYX_DEFAULT_FROM_NUMBER || null,
         sessions: { ok: sessionsOk },
         releaseGate,
         nextSteps,
         timestamp: new Date().toISOString(),
       });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/telephony/signalwire/token", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-
-      const { to, from } = req.body || {};
-      
-      if (!to) {
-        return res.status(400).json({ message: "Destination number (to) is required" });
-      }
-      
-      const space = process.env.SIGNALWIRE_SPACE_URL?.replace(/^https?:\/\//, "").trim();
-      const project = process.env.SIGNALWIRE_PROJECT_ID?.trim();
-      const token = process.env.SIGNALWIRE_API_TOKEN?.trim();
-      
-      if (!space || !project || !token) {
-        return res.status(500).json({ message: "SignalWire credentials not configured" });
-      }
-      
-      // Generate a short-lived JWT token for WebRTC
-      // resource must be a string identifier for the client (e.g. the phone number)
-      const resolvedFrom = String(from ?? process.env.DIALER_DEFAULT_FROM_NUMBER ?? "").trim();
-      if (!resolvedFrom) {
-        return res.status(400).json({ message: "Missing from number" });
-      }
-      const resource = resolvedFrom;
-      
-      const payload = {
-        iss: project,
-        sub: req.session.userId?.toString() || "anonymous",
-        aud: `https://${space}`,
-        exp: Math.floor(Date.now() / 1000) + 300, // 5 minutes
-        iat: Math.floor(Date.now() / 1000),
-        scope: "voice",
-        resource: resource,
-      };
-      
-      if (process.env.NODE_ENV !== "production") {
-        console.log("[SignalWire] WebRTC JWT claims:", {
-          iss: payload.iss,
-          sub: payload.sub,
-          aud: payload.aud,
-          exp: payload.exp,
-          iat: payload.iat,
-          scope: payload.scope,
-          resource: payload.resource,
-        });
-      }
-
-      const secret = new TextEncoder().encode(token);
-      const jwtToken = await new SignJWT(payload as any)
-        .setProtectedHeader({ alg: "HS256" })
-        .sign(secret);
-      
-      res.json({ 
-        token: jwtToken,
-        expiresAt: new Date(payload.exp * 1000).toISOString(),
-        space: `wss://${space}`,
-        project: project,
-        from: resolvedFrom,
-      });
-    } catch (error: any) {
-      console.error("WebRTC token generation failed:", error);
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  app.post("/api/telephony/ws-token", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      const secret = process.env.SESSION_SECRET || "";
-      if (!secret) return res.status(503).json({ message: "Server authentication is not configured" });
-      const now = Math.floor(Date.now() / 1000);
-      const exp = now + 60;
-      const token = await new SignJWT({ sub: String(req.session.userId || ""), exp, iat: now } as any)
-        .setProtectedHeader({ alg: "HS256" })
-        .sign(new TextEncoder().encode(secret));
-      const wsBaseUrlRaw = String(process.env.TELEPHONY_WS_PUBLIC_BASE_URL || "").trim();
-      res.json({ token, expiresAt: new Date(exp * 1000).toISOString(), wsBaseUrl: wsBaseUrlRaw || null });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -6990,26 +6882,148 @@ export async function registerRoutes(
       if (!user) return;
 
       const { to, from, body, metadata } = req.body || {};
-      if (!to || !body) return res.status(400).json({ message: "Missing to/body" });
-      const resolvedFrom = from || process.env.DIALER_DEFAULT_FROM_NUMBER || process.env.SIGNALWIRE_FROM_NUMBER || "";
-      const out = await sendSignalWireSms({ to, body, from: resolvedFrom });
-      const sid = out.messageSid || null;
-      const smsStatus = "queued";
+      if (!to || !body) return res.status(400).json({ error: "Missing to/body", code: "MISSING_FIELDS" });
+      const resolvedFrom = from || process.env.TELNYX_DEFAULT_FROM_NUMBER || "";
+      if (!resolvedFrom) {
+        return res.status(400).json({ error: "Missing fromNumber", code: "MISSING_FROM" });
+      }
+
+      const e164Re = /^\+[1-9]\d{1,14}$/;
+      if (!e164Re.test(String(to))) {
+        return res.status(400).json({ error: "Invalid E.164 destination number", code: "INVALID_TO" });
+      }
+      if (!String(body).trim()) {
+        return res.status(400).json({ error: "SMS body cannot be empty", code: "EMPTY_BODY" });
+      }
+
+      let sid: string | null = null;
+      let smsStatus = "queued";
+      try {
+        const out = await telnyx.sendSms({ to: String(to), body: String(body), from: resolvedFrom });
+        sid = out.messageId || null;
+        smsStatus = "queued";
+      } catch (error: any) {
+        console.error("Telnyx SMS failed:", error);
+        return res.status(error?.status || 502).json({
+          error: error?.message || "SMS send failed",
+          code: error?.code || "TELNYX_SMS_ERROR",
+          detail: error?.detail || null,
+        });
+      }
+
       if (metadata && typeof metadata === "object") {
         const leadId = (metadata as any).leadId ? Number((metadata as any).leadId) : null;
         const propertyId = (metadata as any).propertyId ? Number((metadata as any).propertyId) : null;
         if (leadId || propertyId) {
-          await storage.createGlobalActivity({
-            userId: user.id,
-            action: "sms_sent",
-            description: `Sent SMS to ${String(to || "")}`,
-            metadata: JSON.stringify({ leadId: leadId || undefined, propertyId: propertyId || undefined, to: String(to || ""), sid, status: smsStatus, body: String(body || "") }),
-          } as any);
+          try {
+            await storage.createGlobalActivity({
+              userId: user.id,
+              action: "sms_sent",
+              description: `Sent SMS to ${String(to || "")}`,
+              metadata: JSON.stringify({ leadId: leadId || undefined, propertyId: propertyId || undefined, to: String(to || ""), sid, status: smsStatus, body: String(body || "") }),
+            } as any);
+          } catch {}
         }
       }
       res.json({ sid, status: smsStatus });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
+      console.error("SMS route error:", error);
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
+
+  app.post("/api/telephony/outbound/dispatch", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+
+      const { toNumber, fromNumber, metadata } = req.body || {};
+      if (!toNumber || !String(toNumber).trim()) {
+        return res.status(400).json({ error: "toNumber is required", code: "MISSING_TO" });
+      }
+
+      const resolvedFrom = fromNumber || process.env.TELNYX_DEFAULT_FROM_NUMBER || "";
+      if (!resolvedFrom) {
+        return res.status(400).json({ error: "Missing fromNumber", code: "MISSING_FROM" });
+      }
+
+      let callControlId: string | null = null;
+      let callLog: any = null;
+      try {
+        const result = await telnyx.dial({
+          to: String(toNumber),
+          from: resolvedFrom,
+        });
+        callControlId = result.callControlId;
+      } catch (error: any) {
+        console.error("Telnyx outbound dispatch failed:", error);
+        return res.status(error?.status || 502).json({
+          error: error?.message || "Outbound dispatch failed",
+          code: error?.code || "TELNYX_DIAL_ERROR",
+          detail: error?.detail || null,
+        });
+      }
+
+      try {
+        callLog = await storage.createCallLog({
+          userId: user.id,
+          direction: "outbound",
+          number: String(toNumber),
+          status: "dialing",
+          startedAt: new Date(),
+          metadata: metadata ? JSON.stringify({ ...metadata, callControlId }) : JSON.stringify({ callControlId }),
+        } as any);
+      } catch (e) {
+        console.error("Failed to persist call log:", e);
+      }
+
+      if (metadata && typeof metadata === "object") {
+        const metaLeadId = (metadata as any).leadId ? Number((metadata as any).leadId) : null;
+        const propertyId = (metadata as any).propertyId ? Number((metadata as any).propertyId) : null;
+        if (metaLeadId || propertyId) {
+          try {
+            await storage.createGlobalActivity({
+              userId: user.id,
+              action: "call_started",
+              description: `Started call to ${String(toNumber || "")}`,
+              metadata: JSON.stringify({ leadId: metaLeadId || undefined, propertyId: propertyId || undefined, callLogId: callLog?.id, number: String(toNumber || ""), callControlId }),
+            } as any);
+          } catch {}
+        }
+      }
+
+      res.status(201).json({ callControlId, callLogId: callLog?.id || null });
+    } catch (error: any) {
+      console.error("Outbound dispatch route error:", error);
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
+
+  app.post("/api/telephony/outbound/:callControlId/hangup", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+
+      const callControlId = String(req.params.callControlId || "").trim();
+      if (!callControlId) {
+        return res.status(400).json({ error: "callControlId is required", code: "MISSING_CALL_CONTROL_ID" });
+      }
+
+      try {
+        await telnyx.hangup(callControlId);
+      } catch (error: any) {
+        console.error("Telnyx hangup failed:", error);
+        return res.status(error?.status || 502).json({
+          error: error?.message || "Hangup failed",
+          code: error?.code || "TELNYX_HANGUP_ERROR",
+          detail: error?.detail || null,
+        });
+      }
+
+      res.json({ ok: true, callControlId });
+    } catch (error: any) {
+      console.error("Hangup route error:", error);
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
     }
   });
 
@@ -7050,319 +7064,6 @@ export async function registerRoutes(
     const row = (rows as any).rows?.[0];
     return row?.id ? Number(row.id) : null;
   }
-
-  // Inbound SMS webhook with cXML auto-reply
-  app.post("/api/telephony/sms/webhook", async (req, res) => {
-    try {
-      // Verify SignalWire signature if configured
-      const signature = req.headers["x-signalwire-signature"] as string;
-      const url = req.protocol + "://" + req.get("host") + req.originalUrl;
-      
-      if (signature && process.env.SIGNALWIRE_API_TOKEN) {
-        // Simple signature verification (can be enhanced with crypto)
-        // For now, we'll accept the webhook
-      }
-      
-      const { To, From, Body } = req.body;
-      
-      // Send cXML response for auto-reply
-      const cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Message>Thanks, we'll call you shortly.</Message>
-  <Route to="${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}" body="${Body}" from="${To}"/>
-</Response>`;
-      
-      res.set("Content-Type", "text/xml");
-      res.send(cxmlResponse);
-
-      setImmediate(() => {
-        findLeadMatchByPhone(From)
-          .then((match) => {
-            const leadId = match?.leadId || null;
-            const userId = match?.userId || 0;
-            const bodyText = String(Body || "");
-            const normalized = bodyText.trim().toUpperCase();
-            const isOptOut = normalized === "STOP" || normalized === "UNSUBSCRIBE" || normalized === "CANCEL" || normalized === "QUIT";
-
-            if (leadId && isOptOut) {
-              db.execute(sql`UPDATE leads SET do_not_text = true, updated_at = NOW() WHERE id = ${leadId}`).catch((e: any) => {
-                console.error(JSON.stringify({ ts: new Date().toISOString(), event: "sms_webhook", kind: "optout_update_failed", target: "leads", leadId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
-              });
-              db.execute(sql`UPDATE campaign_enrollments SET status = 'opted_out', updated_at = NOW() WHERE lead_id = ${leadId} AND status = 'active'`).catch((e: any) => {
-                console.error(JSON.stringify({ ts: new Date().toISOString(), event: "sms_webhook", kind: "optout_update_failed", target: "campaign_enrollments", leadId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
-              });
-              storage
-                .createGlobalActivity({
-                  userId,
-                  action: "campaign_opt_out",
-                  description: "Lead opted out via SMS",
-                  metadata: JSON.stringify({ leadId, from: String(From || ""), to: String(To || ""), body: bodyText }),
-                } as any)
-                .catch((e: any) => {
-                  console.error(JSON.stringify({ ts: new Date().toISOString(), event: "sms_webhook", kind: "activity_log_failed", action: "campaign_opt_out", leadId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
-                });
-            }
-
-            return storage.createGlobalActivity({
-              userId,
-              action: "sms_received",
-              description: typeof Body === "string" ? Body : "Inbound SMS received",
-              metadata: JSON.stringify({ leadId: leadId || undefined, from: String(From || ""), to: String(To || ""), body: bodyText }),
-            } as any);
-          })
-          .catch((e: any) => {
-            console.error(JSON.stringify({ ts: new Date().toISOString(), event: "sms_webhook", kind: "background_failed", message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
-          });
-      });
-      
-    } catch (error: any) {
-      console.error("SMS webhook error:", error);
-      res.status(500).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response></Response>");
-    }
-  });
-
-  // Inbound voice webhook with cXML IVR
-  app.post("/api/telephony/voice/webhook", async (req, res) => {
-    try {
-      const { To, From, CallSid } = req.body;
-      
-      setImmediate(() => {
-        (async () => {
-          const existingId = await findCallLogIdByCallSid(CallSid);
-          if (existingId) return;
-          const match = await findLeadMatchByPhone(From);
-          const leadId = match?.leadId || null;
-          const userId = match?.userId || 0;
-          await storage.createCallLog({
-            userId,
-            direction: "inbound",
-            number: String(From || ""),
-            contactId: null as any,
-            leadId: leadId || null,
-            status: "ringing",
-            startedAt: new Date(),
-            metadata: JSON.stringify({ callSid: String(CallSid || ""), to: String(To || ""), from: String(From || "") }),
-          } as any);
-          await storage.createGlobalActivity({
-            userId,
-            action: "call_inbound",
-            description: `Inbound call from ${String(From || "")}`,
-            metadata: JSON.stringify({ leadId: leadId || undefined, callSid: String(CallSid || ""), from: String(From || ""), to: String(To || "") }),
-          } as any);
-        })().catch((e: any) => {
-          console.error(JSON.stringify({ ts: new Date().toISOString(), event: "voice_webhook", kind: "background_failed", message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
-        });
-      });
-      
-      // Simple IVR response - can be enhanced with business hours logic
-      const hour = new Date().getHours();
-      const isBusinessHours = hour >= 9 && hour < 17; // 9 AM to 5 PM
-      
-      let cxmlResponse: string;
-      
-      if (isBusinessHours) {
-        // Business hours: AI greeting and qualification
-        cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Joanna">Thank you for calling. Please tell us how we can help you today.</Say>
-  <Gather input="speech" timeout="10" action="/api/telephony/voice/gather" method="POST">
-    <Say voice="Polly.Joanna">You can say things like schedule appointment, property inquiry, or speak to agent.</Say>
-  </Gather>
-</Response>`;
-      } else {
-        // After hours: voicemail with SMS callback
-        cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Joanna">Thank you for calling. Our office is currently closed. Please leave a message and we will return your call during business hours.</Say>
-  <Record timeout="30" finishOnKey="#" action="/api/telephony/voice/recording" method="POST"/>
-  <Say voice="Polly.Joanna">Thank you for your message. We will contact you soon.</Say>
-</Response>`;
-      }
-      
-      res.set("Content-Type", "text/xml");
-      res.send(cxmlResponse);
-      
-    } catch (error: any) {
-      console.error("Voice webhook error:", error);
-      res.status(500).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>");
-    }
-  });
-
-  // Voice gather webhook for speech recognition
-  app.post("/api/telephony/voice/gather", async (req, res) => {
-    try {
-      const { To, From, CallSid, SpeechResult, Confidence } = req.body;
-      
-      console.log(`[Voice Gather] From: ${From}, Speech: ${SpeechResult}, Confidence: ${Confidence}`);
-      
-      let cxmlResponse: string;
-      
-      if (SpeechResult && Confidence > 0.5) {
-        const speech = SpeechResult.toLowerCase();
-        
-        if (speech.includes("appointment") || speech.includes("schedule")) {
-          cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Joanna">I'll connect you to our scheduling department. Please hold.</Say>
-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
-</Response>`;
-        } else if (speech.includes("property") || speech.includes("inquiry")) {
-          cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Joanna">I'll connect you to our property specialist. Please hold.</Say>
-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
-</Response>`;
-        } else if (speech.includes("agent") || speech.includes("speak")) {
-          cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Joanna">I'll connect you to the next available agent. Please hold.</Say>
-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
-</Response>`;
-        } else {
-          cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Joanna">I didn't understand that. Let me connect you to an agent.</Say>
-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
-</Response>`;
-        }
-      } else {
-        cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Joanna">I didn't catch that. Let me connect you to an agent.</Say>
-  <Dial>${process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943'}</Dial>
-</Response>`;
-      }
-      
-      res.set("Content-Type", "text/xml");
-      res.send(cxmlResponse);
-      
-    } catch (error: any) {
-      console.error("Voice gather error:", error);
-      res.status(500).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>");
-    }
-  });
-
-  // Voice recording webhook
-  app.post("/api/telephony/voice/recording", async (req, res) => {
-    try {
-      const { To, From, CallSid, RecordingUrl, RecordingSid, RecordingDuration } = req.body;
-      
-      if (process.env.NODE_ENV !== "production") {
-        console.log(`[Voice Recording] From: ${From}, RecordingUrl present: ${Boolean(RecordingUrl)}, Duration: ${RecordingDuration}s`);
-      }
-      
-      // Send SMS confirmation
-      const space = process.env.SIGNALWIRE_SPACE_URL?.replace(/^https?:\/\//, "") || "";
-      const project = process.env.SIGNALWIRE_PROJECT_ID || "";
-      const token = process.env.SIGNALWIRE_API_TOKEN || "";
-      
-      if (space && project && token) {
-        const smsUrl = `https://${space}/api/laml/2010-04-01/Accounts/${project}/Messages.json`;
-        const smsForm = new URLSearchParams({ 
-          From: process.env.DIALER_DEFAULT_FROM_NUMBER || '+12314060943',
-          To: From,
-          Body: "Thank you for leaving a voicemail. We will review your message and contact you during business hours."
-        });
-        const auth = Buffer.from(`${project}:${token}`).toString("base64");
-        
-        try {
-          await fetch(smsUrl, { 
-            method: "POST", 
-            headers: { 
-              "Authorization": `Basic ${auth}`, 
-              "Content-Type": "application/x-www-form-urlencoded" 
-            }, 
-            body: smsForm 
-          });
-          console.log(`[Voice Recording] SMS confirmation sent to ${From}`);
-        } catch (smsError) {
-          console.error("Failed to send SMS confirmation:", smsError);
-        }
-      }
-
-      try {
-        const match = await findLeadMatchByPhone(From);
-        const inboxUserId = match?.userId || 0;
-        const leadId = match?.leadId || null;
-
-        const existingCallLogId = await findCallLogIdByCallSid(CallSid);
-        const callLog = existingCallLogId
-          ? await storage.updateCallLog(existingCallLogId, {
-              status: "voicemail",
-              leadId: leadId || null,
-              endedAt: new Date(),
-              durationMs: RecordingDuration ? parseInt(String(RecordingDuration), 10) * 1000 : null,
-              metadata: JSON.stringify({ To, From, CallSid, RecordingUrl, RecordingSid, RecordingDuration }),
-            } as any)
-          : await storage.createCallLog({
-              userId: inboxUserId,
-              direction: "inbound",
-              number: String(From || ""),
-              contactId: null as any,
-              leadId: leadId || null,
-              status: "voicemail",
-              startedAt: new Date(),
-              endedAt: new Date(),
-              durationMs: RecordingDuration ? parseInt(String(RecordingDuration), 10) * 1000 : null,
-              metadata: JSON.stringify({ To, From, CallSid, RecordingUrl, RecordingSid, RecordingDuration }),
-            } as any);
-
-        const media = await storage.createCallMedia({
-          userId: inboxUserId,
-          callLogId: callLog.id,
-          kind: "voicemail",
-          e164: String(From || ""),
-          providerUrl: RecordingUrl ? String(RecordingUrl) : null,
-          providerSid: String(RecordingSid || CallSid || ""),
-          durationSeconds: RecordingDuration ? parseInt(String(RecordingDuration), 10) : null,
-          isRead: false,
-        } as any);
-
-        {
-          const evt = { type: "voicemail_updated", payload: { id: media.id, e164: media.e164 } } as const;
-          emitTelephonyEventToAll(evt);
-          publishTelephonyEvent(evt).catch(() => {});
-        }
-
-        await storage.createGlobalActivity({
-          userId: inboxUserId,
-          action: "voicemail_received",
-          description: `Voicemail from ${String(From || "")}`,
-          metadata: JSON.stringify({ leadId: leadId || undefined, callLogId: callLog.id, from: String(From || ""), to: String(To || ""), audioUrl: RecordingUrl ? String(RecordingUrl) : null }),
-        } as any);
-
-        if (RecordingUrl) {
-          void (async () => {
-            try {
-              const key = `voicemail/${media.id}-${String(RecordingSid || CallSid || "recording")}.mp3`;
-              const uploaded = await uploadTelephonyMediaFromUrl({ key, sourceUrl: String(RecordingUrl), contentType: "audio/mpeg" });
-              if (uploaded) {
-                await storage.updateCallMedia(media.id, { storageKey: uploaded.key, mimeType: uploaded.contentType } as any);
-                {
-                  const evt = { type: "recording_ready", payload: { id: media.id, key: uploaded.key } } as const;
-                  emitTelephonyEventToAll(evt);
-                  publishTelephonyEvent(evt).catch(() => {});
-                }
-              }
-            } catch {}
-          })();
-        }
-      } catch {}
-      
-      const cxmlResponse = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="Polly.Joanna">Thank you for your message. We will contact you soon.</Say>
-  <Hangup/>
-</Response>`;
-      
-      res.set("Content-Type", "text/xml");
-      res.send(cxmlResponse);
-      
-    } catch (error: any) {
-      console.error("Voice recording error:", error);
-      res.status(500).send("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Response><Hangup/></Response>");
-    }
-  });
 
   app.get("/api/properties/:id", async (req, res) => {
     try {
@@ -9885,9 +9586,11 @@ export async function registerRoutes(
 
   app.get("/api/ai/config", async (_req, res) => {
     const required = [
-      "SIGNALWIRE_SPACE_URL",
-      "SIGNALWIRE_PROJECT_ID",
-      "SIGNALWIRE_API_TOKEN",
+      "TELNYX_API_KEY",
+      "TELNYX_CONNECTION_ID",
+      "TELNYX_MESSAGING_PROFILE_ID",
+      "TELNYX_PUBLIC_KEY",
+      "TELNYX_DEFAULT_FROM_NUMBER",
     ];
     const missing = required.filter((k) => !process.env[k] || String(process.env[k]).trim() === "");
     const ready = missing.length === 0;
@@ -9895,7 +9598,7 @@ export async function registerRoutes(
   });
 
   app.get("/api/ai/ping", async (_req, res) => {
-    const ok = Boolean(process.env.SIGNALWIRE_SPACE_URL && process.env.SIGNALWIRE_PROJECT_ID && process.env.SIGNALWIRE_API_TOKEN);
+    const ok = Boolean(process.env.TELNYX_API_KEY && process.env.TELNYX_CONNECTION_ID && process.env.TELNYX_MESSAGING_PROFILE_ID);
     res.json({ ok });
   });
 
