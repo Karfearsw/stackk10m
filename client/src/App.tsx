@@ -78,6 +78,7 @@ function Router() {
       <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
       <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />
       <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />
+      <Route path="/opportunities" component={() => <ProtectedRoute component={Properties} />} />
       <Route path="/dialer" component={() => <ProtectedRoute component={Dialer} />} />
       <Route path="/contacts" component={() => <ProtectedRoute component={Contacts} />} />
       <Route path="/history" component={() => <ProtectedRoute component={History} />} />

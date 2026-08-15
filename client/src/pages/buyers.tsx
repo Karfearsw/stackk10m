@@ -55,6 +55,9 @@ interface Buyer {
   notes: string | null;
   tags: string[] | null;
   lastContactDate: string | null;
+  zipCodes: string[] | null;
+  minBeds: string | null;
+  maxBeds: string | null;
   createdAt: string;
 }
 
@@ -312,6 +315,9 @@ export default function Buyers() {
     phone: "",
     preferredPropertyTypes: [] as string[],
     preferredAreas: "",
+    zipCodes: "",
+    minBeds: "",
+    maxBeds: "",
     minBudget: "",
     maxBudget: "",
     dealsPerMonth: "",
@@ -400,6 +406,9 @@ export default function Buyers() {
       phone: "",
       preferredPropertyTypes: [],
       preferredAreas: "",
+      zipCodes: "",
+      minBeds: "",
+      maxBeds: "",
       minBudget: "",
       maxBudget: "",
       dealsPerMonth: "",
@@ -419,6 +428,9 @@ export default function Buyers() {
       phone: buyer.phone || "",
       preferredPropertyTypes: buyer.preferredPropertyTypes || [],
       preferredAreas: buyer.preferredAreas?.join(", ") || "",
+      zipCodes: buyer.zipCodes?.join(", ") || "",
+      minBeds: buyer.minBeds?.toString() || "",
+      maxBeds: buyer.maxBeds?.toString() || "",
       minBudget: buyer.minBudget || "",
       maxBudget: buyer.maxBudget || "",
       dealsPerMonth: buyer.dealsPerMonth?.toString() || "",
@@ -440,6 +452,9 @@ export default function Buyers() {
       phone: formData.phone || null,
       preferredPropertyTypes: formData.preferredPropertyTypes.length > 0 ? formData.preferredPropertyTypes : null,
       preferredAreas: formData.preferredAreas ? formData.preferredAreas.split(",").map(s => s.trim()) : null,
+      zipCodes: formData.zipCodes ? formData.zipCodes.split(",").map(s => s.trim()) : null,
+      minBeds: formData.minBeds ? parseInt(formData.minBeds) : null,
+      maxBeds: formData.maxBeds ? parseInt(formData.maxBeds) : null,
       minBudget: formData.minBudget || null,
       maxBudget: formData.maxBudget || null,
       dealsPerMonth: formData.dealsPerMonth ? parseInt(formData.dealsPerMonth) : null,
