@@ -4,7 +4,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ResearchHub, type PlaygroundQuickLink, type PlaygroundResearchNote } from "@/components/underwriting/ResearchHub";
 import { UnderwriteDealPanel } from "@/components/underwriting/UnderwriteDealPanel";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
-import { makeAddressSearchUrl } from "@/utils/playgroundPersistence";
+import { makeAddressSearchUrl, getSafeLocalStorage } from "@/utils/playgroundPersistence";
 import { makeEmptyUnderwritingV1, underwritingSchemaV1, type UnderwritingComp, type UnderwritingV1 } from "@shared/underwriting";
 
 type PlaygroundChecklistItem = { id: string; label: string; done: boolean; createdAt: string };
@@ -119,13 +119,55 @@ export function UnderwriteDealWorkspace(props: {
 
   const sessionKey = props.sessionId ? `id:${props.sessionId}` : propertyId ? `property:${propertyId}` : leadId ? `lead:${leadId}` : `addr:${address}`;
 
-  const { data: session, isLoading: sessionLoading } = useQuery<any>({
+  const localStateKey = `playground_workspace_local:${sessionKey}`;
+
+  type WorkspaceLocalState = {
+    currentUrl?: string;
+    underwriting?: any;
+    quickLinks?: PlaygroundQuickLink[];
+    notes?: PlaygroundResearchNote[];
+    tags?: string[];
+    checklist?: PlaygroundChecklistItem[];
+    browserMode?: "iframe" | "external";
+    assignedTo?: number | null;
+    assignmentDueAt?: string | null;
+    assignmentStatus?: string | null;
+  };
+
+  function loadLocalState(): WorkspaceLocalState | null {
+    try {
+      const ls = getSafeLocalStorage().storage;
+      const raw = ls.getItem(localStateKey);
+      if (!raw) return null;
+      return JSON.parse(raw) as WorkspaceLocalState;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveLocalState(state: WorkspaceLocalState): void {
+    try {
+      const ls = getSafeLocalStorage().storage;
+      ls.setItem(localStateKey, JSON.stringify(state));
+    } catch {}
+  }
+
+  const {
+    data: session,
+    isLoading: sessionLoading,
+    error: sessionError,
+  } = useQuery<any>({
     queryKey: ["/api/playground/sessions/open", sessionKey],
     queryFn: async () => {
       if (props.sessionId && props.sessionId > 0) {
         const res = await fetch(`/api/playground/sessions/${props.sessionId}`, { credentials: "include" });
         const json = await res.json();
-        if (!res.ok) throw new Error(json?.message || "Failed to load session");
+        if (!res.ok) {
+          const err: any = new Error(json?.message || "Failed to load session");
+          err.status = res.status;
+          err.kind = json?.kind;
+          throw err;
+        }
         return json;
       }
       if (!address) throw new Error("Address is required");
@@ -136,11 +178,21 @@ export function UnderwriteDealWorkspace(props: {
         body: JSON.stringify({ address, propertyId: propertyId ?? undefined, leadId: leadId ?? undefined }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json?.message || "Failed to open session");
+      if (!res.ok) {
+        const err: any = new Error(json?.message || "Failed to open session");
+        err.status = res.status;
+        err.kind = json?.kind;
+        throw err;
+      }
       return json;
     },
     enabled: Boolean(address) || (props.sessionId ? props.sessionId > 0 : false),
+    retry: false,
+    staleTime: 5 * 60 * 1000,
   });
+
+  const sessionErr = sessionError as any;
+  const dbUnavailable = sessionErr?.status === 503 || sessionErr?.kind === "db_unavailable";
 
   const { data: templates } = useQuery<TemplateDto[]>({
     queryKey: ["/api/underwriting/templates"],
@@ -164,33 +216,68 @@ export function UnderwriteDealWorkspace(props: {
   const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
   const hydratedRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
+  const dbToastShownRef = useRef(false);
 
   useEffect(() => {
-    if (!session) return;
-    const nextUrl = String(session?.currentUrl || "").trim() || String(session?.current_url || "").trim() || makeAddressSearchUrl(address);
-    setCurrentUrl(nextUrl);
-    let raw: any = {};
-    try {
-      raw = session?.underwritingJson ? JSON.parse(session.underwritingJson) : {};
-    } catch {
-      raw = {};
+    if (sessionLoading) return;
+
+    if (session && session.id) {
+      const nextUrl = String(session?.currentUrl || "").trim() || String(session?.current_url || "").trim() || makeAddressSearchUrl(address);
+      setCurrentUrl(nextUrl);
+      let raw: any = {};
+      try {
+        raw = session?.underwritingJson ? JSON.parse(session.underwritingJson) : {};
+      } catch {
+        raw = {};
+      }
+      const parsed = underwritingSchemaV1.safeParse(raw);
+      setUnderwriting(parsed.success ? parsed.data : makeEmptyUnderwritingV1(nowIso()));
+      const nextLinks = coerceQuickLinks(safeJsonParse(session?.bookmarksJson, []));
+      const nextNotes = coerceNotes(safeJsonParse(session?.notesJson, []));
+      const nextTags = coerceTags(safeJsonParse(session?.tagsJson, []));
+      const checklistJson = coerceChecklist(safeJsonParse(session?.checklistJson, {}));
+      setQuickLinks(nextLinks);
+      setNotes(nextNotes);
+      setTags(nextTags);
+      setChecklist(checklistJson.items || []);
+      setBrowserMode(checklistJson.prefs?.browserMode || "iframe");
+      setAssignedTo(typeof session?.assignedTo === "number" ? session.assignedTo : null);
+      setAssignmentDueAt(session?.assignmentDueAt ? new Date(session.assignmentDueAt as any).toISOString().slice(0, 10) : null);
+      setAssignmentStatus(typeof session?.assignmentStatus === "string" && session.assignmentStatus.trim() ? session.assignmentStatus : null);
+      hydratedRef.current = true;
+      return;
     }
-    const parsed = underwritingSchemaV1.safeParse(raw);
-    setUnderwriting(parsed.success ? parsed.data : makeEmptyUnderwritingV1(nowIso()));
-    const nextLinks = coerceQuickLinks(safeJsonParse(session?.bookmarksJson, []));
-    const nextNotes = coerceNotes(safeJsonParse(session?.notesJson, []));
-    const nextTags = coerceTags(safeJsonParse(session?.tagsJson, []));
-    const checklistJson = coerceChecklist(safeJsonParse(session?.checklistJson, {}));
-    setQuickLinks(nextLinks);
-    setNotes(nextNotes);
-    setTags(nextTags);
-    setChecklist(checklistJson.items || []);
-    setBrowserMode(checklistJson.prefs?.browserMode || "iframe");
-    setAssignedTo(typeof session?.assignedTo === "number" ? session.assignedTo : null);
-    setAssignmentDueAt(session?.assignmentDueAt ? new Date(session.assignmentDueAt as any).toISOString().slice(0, 10) : null);
-    setAssignmentStatus(typeof session?.assignmentStatus === "string" && session.assignmentStatus.trim() ? session.assignmentStatus : null);
+
+    if (dbUnavailable) {
+      if (!dbToastShownRef.current) {
+        dbToastShownRef.current = true;
+        toast({
+          title: "Limited mode — database unavailable",
+          description: "Changes are saved locally in your browser and will sync when the database is back online.",
+          variant: "destructive",
+        });
+      }
+    }
+
+    const saved = loadLocalState();
+    if (saved) {
+      setCurrentUrl(saved.currentUrl || makeAddressSearchUrl(address));
+      setUnderwriting(saved.underwriting ? underwritingSchemaV1.safeParse(saved.underwriting).success ? underwritingSchemaV1.parse(saved.underwriting) : makeEmptyUnderwritingV1(nowIso()) : makeEmptyUnderwritingV1(nowIso()));
+      setQuickLinks(saved.quickLinks || []);
+      setNotes(saved.notes || []);
+      setTags(saved.tags || []);
+      setChecklist(saved.checklist || []);
+      setBrowserMode(saved.browserMode || "iframe");
+      setAssignedTo(saved.assignedTo ?? null);
+      setAssignmentDueAt(saved.assignmentDueAt ?? null);
+      setAssignmentStatus(saved.assignmentStatus ?? null);
+    }
     hydratedRef.current = true;
-  }, [session, address]);
+  }, [session, sessionLoading, dbUnavailable, address]);
+
+  useEffect(() => {
+    if (!dbUnavailable) dbToastShownRef.current = false;
+  }, [dbUnavailable]);
 
   const patchSession = useMutation({
     mutationFn: async (patch: any) => {
@@ -216,22 +303,43 @@ export function UnderwriteDealWorkspace(props: {
 
   useEffect(() => {
     if (!hydratedRef.current) return;
-    if (!session?.id) return;
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = window.setTimeout(() => {
-      patchSession.mutate({
-        currentUrl,
-        tagsJson: JSON.stringify(tags || []),
-        bookmarksJson: JSON.stringify(quickLinks || []),
-        checklistJson: JSON.stringify({ prefs: { browserMode }, items: checklist || [] }),
-        notesJson: JSON.stringify(notes || []),
-        underwritingJson: JSON.stringify({ ...underwriting, updatedAt: nowIso() }),
-        assignedTo,
-        assignmentDueAt: assignmentDueAt ? new Date(`${assignmentDueAt}T00:00:00.000Z`).toISOString() : null,
-        assignmentStatus,
-      });
-      saveTimerRef.current = null;
-    }, 500);
+
+    const state: WorkspaceLocalState = {
+      currentUrl,
+      tags: tags || [],
+      quickLinks: quickLinks || [],
+      checklist: checklist || [],
+      notes: notes || [],
+      browserMode,
+      underwriting: { ...underwriting, updatedAt: nowIso() },
+      assignedTo,
+      assignmentDueAt,
+      assignmentStatus,
+    };
+
+    if (session && session.id) {
+      saveTimerRef.current = window.setTimeout(() => {
+        patchSession.mutate({
+          currentUrl,
+          tagsJson: JSON.stringify(tags || []),
+          bookmarksJson: JSON.stringify(quickLinks || []),
+          checklistJson: JSON.stringify({ prefs: { browserMode }, items: checklist || [] }),
+          notesJson: JSON.stringify(notes || []),
+          underwritingJson: JSON.stringify({ ...underwriting, updatedAt: nowIso() }),
+          assignedTo,
+          assignmentDueAt: assignmentDueAt ? new Date(`${assignmentDueAt}T00:00:00.000Z`).toISOString() : null,
+          assignmentStatus,
+        });
+        saveTimerRef.current = null;
+      }, 500);
+    } else {
+      saveTimerRef.current = window.setTimeout(() => {
+        saveLocalState(state);
+        saveTimerRef.current = null;
+      }, 500);
+    }
+
     return () => {
       if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     };
@@ -317,6 +425,21 @@ export function UnderwriteDealWorkspace(props: {
 
   return (
     <>
+      {dbUnavailable && (
+        <div className="mb-4 rounded-md border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20 px-4 py-3 text-sm">
+          <div className="flex items-start gap-3">
+            <svg className="h-5 w-5 text-amber-600 dark:text-amber-500 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8.25v4.25m0 4.25h.009M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" />
+            </svg>
+            <div>
+              <p className="font-medium text-amber-800 dark:text-amber-400">Limited mode — database unavailable</p>
+              <p className="text-amber-700 dark:text-amber-500 mt-1">
+                Your tags, checklist, notes, bookmarks, and browser history are being saved locally in your browser. They will sync to the server once the database is back online.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-1 gap-4 min-h-[70vh] overflow-hidden xl:hidden">
         <div className="min-h-[70vh] min-w-0">
           <ResearchHub

@@ -80,19 +80,59 @@ export default function Playground() {
         return;
       }
       if (context.propertyId) {
-        const res = await fetch(`/api/opportunities/${context.propertyId}`, { credentials: "include" });
-        if (!res.ok) return;
-        const json = await res.json();
-        const addr = String(json?.property?.address || "").trim();
-        if (addr) setResolvedAddress(addr);
+        try {
+          const res = await fetch(`/api/opportunities/${context.propertyId}`, { credentials: "include" });
+          if (!res.ok) {
+            if (res.status === 503) {
+              toast({
+                title: "Database unavailable",
+                description: "Playground is running in limited mode. Some features may not save.",
+                variant: "destructive",
+              });
+            }
+            return;
+          }
+          const json = await res.json();
+          const addr = String(json?.property?.address || "").trim();
+          if (addr) setResolvedAddress(addr);
+        } catch {
+          toast({
+            title: "Network error",
+            description: "Could not load opportunity data. You can still enter an address manually.",
+            variant: "destructive",
+          });
+        }
         return;
       }
       if (context.leadId) {
-        const res = await fetch(`/api/leads/${context.leadId}`, { credentials: "include" });
-        if (!res.ok) return;
-        const json = await res.json();
-        const addr = String(json?.address || "").trim();
-        if (addr) setResolvedAddress(addr);
+        try {
+          const res = await fetch(`/api/leads/${context.leadId}`, { credentials: "include" });
+          if (!res.ok) {
+            if (res.status === 503) {
+              toast({
+                title: "Database unavailable",
+                description: "Playground is running in limited mode. Some features may not save.",
+                variant: "destructive",
+              });
+            } else if (res.status === 404) {
+              toast({
+                title: "Lead not found",
+                description: "The lead could not be found. Enter an address manually to continue.",
+                variant: "destructive",
+              });
+            }
+            return;
+          }
+          const json = await res.json();
+          const addr = String(json?.address || "").trim();
+          if (addr) setResolvedAddress(addr);
+        } catch {
+          toast({
+            title: "Network error",
+            description: "Could not load lead data. Enter an address manually to continue.",
+            variant: "destructive",
+          });
+        }
       }
     };
     hydrate();
