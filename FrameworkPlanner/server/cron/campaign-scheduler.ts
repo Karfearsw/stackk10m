@@ -1,6 +1,6 @@
 import { db } from "../db.js";
 import { sql } from "drizzle-orm";
-import { sendSignalWireSms } from "../services/messaging/signalwire.js";
+import { telnyx } from "../services/telecom/telnyx-client.js";
 import { sendResendEmail } from "../services/messaging/resend.js";
 import { storage } from "../storage.js";
 import { onCampaignCompleted } from "../services/tasks/task-service.js";
@@ -160,9 +160,9 @@ export function startCampaignScheduler(intervalMs = 60_000) {
             error = "Missing lead phone";
           } else {
             try {
-              const out = await sendSignalWireSms({ to, body: templateText });
+              const out = await telnyx.sendSms({ to, body: templateText });
               deliveryStatus = "sent";
-              providerId = out.messageSid || null;
+              providerId = out.messageId || null;
             } catch (e: any) {
               deliveryStatus = "failed";
               error = String(e?.message || e);

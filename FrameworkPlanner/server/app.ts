@@ -185,7 +185,7 @@ if (!sessionSecret) {
 
   const store = hasDatabaseUrl
     ? new PgSession({
-        pool,
+        pool: pool as any,
         tableName: "session",
         createTableIfMissing: false,
         disableTouch: true,

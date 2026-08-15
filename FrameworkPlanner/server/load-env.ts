@@ -3,11 +3,8 @@ import path from "node:path";
 import dotenv from "dotenv";
 
 const frameworkRoot = path.resolve(import.meta.dirname, "..");
-const repoRoot = path.resolve(frameworkRoot, "..");
 
 const candidateFiles = [
-  path.join(repoRoot, ".env.local"),
-  path.join(repoRoot, ".env"),
   path.join(frameworkRoot, ".env.local"),
   path.join(frameworkRoot, ".env"),
 ];

@@ -1,5 +1,18 @@
 import { defineConfig } from "drizzle-kit";
-import "dotenv/config";
+import fs from "node:fs";
+import path from "node:path";
+import { config } from "dotenv";
+
+const frameworkRoot = path.resolve(import.meta.dirname, "FrameworkPlanner");
+const candidates = [
+  path.join(frameworkRoot, ".env.local"),
+  path.join(frameworkRoot, ".env"),
+];
+
+for (const filePath of candidates) {
+  if (!fs.existsSync(filePath)) continue;
+  config({ path: filePath, override: false });
+}
 
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL, ensure the database is provisioned");

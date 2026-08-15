@@ -10,7 +10,7 @@ function baseUrl() {
     const body = await res.json();
     expect(body).toHaveProperty("status");
     expect(body).toHaveProperty("db");
-    expect(body).toHaveProperty("signalwire");
+    expect(body).toHaveProperty("telnyx");
     expect(body).toHaveProperty("env");
   });
 });

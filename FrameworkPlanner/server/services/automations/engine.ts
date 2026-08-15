@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { storage } from "../../storage.js";
 import { createTask } from "../tasks/task-service.js";
 import { sendResendEmail } from "../messaging/resend.js";
-import { sendSignalWireSms } from "../messaging/signalwire.js";
+import { telnyx } from "../telecom/telnyx-client.js";
 
 type AutomationEvent = {
   eventType: string;
@@ -181,8 +181,8 @@ async function executeAction(event: AutomationEvent, automationName: string, act
         const u = await storage.getUserById(toUserId);
         const phone = String((u as any)?.phone || "").trim();
         if (phone) {
-          const sent = await sendSignalWireSms({ to: phone, body: [title, description].filter(Boolean).join("\n") });
-          delivery.sms = { ok: true, sid: sent.messageSid };
+          const sent = await telnyx.sendSms({ to: phone, body: [title, description].filter(Boolean).join("\n") });
+          delivery.sms = { ok: true, sid: sent.messageId };
         } else {
           delivery.sms = { ok: false, skipped: true, error: "Missing phone" };
         }

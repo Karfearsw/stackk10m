@@ -414,7 +414,7 @@ function DialerWorkspaceInner() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="text-sm text-muted-foreground">
-              SignalWire: {ready ? "Connected" : connectionState === "connecting" ? "Connecting…" : connectionState}
+              Telnyx: {ready ? "Connected" : connectionState === "connecting" ? "Connecting…" : connectionState}
               {error ? <span className="text-destructive"> • {error}</span> : null}
             </div>
 

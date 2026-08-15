@@ -13,7 +13,7 @@ import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock, ImageIcon,
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
-import { runSignalWireDiagnostics } from "@/debug/signalwireDiag";
+import { runTelnyxDiagnostics } from "@/debug/signalwireDiag";
 import { useLocation } from "wouter";
 
 function SettingsContent() {
@@ -1589,11 +1589,11 @@ function SettingsContent() {
               </Button>
               <Button
                 variant="outline"
-                onClick={() => runSignalWireDiagnostics()}
-                aria-label="Run SignalWire Diagnostics"
-                data-testid="button-signalwire-diagnostics"
+                onClick={() => runTelnyxDiagnostics()}
+                aria-label="Run Telnyx Diagnostics"
+                data-testid="button-telnyx-diagnostics"
               >
-                Run SignalWire Diagnostics
+                Run Telnyx Diagnostics
               </Button>
             </CardContent>
           </Card>
@@ -1688,15 +1688,15 @@ function SettingsContent() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Phone className="w-5 h-5" />
-                  Dialer (SignalWire)
+                  Dialer (Telnyx)
                 </CardTitle>
-                <CardDescription>WebRTC + REST reachability.</CardDescription>
+                <CardDescription>REST outbound + webhook reachability.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm">SignalWire</span>
-                  <span className={`text-sm font-medium ${telephonyHealth?.signalwire === "reachable" ? "text-green-600" : telephonyHealth?.signalwire === "unconfigured" ? "text-yellow-600" : "text-red-600"}`}>
-                    {telephonyHealth?.signalwire || "unknown"}
+                  <span className="text-sm">Telnyx</span>
+                  <span className={`text-sm font-medium ${telephonyHealth?.telnyx === "reachable" ? "text-green-600" : telephonyHealth?.telnyx === "unconfigured" ? "text-yellow-600" : "text-red-600"}`}>
+                    {telephonyHealth?.telnyx || "unknown"}
                   </span>
                 </div>
                 <div className="space-y-1">

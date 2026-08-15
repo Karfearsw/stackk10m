@@ -1,7 +1,19 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import request from 'supertest';
 import express from 'express';
 import session from 'express-session';
+
+vi.mock('../server/services/telecom/telnyx-client', () => ({
+  telnyx: {
+    dial: async () => ({ callControlId: 'test-call-control-id' }),
+    hangup: async () => {},
+    sendSms: async () => ({ messageId: 'test-message-id' }),
+    healthCheck: async () => ({ status: 'reachable', code: 200, message: 'Connection is active', connectionFound: true, connectionActive: true, httpStatus: 200 }),
+    diagnostics: () => ({ telnyxConfigured: true, apiKeyPrefix: 'test-a', usedPublicKey: false, baseUrl: 'https://api.telnyx.com/v2', connectionId: 'test-connection-id', messagingProfileId: 'test-profile-id', defaultFrom: '+15550001234' }),
+  },
+  createTelnyxWebhookRouter: () => express(),
+}));
+
 import { registerRoutes } from '../server/routes';
 import { storage } from '../server/storage';
 
@@ -9,10 +21,12 @@ describe('Telephony Routes', () => {
   let app: express.Express;
 
   beforeAll(async () => {
-    process.env.SIGNALWIRE_SPACE_URL = "example.signalwire.com";
-    process.env.SIGNALWIRE_PROJECT_ID = "project-id";
-    process.env.SIGNALWIRE_API_TOKEN = "api-token";
-    process.env.DIALER_DEFAULT_FROM_NUMBER = "+15550001234";
+    // Use a throwaway test key; Telnyx is mocked
+    process.env.TELNYX_API_KEY = process.env.TELNYX_API_KEY || 'test-api-key';
+    process.env.TELNYX_CONNECTION_ID = process.env.TELNYX_CONNECTION_ID || 'test-connection-id';
+    process.env.TELNYX_MESSAGING_PROFILE_ID = process.env.TELNYX_MESSAGING_PROFILE_ID || 'test-profile-id';
+    process.env.TELNYX_PUBLIC_KEY = process.env.TELNYX_PUBLIC_KEY || 'test-public-key';
+    process.env.TELNYX_DEFAULT_FROM_NUMBER = process.env.TELNYX_DEFAULT_FROM_NUMBER || '+15550001234';
 
     // Mock storage to avoid DB access in tests
     storage.getUserById = async (id: number) => ({ id, email: "test@example.com" } as any);
@@ -43,11 +57,13 @@ describe('Telephony Routes', () => {
     expect(res.body).toHaveProperty('items');
   });
 
-  it('POST /api/telephony/signalwire/token returns token', async () => {
-    const res = await request(app).post('/api/telephony/signalwire/token').send({ to: '+15551234567' });
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('token');
-    expect(res.body).toHaveProperty('from');
+  it('POST /api/telephony/outbound/dispatch returns callControlId', async () => {
+    const res = await request(app)
+      .post('/api/telephony/outbound/dispatch')
+      .send({ toNumber: '+15551234567' });
+    expect(res.status).toBe(201);
+    expect(res.body).toHaveProperty('callControlId');
+    expect(res.body).toHaveProperty('callLogId');
   });
 
   it('POST /api/telephony/calls creates call log', async () => {
