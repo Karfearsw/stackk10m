@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
@@ -6,12 +6,10 @@ import { Badge } from "@/components/ui/badge";
 import { useLocation } from "wouter";
 
 function useQueryParam(name: string) {
-  const [value, setValue] = useState<string>("");
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    setValue(params.get(name) || "");
-  }, [name]);
-  return value;
+  const [location] = useLocation();
+  const search = location.includes("?") ? location.split("?")[1] : "";
+  const params = new URLSearchParams(search);
+  return params.get(name) || "";
 }
 
 export default function SearchPage() {
