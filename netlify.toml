@@ -1,5 +1,5 @@
 [build]
-  command = "npm --prefix FrameworkPlanner ci && npm --prefix FrameworkPlanner run build"
+  command = "cp -r FrameworkPlanner/node_modules . && npm --prefix FrameworkPlanner run build && npx --prefix . vite build && cp -r dist/index.html dist/assets FrameworkPlanner/dist/ && rm -rf dist dist-server"
   publish = "FrameworkPlanner/dist"
 
 [build.environment]
