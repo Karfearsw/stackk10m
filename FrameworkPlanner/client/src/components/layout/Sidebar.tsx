@@ -4,6 +4,7 @@ import {
   Users, 
   Building2, 
   FileText, 
+  FileSignature,
   FolderOpen,
   Settings, 
   PieChart, 
@@ -27,6 +28,7 @@ import {
   Zap,
   ScrollText,
   Shield,
+  Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -51,10 +53,12 @@ export const navigation = [
   { name: "Companies", href: "/companies", icon: Building2 },
   { name: "Documents", href: "/documents", icon: FolderOpen },
   { name: "Buyers", href: "/buyers", icon: UserCheck },
+  { name: "Contract Generator", href: "/contract-generator", icon: FileSignature },
   { name: "Contracts", href: "/contracts", icon: FileText },
   { name: "Analytics", href: "/analytics", icon: PieChart },
   { name: "Automations", href: "/automations", icon: Zap },
   { name: "Audit Log", href: "/audit-log", icon: ScrollText },
+  { name: "Search", href: "/search", icon: Search },
   { name: "Playground", href: "/playground", icon: Lightbulb },
   { name: "Audit", href: "/audit", icon: Shield },
   { name: "Calculator", href: "/calculator", icon: Calculator },
