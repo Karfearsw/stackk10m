@@ -55,10 +55,10 @@ interface Buyer {
   notes: string | null;
   tags: string[] | null;
   lastContactDate: string | null;
-  zipCodes: string[] | null;
-  minBeds: string | null;
-  maxBeds: string | null;
   createdAt: string;
+  zipCodes: string[] | null;
+  minBeds: number | null;
+  maxBeds: number | null;
 }
 
 interface BuyerCommunication {
@@ -316,11 +316,11 @@ export default function Buyers() {
     preferredPropertyTypes: [] as string[],
     preferredAreas: "",
     zipCodes: "",
-    minBeds: "",
-    maxBeds: "",
     minBudget: "",
     maxBudget: "",
     dealsPerMonth: "",
+    minBeds: "",
+    maxBeds: "",
     proofOfFunds: false,
     proofOfFundsNotes: "",
     isVip: false,
@@ -407,11 +407,11 @@ export default function Buyers() {
       preferredPropertyTypes: [],
       preferredAreas: "",
       zipCodes: "",
-      minBeds: "",
-      maxBeds: "",
       minBudget: "",
       maxBudget: "",
       dealsPerMonth: "",
+      minBeds: "",
+      maxBeds: "",
       proofOfFunds: false,
       proofOfFundsNotes: "",
       isVip: false,
@@ -429,11 +429,11 @@ export default function Buyers() {
       preferredPropertyTypes: buyer.preferredPropertyTypes || [],
       preferredAreas: buyer.preferredAreas?.join(", ") || "",
       zipCodes: buyer.zipCodes?.join(", ") || "",
-      minBeds: buyer.minBeds?.toString() || "",
-      maxBeds: buyer.maxBeds?.toString() || "",
       minBudget: buyer.minBudget || "",
       maxBudget: buyer.maxBudget || "",
       dealsPerMonth: buyer.dealsPerMonth?.toString() || "",
+      minBeds: buyer.minBeds?.toString() || "",
+      maxBeds: buyer.maxBeds?.toString() || "",
       proofOfFunds: buyer.proofOfFunds || false,
       proofOfFundsNotes: buyer.proofOfFundsNotes || "",
       isVip: buyer.isVip || false,
@@ -452,12 +452,12 @@ export default function Buyers() {
       phone: formData.phone || null,
       preferredPropertyTypes: formData.preferredPropertyTypes.length > 0 ? formData.preferredPropertyTypes : null,
       preferredAreas: formData.preferredAreas ? formData.preferredAreas.split(",").map(s => s.trim()) : null,
-      zipCodes: formData.zipCodes ? formData.zipCodes.split(",").map(s => s.trim()) : null,
-      minBeds: formData.minBeds ? parseInt(formData.minBeds) : null,
-      maxBeds: formData.maxBeds ? parseInt(formData.maxBeds) : null,
+      zipCodes: formData.zipCodes ? formData.zipCodes.split(",").map(s => s.trim()).filter(Boolean) : null,
       minBudget: formData.minBudget || null,
       maxBudget: formData.maxBudget || null,
       dealsPerMonth: formData.dealsPerMonth ? parseInt(formData.dealsPerMonth) : null,
+      minBeds: formData.minBeds ? parseInt(formData.minBeds) : null,
+      maxBeds: formData.maxBeds ? parseInt(formData.maxBeds) : null,
       proofOfFunds: formData.proofOfFunds,
       isVip: formData.isVip,
       notes: formData.notes || null,
