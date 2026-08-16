@@ -59,8 +59,8 @@ interface Buyer {
   tags: string[] | null;
   lastContactDate: string | null;
   zipCodes: string[] | null;
-  minBeds: string | null;
-  maxBeds: string | null;
+  minBeds: number | null;
+  maxBeds: number | null;
   createdAt: string;
 }
 
