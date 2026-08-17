@@ -1,0 +1,20 @@
+[build]
+  command = "npm --prefix FrameworkPlanner ci && npm --prefix FrameworkPlanner run build"
+  publish = "FrameworkPlanner/dist"
+
+[build.environment]
+  NODE_VERSION = "20.x"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+  force = true
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
