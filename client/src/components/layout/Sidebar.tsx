@@ -4,6 +4,7 @@ import {
   Users, 
   Building2, 
   FileText, 
+  FileSignature,
   Settings, 
   PieChart, 
   LogOut,
@@ -16,8 +17,9 @@ import {
   Lightbulb,
   UserCheck,
   Phone,
+  History,
   Voicemail,
-  History
+  Search as SearchIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -34,8 +36,10 @@ const navigation = [
   { name: "History", href: "/history", icon: History },
   { name: "Voicemail", href: "/voicemail", icon: Voicemail },
   { name: "Buyers", href: "/buyers", icon: UserCheck },
+  { name: "Contract Generator", href: "/contract-generator", icon: FileSignature },
   { name: "Contracts", href: "/contracts", icon: FileText },
   { name: "Analytics", href: "/analytics", icon: PieChart },
+  { name: "Search", href: "/search", icon: SearchIcon },
   { name: "Playground", href: "/playground", icon: Lightbulb },
   { name: "Calculator", href: "/calculator", icon: Calculator },
   { name: "Timesheet", href: "/timesheet", icon: Clock },

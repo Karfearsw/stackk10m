@@ -24,6 +24,24 @@ function isDbConnectivityError(error: any): boolean {
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
   if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
+  const message = String(error?.message || error || "");
+  if (/getaddrinfo\s+ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENOTFOUND/.test(message)) return true;
+  if (error?.cause) {
+    const causeCode = error.cause?.code;
+    if (causeCode === "ECONNREFUSED" || causeCode === "ENOTFOUND" || causeCode === "ETIMEDOUT") return true;
+    if (causeCode === "ENETUNREACH" || causeCode === "EHOSTUNREACH") return true;
+    const causeMessage = String(error.cause?.message || error.cause || "");
+    if (/getaddrinfo\s+ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENOTFOUND/.test(causeMessage)) return true;
+  }
+  if (error?.error && typeof error.error === "object") {
+    const nestedCode = error.error?.code;
+    if (nestedCode === "ECONNREFUSED" || nestedCode === "ENOTFOUND" || nestedCode === "ETIMEDOUT") return true;
+    if (nestedCode === "ENETUNREACH" || nestedCode === "EHOSTUNREACH") return true;
+    const nested = String(error.error?.message || error.error || "");
+    if (/getaddrinfo\s+ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENOTFOUND/.test(nested)) return true;
+    const nestedStack = String(error.error?.stack || "");
+    if (error.error?.constructor?.name === "TypeError" && /undici|WebSocket/.test(nestedStack)) return true;
+  }
   return false;
 }
 
@@ -112,7 +130,8 @@ async function checkSchemaOnce(): Promise<SchemaReadiness> {
   } catch (e: any) {
     const code = e?.code ? String(e.code) : null;
     const isConn = isDbConnectivityError(e);
-    log("error", { kind: "check_failed", message: String(e?.message || e), code, connectivity: isConn });
+    const errMessage = e?.error?.message ? String(e.error.message) : String(e?.message || e);
+    log("error", { kind: "check_failed", message: errMessage, code, connectivity: isConn });
     return {
       ok: false,
       checkedAt,
