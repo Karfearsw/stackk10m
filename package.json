@@ -11,7 +11,8 @@
     "vercel-build": "npm --prefix FrameworkPlanner ci && npm --prefix FrameworkPlanner run vercel-build",
     "start": "npm --prefix FrameworkPlanner run start",
     "check": "npm --prefix FrameworkPlanner run check",
-    "db:push": "npm --prefix FrameworkPlanner run db:push"
+    "db:push": "npm --prefix FrameworkPlanner run db:push",
+    "build:client": "vite build"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.12",
