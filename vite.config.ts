@@ -7,39 +7,41 @@ import { metaImagesPlugin } from "./vite-plugin-meta-images.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-export default defineConfig({
-  plugins: [
-    react(),
-    ...(process.env.NODE_ENV !== "production" && process.env.REPL_ID !== undefined
-      ? [await import("@replit/vite-plugin-runtime-error-modal").then((m) => m.default())]
-      : []),
-    tailwindcss(),
-    metaImagesPlugin(),
-  ],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "client", "src"),
-      "@shared": path.resolve(__dirname, "shared"),
-      "@assets": path.resolve(__dirname, "attached_assets"),
+export default defineConfig(async () => {
+  const replitPlugins =
+    process.env.NODE_ENV !== "production" && process.env.REPL_ID !== undefined
+      ? [
+          (await import("@replit/vite-plugin-runtime-error-modal")).default(),
+        ]
+      : [];
+
+  return {
+    plugins: [react(), ...replitPlugins, tailwindcss(), metaImagesPlugin()],
+    resolve: {
+      alias: {
+        "@": path.resolve(__dirname, "client", "src"),
+        "@shared": path.resolve(__dirname, "shared"),
+        "@assets": path.resolve(__dirname, "attached_assets"),
+      },
     },
-  },
-  css: {
-    postcss: {
-      plugins: [],
+    css: {
+      postcss: {
+        plugins: [],
+      },
     },
-  },
-  root: path.resolve(__dirname, "client"),
-  build: {
-    outDir: path.resolve(__dirname, "dist"),
-    emptyOutDir: true,
-  },
-  server: {
-    port: 3000,
-    host: "0.0.0.0",
-    allowedHosts: true,
-    fs: {
-      strict: true,
-      deny: ["**/.*"],
+    root: path.resolve(__dirname, "client"),
+    build: {
+      outDir: path.resolve(__dirname, "dist"),
+      emptyOutDir: true,
     },
-  },
+    server: {
+      port: 3000,
+      host: "0.0.0.0",
+      allowedHosts: true,
+      fs: {
+        strict: true,
+        deny: ["**/.*"],
+      },
+    },
+  };
 });
