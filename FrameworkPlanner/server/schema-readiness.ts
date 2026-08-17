@@ -19,6 +19,9 @@ function nowIso() {
 }
 
 function isDbConnectivityError(error: any): boolean {
+  if (error && typeof error === "object" && error.type === "error" && typeof error.error === "object") {
+    return true;
+  }
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
