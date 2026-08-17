@@ -58,6 +58,9 @@ interface Buyer {
   notes: string | null;
   tags: string[] | null;
   lastContactDate: string | null;
+  zipCodes: string[] | null;
+  minBeds: number | null;
+  maxBeds: number | null;
   createdAt: string;
 }
 
@@ -459,11 +462,11 @@ export default function Buyers() {
       phone: buyer.phone || "",
       preferredPropertyTypes: buyer.preferredPropertyTypes || [],
       preferredAreas: buyer.preferredAreas?.join(", ") || "",
-      zipCodes: (buyer as any).zipCodes?.join(", ") || "",
+      zipCodes: buyer.zipCodes?.join(", ") || "",
       minBudget: buyer.minBudget || "",
       maxBudget: buyer.maxBudget || "",
-      minBeds: (buyer as any).minBeds?.toString() || "",
-      maxBeds: (buyer as any).maxBeds?.toString() || "",
+      minBeds: buyer.minBeds?.toString() || "",
+      maxBeds: buyer.maxBeds?.toString() || "",
       dealsPerMonth: buyer.dealsPerMonth?.toString() || "",
       proofOfFunds: buyer.proofOfFunds || false,
       proofOfFundsNotes: buyer.proofOfFundsNotes || "",
