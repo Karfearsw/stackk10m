@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 describe("schema readiness", () => {
+  afterEach(() => {
+    vi.unmock("../server/db.js");
+  });
+
   it("returns db_unavailable when DATABASE_URL is missing", async () => {
     const prev = process.env.DATABASE_URL;
     delete process.env.DATABASE_URL;
