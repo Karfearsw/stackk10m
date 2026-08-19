@@ -3,12 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { QueryError } from "@/components/ui/query-state";
 
 function useQueryParam(name: string) {
-  const [location] = useLocation();
-  const search = location.includes("?") ? location.split("?")[1] : "";
+  const search = useSearch();
   const params = new URLSearchParams(search);
   return params.get(name) || "";
 }
