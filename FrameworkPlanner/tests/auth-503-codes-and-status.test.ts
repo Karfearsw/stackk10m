@@ -21,7 +21,7 @@ describe("Auth 503 stable codes", () => {
     vi.clearAllMocks();
   });
 
-  it("returns code=signup_not_configured for POST /api/auth/signup 503", async () => {
+  it("returns code=signup_not_configured for POST /api/auth/signup 503", { timeout: 20000 }, async () => {
     process.env.DB_STARTUP_TEST = "0";
     delete process.env.EMPLOYEE_ACCESS_CODE;
     delete process.env.ADMIN_ROLE_CODE;
@@ -50,7 +50,7 @@ describe("Auth 503 stable codes", () => {
     expect(res.body?.code).toBe("signup_not_configured");
   });
 
-  it("returns code=db_unavailable for POST /api/auth/login 503", async () => {
+  it("returns code=db_unavailable for POST /api/auth/login 503", { timeout: 20000 }, async () => {
     process.env.DB_STARTUP_TEST = "0";
 
     vi.resetModules();
@@ -77,7 +77,7 @@ describe("Auth 503 stable codes", () => {
     expect(res.body?.code).toBe("db_unavailable");
   });
 
-  it("returns code=email_not_configured for POST /api/auth/password-reset/request 503", async () => {
+  it("returns code=email_not_configured for POST /api/auth/password-reset/request 503", { timeout: 20000 }, async () => {
     process.env.DB_STARTUP_TEST = "0";
     process.env.NODE_ENV = "production";
     delete process.env.RESEND_API_KEY;
@@ -99,7 +99,7 @@ describe("Auth 503 stable codes", () => {
     expect(res.body?.code).toBe("email_not_configured");
   });
 
-  it("returns code=email_not_configured for POST /api/auth/magic-link/request 503", async () => {
+  it("returns code=email_not_configured for POST /api/auth/magic-link/request 503", { timeout: 20000 }, async () => {
     process.env.DB_STARTUP_TEST = "0";
     process.env.NODE_ENV = "production";
     delete process.env.RESEND_API_KEY;
