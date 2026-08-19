@@ -573,6 +573,7 @@ export default function Opportunities() {
       { value: "pending", label: "Pending" },
       { value: "sold", label: "Sold" },
       { value: "withdrawn", label: "Withdrawn" },
+      { value: "closed", label: "Closed" },
     ];
   }, [opportunityPipelineConfig]);
 
@@ -876,7 +877,7 @@ export default function Opportunities() {
                   <div className="flex items-center gap-2 mb-2 overflow-x-auto pb-1">
                     {(() => {
                       const statusIdx = pipelineColumns.findIndex((c) => c.value === (prop.status || "active"));
-                      const adjustedStatusIdx = statusIdx === -1 ? pipelineColumns.length - 1 : statusIdx;
+                      const adjustedStatusIdx = statusIdx === -1 ? -1 : statusIdx;
                       return pipelineColumns.map((col) => (
                         <div
                           key={col.value}
