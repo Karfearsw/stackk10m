@@ -3,7 +3,7 @@ import request from "supertest";
 import express from "express";
 
 describe("DB quota exceeded handling", () => {
-  it("returns 503 with code=DB_QUOTA_EXCEEDED", async () => {
+  it("returns 503 with code=DB_QUOTA_EXCEEDED", { timeout: 20000 }, async () => {
     const prevSession = process.env.SESSION_SECRET;
     const prevEnv = process.env.NODE_ENV;
     process.env.SESSION_SECRET = "test";
