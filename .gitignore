@@ -1,4 +1,6 @@
 node_modules
+dist
+dist-server
 FrameworkPlanner/dist
 FrameworkPlanner/dist-server
 .DS_Store
