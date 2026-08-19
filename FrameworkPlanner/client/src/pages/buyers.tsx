@@ -59,6 +59,9 @@ interface Buyer {
   tags: string[] | null;
   lastContactDate: string | null;
   createdAt: string;
+  zipCodes: string[] | null;
+  minBeds: number | null;
+  maxBeds: number | null;
 }
 
 interface BuyerCommunication {
@@ -459,12 +462,12 @@ export default function Buyers() {
       phone: buyer.phone || "",
       preferredPropertyTypes: buyer.preferredPropertyTypes || [],
       preferredAreas: buyer.preferredAreas?.join(", ") || "",
-      zipCodes: (buyer as any).zipCodes?.join(", ") || "",
+      zipCodes: buyer.zipCodes?.join(", ") || "",
       minBudget: buyer.minBudget || "",
       maxBudget: buyer.maxBudget || "",
-      minBeds: (buyer as any).minBeds?.toString() || "",
-      maxBeds: (buyer as any).maxBeds?.toString() || "",
       dealsPerMonth: buyer.dealsPerMonth?.toString() || "",
+      minBeds: buyer.minBeds?.toString() || "",
+      maxBeds: buyer.maxBeds?.toString() || "",
       proofOfFunds: buyer.proofOfFunds || false,
       proofOfFundsNotes: buyer.proofOfFundsNotes || "",
       isVip: buyer.isVip || false,

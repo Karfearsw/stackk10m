@@ -22,6 +22,7 @@ import ResetPassword from "@/pages/reset-password";
 import Notifications from "@/pages/notifications";
 import Playground from "@/pages/playground";
 import Buyers from "@/pages/buyers";
+import Opportunities from "@/pages/opportunities";
 import Dialer from "@/pages/dialer";
 import Contacts from "@/pages/contacts";
 import History from "@/pages/history";
@@ -76,6 +77,7 @@ function Router() {
       <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
       <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />
       <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />
+      <Route path="/opportunities" component={() => <ProtectedRoute component={Opportunities} />} />
       <Route path="/dialer" component={() => <ProtectedRoute component={Dialer} />} />
       <Route path="/contacts" component={() => <ProtectedRoute component={Contacts} />} />
       <Route path="/history" component={() => <ProtectedRoute component={History} />} />
