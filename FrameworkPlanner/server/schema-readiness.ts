@@ -19,7 +19,9 @@ function nowIso() {
 }
 
 function isDbConnectivityError(error: any): boolean {
-  const code = error?.code;
+  if (error?.target && typeof error.target.constructor === 'function' && error.target.constructor.name === 'WebSocket') return true;
+  const source = error?.error || error;
+  const code = source?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
@@ -110,7 +112,8 @@ async function checkSchemaOnce(): Promise<SchemaReadiness> {
     }
     return { ok: true, checkedAt };
   } catch (e: any) {
-    const code = e?.code ? String(e.code) : null;
+    const source = e?.error || e;
+    const code = source?.code ? String(source.code) : null;
     const isConn = isDbConnectivityError(e);
     log("error", { kind: "check_failed", message: String(e?.message || e), code, connectivity: isConn });
     return {
