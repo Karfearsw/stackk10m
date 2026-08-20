@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
@@ -10,12 +10,11 @@ RUN npm ci
 # Copy source
 COPY . .
 
-# Build client and server
-# This produces dist/public (client) and dist/index.js (server)
+# Build client and server (produces dist/ and dist-server/)
 RUN npm run build
 
 # Stage 2: Production Runner
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 
 WORKDIR /app
 
@@ -26,10 +25,11 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 # Copy built artifacts from builder
-COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/FrameworkPlanner/dist ./dist
+COPY --from=builder /app/FrameworkPlanner/dist-server ./dist-server
 
 # Expose port (default 5000)
 EXPOSE 5000
 
 # Start command
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist-server/index.js"]

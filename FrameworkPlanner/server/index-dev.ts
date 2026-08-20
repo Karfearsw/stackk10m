@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { type Server } from "node:http";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import "./load-env.js";
 
 import type { Express } from "express";
@@ -10,6 +11,8 @@ import { createServer as createViteServer, createLogger } from "vite";
 import runApp from "./app.js";
 
 import viteConfig from "../vite.config";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const viteLogger = createLogger();
 
@@ -58,7 +61,7 @@ export async function setupVite(app: Express, server: Server) {
 
     try {
       const clientTemplate = path.resolve(
-        import.meta.dirname,
+        __dirname,
         "..",
         "client",
         "index.html",
