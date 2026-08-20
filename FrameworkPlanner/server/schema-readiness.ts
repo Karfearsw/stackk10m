@@ -23,13 +23,17 @@ function isDbConnectivityError(error: any): boolean {
   if (error?.error instanceof TypeError) return true;
   const inner = error?.error || error;
   const code = inner?.code || (typeof inner?.errno === "string" ? inner.errno : null);
+  const nested = error?.errors;
+  if (Array.isArray(nested) && nested.length > 0) return nested.some(isDbConnectivityError);
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
   if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
-  const msg = String(error?.message || inner?.message || error || inner || "");
-  if (msg.includes("ENOTFOUND") || msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT")) return true;
-  if (msg.includes("ENETUNREACH") || msg.includes("EHOSTUNREACH")) return true;
+  const message = String(error?.message || inner?.message || error || inner || "");
+  if (message.includes("ENOTFOUND") || message.includes("ECONNREFUSED") || message.includes("ETIMEDOUT")) return true;
+  if (message.includes("ENETUNREACH") || message.includes("EHOSTUNREACH")) return true;
+  if (message.includes("DATABASE_URL")) return true;
+  if (message.includes("getaddrinfo") || message.includes("connect")) return true;
   return false;
 }
 
