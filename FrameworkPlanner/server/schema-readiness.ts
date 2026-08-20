@@ -18,22 +18,54 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function isDbConnectivityError(error: any): boolean {
-  if (error?.constructor?.name === "ErrorEvent") return true;
-  if (error?.error instanceof TypeError) return true;
-  const inner = error?.error || error;
-  const code = inner?.code || (typeof inner?.errno === "string" ? inner.errno : null);
-  const nested = error?.errors;
-  if (Array.isArray(nested) && nested.length > 0) return nested.some(isDbConnectivityError);
-  if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
-  if (code === "57P01" || code === "57P02" || code === "57P03") return true;
-  if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
-  if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
-  const message = String(error?.message || inner?.message || error || inner || "");
-  if (message.includes("ENOTFOUND") || message.includes("ECONNREFUSED") || message.includes("ETIMEDOUT")) return true;
-  if (message.includes("ENETUNREACH") || message.includes("EHOSTUNREACH")) return true;
-  if (message.includes("DATABASE_URL")) return true;
-  if (message.includes("getaddrinfo") || message.includes("connect")) return true;
+function isTransportErrorEvent(error: any): boolean {
+  if (!error || typeof error !== "object") return false;
+  const ctor = error.constructor && error.constructor.name;
+  return ctor === "ErrorEvent" || (error.type === "error" && "target" in error);
+}
+
+function collectCandidates(error: any, depth = 0, seen = new Set<any>()): any[] {
+  if (!error || typeof error !== "object" || depth > 4 || seen.has(error)) return error ? [error] : [];
+  seen.add(error);
+  const out: any[] = [error];
+  for (const key of ["error", "cause", "message"]) {
+    const value = error[key];
+    if (value && typeof value === "object") out.push(...collectCandidates(value, depth + 1, seen));
+  }
+  const nested = error.errors;
+  if (Array.isArray(nested)) {
+    for (const n of nested) out.push(...collectCandidates(n, depth + 1, seen));
+  }
+  return out;
+}
+
+export function isDbConnectivityError(error: any): boolean {
+  for (const candidate of collectCandidates(error)) {
+    const code = candidate?.code;
+    if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
+    if (code === "57P01" || code === "57P02" || code === "57P03") return true;
+    if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
+    if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
+
+    const message = typeof candidate?.message === "string" ? candidate.message : "";
+    if (
+      message.includes("ENOTFOUND") ||
+      message.includes("getaddrinfo") ||
+      message.includes("ECONNREFUSED") ||
+      message.includes("ETIMEDOUT") ||
+      message.includes("socket hang up") ||
+      message.includes("Connection terminated") ||
+      message.includes("fetch failed") ||
+      message.includes("WebSocket")
+    ) {
+      return true;
+    }
+
+    // The Neon serverless driver connects over a WebSocket, so transport-level
+    // failures (DNS, refused connections, TLS) surface as an ErrorEvent that
+    // carries no pg error code. Those are connectivity failures, not schema ones.
+    if (isTransportErrorEvent(candidate)) return true;
+  }
   return false;
 }
 
@@ -120,10 +152,9 @@ async function checkSchemaOnce(): Promise<SchemaReadiness> {
     }
     return { ok: true, checkedAt };
   } catch (e: any) {
-    const actualError = e?.error || e;
-    const code = actualError?.code ? String(actualError.code) : null;
+    const code = e?.code ? String(e.code) : null;
     const isConn = isDbConnectivityError(e);
-    log("error", { kind: "check_failed", message: String(actualError?.message || actualError), code, connectivity: isConn });
+    log("error", { kind: "check_failed", message: String(e?.message || e), code, connectivity: isConn });
     return {
       ok: false,
       checkedAt,

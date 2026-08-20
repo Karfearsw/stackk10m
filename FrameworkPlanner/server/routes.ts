@@ -11,7 +11,7 @@ import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
 import { publishTelephonyEvent } from "./telephony/pubsub.js";
 import { getTelephonyMediaSignedUrl, uploadTelephonyMediaFromUrl } from "./telephony/objectStorage.js";
-import { getSchemaReadiness, schemaFixInstructions } from "./schema-readiness.js";
+import { getSchemaReadiness, schemaFixInstructions, isDbConnectivityError } from "./schema-readiness.js";
 import {
   createExportJob,
   createImportJob,
@@ -184,25 +184,6 @@ function detectMimeFromMagic(buf: Buffer): string | null {
     }
   }
   return null;
-}
-
-function isDbConnectivityError(error: any): boolean {
-  if (error?.constructor?.name === "ErrorEvent") return true;
-  if (error?.error instanceof TypeError) return true;
-  const inner = error?.error || error;
-  const code = inner?.code || (typeof inner?.errno === "string" ? inner.errno : null);
-  const nested = error?.errors;
-  if (Array.isArray(nested) && nested.length > 0) return nested.some(isDbConnectivityError);
-  if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
-  if (code === "57P01" || code === "57P02" || code === "57P03") return true;
-  if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
-  if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
-  const message = String(error?.message || inner?.message || error || inner || "");
-  if (message.includes("ENOTFOUND") || message.includes("ECONNREFUSED") || message.includes("ETIMEDOUT")) return true;
-  if (message.includes("ENETUNREACH") || message.includes("EHOSTUNREACH")) return true;
-  if (message.includes("DATABASE_URL")) return true;
-  if (message.includes("getaddrinfo") || message.includes("connect")) return true;
-  return false;
 }
 
 function parseLimitOffset(query: any): { limit: number; offset: number } {
