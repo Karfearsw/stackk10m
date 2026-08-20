@@ -20,12 +20,16 @@ function nowIso() {
 
 function isDbConnectivityError(error: any): boolean {
   if (error?.constructor?.name === "ErrorEvent") return true;
-  const code = error?.code || error?.error?.code;
+  if (error?.error instanceof TypeError) return true;
+  const inner = error?.error || error;
+  const code = inner?.code || (typeof inner?.errno === "string" ? inner.errno : null);
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
   if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
-  if (error?.error instanceof TypeError) return true;
+  const msg = String(error?.message || inner?.message || error || inner || "");
+  if (msg.includes("ENOTFOUND") || msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT")) return true;
+  if (msg.includes("ENETUNREACH") || msg.includes("EHOSTUNREACH")) return true;
   return false;
 }
 
