@@ -1,11 +1,9 @@
 import { defineConfig } from "drizzle-kit";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { config } from "dotenv";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const frameworkRoot = path.resolve(__dirname, "FrameworkPlanner");
+const frameworkRoot = path.resolve(import.meta.dirname, "FrameworkPlanner");
 const candidates = [
   path.join(frameworkRoot, ".env.local"),
   path.join(frameworkRoot, ".env"),

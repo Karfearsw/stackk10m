@@ -6,21 +6,17 @@ import { Badge } from "@/components/ui/badge";
 import { useLocation } from "wouter";
 
 function useQueryParam(name: string) {
-  const [location] = useLocation();
-  const [value, setValue] = useState<string>(() => {
-    const params = new URLSearchParams(window.location.search);
-    return params.get(name) || "";
-  });
+  const [value, setValue] = useState<string>("");
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setValue(params.get(name) || "");
-  }, [location, name]);
+  }, [name]);
   return value;
 }
 
 export default function SearchPage() {
   const q = useQueryParam("q");
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const [page, setPage] = useState(0);
   const limit = 50;
   const offset = page * limit;

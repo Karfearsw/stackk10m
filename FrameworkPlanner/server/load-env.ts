@@ -1,11 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import dotenv from "dotenv";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-const frameworkRoot = path.resolve(__dirname, "..");
+const frameworkRoot = path.resolve(import.meta.dirname, "..");
 
 const candidateFiles = [
   path.join(frameworkRoot, ".env.local"),

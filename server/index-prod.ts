@@ -1,20 +1,17 @@
 import fs from "node:fs";
 import { type Server } from "node:http";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import "dotenv/config";
 
 import express, { type Express, type Request } from "express";
 
 import runApp from "./app.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
 export async function serveStatic(app: Express, server: Server) {
   // When built, this file is in dist-server/index.js
   // The client build is in dist/ (relative to project root)
   // So we go up one level from dist-server to find dist
-  const distPath = path.resolve(__dirname, "..", "dist");
+  const distPath = path.resolve(import.meta.dirname, "..", "dist");
 
   if (!fs.existsSync(distPath)) {
     throw new Error(
