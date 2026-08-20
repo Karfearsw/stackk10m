@@ -10,6 +10,9 @@ RUN npm ci
 # Copy source
 COPY . .
 
+# Install FrameworkPlanner dependencies (node_modules is dockerignored)
+RUN npm --prefix FrameworkPlanner ci
+
 # Build client and server (produces dist/ and dist-server/)
 RUN npm run build
 
@@ -20,9 +23,9 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
-# Install only production dependencies
-COPY package*.json ./
-RUN npm ci --omit=dev
+# Install only production dependencies for FrameworkPlanner
+COPY FrameworkPlanner/package*.json FrameworkPlanner/
+RUN npm --prefix FrameworkPlanner ci --omit=dev
 
 # Copy built artifacts from builder
 COPY --from=builder /app/FrameworkPlanner/dist ./dist
