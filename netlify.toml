@@ -1,5 +1,5 @@
 [build]
-  command = "npm --prefix FrameworkPlanner ci && npm --prefix FrameworkPlanner run build"
+  command = "npm --prefix FrameworkPlanner ci && npm --prefix FrameworkPlanner run build && npm --prefix . ci && npm --prefix . run build:client && cp -r dist/. FrameworkPlanner/dist/"
   publish = "FrameworkPlanner/dist"
 
 [build.environment]
