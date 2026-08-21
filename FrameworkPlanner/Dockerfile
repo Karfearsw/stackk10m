@@ -11,7 +11,7 @@ RUN npm ci
 COPY . .
 
 # Build client and server
-# This produces dist/public (client) and dist/index.js (server)
+# This produces dist/ (client) and dist-server/ (server bundle)
 RUN npm run build
 
 # Stage 2: Production Runner
@@ -27,9 +27,10 @@ RUN npm ci --omit=dev
 
 # Copy built artifacts from builder
 COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/dist-server ./dist-server
 
 # Expose port (default 5000)
 EXPOSE 5000
 
 # Start command
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist-server/index.js"]
