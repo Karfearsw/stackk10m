@@ -193,9 +193,13 @@ function isDbConnectivityError(error: any): boolean {
   if (code === "08006" || code === "08001" || code === "08004") return true;
   if (code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "SELF_SIGNED_CERT_IN_CHAIN") return true;
   if (code === "ERR_TLS_CERT_ALTNAME_INVALID" || code === "CERT_HAS_EXPIRED") return true;
+  if (error?.constructor?.name === "ErrorEvent") return true;
+  const message = String(error?.message || "");
+  if (/fetch failed|WebSocket|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH/.test(message)) return true;
   const nested = error?.errors;
   if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
-  const message = String(error?.message || "");
+  const inner = error?.error;
+  if (inner && isDbConnectivityError(inner)) return true;
   return message.includes("DATABASE_URL");
 }
 

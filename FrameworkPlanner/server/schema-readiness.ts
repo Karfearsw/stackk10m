@@ -24,6 +24,13 @@ function isDbConnectivityError(error: any): boolean {
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
   if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
+  if (error?.constructor?.name === "ErrorEvent") return true;
+  const message = String(error?.message || "");
+  if (/fetch failed|WebSocket|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ENETUNREACH|EHOSTUNREACH/.test(message)) return true;
+  const nested = error?.errors;
+  if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
+  const inner = error?.error;
+  if (inner && isDbConnectivityError(inner)) return true;
   return false;
 }
 
