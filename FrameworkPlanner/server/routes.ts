@@ -193,10 +193,16 @@ function isDbConnectivityError(error: any): boolean {
   if (code === "08006" || code === "08001" || code === "08004") return true;
   if (code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "SELF_SIGNED_CERT_IN_CHAIN") return true;
   if (code === "ERR_TLS_CERT_ALTNAME_INVALID" || code === "CERT_HAS_EXPIRED") return true;
+  if (error?.constructor?.name === "ErrorEvent") return true;
+  if (error?.constructor?.name === "TypeError") return true;
+  if (error?.constructor?.name === "AggregateError") return true;
+  const nestedCode = error?.error?.code || error?.error?.errno;
+  if (nestedCode === "ECONNREFUSED" || nestedCode === "ENOTFOUND" || nestedCode === "ETIMEDOUT") return true;
+  const msg = String(error?.message || error?.error?.message || "");
+  if (msg.includes("WebSocket") || msg.includes("fetch failed") || msg.includes("connect ECONNREFUSED")) return true;
   const nested = error?.errors;
   if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
-  const message = String(error?.message || "");
-  return message.includes("DATABASE_URL");
+  return false;
 }
 
 function parseLimitOffset(query: any): { limit: number; offset: number } {
