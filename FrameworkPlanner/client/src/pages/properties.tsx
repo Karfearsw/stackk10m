@@ -687,6 +687,7 @@ export default function Opportunities() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case "active": return "bg-green-600 text-white";
+      case "negotiation": return "bg-orange-600 text-white";
       case "under_contract": return "bg-blue-600 text-white";
       case "pending": return "bg-yellow-600 text-white";
       case "sold": return "bg-purple-600 text-white";
@@ -872,18 +873,21 @@ export default function Opportunities() {
                   </div>
 
                   <div className="flex items-center gap-2 mb-2 overflow-x-auto pb-1">
-                    {["active", "negotiation", "under_contract", "closed"].map((stage) => (
-                      <div
-                        key={stage}
-                        className={`h-1.5 flex-1 rounded-full ${
-                          (prop.status === stage)
-                            ? "bg-primary"
-                            : (["active", "negotiation", "under_contract", "closed"].indexOf(prop.status || "active") > ["active", "negotiation", "under_contract", "closed"].indexOf(stage))
-                              ? "bg-primary/40"
-                              : "bg-secondary"
-                        }`}
-                      />
-                    ))}
+                    {pipelineColumns.map((stage, idx) => {
+                      const statusIndex = pipelineColumns.findIndex((c) => c.value === (prop.status || "active"));
+                      return (
+                        <div
+                          key={stage.value}
+                          className={`h-1.5 flex-1 rounded-full ${
+                            prop.status === stage.value
+                              ? "bg-primary"
+                              : statusIndex > idx
+                                ? "bg-primary/40"
+                                : "bg-secondary"
+                          }`}
+                        />
+                      );
+                    })}
                   </div>
 
                   {prop.repairCost && (

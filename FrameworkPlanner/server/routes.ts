@@ -11,7 +11,7 @@ import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
 import { publishTelephonyEvent } from "./telephony/pubsub.js";
 import { getTelephonyMediaSignedUrl, uploadTelephonyMediaFromUrl } from "./telephony/objectStorage.js";
-import { getSchemaReadiness, schemaFixInstructions } from "./schema-readiness.js";
+import { getSchemaReadiness, schemaFixInstructions, isDbConnectivityError } from "./schema-readiness.js";
 import {
   createExportJob,
   createImportJob,
@@ -184,27 +184,6 @@ function detectMimeFromMagic(buf: Buffer): string | null {
     }
   }
   return null;
-}
-
-function isDbConnectivityError(error: any): boolean {
-  const code = error?.code;
-  if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
-  if (code === "57P01" || code === "57P02" || code === "57P03") return true;
-  if (code === "08006" || code === "08001" || code === "08004") return true;
-  if (code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "SELF_SIGNED_CERT_IN_CHAIN") return true;
-  if (code === "ERR_TLS_CERT_ALTNAME_INVALID" || code === "CERT_HAS_EXPIRED") return true;
-  if (code === "53300" || code === "08000" || code === "08003") return true;
-  if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
-  const nested = error?.errors || error?.error?.errors;
-  if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
-  const inner = error?.error || error?.cause;
-  if (inner && isDbConnectivityError(inner)) return true;
-  const ctor = error?.constructor?.name;
-  if (ctor === "ErrorEvent" || ctor === "AggregateError" || ctor === "TypeError") return true;
-  const message = String(error?.message || "");
-  if (message.includes("DATABASE_URL")) return true;
-  if (/fetch failed|WebSocket|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|connect|socket hang up/i.test(message)) return true;
-  return false;
 }
 
 function parseLimitOffset(query: any): { limit: number; offset: number } {

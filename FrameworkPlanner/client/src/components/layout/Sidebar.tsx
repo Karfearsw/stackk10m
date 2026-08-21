@@ -33,6 +33,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useSidebar } from "@/contexts/SidebarContext";
 import { useQuery } from "@tanstack/react-query";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Search, FileSearch } from "lucide-react";
 
 export const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -50,8 +51,10 @@ export const navigation = [
   { name: "Contacts", href: "/contacts", icon: Users },
   { name: "Companies", href: "/companies", icon: Building2 },
   { name: "Documents", href: "/documents", icon: FolderOpen },
+  { name: "Search", href: "/search", icon: Search },
   { name: "Buyers", href: "/buyers", icon: UserCheck },
   { name: "Contracts", href: "/contracts", icon: FileText },
+  { name: "Contract Generator", href: "/contract-generator", icon: FileSearch },
   { name: "Analytics", href: "/analytics", icon: PieChart },
   { name: "Automations", href: "/automations", icon: Zap },
   { name: "Audit Log", href: "/audit-log", icon: ScrollText },

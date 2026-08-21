@@ -6,11 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { useLocation } from "wouter";
 
 function useQueryParam(name: string) {
+  const [location] = useLocation();
   const [value, setValue] = useState<string>("");
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setValue(params.get(name) || "");
-  }, [name]);
+  }, [name, location]);
   return value;
 }
 

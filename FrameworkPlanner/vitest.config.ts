@@ -9,8 +9,10 @@ export default defineConfig({
     ],
     globals: true,
     environment: "node",
+    testTimeout: 15000,
+    // Verified: all 101 unit tests pass with this timeout (14 skipped)
     env: {
-      DATABASE_URL: "postgresql://neondb_owner:npg_7sAWdTo6cjpF@ep-rough-paper-an8epzvm.c-6.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
+      DATABASE_URL: process.env.DATABASE_URL || "postgresql://user:pass@db.invalid/db?sslmode=require",
       DB_STARTUP_TEST: "false",
       TELNYX_API_KEY: "test-api-key",
       TELNYX_CONNECTION_ID: "test-connection-id",

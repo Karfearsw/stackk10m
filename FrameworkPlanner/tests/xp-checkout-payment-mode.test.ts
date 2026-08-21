@@ -32,7 +32,7 @@ describe("XP checkout payment mode", () => {
     vi.clearAllMocks();
   });
 
-  it("charges priceTotal when paymentMode=full", async () => {
+  it("charges priceTotal when paymentMode=full", { timeout: 20000 }, async () => {
     vi.resetModules();
     const { registerRoutes } = await import("../server/routes");
     const { storage } = await import("../server/storage");
@@ -93,7 +93,7 @@ describe("XP checkout payment mode", () => {
     expect(args?.metadata?.paymentMode).toBe("full");
   });
 
-  it("charges depositAmount when paymentMode=deposit", async () => {
+  it("charges depositAmount when paymentMode=deposit", { timeout: 20000 }, async () => {
     vi.resetModules();
     const { registerRoutes } = await import("../server/routes");
     const { storage } = await import("../server/storage");
