@@ -19,12 +19,61 @@ function nowIso() {
 }
 
 function isDbConnectivityError(error: any): boolean {
-  const code = error?.code;
-  if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
-  if (code === "57P01" || code === "57P02" || code === "57P03") return true;
-  if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
-  if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
-  return false;
+  const knownCodes = new Set([
+    "ECONNREFUSED",
+    "ENOTFOUND",
+    "ETIMEDOUT",
+    "ENETUNREACH",
+    "EHOSTUNREACH",
+    "57P01",
+    "57P02",
+    "57P03",
+    "53300",
+    "08000",
+    "08003",
+    "08006",
+    "08001",
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "SELF_SIGNED_CERT_IN_CHAIN",
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+    "CERT_HAS_EXPIRED",
+  ]);
+
+  const connectivityKeywords = [
+    "fetch failed",
+    "getaddrinfo",
+    "ENOTFOUND",
+    "ECONNREFUSED",
+    "ETIMEDOUT",
+    "ENETUNREACH",
+    "EHOSTUNREACH",
+    "All attempts to open a WebSocket",
+  ];
+
+  function matches(error: any): boolean {
+    if (!error || typeof error !== "object") return false;
+    const code = String(error.code || "");
+    if (knownCodes.has(code)) return true;
+    if (error.constructor?.name === "ErrorEvent") return true;
+    const message = String(error.message || error.description || "");
+    if (message) {
+      for (const kw of connectivityKeywords) {
+        if (message.includes(kw)) return true;
+      }
+    }
+    const nested = error.error || error.cause;
+    if (nested && typeof nested === "object") {
+      if (matches(nested)) return true;
+      const innerCode = String(nested.code || nested.errno || "");
+      if (knownCodes.has(innerCode)) return true;
+    }
+    if (Array.isArray(error.errors)) {
+      if (error.errors.some((e: any) => matches(e))) return true;
+    }
+    return false;
+  }
+
+  return matches(error);
 }
 
 function log(level: "info" | "warn" | "error", payload: Record<string, unknown>) {
@@ -123,6 +172,8 @@ async function checkSchemaOnce(): Promise<SchemaReadiness> {
     };
   }
 }
+
+export { isDbConnectivityError };
 
 export async function getSchemaReadiness(): Promise<SchemaReadiness> {
   const ttlOkMs = 300_000;
