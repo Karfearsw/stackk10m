@@ -19,11 +19,23 @@ function nowIso() {
 }
 
 function isDbConnectivityError(error: any): boolean {
+  if (!error || typeof error !== "object") return false;
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
   if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
+  const name = error?.constructor?.name;
+  if (name === "ErrorEvent" || name === "AggregateError") return true;
+  const nested = error?.error;
+  if (nested && typeof nested === "object") {
+    const nestedName = nested?.constructor?.name;
+    if (nestedName === "TypeError" || nestedName === "ErrorEvent") return true;
+    const nestedCode = nested?.code;
+    if (nestedCode === "ECONNREFUSED" || nestedCode === "ENOTFOUND" || nestedCode === "ETIMEDOUT") return true;
+  }
+  const message = String(error?.message || "").toLowerCase();
+  if (message.includes("fetch failed") || message.includes("websocket") || message.includes("connect econnrefused") || message.includes("connect enotfound")) return true;
   return false;
 }
 
