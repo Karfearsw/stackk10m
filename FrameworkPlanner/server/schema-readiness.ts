@@ -18,13 +18,26 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-function isDbConnectivityError(error: any): boolean {
+export function isDbConnectivityError(error: any): boolean {
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
   if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
-  return false;
+  if (error?.constructor?.name === "ErrorEvent") return true;
+  const nested = error?.error;
+  if (nested && typeof nested === "object") {
+    const nestedCode = nested?.code;
+    if (nestedCode === "ECONNREFUSED" || nestedCode === "ENOTFOUND" || nestedCode === "ETIMEDOUT") return true;
+    if (nestedCode === "ENETUNREACH" || nestedCode === "EHOSTUNREACH") return true;
+    if (nested?.constructor?.name === "TypeError") return true;
+  }
+  const nestedArr = error?.errors;
+  if (Array.isArray(nestedArr)) return nestedArr.some(isDbConnectivityError);
+  const message = String(error?.message || "");
+  if (message.includes("fetch failed")) return true;
+  if (message.includes("All attempts to open a WebSocket")) return true;
+  return message.includes("DATABASE_URL");
 }
 
 function log(level: "info" | "warn" | "error", payload: Record<string, unknown>) {
