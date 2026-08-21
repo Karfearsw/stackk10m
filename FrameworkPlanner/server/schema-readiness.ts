@@ -19,13 +19,39 @@ function nowIso() {
 }
 
 function isDbConnectivityError(error: any): boolean {
+  if (!error) return false;
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
   if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
+  if (error?.constructor?.name === "ErrorEvent") return true;
+  if (error?.constructor?.name === "AggregateError") {
+    const causes = error?.errors;
+    if (Array.isArray(causes)) return causes.some(isDbConnectivityError);
+  }
+  const nested = error?.error || error?.cause;
+  if (nested && typeof nested === "object") return isDbConnectivityError(nested);
+  const nestedArr = error?.errors;
+  if (Array.isArray(nestedArr)) return nestedArr.some(isDbConnectivityError);
+  const message = String(error?.message || "");
+  if (
+    message.includes("fetch failed") ||
+    message.includes("All attempts to open a WebSocket") ||
+    message.includes("getaddrinfo") ||
+    message.includes("EAI_AGAIN") ||
+    message.includes("ECONNREFUSED") ||
+    message.includes("ENOTFOUND") ||
+    message.includes("ETIMEDOUT") ||
+    message.includes("connect") ||
+    message.includes("network")
+  ) {
+    return true;
+  }
   return false;
 }
+
+export { isDbConnectivityError };
 
 function log(level: "info" | "warn" | "error", payload: Record<string, unknown>) {
   const line = JSON.stringify({ ts: nowIso(), event: "schema", ...payload });
