@@ -4,6 +4,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PipelineColumn } from "./types";
 import { Clock, StickyNote, Lightbulb } from "lucide-react";
 import { playgroundUrl } from "@/lib/deepLinks";
+import { useLocation } from "wouter";
 
 type OpportunityLike = {
   id: number;
@@ -29,6 +30,7 @@ export function OpportunityPipelineCard({
   onAddNote: (opportunity: OpportunityLike) => void;
   onOpenActivity: (opportunity: OpportunityLike) => void;
 }) {
+  const [, setLocation] = useLocation();
   const status = String(opportunity.status || "").trim();
   const addressLine = [opportunity.address, opportunity.city, opportunity.state, opportunity.zipCode].filter(Boolean).join(", ");
   const notePreview = String(opportunity.notes || "").trim().split("\n").filter(Boolean).slice(-1)[0] || "";
@@ -72,7 +74,7 @@ export function OpportunityPipelineCard({
             className="h-8 px-2"
             onClick={() => {
               if (!playgroundAddress) return;
-              window.location.href = playgroundUrl({ address: playgroundAddress, propertyId: opportunity.id });
+              setLocation(playgroundUrl({ address: playgroundAddress, propertyId: opportunity.id }));
             }}
             disabled={!playgroundAddress}
           >

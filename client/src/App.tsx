@@ -67,7 +67,9 @@ function Router() {
       <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
       <Route path="/leads" component={() => <ProtectedRoute component={Leads} />} />
       <Route path="/properties" component={() => <ProtectedRoute component={Properties} />} />
+      <Route path="/opportunities" component={() => <ProtectedRoute component={Properties} />} />
       <Route path="/property/:id" component={() => <ProtectedRoute component={PropertyDetail} />} />
+      <Route path="/opportunities/:id" component={() => <ProtectedRoute component={PropertyDetail} />} />
       <Route path="/contracts" component={() => <ProtectedRoute component={Contracts} />} />
       <Route path="/contract-generator" component={() => <ProtectedRoute component={ContractGenerator} />} />
       <Route path="/analytics" component={() => <ProtectedRoute component={Analytics} />} />
