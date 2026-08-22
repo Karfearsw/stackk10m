@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import { storage } from "./storage.js";
 
-async function bootstrapAdmin() {
+export async function bootstrapAdmin() {
   try {
     console.log("🔐 Bootstrapping admin account...");
 
