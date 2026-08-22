@@ -503,6 +503,7 @@ export default function Opportunities() {
       case "under_contract": return "bg-blue-600 text-white";
       case "pending": return "bg-yellow-600 text-white";
       case "sold": return "bg-purple-600 text-white";
+      case "negotiation": return "bg-indigo-600 text-white";
       case "withdrawn": return "bg-gray-600 text-white";
       default: return "bg-primary text-primary-foreground";
     }
