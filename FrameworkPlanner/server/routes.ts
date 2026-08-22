@@ -187,21 +187,40 @@ function detectMimeFromMagic(buf: Buffer): string | null {
 }
 
 function isDbConnectivityError(error: any): boolean {
-  if (!error) return false;
-  const code = error.code;
+  if (error == null) return false;
+
+  const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "08006" || code === "08001" || code === "08004") return true;
   if (code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "SELF_SIGNED_CERT_IN_CHAIN") return true;
   if (code === "ERR_TLS_CERT_ALTNAME_INVALID" || code === "CERT_HAS_EXPIRED") return true;
-  const nested = error.errors;
+
+  const constructorName = error?.constructor?.name;
+  if (constructorName === "ErrorEvent" || constructorName === "AggregateError") return true;
+  if (error instanceof TypeError) return true;
+
+  const message = String(error?.message || "");
+  const lowerMsg = message.toLowerCase();
+  if (
+    lowerMsg.includes("fetch failed") ||
+    lowerMsg.includes("websocket") ||
+    lowerMsg.includes("all attempts to open") ||
+    lowerMsg.includes("could not connect") ||
+    lowerMsg.includes("connection terminated unexpectedly")
+  )
+    return true;
+  if (message.includes("DATABASE_URL")) return true;
+
+  if (error?.error) {
+    if (isDbConnectivityError(error.error)) return true;
+  }
+  if (error?.cause) {
+    if (isDbConnectivityError(error.cause)) return true;
+  }
+  const nested = error?.errors;
   if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
-  const inner = error.error || error.cause;
-  if (inner && isDbConnectivityError(inner)) return true;
-  const ctorName = error.constructor?.name;
-  if (ctorName === "ErrorEvent" || ctorName === "AggregateError" || ctorName === "TypeError") return true;
-  const message = String(error.message || "");
-  if (message.includes("[object ErrorEvent]") || message.includes("fetch failed") || message.includes("WebSocket")) return true;
+
   return false;
 }
 
