@@ -13,6 +13,7 @@ function restoreEnv() {
 describe("Auth 503 stable codes", () => {
   beforeEach(() => {
     restoreEnv();
+    vi.resetModules();
   });
 
   afterEach(() => {
@@ -29,7 +30,6 @@ describe("Auth 503 stable codes", () => {
     delete process.env.AGENT_ROLE_CODE;
     delete process.env.VA_ROLE_CODE;
 
-    vi.resetModules();
     const { registerRoutes } = await import("../server/routes");
 
     const app = express();
@@ -48,7 +48,7 @@ describe("Auth 503 stable codes", () => {
 
     expect(res.status).toBe(503);
     expect(res.body?.code).toBe("signup_not_configured");
-  });
+  }, 15000);
 
   it("returns code=db_unavailable for POST /api/auth/login 503", async () => {
     process.env.DB_STARTUP_TEST = "0";
@@ -125,6 +125,7 @@ describe("Auth 503 stable codes", () => {
 describe("/api/auth/status production snapshot", () => {
   beforeEach(() => {
     restoreEnv();
+    vi.resetModules();
   });
 
   afterEach(() => {

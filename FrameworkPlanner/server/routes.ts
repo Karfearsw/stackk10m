@@ -11,7 +11,7 @@ import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
 import { publishTelephonyEvent } from "./telephony/pubsub.js";
 import { getTelephonyMediaSignedUrl, uploadTelephonyMediaFromUrl } from "./telephony/objectStorage.js";
-import { getSchemaReadiness, schemaFixInstructions, isDbConnectivityError } from "./schema-readiness.js";
+import { getSchemaReadiness, isDbConnectivityError, schemaFixInstructions } from "./schema-readiness.js";
 import {
   createExportJob,
   createImportJob,
@@ -183,7 +183,7 @@ function detectMimeFromMagic(buf: Buffer): string | null {
       if (match) return entry.mime;
     }
   }
-  return null;
+   return null;
 }
 
 function parseLimitOffset(query: any): { limit: number; offset: number } {

@@ -39,3 +39,9 @@ jobs:
     - name: Run Tests
       working-directory: FrameworkPlanner
       run: npx vitest run
+
+    - name: Install root dependencies
+      run: npm ci
+
+    - name: Build Root Client
+      run: npm run build:client
