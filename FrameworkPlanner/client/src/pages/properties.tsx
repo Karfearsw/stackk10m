@@ -877,7 +877,7 @@ export default function Opportunities() {
                   <div className="flex items-center gap-2 mb-2 overflow-x-auto pb-1">
                     {(() => {
                       const statusIdx = pipelineColumns.findIndex((c) => c.value === (prop.status || "active"));
-                      const adjustedStatusIdx = statusIdx === -1 ? -1 : statusIdx;
+                      const adjustedStatusIdx = statusIdx === -1 ? pipelineColumns.length : statusIdx;
                       return pipelineColumns.map((col) => (
                         <div
                           key={col.value}
