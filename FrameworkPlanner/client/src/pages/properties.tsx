@@ -573,6 +573,7 @@ export default function Opportunities() {
       { value: "pending", label: "Pending" },
       { value: "sold", label: "Sold" },
       { value: "withdrawn", label: "Withdrawn" },
+      { value: "closed", label: "Closed" },
     ];
   }, [opportunityPipelineConfig]);
 
@@ -692,6 +693,7 @@ export default function Opportunities() {
       case "pending": return "bg-yellow-600 text-white";
       case "sold": return "bg-purple-600 text-white";
       case "withdrawn": return "bg-gray-600 text-white";
+      case "closed": return "bg-emerald-600 text-white";
       default: return "bg-primary text-primary-foreground";
     }
   };
