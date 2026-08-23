@@ -187,16 +187,26 @@ function detectMimeFromMagic(buf: Buffer): string | null {
 }
 
 function isDbConnectivityError(error: any): boolean {
-  const code = error?.code;
+  if (!error) return false;
+  const code = typeof error?.code === "string" ? error.code : null;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "08006" || code === "08001" || code === "08004") return true;
   if (code === "DEPTH_ZERO_SELF_SIGNED_CERT" || code === "SELF_SIGNED_CERT_IN_CHAIN") return true;
   if (code === "ERR_TLS_CERT_ALTNAME_INVALID" || code === "CERT_HAS_EXPIRED") return true;
+
+  const constructorName = error?.constructor?.name;
+  if (constructorName === "ErrorEvent" || constructorName === "AggregateError" || constructorName === "TypeError") return true;
+
   const nested = error?.errors;
   if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
+  if (error?.error && typeof error.error === "object") return isDbConnectivityError(error.error);
+  if (error?.cause) return isDbConnectivityError(error.cause);
+
   const message = String(error?.message || "");
-  return message.includes("DATABASE_URL");
+  if (message.includes("fetch failed") || message.includes("WebSocket") || message.includes("DATABASE_URL")) return true;
+
+  return false;
 }
 
 function parseLimitOffset(query: any): { limit: number; offset: number } {
