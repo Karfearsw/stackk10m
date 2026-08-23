@@ -12,6 +12,7 @@ import { Plus, Filter, Search, Home, Upload, X, ChevronLeft, ChevronRight, Trash
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
+import { useLocation } from "wouter";
 
 interface Property {
   id: number;
@@ -394,6 +395,7 @@ function PropertyForm({
 }
 
 export default function Opportunities() {
+  const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -489,21 +491,33 @@ export default function Opportunities() {
   };
 
   const filteredProperties = properties.filter((prop) => {
-    const matchesSearch = 
-      prop.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      prop.city.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      prop.state.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch =
+      String(prop.address || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(prop.city || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(prop.state || "").toLowerCase().includes(searchQuery.toLowerCase());
     const matchesStatus = statusFilter === "all" || prop.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
 
+  const pipelineColumns = [
+    { value: "active", label: "Active" },
+    { value: "negotiation", label: "Negotiation" },
+    { value: "under_contract", label: "Under Contract" },
+    { value: "pending", label: "Pending" },
+    { value: "sold", label: "Sold" },
+    { value: "withdrawn", label: "Withdrawn" },
+    { value: "closed", label: "Closed" },
+  ];
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "active": return "bg-green-600 text-white";
+      case "negotiation": return "bg-orange-600 text-white";
       case "under_contract": return "bg-blue-600 text-white";
       case "pending": return "bg-yellow-600 text-white";
       case "sold": return "bg-purple-600 text-white";
       case "withdrawn": return "bg-gray-600 text-white";
+      case "closed": return "bg-emerald-600 text-white";
       default: return "bg-primary text-primary-foreground";
     }
   };
@@ -652,13 +666,13 @@ export default function Opportunities() {
               </div>
               
               <div className="flex items-center gap-2 mb-2 overflow-x-auto pb-1">
-                {["active", "negotiation", "under_contract", "closed"].map((stage) => (
+                {pipelineColumns.map((stage) => (
                   <div 
-                    key={stage}
+                    key={stage.value}
                     className={`h-1.5 flex-1 rounded-full ${
-                      (prop.status === stage) 
+                      (prop.status === stage.value) 
                         ? "bg-primary" 
-                        : (["active", "negotiation", "under_contract", "closed"].indexOf(prop.status || "active") > ["active", "negotiation", "under_contract", "closed"].indexOf(stage))
+                        : (pipelineColumns.findIndex((c) => c.value === (prop.status || "active")) > pipelineColumns.findIndex((c) => c.value === stage.value))
                           ? "bg-primary/40"
                           : "bg-secondary"
                     }`}
@@ -674,7 +688,7 @@ export default function Opportunities() {
               )}
               <Button 
                 className="w-full bg-primary hover:bg-primary/90 text-white"
-                onClick={() => openEditDialog(prop)}
+                onClick={() => setLocation(`/opportunities/${prop.id}`)}
                 data-testid={`button-view-opportunity-${prop.id}`}
               >
                 View Details

@@ -155,7 +155,7 @@ const idleInTxTimeoutMs = parseInt(process.env.DB_IDLE_IN_TX_TIMEOUT_MS || "1500
 const slowQueryMs = parseInt(process.env.DB_SLOW_QUERY_MS || "250", 10);
 const enableQueryTiming = process.env.DB_QUERY_TIMING !== "false";
 const enableSelectRetry = process.env.DB_RETRY_SELECTS !== "false";
-const enableStartupTest = process.env.DB_STARTUP_TEST !== "false" && !isVercel;
+const enableStartupTest = process.env.DB_STARTUP_TEST !== "false" && process.env.DB_STARTUP_TEST !== "0" && !isVercel;
 
 export const pool = new Pool({
   connectionString: databaseUrl(),

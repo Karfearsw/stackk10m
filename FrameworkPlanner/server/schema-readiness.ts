@@ -19,11 +19,37 @@ function nowIso() {
 }
 
 function isDbConnectivityError(error: any): boolean {
+  if (error == null) return false;
+
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
   if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
+
+  const constructorName = error?.constructor?.name;
+  if (constructorName === "ErrorEvent" || constructorName === "AggregateError") return true;
+  if (error instanceof TypeError) return true;
+
+  const message = String(error?.message || "");
+  const lowerMsg = message.toLowerCase();
+  if (
+    lowerMsg.includes("econnreset") ||
+    lowerMsg.includes("socket hang up") ||
+    lowerMsg.includes("getaddrinfo") ||
+    lowerMsg.includes("network is unreachable") ||
+    lowerMsg.includes("host is unreachable") ||
+    lowerMsg.includes("connection refused") ||
+    lowerMsg.includes("could not translate")
+  ) {
+    return true;
+  }
+
+  if (error?.error && isDbConnectivityError(error.error)) return true;
+  if (error?.cause && isDbConnectivityError(error.cause)) return true;
+  const nested = error?.errors;
+  if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
+
   return false;
 }
 

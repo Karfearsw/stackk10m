@@ -179,6 +179,7 @@ export default function Playground() {
                 variant="outline"
                 onClick={() => {
                   const nextAddr = addressInput.trim();
+                  setAddressInput(nextAddr);
                   setContext((c) => ({ ...c, address: nextAddr, sessionId: null }));
                   setResolvedAddress(nextAddr);
                   toast({ title: "Context updated", description: nextAddr || "—" });
