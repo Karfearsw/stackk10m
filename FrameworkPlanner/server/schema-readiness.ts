@@ -19,11 +19,22 @@ function nowIso() {
 }
 
 function isDbConnectivityError(error: any): boolean {
+  if (!error || typeof error !== "object") return false;
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
   if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
+  if (error?.constructor?.name === "ErrorEvent") return true;
+  if (error?.constructor?.name === "AggregateError") return true;
+  const nested = error?.error || error?.cause || error?.errors;
+  if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
+  if (nested && typeof nested === "object") return isDbConnectivityError(nested);
+  const message = String(error?.message || "");
+  if (message.includes("fetch failed")) return true;
+  if (message.includes("WebSocket")) return true;
+  if (message.includes("getaddrinfo ENOTFOUND")) return true;
+  if (message.includes("ECONNREFUSED")) return true;
   return false;
 }
 
@@ -133,6 +144,8 @@ export async function getSchemaReadiness(): Promise<SchemaReadiness> {
   cached = { value, expiresAt: now + (value.ok ? ttlOkMs : ttlFailMs) };
   return value;
 }
+
+export { isDbConnectivityError };
 
 export function schemaFixInstructions() {
   return {
