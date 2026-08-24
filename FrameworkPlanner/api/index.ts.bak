@@ -1,8 +1,6 @@
-import "../server/load-env.js";
-
 // Vercel Serverless Function Entry Point
-// load-env.js must run first to ensure DATABASE_URL and SESSION_SECRET
-// are available before any module-level DB pool creation.
+// On Vercel, env vars (DATABASE_URL, SESSION_SECRET, etc.) are injected by the platform.
+// Do NOT import load-env.js here — it uses import.meta.dirname which crashes in CJS mode on Vercel.
 
 import { app, installErrorHandling } from "../server/app.js";
 import { registerRoutes } from "../server/routes.js";

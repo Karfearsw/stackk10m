@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { applyMigrations } from "./apply-migrations.js";
 
@@ -51,7 +52,33 @@ async function run() {
     throw new Error("npm_execpath is not set; cannot run nested npm build");
   }
 
-  const res = spawnSync(process.execPath, [npmCli, "run", "build"], { stdio: "inherit" });
+
+  // Bundle api/index.ts -> api/index.js (ESM format for Vercel serverless)
+  console.log("Bundling api/index.js (ESM serverless entry)...");
+  const apiSrc = "api/index.ts.bak";
+  const apiOut = "api/index.js";
+  if (fs.existsSync(apiSrc)) {
+    const esbuildRes = spawnSync(process.execPath, [
+      "node_modules/esbuild/bin/esbuild",
+      apiSrc,
+      "--platform=node",
+      "--format=esm",
+      "--outfile=" + apiOut,
+      "--bundle",
+      "--packages=external",
+    ], { stdio: "inherit" });
+    if (esbuildRes.error) console.error(esbuildRes.error);
+    if (esbuildRes.status !== 0) {
+      console.error("Failed to bundle api/index.js");
+      process.exitCode = 1;
+      return;
+    }
+    console.log("api/index.js bundled successfully.");
+  } else {
+    console.warn("Warning: " + apiSrc + " not found, skipping api bundle.");
+  }
+
+const res = spawnSync(process.execPath, [npmCli, "run", "build"], { stdio: "inherit" });
   if (res.error) console.error(res.error);
   process.exitCode = res.status ?? 1;
 }
