@@ -3,7 +3,13 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
 
-const frameworkRoot = fileURLToPath(new URL("../..", import.meta.url));
+let frameworkRoot: string;
+try {
+  frameworkRoot = fileURLToPath(new URL("../..", import.meta.url));
+} catch {
+  // import.meta not available (CJS context on Vercel) — use process.cwd()
+  frameworkRoot = process.cwd();
+}
 
 dotenv.config({ path: join(frameworkRoot, ".env") });
 
