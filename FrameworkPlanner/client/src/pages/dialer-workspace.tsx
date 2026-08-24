@@ -359,7 +359,7 @@ function DialerWorkspaceInner() {
 
   return (
     <Layout>
-      <div className="grid gap-4 min-w-0 xl:grid-cols-[320px_minmax(0,1fr)_420px]">
+      <div className="grid gap-4 min-w-0 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)_420px]">
         <Card>
           <CardHeader>
             <CardTitle>Queue</CardTitle>
@@ -402,7 +402,7 @@ function DialerWorkspaceInner() {
               </Button>
             </div>
 
-            <ScrollArea className="h-[min(560px,60vh)] border rounded-md p-2">
+            <ScrollArea className="max-h-[40vh] sm:max-h-[50vh] lg:max-h-[60vh] min-h-[10rem] border rounded-md p-2">
               {!state.queue.length ? (
                 <div className="text-sm text-muted-foreground">No queue loaded</div>
               ) : (
@@ -442,7 +442,7 @@ function DialerWorkspaceInner() {
               <Input id="dialer-number" value={number} onChange={(e) => setNumber(e.target.value)} placeholder="Enter number" />
               <div className="grid grid-cols-3 gap-2" role="group" aria-label="Dialer keypad">
                 {KEYS.map((k) => (
-                  <Button key={k} variant="outline" className="h-12 text-xl" onClick={() => setNumber((prev) => prev + k)} aria-label={`Key ${k}`}>
+                  <Button key={k} variant="outline" className="h-10 sm:h-12 text-lg sm:text-xl" onClick={() => setNumber((prev) => prev + k)} aria-label={`Key ${k}`}>
                     {k}
                   </Button>
                 ))}

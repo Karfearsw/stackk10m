@@ -330,7 +330,7 @@ export default function PhoneWorkspace() {
           </CardHeader>
           <CardContent>
             <Tabs value={tab} onValueChange={(v) => setTabAndUrl(v as TabKey)}>
-              <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+              <TabsList className="grid w-full grid-cols-3 sm:grid-cols-5 gap-1">
                 <TabsTrigger value="dial">Dial</TabsTrigger>
                 <TabsTrigger value="contacts">Contacts</TabsTrigger>
                 <TabsTrigger value="history">History</TabsTrigger>
@@ -339,7 +339,7 @@ export default function PhoneWorkspace() {
               </TabsList>
 
               <TabsContent value="dial">
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid gap-4 grid-cols-1 md:grid-cols-2 min-w-0">
                   <Card>
                     <CardHeader>
                       <CardTitle>Dialer</CardTitle>
@@ -355,7 +355,7 @@ export default function PhoneWorkspace() {
                         </div>
                         <div className="grid grid-cols-3 gap-2 mt-3" role="group" aria-label="Dialer keypad">
                           {KEYS.map((k) => (
-                            <Button key={k} variant="outline" className="h-12 text-xl" onClick={() => setNumber((prev) => prev + k)} aria-label={`Key ${k}`}>
+                            <Button key={k} variant="outline" className="h-10 sm:h-12 text-lg sm:text-xl" onClick={() => setNumber((prev) => prev + k)} aria-label={`Key ${k}`}>
                               {k}
                             </Button>
                           ))}
@@ -403,7 +403,7 @@ export default function PhoneWorkspace() {
                         <Search className="w-4 h-4 text-muted-foreground" />
                         <Input placeholder="Search contacts" value={contactQuery} onChange={(e) => setContactQuery(e.target.value)} />
                       </div>
-                      <ScrollArea className="h-[min(16rem,45vh)] border rounded-md p-2">
+                      <ScrollArea className="max-h-[40vh] sm:max-h-[45vh] min-h-[10rem] border rounded-md p-2">
                         {contactsLoading ? (
                           <div className="text-sm text-muted-foreground">Loading…</div>
                         ) : (
@@ -449,17 +449,17 @@ export default function PhoneWorkspace() {
                     <CardTitle>Call History</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ScrollArea className="h-[min(28rem,60vh)] border rounded-md p-2">
+                    <ScrollArea className="max-h-[55vh] sm:max-h-[60vh] min-h-[12rem] border rounded-md p-2">
                       {historyLoading ? (
                         <div className="text-sm text-muted-foreground">Loading…</div>
                       ) : (
                         history.map((h: any) => (
-                          <div key={h.id} className="flex items-center justify-between py-2">
+                          <div key={h.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 py-2 min-w-0">
                             <div className="flex items-center gap-2">
                               <Clock className="w-4 h-4 text-muted-foreground" />
                               <div>
                                 <div className="font-medium flex items-center gap-2">
-                                  <span>{h.number}</span>
+                                  <span className="truncate">{h.number}</span>
                                   {h.spamLabel ? <Badge variant="destructive">Spam</Badge> : null}
                                 </div>
                                 <div className="text-xs text-muted-foreground">
@@ -566,7 +566,7 @@ function PhoneAnalyticsPanel() {
   const answerRate = total > 0 ? Math.round((answered / total) * 100) : 0;
 
   return (
-    <div className="grid gap-3 md:grid-cols-4">
+    <div className="grid gap-3 grid-cols-2 md:grid-cols-4">
       <Card>
         <CardHeader>
           <CardTitle className="text-sm">Total Calls</CardTitle>

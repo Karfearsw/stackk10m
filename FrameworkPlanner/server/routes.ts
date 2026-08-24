@@ -6743,6 +6743,184 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
+  // ========================= SCRIPT LIBRARY ROUTES =========================
+
+  app.get("/api/scripts", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const category = typeof req.query.category === "string" ? req.query.category.trim() : "";
+      const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+      const showArchived = req.query.archived === "true";
+      let where = sql`user_id = ${user.id}`;
+      if (!showArchived) where = sql`${where} AND (is_archived IS NULL OR is_archived = false)`;
+      if (category) where = sql`${where} AND category = ${category}`;
+      if (search) where = sql`${where} AND (name ILIKE ${"%" + search + "%"} OR description ILIKE ${"%" + search + "%"} OR content ILIKE ${"%" + search + "%"})`;
+      const result: any = await db.execute(sql`
+        SELECT id, name, content, description, category, tags, is_default as "isDefault",
+               is_archived as "isArchived", use_count as "useCount",
+               avg_practice_seconds as "avgPracticeSeconds",
+               total_practice_count as "totalPracticeCount",
+               last_practiced_at as "lastPracticedAt",
+               created_at as "createdAt", updated_at as "updatedAt"
+        FROM dialer_scripts
+        WHERE ${where}
+        ORDER BY is_default DESC, updated_at DESC, id DESC
+      `);
+      const cats: any = await db.execute(sql`
+        SELECT DISTINCT category FROM dialer_scripts
+        WHERE user_id = ${user.id} AND (is_archived IS NULL OR is_archived = false)
+        ORDER BY category
+      `);
+      res.json({ items: result.rows || [], categories: (cats.rows || []).map((r: any) => r.category) });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/scripts", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const name = String(req.body?.name || "").trim();
+      const content = String(req.body?.content || "");
+      const description = String(req.body?.description || "");
+      const category = String(req.body?.category || "general").trim();
+      const tags = Array.isArray(req.body?.tags) ? req.body.tags.filter((t: any) => typeof t === "string").slice(0, 10) : [];
+      const isDefault = Boolean(req.body?.isDefault);
+      if (!name) return res.status(400).json({ message: "Script name is required" });
+      if (name.length > 120) return res.status(400).json({ message: "Name too long" });
+      if (content.length > 50_000) return res.status(400).json({ message: "Content too long" });
+      if (isDefault) {
+        await db.execute(sql`UPDATE dialer_scripts SET is_default = false, updated_at = now() WHERE user_id = ${user.id} AND is_default = true`);
+      }
+      const ins: any = await db.execute(sql`
+        INSERT INTO dialer_scripts (user_id, name, content, description, category, tags, is_default)
+        VALUES (${user.id}, ${name}, ${content}, ${description}, ${category}, ${tags}, ${isDefault})
+        RETURNING id, name, content, description, category, tags, is_default as "isDefault", created_at as "createdAt"
+      `);
+      res.json({ item: (ins.rows || [])[0] });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/scripts/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const before: any = await db.execute(sql`SELECT id, name, content, description, category, tags, is_default as "isDefault" FROM dialer_scripts WHERE id = ${id} AND user_id = ${user.id} LIMIT 1`);
+      const existing = (before.rows || [])[0];
+      if (!existing) return res.status(404).json({ message: "Not found" });
+      const nameNext = typeof req.body?.name === "string" ? String(req.body.name).trim() : existing.name;
+      const contentNext = typeof req.body?.content === "string" ? String(req.body.content) : existing.content;
+      const descNext = typeof req.body?.description === "string" ? String(req.body.description) : (existing.description || "");
+      const catNext = typeof req.body?.category === "string" ? String(req.body.category).trim() || "general" : (existing.category || "general");
+      const tagsNext = Array.isArray(req.body?.tags) ? req.body.tags.filter((t: any) => typeof t === "string").slice(0, 10) : existing.tags || [];
+      const isDefaultNext = typeof req.body?.isDefault === "boolean" ? req.body.isDefault : existing.isDefault;
+      if (!nameNext) return res.status(400).json({ message: "Script name is required" });
+      if (isDefaultNext && !existing.isDefault) {
+        await db.execute(sql`UPDATE dialer_scripts SET is_default = false, updated_at = now() WHERE user_id = ${user.id} AND is_default = true AND id != ${id}`);
+      }
+      await db.execute(sql`UPDATE dialer_scripts SET name = ${nameNext}, content = ${contentNext}, description = ${descNext}, category = ${catNext}, tags = ${tagsNext}, is_default = ${isDefaultNext}, updated_at = now() WHERE id = ${id} AND user_id = ${user.id}`);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/scripts/:id/archive", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      await db.execute(sql`UPDATE dialer_scripts SET is_archived = true, updated_at = now() WHERE id = ${id} AND user_id = ${user.id}`);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/scripts/:id/practice", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const durationSeconds = parseInt(String(req.body?.durationSeconds || "0"), 10);
+      if (!Number.isFinite(durationSeconds) || durationSeconds < 0) return res.status(400).json({ message: "Invalid duration" });
+      const notes = String(req.body?.notes || "").slice(0, 2000);
+      const leadId = req.body?.leadId ? parseInt(String(req.body.leadId), 10) : null;
+      const scriptCheck: any = await db.execute(sql`SELECT id FROM dialer_scripts WHERE id = ${id} AND user_id = ${user.id} LIMIT 1`);
+      if (!(scriptCheck.rows || [])[0]) return res.status(404).json({ message: "Script not found" });
+      await db.execute(sql`
+        INSERT INTO script_practice_sessions (user_id, script_id, duration_seconds, notes, lead_id)
+        VALUES (${user.id}, ${id}, ${durationSeconds}, ${notes}, ${leadId || null})
+      `);
+      // Update aggregate stats on the script
+      const stats: any = await db.execute(sql`
+        SELECT COUNT(*) as cnt, COALESCE(AVG(duration_seconds), 0) as avg_sec
+        FROM script_practice_sessions WHERE script_id = ${id} AND user_id = ${user.id}
+      `);
+      const row = (stats.rows || [])[0];
+      if (row) {
+        await db.execute(sql`UPDATE dialer_scripts SET total_practice_count = ${parseInt(row.cnt)}, avg_practice_seconds = ${Math.round(parseFloat(row.avg_sec))}, last_practiced_at = now(), updated_at = now() WHERE id = ${id} AND user_id = ${user.id}`);
+      }
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/scripts/:id/practice", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit || "20"), 10) || 20));
+      const result: any = await db.execute(sql`
+        SELECT id, duration_seconds as "durationSeconds", notes, lead_id as "leadId", created_at as "createdAt"
+        FROM script_practice_sessions
+        WHERE script_id = ${id} AND user_id = ${user.id}
+        ORDER BY created_at DESC
+        LIMIT ${limit}
+      `);
+      res.json({ items: result.rows || [] });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/scripts/import", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const scripts = Array.isArray(req.body?.scripts) ? req.body.scripts : [];
+      let created = 0;
+      for (const s of scripts.slice(0, 100)) {
+        const name = String(s?.name || "").trim();
+        const content = String(s?.content || "");
+        if (!name || !content) continue;
+        const category = String(s?.category || "general").trim();
+        const tags = Array.isArray(s?.tags) ? s.tags.filter((t: any) => typeof t === "string").slice(0, 10) : [];
+        await db.execute(sql`
+          INSERT INTO dialer_scripts (user_id, name, content, description, category, tags)
+          VALUES (${user.id}, ${name}, ${content}, ${String(s?.description || "")}, ${category}, ${tags})
+        `);
+        created++;
+      }
+      res.json({ created });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ========================= END SCRIPT LIBRARY ROUTES =========================
+
   app.get("/api/dialer/queue", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;

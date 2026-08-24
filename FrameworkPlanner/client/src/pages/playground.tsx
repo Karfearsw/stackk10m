@@ -218,9 +218,9 @@ export default function Playground() {
 
   return (
     <Layout>
-      <div className="flex items-start justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-3">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2" data-testid="page-title">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2" data-testid="page-title">
             <Lightbulb className="h-8 w-8 text-primary" />
             Property Playground
           </h1>
@@ -240,8 +240,8 @@ export default function Playground() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex-1 min-w-[240px]">
+            <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2">
+              <div className="flex-1 w-full">
                 <Input value={addressInput} onChange={(e) => setAddressInput(e.target.value)} placeholder="Address" />
               </div>
               <Button
@@ -309,7 +309,7 @@ export default function Playground() {
 
 
       {resolvedAddress ? (
-        <UnderwriteDealWorkspace address={resolvedAddress} propertyId={context.propertyId} leadId={context.leadId} sessionId={context.sessionId} />
+        <div className="min-w-0 overflow-hidden"><UnderwriteDealWorkspace address={resolvedAddress} propertyId={context.propertyId} leadId={context.leadId} sessionId={context.sessionId} /></div>
       ) : (
         <div className="text-sm text-muted-foreground py-10 text-center">Enter an address to start underwriting.</div>
       )}

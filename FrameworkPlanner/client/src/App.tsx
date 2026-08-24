@@ -44,6 +44,8 @@ const FieldModePage = React.lazy(() => import("@/pages/field"));
 const PhoneWorkspace = React.lazy(() => import("@/pages/phone"));
 const Dialer = React.lazy(() => import("@/pages/dialer"));
 const DialerWorkspace = React.lazy(() => import("@/pages/dialer-workspace"));
+const ScriptsPage = React.lazy(() => import("@/pages/scripts"));
+const VoicemailPage = React.lazy(() => import("@/pages/voicemail"));
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
 const TeamsPage = React.lazy(() => import("@/pages/teams"));
 const XpLandingPage = React.lazy(() => import("@/pages/xp/index"));
@@ -150,9 +152,11 @@ function Router() {
       <Route path="/search" component={() => <ProtectedRoute component={SearchPage} />} />
       <Route path="/field" component={() => <ProtectedRoute component={FieldModePage} />} />
       <Route path="/phone" component={() => <ProtectedRoute component={PhoneWorkspace} />} />
+      <Route path="/voicemail" component={() => <ProtectedRoute component={VoicemailPage} />} />
       <Route path="/dialer" component={() => <ProtectedRoute component={Dialer} />} />
       <Route path="/dialer-workspace" component={() => <ProtectedRoute component={DialerWorkspace} />} />
       <Route path="/dialer/workspace" component={() => <ProtectedRoute component={DialerWorkspace} />} />
+      <Route path="/scripts" component={() => <ProtectedRoute component={ScriptsPage} />} />
       <Route path="/system-health" component={() => <ProtectedRoute component={SystemHealthPage} />} />
       <Route path="/teams" component={() => <ProtectedRoute component={TeamsPage} />} />
       <Route path="/companies" component={() => <ProtectedRoute component={CompaniesPage} />} />

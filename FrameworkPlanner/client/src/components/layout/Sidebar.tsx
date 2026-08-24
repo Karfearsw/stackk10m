@@ -109,6 +109,7 @@ const menuGroups = [
       { name: "Notifications", href: "/notifications", icon: Bell },
       { name: "System Health", href: "/system-health", icon: ActivitySquare },
       { name: "Playground", href: "/playground", icon: Lightbulb },
+      { name: "Scripts", href: "/scripts", icon: FileText },
     ],
   },
 ];

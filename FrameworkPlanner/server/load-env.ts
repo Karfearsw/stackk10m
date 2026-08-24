@@ -6,7 +6,11 @@ import dotenv from "dotenv";
 // Locally, use process.cwd() to find .env files (avoids import.meta).
 const isVercel = Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
 if (!isVercel) {
-  const frameworkRoot = path.resolve(process.cwd(), "FrameworkPlanner");
+  // When running from FrameworkPlanner/, cwd already is the project root.
+  // When running from the repo root, need to append FrameworkPlanner/.
+  const cwd = process.cwd();
+  const rootHasDotEnv = fs.existsSync(path.join(cwd, ".env"));
+  const frameworkRoot = rootHasDotEnv ? cwd : path.resolve(cwd, "FrameworkPlanner");
   const baseFile = path.join(frameworkRoot, ".env");
   if (fs.existsSync(baseFile)) {
     dotenv.config({ path: baseFile, override: true });
