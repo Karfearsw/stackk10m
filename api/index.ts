@@ -4,8 +4,10 @@ let cachedPromise: Promise<any> | null = null;
 async function loadHandler(): Promise<any> {
   if (cached) return cached;
   if (!cachedPromise) {
-    const url = new URL("../FrameworkPlanner/dist-server/vercel.js", import.meta.url);
-    cachedPromise = import(url.href).then((m: any) => {
+    // Use process.cwd() instead of import.meta.url (CJS-safe)
+    const target = new URL("../FrameworkPlanner/dist-server/vercel.js",
+      "file://" + process.cwd() + "/api/");
+    cachedPromise = import(target.href).then((m: any) => {
       cached = m?.default ?? m;
       return cached;
     });

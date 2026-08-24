@@ -9,16 +9,16 @@ import { installErrorHandling } from "../server/app.js";
 
 let ready = false;
 
-export default async function handler(req: any, res: any) {
+export default async function handler(req, res) {
   if (!ready) {
     try {
       await registerRoutes(app, { mode: "serverless" });
       installErrorHandling(app);
       ready = true;
-    } catch (err: any) {
-      console.error("[api/index] Init failed:", err?.message || err);
+    } catch (err) {
+      console.error("[api/index] Init failed:", err && err.message || err);
       if (!res.headersSent) {
-        res.status(500).json({ message: "Server init failed", detail: String(err?.message || err) });
+        res.status(500).json({ message: "Server init failed", detail: String(err && err.message || err) });
       }
       return;
     }

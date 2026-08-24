@@ -52,9 +52,7 @@ async function run() {
     throw new Error("npm_execpath is not set; cannot run nested npm build");
   }
 
-
-
-const res = spawnSync(process.execPath, [npmCli, "run", "build"], { stdio: "inherit" });
+  const res = spawnSync(process.execPath, [npmCli, "run", "build"], { stdio: "inherit" });
   if (res.error) console.error(res.error);
   process.exitCode = res.status ?? 1;
 }
