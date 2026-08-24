@@ -2,7 +2,7 @@
   "name": "stackk10m-root",
   "private": true,
   "engines": {
-    "node": "24.x"
+    "node": ">=18"
   },
   "scripts": {
     "dev": "npm --prefix FrameworkPlanner run dev",
