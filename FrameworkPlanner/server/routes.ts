@@ -7301,15 +7301,37 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  // ADMIN: Run migrations manually (for post-deploy or retry)
+  // ADMIN: Run migrations manually (post-deploy / manual trigger)
+  // Requires admin auth. Uses a PostgreSQL advisory lock to prevent
+  // concurrent migration runs across multiple Vercel instances.
   app.post("/api/admin/migrate", async (req, res) => {
     try {
-      const { applyMigrations } = await import("./scripts/apply-migrations.js");
-      await applyMigrations();
-      res.json({ success: true, message: "Migrations applied successfully." });
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) {
+        res.status(403).json({ success: false, error: "Admin access required" });
+        return;
+      }
+
+      // Acquire advisory lock to prevent concurrent migration runs.
+      const LOCK_KEY = 83749201;
+      const lockResult = await pool.query("SELECT pg_try_advisory_lock()", [LOCK_KEY]);
+      const acquired = lockResult?.rows?.[0]?.pg_try_advisory_lock;
+      if (!acquired) {
+        res.status(409).json({ success: false, error: "Migration already in progress by another instance" });
+        return;
+      }
+
+      try {
+        const { applyMigrations } = await import("./scripts/apply-migrations.js");
+        await applyMigrations();
+        res.json({ success: true, message: "Migrations applied successfully." });
+      } finally {
+        await pool.query("SELECT pg_advisory_unlock()", [LOCK_KEY]).catch(() => {});
+      }
     } catch (e: any) {
       console.error("Admin migrate failed:", e?.message || e);
-      res.status(500).json({ success: false, error: e?.message || "Migration failed" });
+      res.status(500).json({ success: false, error: "Migration failed" });
     }
   });
   // SYSTEM HEALTH (Aggregated diagnostics)

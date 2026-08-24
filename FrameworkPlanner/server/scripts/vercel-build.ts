@@ -17,11 +17,10 @@ function isQuotaExceededError(e: any): boolean {
 async function run() {
   const skip = parseBoolEnv("SKIP_DB_MIGRATIONS");
   const explicit = parseBoolEnv("AUTO_APPLY_MIGRATIONS");
-  const isVercel = Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
 
-  // Default on Vercel: SKIP migrations during build.
-  // Neon WebSocket connections are not supported on Vercel build machines.
-  // Run migrations separately via POST /api/admin/migrate or post-deploy script.
+  // Migrations are skipped during build by default.
+  // After deploy, run: POST /api/admin/migrate (admin auth required)
+  // Or use a dedicated post-deploy hook.
   const shouldApply = skip === true ? false : explicit === true ? true : false;
 
   if (shouldApply) {
@@ -30,27 +29,20 @@ async function run() {
       await applyMigrations();
     } catch (e: any) {
       if (isQuotaExceededError(e)) {
-        console.error("",
-          "Database is rejecting queries because a Neon quota has been exceeded.",
+        console.error(
+          "Database quota exceeded. Migrations skipped.",
           "Fix: reduce usage / wait for quota reset / upgrade Neon plan.",
-          "Set AUTO_APPLY_MIGRATIONS=false to bypass migrations during build.",
         );
         process.exitCode = 1;
         return;
       }
-      if (isVercel) {
-        console.warn("WARNING: Migration failed during Vercel build.",
-          "The build will continue. Migrations will be applied on first request.",
-          "Error: " + String(e?.message || e),
-        );
-      } else {
-        throw e;
-      }
+      throw e;
     }
   } else {
-    console.log("Skipping DB migrations during build (safe default).",
-      "Migrations will be applied on first request or via POST /api/admin/migrate.",
-      "To force during build, set AUTO_APPLY_MIGRATIONS=true.",
+    console.log(
+      "Skipping DB migrations during build.",
+      "After deploy, run migrations via: POST /api/admin/migrate",
+      "(requires admin auth + advisory lock).",
     );
   }
 
