@@ -53,10 +53,10 @@ async function run() {
   }
 
 
-  // Bundle api/index.ts -> api/index.js (ESM format for Vercel serverless)
-  console.log("Bundling api/index.js (ESM serverless entry)...");
+  // Bundle api/index.ts -> api/index.mjs (ESM format for Vercel serverless)
+  console.log("Bundling api/index.mjs (ESM serverless entry)...");
   const apiSrc = "api/index.ts.bak";
-  const apiOut = "api/index.js";
+  const apiOut = "api/index.mjs";
   if (fs.existsSync(apiSrc)) {
     const esbuildRes = spawnSync(process.execPath, [
       "node_modules/esbuild/bin/esbuild",
@@ -69,11 +69,11 @@ async function run() {
     ], { stdio: "inherit" });
     if (esbuildRes.error) console.error(esbuildRes.error);
     if (esbuildRes.status !== 0) {
-      console.error("Failed to bundle api/index.js");
+      console.error("Failed to bundle api/index.mjs");
       process.exitCode = 1;
       return;
     }
-    console.log("api/index.js bundled successfully.");
+    console.log("api/index.mjs bundled successfully.");
   } else {
     console.warn("Warning: " + apiSrc + " not found, skipping api bundle.");
   }
