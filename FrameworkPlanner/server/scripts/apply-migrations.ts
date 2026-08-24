@@ -3,13 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
 
-let frameworkRoot: string;
-try {
-  frameworkRoot = fileURLToPath(new URL("../..", import.meta.url));
-} catch {
-  // import.meta not available (CJS context on Vercel) — use process.cwd()
-  frameworkRoot = process.cwd();
-}
+const frameworkRoot = process.cwd();
 
 dotenv.config({ path: join(frameworkRoot, ".env") });
 
@@ -200,7 +194,7 @@ export async function applyMigrations() {
 }
 
 function isMain() {
-  const self = resolve(fileURLToPath(import.meta.url));
+  const self = resolve(process.argv[1] || "");
   const argv = process.argv[1] ? resolve(process.argv[1]) : "";
   return self === argv;
 }
