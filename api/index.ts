@@ -1,21 +1,2 @@
-let cached: any | null = null;
-let cachedPromise: Promise<any> | null = null;
-
-async function loadHandler(): Promise<any> {
-  if (cached) return cached;
-  if (!cachedPromise) {
-    // Use process.cwd() instead of import.meta.url (CJS-safe)
-    const target = new URL("../FrameworkPlanner/dist-server/vercel.js",
-      "file://" + process.cwd() + "/api/");
-    cachedPromise = import(target.href).then((m: any) => {
-      cached = m?.default ?? m;
-      return cached;
-    });
-  }
-  return cachedPromise;
-}
-
-export default async function handler(req: any, res: any) {
-  const h = await loadHandler();
-  return h(req, res);
-}
+import handler from "../FrameworkPlanner/dist-server/vercel.js";
+export default handler;
