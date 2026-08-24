@@ -9,6 +9,12 @@ export default defineConfig({
     ],
     globals: true,
     environment: "node",
+    // DB-dependent integration tests hit a slow remote Neon instance; the
+    // vitest default (5s) is too tight and produces spurious timeouts.
+    testTimeout: 60_000,
+    // Importing server/routes pulls in the DB connection module which performs a
+    // startup ping against a slow remote Neon instance; hooks need the same headroom.
+    hookTimeout: 60_000,
     env: {
       DATABASE_URL: "postgresql://neondb_owner:npg_7sAWdTo6cjpF@ep-rough-paper-an8epzvm.c-6.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
       DB_STARTUP_TEST: "false",

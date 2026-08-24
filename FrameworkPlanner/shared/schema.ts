@@ -64,6 +64,18 @@ export const properties = pgTable("properties", {
   sourceLeadId: integer("source_lead_id"),
   notes: text("notes"),
   dedupeKey: varchar("dedupe_key", { length: 400 }),
+  opportunityType: varchar("opportunity_type", { length: 50 }).default("acquisition"),
+  stage: varchar("stage", { length: 50 }).default("lead"),
+  opportunityStatus: varchar("opportunity_status", { length: 50 }).default("active"),
+  internalSummary: text("internal_summary"),
+  askingPrice: decimal("asking_price", { precision: 12, scale: 2 }),
+  targetDispositionPrice: decimal("target_disposition_price", { precision: 12, scale: 2 }),
+  earnestMoney: decimal("earnest_money", { precision: 12, scale: 2 }),
+  closingDate: timestamp("closing_date"),
+  inspectionDeadline: timestamp("inspection_deadline"),
+  nextActionAt: timestamp("next_action_at"),
+  lastActivityAt: timestamp("last_activity_at"),
+  stageChangedAt: timestamp("stage_changed_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -251,6 +263,7 @@ export const users = pgTable("users", {
   profilePicture: text("profile_picture"),
   showBannerQuotes: boolean("show_banner_quotes").default(true),
   customBannerImages: text("custom_banner_images").array(),
+  bannerConfig: jsonb("banner_config"),
   skipTraceDefaultMode: varchar("skip_trace_default_mode", { length: 30 }).notNull().default("both"),
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
@@ -848,3 +861,88 @@ export const insertPlaygroundPropertySessionSchema = createInsertSchema(playgrou
 } as any);
 export type PlaygroundPropertySession = typeof playgroundPropertySessions.$inferSelect;
 export type InsertPlaygroundPropertySession = z.infer<typeof insertPlaygroundPropertySessionSchema>;
+
+// OPPORTUNITY PARTIES TABLE
+export const opportunityParties = pgTable("opportunity_parties", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  opportunityId: integer("opportunity_id").notNull(),
+  contactId: integer("contact_id"),
+  role: varchar("role", { length: 32 }).notNull(),
+  name: varchar("name", { length: 255 }),
+  email: varchar("email", { length: 255 }),
+  phone: varchar("phone", { length: 20 }),
+  company: varchar("company", { length: 255 }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertOpportunityPartySchema = createInsertSchema(opportunityParties).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type OpportunityParty = typeof opportunityParties.$inferSelect;
+export type InsertOpportunityParty = z.infer<typeof insertOpportunityPartySchema>;
+
+// PUBLIC LISTINGS TABLE
+export const publicListings = pgTable("public_listings", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  opportunityId: integer("opportunity_id").notNull(),
+  slug: varchar("slug", { length: 255 }).notNull().unique(),
+  token: varchar("token", { length: 255 }).notNull().unique(),
+  status: varchar("status", { length: 50 }).default("draft").notNull(),
+  visibility: varchar("visibility", { length: 20 }).default("link_only").notNull(),
+  passwordHash: varchar("password_hash", { length: 255 }),
+  title: varchar("title", { length: 255 }),
+  description: text("description"),
+  contactName: varchar("contact_name", { length: 255 }),
+  contactEmail: varchar("contact_email", { length: 255 }),
+  contactPhone: varchar("contact_phone", { length: 20 }),
+  viewCount: integer("view_count").default(0).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+  publishedAt: timestamp("published_at"),
+  expiresAt: timestamp("expires_at"),
+});
+
+export const insertPublicListingSchema = createInsertSchema(publicListings).omit({ id: true, createdAt: true, updatedAt: true, viewCount: true } as any);
+export type PublicListing = typeof publicListings.$inferSelect;
+export type InsertPublicListing = z.infer<typeof insertPublicListingSchema>;
+
+// BUYER INQUIRIES TABLE
+export const buyerInquiries = pgTable("buyer_inquiries", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  listingId: integer("listing_id").notNull(),
+  opportunityId: integer("opportunity_id").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 255 }),
+  phone: varchar("phone", { length: 20 }),
+  company: varchar("company", { length: 255 }),
+  buyerType: varchar("buyer_type", { length: 50 }),
+  message: text("message"),
+  offerAmount: decimal("offer_amount", { precision: 12, scale: 2 }),
+  proofOfFundsUrl: varchar("pof_url", { length: 500 }),
+  status: varchar("status", { length: 50 }).default("new").notNull(),
+  assignedToUserId: integer("assigned_to_user_id"),
+  ip: varchar("ip", { length: 50 }),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertBuyerInquirySchema = createInsertSchema(buyerInquiries).omit({ id: true, createdAt: true, updatedAt: true, status: true, assignedToUserId: true } as any);
+export type BuyerInquiry = typeof buyerInquiries.$inferSelect;
+export type InsertBuyerInquiry = z.infer<typeof insertBuyerInquirySchema>;
+
+// OPPORTUNITY EVENTS TABLE
+export const opportunityEvents = pgTable("opportunity_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  opportunityId: integer("opportunity_id").notNull(),
+  eventType: varchar("event_type", { length: 100 }).notNull(),
+  actorType: varchar("actor_type", { length: 50 }).default("user"),
+  actorUserId: integer("actor_user_id"),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  metadataJson: text("metadata_json"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertOpportunityEventSchema = createInsertSchema(opportunityEvents).omit({ id: true, createdAt: true } as any);
+export type OpportunityEvent = typeof opportunityEvents.$inferSelect;
+export type InsertOpportunityEvent = z.infer<typeof insertOpportunityEventSchema>;

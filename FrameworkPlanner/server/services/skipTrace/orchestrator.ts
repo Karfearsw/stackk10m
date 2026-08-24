@@ -359,7 +359,8 @@ async function runPublicResearchStep(input: {
     } as any);
   }
 
-  await addJobEvent(input.job.id, `public_research_${out.status}`, out.message ? String(out.message) : null, { runner: input.runner.name, evidenceCount: (out.evidence || []).length });
+  const publicStatus = String(out.status || "unknown").toLowerCase();
+  await addJobEvent(input.job.id, `public_${publicStatus}`, out.message ? String(out.message) : null, { runner: input.runner.name, evidenceCount: (out.evidence || []).length });
   return out;
 }
 

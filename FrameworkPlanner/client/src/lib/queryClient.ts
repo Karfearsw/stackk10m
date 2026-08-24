@@ -17,16 +17,24 @@ function authHeaders(): Record<string, string> {
 
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
+    // Read the body exactly once; a second read throws "body stream already read".
+    const raw = await res.text().catch(() => "");
+    let message = raw || res.statusText;
     const ct = res.headers.get("content-type") || "";
-    if (ct.includes("application/json")) {
+    if (ct.includes("application/json") && raw) {
       try {
-        const json = await res.json();
+        const json = JSON.parse(raw);
         const msg = typeof (json as any)?.message === "string" && (json as any).message.trim() ? (json as any).message : "";
-        throw new Error(`${res.status}: ${msg || JSON.stringify(json)}`);
+        const err = (json as any)?.error;
+        const detail = (json as any)?.detail;
+        const pick = msg || (typeof err === "string" ? err : err?.message) || detail || raw;
+        if (pick) message = pick;
       } catch {}
     }
-    const text = (await res.text()) || res.statusText;
-    throw new Error(`${res.status}: ${text}`);
+    const error = new Error(`${res.status}: ${message}`) as any;
+    error.status = res.status;
+    error.body = raw;
+    throw error;
   }
 }
 

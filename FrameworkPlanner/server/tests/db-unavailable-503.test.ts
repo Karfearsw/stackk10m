@@ -62,7 +62,7 @@ describe("DB unavailable handling", () => {
 
     expect(res.status).toBe(503);
     expect(res.body?.kind).toBe("db_unavailable");
-  }, 15000);
+  }, 180_000);
 
   it("returns 503 with missing env hints when DATABASE_URL is invalid", async () => {
     process.env.VERCEL = "1";
@@ -78,7 +78,7 @@ describe("DB unavailable handling", () => {
     expect(res.status).toBe(503);
     expect(res.body?.kind).toBe("db_unavailable");
     expect(Array.isArray(res.body?.missing) ? res.body.missing : []).toContain("env:DATABASE_URL");
-  });
+  }, 180_000);
 
   it("resolves DB URL from POSTGRES_URL_NON_POOLING when DATABASE_URL missing", async () => {
     process.env.VERCEL = "1";

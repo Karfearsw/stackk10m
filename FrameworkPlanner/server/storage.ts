@@ -1,10 +1,13 @@
 import { db } from "./db.js";
 import { asc, desc, sql } from "drizzle-orm";
 import { 
-  leads, leadNotes, savedViews, leadBulkActionJobs, aiActionLogs, aiActionUndo, appAuditRuns, appAuditFindings, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, documentVersions, lois,
+  leads, leadNotes, savedViews, leadBulkActionJobs, aiActionLogs, aiActionUndo, appAuditRuns, appAuditFindings, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, contractSigners, contractEvents, contractFields, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, workCategories, timesheetEntries, timeClockSessions, workerProfiles, categoryRateOverrides, payPeriods, approvalEvents, commissionEvents, dealParticipants, commissionLedgerEntries, globalActivityLogs,
   buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents,
-  companies, companyPeople, companyLinks, documents, documentLinks, vaultDocumentVersions, automations, automationTriggers, automationConditions, automationActions, automationRuns, auditEvents
+  companies, companyPeople, companyLinks, documents, documentLinks, vaultDocumentVersions, automations, automationTriggers, automationConditions, automationActions, automationRuns, auditEvents,
+  opportunityParties, publicListings, buyerInquiries, opportunityEvents, buyerOffers,
+  internalMessages, calendarEvents,
+  type BuyerOffer, type InsertBuyerOffer
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -21,6 +24,9 @@ import {
   type ContractTemplate, type InsertContractTemplate,
   type ContractDocument, type InsertContractDocument,
   type ContractEnvelope, type InsertContractEnvelope,
+  type ContractSigner, type InsertContractSigner,
+  type ContractEvent, type InsertContractEvent,
+  type ContractField, type InsertContractField,
   type SyncIdempotency, type InsertSyncIdempotency,
   type FieldMediaAsset, type InsertFieldMediaAsset,
   type CompSnapshot, type InsertCompSnapshot,
@@ -31,6 +37,8 @@ import {
   type User, type InsertUser,
   type TwoFactorAuth, type InsertTwoFactorAuth,
   type BackupCode, type InsertBackupCode,
+  type InternalMessage, type InsertInternalMessage,
+  type CalendarEvent, type InsertCalendarEvent,
   type Team, type InsertTeam,
   type TeamMember, type InsertTeamMember,
   type TeamActivityLog, type InsertTeamActivityLog,
@@ -97,9 +105,13 @@ import {
   type AutomationCondition, type InsertAutomationCondition,
   type AutomationAction, type InsertAutomationAction,
   type AutomationRun, type InsertAutomationRun,
-  type AuditEvent, type InsertAuditEvent
+  type AuditEvent, type InsertAuditEvent,
+  type OpportunityParty, type InsertOpportunityParty,
+  type PublicListing, type InsertPublicListing,
+  type BuyerInquiry, type InsertBuyerInquiry,
+  type OpportunityEvent, type InsertOpportunityEvent
 } from "./shared-schema.js";
-import { eq, and, gte, lte, isNull, inArray, or, ne, isNotNull } from "drizzle-orm";
+import { eq, and, gte, lte, isNull, inArray, or, ne, isNotNull, like } from "drizzle-orm";
 
 export interface IStorage {
   // Leads
@@ -304,10 +316,21 @@ export interface IStorage {
   deleteContract(id: number): Promise<void>;
 
   // Contract Templates
-  getContractTemplates(limit?: number, offset?: number): Promise<ContractTemplate[]>;
+  getContractTemplates(opts?: {
+    limit?: number;
+    offset?: number;
+    category?: string;
+    jurisdiction?: string;
+    status?: string;
+    q?: string;
+    ownerUserId?: number;
+    includeArchived?: boolean;
+  }): Promise<ContractTemplate[]>;
   getContractTemplateById(id: number): Promise<ContractTemplate | undefined>;
   createContractTemplate(template: InsertContractTemplate): Promise<ContractTemplate>;
   updateContractTemplate(id: number, template: Partial<InsertContractTemplate>): Promise<ContractTemplate>;
+  approveContractTemplate(id: number, userId: number): Promise<ContractTemplate | undefined>;
+  cloneContractTemplate(parentId: number, ownerUserId: number): Promise<ContractTemplate | undefined>;
   deleteContractTemplate(id: number): Promise<void>;
 
   // Contract Documents
@@ -323,6 +346,22 @@ export interface IStorage {
   getContractEnvelopeByTokenHash(tokenHash: string): Promise<ContractEnvelope | undefined>;
   createContractEnvelope(input: InsertContractEnvelope): Promise<ContractEnvelope>;
   updateContractEnvelope(id: number, patch: Partial<InsertContractEnvelope>): Promise<ContractEnvelope>;
+
+  // Contract Signers
+  getContractSignersByContract(contractId: number): Promise<ContractSigner[]>;
+  getContractSignerByTokenHash(tokenHash: string): Promise<ContractSigner | undefined>;
+  createContractSigner(input: InsertContractSigner): Promise<ContractSigner>;
+  updateContractSigner(id: number, patch: Partial<InsertContractSigner>): Promise<ContractSigner>;
+
+  // Contract Events
+  getContractEventsByContract(contractId: number): Promise<ContractEvent[]>;
+  createContractEvent(input: InsertContractEvent): Promise<ContractEvent>;
+
+  // Contract Fields
+  getContractFieldsByContract(contractId: number): Promise<ContractField[]>;
+  createContractField(input: InsertContractField): Promise<ContractField>;
+  updateContractField(id: number, patch: Partial<InsertContractField>): Promise<ContractField>;
+  deleteContractField(id: number): Promise<void>;
 
   // Sync
   getSyncIdempotency(userId: number, key: string): Promise<SyncIdempotency | undefined>;
@@ -412,6 +451,22 @@ export interface IStorage {
   deleteUserNotification(id: number): Promise<void>;
   deleteAllUserNotifications(userId: number): Promise<void>;
   markAllNotificationsAsRead(userId: number): Promise<void>;
+  getUnreadNotificationCount(userId: number): Promise<number>;
+  createUserNotificationDedup(notification: InsertUserNotification): Promise<UserNotification | null>;
+
+  // Internal Messages
+  createInternalMessage(message: InsertInternalMessage): Promise<InternalMessage>;
+  getInternalMessages(userId: number, withUserId?: number, limit?: number, offset?: number): Promise<InternalMessage[]>;
+  getInternalMessageUnreadCount(userId: number): Promise<number>;
+  markInternalMessagesRead(userId: number, withUserId?: number): Promise<void>;
+  getInternalMessageConversations(userId: number): Promise<any[]>;
+
+  // Calendar Events
+  createCalendarEvent(event: InsertCalendarEvent): Promise<CalendarEvent>;
+  getCalendarEventsForUser(userId: number, from?: Date, to?: Date): Promise<CalendarEvent[]>;
+  updateCalendarEvent(id: number, patch: Partial<InsertCalendarEvent>): Promise<CalendarEvent>;
+  deleteCalendarEvent(id: number): Promise<void>;
+  getCalendarEventById(id: number): Promise<CalendarEvent | undefined>;
 
   // User Goals
   getUserGoals(userId: number): Promise<UserGoal[]>;
@@ -605,6 +660,43 @@ export interface IStorage {
   getCallLogs(limit?: number, offset?: number, status?: string, contactId?: number): Promise<CallLog[]>;
   createCallLog(log: InsertCallLog): Promise<CallLog>;
   updateCallLog(id: number, patch: Partial<InsertCallLog & { status?: string; endedAt?: Date; durationMs?: number; errorCode?: string; errorMessage?: string }>): Promise<CallLog>;
+
+  // Opportunity Parties
+  getOpportunityParties(opportunityId: number): Promise<OpportunityParty[]>;
+  getOpportunityPartyById(id: number): Promise<OpportunityParty | undefined>;
+  createOpportunityParty(party: InsertOpportunityParty): Promise<OpportunityParty>;
+  updateOpportunityParty(id: number, patch: Partial<InsertOpportunityParty>): Promise<OpportunityParty>;
+  deleteOpportunityParty(id: number): Promise<void>;
+
+  // Public Listings
+  getPublicListingBySlug(slug: string): Promise<PublicListing | undefined>;
+  getPublicListingByToken(token: string): Promise<PublicListing | undefined>;
+  getPublicListingById(id: number): Promise<PublicListing | undefined>;
+  getPublicListingsByOpportunity(opportunityId: number): Promise<PublicListing[]>;
+  createPublicListing(listing: InsertPublicListing): Promise<PublicListing>;
+  updatePublicListing(id: number, patch: Partial<InsertPublicListing>): Promise<PublicListing>;
+  incrementListingViews(id: number): Promise<void>;
+  deletePublicListing(id: number): Promise<void>;
+
+  // Buyer Inquiries
+  getBuyerInquiries(opportunityId: number): Promise<BuyerInquiry[]>;
+  getBuyerInquiryById(id: number): Promise<BuyerInquiry | undefined>;
+  getBuyerInquiriesByListing(listingId: number): Promise<BuyerInquiry[]>;
+  createBuyerInquiry(inquiry: InsertBuyerInquiry): Promise<BuyerInquiry>;
+  updateBuyerInquiry(id: number, patch: Partial<InsertBuyerInquiry>): Promise<BuyerInquiry>;
+
+  // Opportunity Events
+  getOpportunityEvents(opportunityId: number, limit?: number): Promise<OpportunityEvent[]>;
+  createOpportunityEvent(event: InsertOpportunityEvent): Promise<OpportunityEvent>;
+
+  // Buyer Offers
+  getBuyerOffersByOpportunity(opportunityId: number): Promise<BuyerOffer[]>;
+  getBuyerOfferById(id: number): Promise<BuyerOffer | undefined>;
+  createBuyerOffer(offer: InsertBuyerOffer): Promise<BuyerOffer>;
+  updateBuyerOffer(id: number, patch: Partial<InsertBuyerOffer>): Promise<BuyerOffer>;
+
+  // Tasks
+  getTasksByRelatedEntity(entityType: string, entityId: number): Promise<Task[]>;
 }
 
 function normalizeGlobalActivityAction(action: string) {
@@ -1851,9 +1943,30 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Contract Templates
-  async getContractTemplates(limit?: number, offset: number = 0): Promise<ContractTemplate[]> {
-    let q: any = db.select().from(contractTemplates);
-    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+  async getContractTemplates(opts?: {
+    limit?: number;
+    offset?: number;
+    category?: string;
+    jurisdiction?: string;
+    status?: string;
+    q?: string;
+    ownerUserId?: number;
+    includeArchived?: boolean;
+  }): Promise<ContractTemplate[]> {
+    const conds: any[] = [];
+    if (opts?.category) conds.push(eq(contractTemplates.category, opts.category));
+    if (opts?.jurisdiction) conds.push(eq(contractTemplates.jurisdiction, opts.jurisdiction));
+    if (opts?.status) conds.push(eq(contractTemplates.status, opts.status));
+    if (typeof opts?.ownerUserId === "number") conds.push(eq(contractTemplates.ownerUserId, opts.ownerUserId));
+    if (!opts?.includeArchived) conds.push(ne(contractTemplates.status, "archived"));
+    if (opts?.q) {
+      const pattern = `%${String(opts.q).toLowerCase()}%`;
+      conds.push(or(like(contractTemplates.name, pattern), like(contractTemplates.category, pattern)));
+    }
+    let q: any = conds.length
+      ? db.select().from(contractTemplates).where(and(...conds))
+      : db.select().from(contractTemplates);
+    if (typeof opts?.limit === "number") q = q.limit(opts.limit).offset(opts.offset || 0);
     return q as unknown as Promise<ContractTemplate[]>;
   }
 
@@ -1869,6 +1982,45 @@ export class DatabaseStorage implements IStorage {
 
   async updateContractTemplate(id: number, template: Partial<InsertContractTemplate>): Promise<ContractTemplate> {
     const result = await db.update(contractTemplates).set(template as any).where(eq(contractTemplates.id, id)).returning();
+    return result[0];
+  }
+
+  async approveContractTemplate(id: number, userId: number): Promise<ContractTemplate | undefined> {
+    const result = await db
+      .update(contractTemplates)
+      .set({
+        status: "approved",
+        approvedByUserId: userId,
+        approvedAt: new Date(),
+        lastReviewedAt: new Date(),
+        isActive: true,
+      } as any)
+      .where(eq(contractTemplates.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async cloneContractTemplate(parentId: number, ownerUserId: number): Promise<ContractTemplate | undefined> {
+    const parent = await this.getContractTemplateById(parentId);
+    if (!parent) return undefined;
+    const nextVersion = Number(parent.version || 1) + 1;
+    const result = await db
+      .insert(contractTemplates)
+      .values({
+        name: parent.name,
+        description: parent.description,
+        category: parent.category,
+        content: parent.content,
+        mergeFields: parent.mergeFields,
+        isActive: false,
+        jurisdiction: parent.jurisdiction,
+        status: "draft",
+        ownerUserId,
+        version: nextVersion,
+        sourceFormat: parent.sourceFormat,
+        parentTemplateId: parent.id,
+      } as any)
+      .returning();
     return result[0];
   }
 
@@ -1924,6 +2076,52 @@ export class DatabaseStorage implements IStorage {
   async updateContractEnvelope(id: number, patch: Partial<InsertContractEnvelope>): Promise<ContractEnvelope> {
     const result = await db.update(contractEnvelopes).set({ ...patch, updatedAt: new Date() } as any).where(eq(contractEnvelopes.id, id)).returning();
     return result[0];
+  }
+
+  async getContractSignersByContract(contractId: number): Promise<ContractSigner[]> {
+    return db.select().from(contractSigners).where(eq(contractSigners.contractId, contractId)).orderBy(contractSigners.signingOrder);
+  }
+
+  async getContractSignerByTokenHash(tokenHash: string): Promise<ContractSigner | undefined> {
+    const result = await db.select().from(contractSigners).where(eq(contractSigners.tokenHash, tokenHash)).limit(1);
+    return result[0];
+  }
+
+  async createContractSigner(input: InsertContractSigner): Promise<ContractSigner> {
+    const result = await db.insert(contractSigners).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateContractSigner(id: number, patch: Partial<InsertContractSigner>): Promise<ContractSigner> {
+    const result = await db.update(contractSigners).set({ ...patch, updatedAt: new Date() } as any).where(eq(contractSigners.id, id)).returning();
+    return result[0];
+  }
+
+  async getContractEventsByContract(contractId: number): Promise<ContractEvent[]> {
+    return db.select().from(contractEvents).where(eq(contractEvents.contractId, contractId)).orderBy(desc(contractEvents.createdAt));
+  }
+
+  async createContractEvent(input: InsertContractEvent): Promise<ContractEvent> {
+    const result = await db.insert(contractEvents).values(input as any).returning();
+    return result[0];
+  }
+
+  async getContractFieldsByContract(contractId: number): Promise<ContractField[]> {
+    return db.select().from(contractFields).where(eq(contractFields.contractId, contractId));
+  }
+
+  async createContractField(input: InsertContractField): Promise<ContractField> {
+    const result = await db.insert(contractFields).values(input as any).returning();
+    return result[0];
+  }
+
+  async updateContractField(id: number, patch: Partial<InsertContractField>): Promise<ContractField> {
+    const result = await db.update(contractFields).set({ ...patch, updatedAt: new Date() } as any).where(eq(contractFields.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteContractField(id: number): Promise<void> {
+    await db.delete(contractFields).where(eq(contractFields.id, id));
   }
 
   async getSyncIdempotency(userId: number, key: string): Promise<SyncIdempotency | undefined> {
@@ -2278,6 +2476,140 @@ export class DatabaseStorage implements IStorage {
 
   async markAllNotificationsAsRead(userId: number): Promise<void> {
     await db.update(userNotifications).set({ read: true }).where(eq(userNotifications.userId, userId));
+  }
+
+  async getUnreadNotificationCount(userId: number): Promise<number> {
+    const rows: any = await db.execute(sql`
+      SELECT COUNT(*)::int AS count FROM user_notifications
+      WHERE user_id = ${userId} AND read = false
+    `);
+    return Number((rows as any).rows?.[0]?.count ?? 0);
+  }
+
+  async createUserNotificationDedup(notification: InsertUserNotification): Promise<UserNotification | null> {
+    const result = await db
+      .insert(userNotifications)
+      .values(notification as any)
+      .onConflictDoNothing()
+      .returning();
+    return result[0] ?? null;
+  }
+
+  // Internal Messages
+  async createInternalMessage(message: InsertInternalMessage): Promise<InternalMessage> {
+    const result = await db.insert(internalMessages).values(message as any).returning();
+    return result[0];
+  }
+
+  async getInternalMessages(userId: number, withUserId?: number, limit: number = 100, offset: number = 0): Promise<InternalMessage[]> {
+    if (withUserId) {
+      return db
+        .select()
+        .from(internalMessages)
+        .where(
+          or(
+            and(eq(internalMessages.senderUserId, userId), eq(internalMessages.recipientUserId, withUserId)),
+            and(eq(internalMessages.senderUserId, withUserId), eq(internalMessages.recipientUserId, userId)),
+          ),
+        )
+        .orderBy(asc(internalMessages.id))
+        .limit(limit)
+        .offset(offset);
+    }
+    return db
+      .select()
+      .from(internalMessages)
+      .where(or(eq(internalMessages.recipientUserId, userId), eq(internalMessages.senderUserId, userId)))
+      .orderBy(desc(internalMessages.id))
+      .limit(limit)
+      .offset(offset);
+  }
+
+  async getInternalMessageUnreadCount(userId: number): Promise<number> {
+    const rows: any = await db.execute(sql`
+      SELECT COUNT(*)::int AS count FROM internal_messages
+      WHERE recipient_user_id = ${userId} AND read_at IS NULL
+    `);
+    return Number((rows as any).rows?.[0]?.count ?? 0);
+  }
+
+  async getInternalMessageConversations(userId: number): Promise<any[]> {
+    const rows: any = await db.execute(sql`
+      WITH pairs AS (
+        SELECT
+          CASE WHEN sender_user_id = ${userId} THEN recipient_user_id ELSE sender_user_id END AS counterpart_id,
+          id, body, read_at, created_at,
+          CASE WHEN recipient_user_id = ${userId} AND read_at IS NULL THEN 1 ELSE 0 END AS unread_flag
+        FROM internal_messages
+        WHERE sender_user_id = ${userId} OR recipient_user_id = ${userId}
+      ),
+      ranked AS (
+        SELECT counterpart_id, id, body, read_at, created_at, unread_flag,
+               ROW_NUMBER() OVER (PARTITION BY counterpart_id ORDER BY id DESC) AS rn
+        FROM pairs
+      ),
+      summary AS (
+        SELECT counterpart_id, MAX(id) AS last_id,
+               COUNT(*) FILTER (WHERE unread_flag = 1)::int AS unread_count
+        FROM pairs GROUP BY counterpart_id
+      )
+      SELECT r.counterpart_id, r.body AS last_message, r.created_at AS last_at, s.unread_count
+      FROM ranked r
+      JOIN summary s ON s.counterpart_id = r.counterpart_id
+      WHERE r.rn = 1
+      ORDER BY r.created_at DESC
+    `);
+    return (rows as any).rows ?? [];
+  }
+
+  async markInternalMessagesRead(userId: number, withUserId?: number): Promise<void> {
+    if (withUserId) {
+      await db
+        .update(internalMessages)
+        .set({ readAt: new Date() } as any)
+        .where(
+          and(
+            eq(internalMessages.recipientUserId, userId),
+            eq(internalMessages.senderUserId, withUserId),
+          ),
+        );
+      return;
+    }
+    await db
+      .update(internalMessages)
+      .set({ readAt: new Date() } as any)
+      .where(eq(internalMessages.recipientUserId, userId));
+  }
+
+  // Calendar Events
+  async createCalendarEvent(event: InsertCalendarEvent): Promise<CalendarEvent> {
+    const result = await db.insert(calendarEvents).values(event as any).returning();
+    return result[0];
+  }
+
+  async getCalendarEventsForUser(userId: number, from?: Date, to?: Date): Promise<CalendarEvent[]> {
+    const conditions: any[] = [or(sql`${userId} = ANY(calendar_events.invitee_user_ids)`, eq(calendarEvents.createdBy, userId))];
+    if (from) conditions.push(gte(calendarEvents.startsAt, from));
+    if (to) conditions.push(lte(calendarEvents.startsAt, to));
+    return db
+      .select()
+      .from(calendarEvents)
+      .where(and(...conditions))
+      .orderBy(asc(calendarEvents.startsAt));
+  }
+
+  async updateCalendarEvent(id: number, patch: Partial<InsertCalendarEvent>): Promise<CalendarEvent> {
+    const result = await db.update(calendarEvents).set(patch as any).where(eq(calendarEvents.id, id)).returning();
+    return result[0];
+  }
+
+  async deleteCalendarEvent(id: number): Promise<void> {
+    await db.delete(calendarEvents).where(eq(calendarEvents.id, id));
+  }
+
+  async getCalendarEventById(id: number): Promise<CalendarEvent | undefined> {
+    const rows = await db.select().from(calendarEvents).where(eq(calendarEvents.id, id)).limit(1);
+    return rows[0];
   }
 
   // User Goals
@@ -3578,6 +3910,120 @@ export class DatabaseStorage implements IStorage {
       failed: Number(row.failed || 0),
       talkSeconds: Math.round(talkMs / 1000),
     };
+  }
+
+  // Opportunity Parties
+  async getOpportunityParties(opportunityId: number): Promise<OpportunityParty[]> {
+    return db.select().from(opportunityParties).where(eq(opportunityParties.opportunityId, opportunityId)).orderBy(asc(opportunityParties.createdAt));
+  }
+  async getOpportunityPartyById(id: number): Promise<OpportunityParty | undefined> {
+    const result = await db.select().from(opportunityParties).where(eq(opportunityParties.id, id)).limit(1);
+    return result[0];
+  }
+  async createOpportunityParty(party: InsertOpportunityParty): Promise<OpportunityParty> {
+    const result = await db.insert(opportunityParties).values(party as any).returning();
+    return result[0];
+  }
+  async updateOpportunityParty(id: number, patch: Partial<InsertOpportunityParty>): Promise<OpportunityParty> {
+    const result = await db.update(opportunityParties).set(patch as any).where(eq(opportunityParties.id, id)).returning();
+    return result[0];
+  }
+  async deleteOpportunityParty(id: number): Promise<void> {
+    await db.delete(opportunityParties).where(eq(opportunityParties.id, id));
+  }
+
+  // Public Listings
+  async getPublicListingBySlug(slug: string): Promise<PublicListing | undefined> {
+    const result = await db.select().from(publicListings).where(eq(publicListings.slug, slug)).limit(1);
+    return result[0];
+  }
+  async getPublicListingByToken(token: string): Promise<PublicListing | undefined> {
+    const result = await db.select().from(publicListings).where(eq(publicListings.token, token)).limit(1);
+    return result[0];
+  }
+  async getPublicListingById(id: number): Promise<PublicListing | undefined> {
+    const result = await db.select().from(publicListings).where(eq(publicListings.id, id)).limit(1);
+    return result[0];
+  }
+  async getPublicListingsByOpportunity(opportunityId: number): Promise<PublicListing[]> {
+    return db.select().from(publicListings).where(eq(publicListings.opportunityId, opportunityId)).orderBy(desc(publicListings.createdAt));
+  }
+  async createPublicListing(listing: InsertPublicListing): Promise<PublicListing> {
+    const result = await db.insert(publicListings).values(listing as any).returning();
+    return result[0];
+  }
+  async updatePublicListing(id: number, patch: Partial<InsertPublicListing>): Promise<PublicListing> {
+    const result = await db.update(publicListings).set(patch as any).where(eq(publicListings.id, id)).returning();
+    return result[0];
+  }
+  async incrementListingViews(id: number): Promise<void> {
+    await db.update(publicListings).set({ viewCount: sql`${publicListings.viewCount} + 1` }).where(eq(publicListings.id, id));
+  }
+  async deletePublicListing(id: number): Promise<void> {
+    await db.delete(publicListings).where(eq(publicListings.id, id));
+  }
+
+  // Buyer Inquiries
+  async getBuyerInquiries(opportunityId: number): Promise<BuyerInquiry[]> {
+    return db.select().from(buyerInquiries).where(eq(buyerInquiries.opportunityId, opportunityId)).orderBy(desc(buyerInquiries.createdAt));
+  }
+  async getBuyerInquiryById(id: number): Promise<BuyerInquiry | undefined> {
+    const result = await db.select().from(buyerInquiries).where(eq(buyerInquiries.id, id)).limit(1);
+    return result[0];
+  }
+  async getBuyerInquiriesByListing(listingId: number): Promise<BuyerInquiry[]> {
+    return db.select().from(buyerInquiries).where(eq(buyerInquiries.listingId, listingId)).orderBy(desc(buyerInquiries.createdAt));
+  }
+  async createBuyerInquiry(inquiry: InsertBuyerInquiry): Promise<BuyerInquiry> {
+    const result = await db.insert(buyerInquiries).values(inquiry as any).returning();
+    return result[0];
+  }
+  async updateBuyerInquiry(id: number, patch: Partial<InsertBuyerInquiry>): Promise<BuyerInquiry> {
+    const result = await db.update(buyerInquiries).set(patch as any).where(eq(buyerInquiries.id, id)).returning();
+    return result[0];
+  }
+
+  // Opportunity Events
+  async getOpportunityEvents(opportunityId: number, limit: number = 100): Promise<OpportunityEvent[]> {
+    return db.select().from(opportunityEvents).where(eq(opportunityEvents.opportunityId, opportunityId)).orderBy(desc(opportunityEvents.createdAt)).limit(limit);
+  }
+  async createOpportunityEvent(event: InsertOpportunityEvent): Promise<OpportunityEvent> {
+    const result = await db.insert(opportunityEvents).values(event as any).returning();
+    return result[0];
+  }
+
+  // Buyer Offers
+  async getBuyerOffersByOpportunity(opportunityId: number): Promise<BuyerOffer[]> {
+    return db
+      .select()
+      .from(buyerOffers)
+      .where(eq(buyerOffers.opportunityId, opportunityId))
+      .orderBy(desc(buyerOffers.createdAt));
+  }
+  async getBuyerOfferById(id: number): Promise<BuyerOffer | undefined> {
+    const result = await db.select().from(buyerOffers).where(eq(buyerOffers.id, id)).limit(1);
+    return result[0];
+  }
+  async createBuyerOffer(offer: InsertBuyerOffer): Promise<BuyerOffer> {
+    const result = await db.insert(buyerOffers).values(offer as any).returning();
+    return result[0];
+  }
+  async updateBuyerOffer(id: number, patch: Partial<InsertBuyerOffer>): Promise<BuyerOffer> {
+    const result = await db
+      .update(buyerOffers)
+      .set({ ...(patch as any), updatedAt: new Date() })
+      .where(eq(buyerOffers.id, id))
+      .returning();
+    return result[0];
+  }
+
+  // Tasks
+  async getTasksByRelatedEntity(entityType: string, entityId: number): Promise<Task[]> {
+    return db
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.relatedEntityType, entityType), eq(tasks.relatedEntityId, entityId)))
+      .orderBy(desc(tasks.createdAt));
   }
 }
 

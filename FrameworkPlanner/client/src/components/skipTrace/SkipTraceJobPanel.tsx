@@ -9,6 +9,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import { ExternalLink, RefreshCw } from "lucide-react";
+import { SkipTraceProviderState, SkipTraceScoreBreakdown } from "@/components/skipTrace/SkipTraceScoreBreakdown";
 
 type EntityType = "lead" | "opportunity";
 type Mode = "provider" | "public_research" | "both";
@@ -40,43 +41,6 @@ function statusTone(status: string) {
   if (s === "running") return "bg-blue-500/10 text-blue-700 border-blue-500/20";
   if (s === "queued") return "bg-slate-500/10 text-slate-700 border-slate-500/20";
   return "bg-muted";
-}
-
-function confidenceTone(confidence: string) {
-  const c = confidence.toLowerCase();
-  if (c === "high") return "bg-emerald-500/10 text-emerald-700 border-emerald-500/20";
-  if (c === "medium") return "bg-amber-500/10 text-amber-800 border-amber-500/20";
-  if (c === "low") return "bg-red-500/10 text-red-700 border-red-500/20";
-  return "bg-muted";
-}
-
-function safeNumber(v: unknown): number | null {
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  if (typeof v === "string") {
-    const n = parseFloat(v);
-    if (Number.isFinite(n)) return n;
-  }
-  return null;
-}
-
-function parseReasons(factorsJson: unknown): { label: string; points: number }[] {
-  const factors = Array.isArray(factorsJson) ? factorsJson : [];
-  const rows = factors
-    .map((f: any) => ({
-      label: toStr(f?.label || f?.key).trim(),
-      points: safeNumber(f?.points) ?? 0,
-    }))
-    .filter((r) => r.label && r.points > 0)
-    .sort((a, b) => (b.points - a.points) || a.label.localeCompare(b.label));
-  const out: { label: string; points: number }[] = [];
-  const seen = new Set<string>();
-  for (const r of rows) {
-    if (seen.has(r.label)) continue;
-    seen.add(r.label);
-    out.push(r);
-    if (out.length >= 8) break;
-  }
-  return out;
 }
 
 export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: number; className?: string }) {
@@ -216,11 +180,9 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
   }, [merged?.contacts?.emails, merged?.contacts?.phones, providerResult?.emails, providerResult?.phones]);
 
   const hasLowConfidence = String(scoreSnapshot?.confidence || "").toLowerCase() === "low";
-  const reasons = useMemo(() => parseReasons(scoreSnapshot?.factorsJson), [scoreSnapshot?.factorsJson]);
-  const scoreTotal = typeof scoreSnapshot?.scoreTotal === "number" ? scoreSnapshot.scoreTotal : safeNumber(scoreSnapshot?.scoreTotal) ?? null;
+  const scoreTotal = typeof scoreSnapshot?.scoreTotal === "number" ? scoreSnapshot.scoreTotal : null;
   const urgencyTier = toStr(scoreSnapshot?.urgencyTier).trim() || null;
   const confidence = toStr(scoreSnapshot?.confidence).trim() || null;
-  const reasonSummary = toStr(scoreSnapshot?.reasonSummary).trim() || null;
 
   const latestEvent = useMemo(() => {
     if (!events.length) return null;
@@ -235,12 +197,38 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
   const modeLabel = formatMode(toStr(job?.mode) || mode);
   const jobStatus = toStr(job?.status) || (createJobMutation.data?.status ? toStr(createJobMutation.data.status) : "");
   const isQueued = jobId ? jobStatus.toLowerCase() === "queued" : false;
-  const canRun = configQuery.data?.enabled === false ? false : true;
+  const skipTraceDisabled = configQuery.data?.enabled === false;
+  const configLoading = configQuery.isLoading || configQuery.isFetching;
+  const configError = configQuery.isError;
+  const canRun = !skipTraceDisabled && !configLoading && !configError;
   const allowedModes = Array.isArray(configQuery.data?.allowedModes) ? (configQuery.data.allowedModes as string[]) : null;
 
   return (
     <div className={props.className}>
       <div className="flex flex-col gap-3">
+        {configError ? (
+          <Alert variant="destructive">
+            <AlertTitle>Skip Trace configuration unavailable</AlertTitle>
+            <AlertDescription>
+              Could not load the skip trace configuration. Check your connection and retry.
+            </AlertDescription>
+          </Alert>
+        ) : skipTraceDisabled ? (
+          <Alert>
+            <AlertTitle>Skip Trace is not enabled</AlertTitle>
+            <AlertDescription>
+              The skip trace feature is disabled for this account, so lookups are blocked. An administrator needs to
+              enable the skip_trace feature flag (FEATURE_SKIP_TRACE) in the deployment configuration before lookups
+              can run. Nothing was sent or charged.
+            </AlertDescription>
+          </Alert>
+        ) : configLoading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <RefreshCw className="h-4 w-4 animate-spin" />
+            Checking skip trace configuration…
+          </div>
+        ) : null}
+
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <div className="text-sm font-medium">Skip Trace</div>
@@ -257,7 +245,12 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
           </div>
           <div className="flex flex-wrap items-center justify-start gap-2 sm:justify-end">
             <Select value={mode} onValueChange={(v) => setMode(v as Mode)}>
-              <SelectTrigger className="h-9 w-full sm:w-[160px]" data-testid="select-skip-trace-mode" disabled={!canRun}>
+              <SelectTrigger
+                className="h-9 w-full sm:w-[160px]"
+                data-testid="select-skip-trace-mode"
+                disabled={!canRun}
+                title={skipTraceDisabled ? "Skip Trace is disabled for this account" : ""}
+              >
                 <SelectValue placeholder="Mode" />
               </SelectTrigger>
               <SelectContent>
@@ -277,6 +270,7 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
               className="h-9 font-semibold"
               onClick={() => (isQueued ? runJobMutation.mutate() : createJobMutation.mutate())}
               disabled={canRun ? (isQueued ? runJobMutation.isPending || !jobId : createJobMutation.isPending || props.entityId <= 0) : true}
+              title={skipTraceDisabled ? "Skip Trace is disabled for this account" : ""}
               data-testid="button-skip-trace-run"
             >
               {isQueued
@@ -316,6 +310,8 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
           </Alert>
         ) : null}
 
+        <SkipTraceProviderState result={providerResult} />
+
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
           <div className="rounded-md border p-3 lg:col-span-1">
             <div className="text-xs text-muted-foreground">Contacts</div>
@@ -348,60 +344,17 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
                   )}
                 </div>
               </div>
-              {typeof providerResult?.costCents === "number" ? (
-                <div className="pt-1 text-xs text-muted-foreground">
-                  Provider cost: ${(providerResult.costCents / 100).toFixed(2)}
-                </div>
-              ) : null}
             </div>
           </div>
 
-          <div className="rounded-md border p-3 lg:col-span-2">
-            <div className="flex items-center justify-between gap-3">
-              <div className="text-xs text-muted-foreground">Score</div>
-              {confidence ? (
-                <Badge variant="outline" className={confidenceTone(confidence)}>
-                  {confidence}
-                </Badge>
-              ) : null}
-            </div>
-
-            <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div className="rounded-md bg-muted/20 p-3">
-                <div className="text-xs text-muted-foreground">Total</div>
-                <div className="mt-1 text-2xl font-semibold">{scoreTotal === null ? "—" : scoreTotal}</div>
-                <div className="text-xs text-muted-foreground">0–100</div>
-              </div>
-              <div className="rounded-md bg-muted/20 p-3">
-                <div className="text-xs text-muted-foreground">Urgency</div>
-                <div className="mt-1 text-lg font-semibold">{urgencyTier || "—"}</div>
-              </div>
-              <div className="rounded-md bg-muted/20 p-3">
-                <div className="text-xs text-muted-foreground">Evidence</div>
-                <div className="mt-1 text-lg font-semibold">{evidence.length.toLocaleString()}</div>
-              </div>
-            </div>
-
-            {reasons.length || reasonSummary ? (
-              <div className="mt-3 space-y-2">
-                <div className="text-xs text-muted-foreground">Reasons</div>
-                {reasons.length ? (
-                  <div className="grid grid-cols-1 gap-1 text-sm">
-                    {reasons.map((r) => (
-                      <div key={`${r.label}:${r.points}`} className="flex items-center justify-between gap-3">
-                        <span className="truncate">{r.label}</span>
-                        <span className="text-muted-foreground">+{r.points}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-sm">{reasonSummary}</div>
-                )}
-              </div>
-            ) : (
-              <div className="mt-3 text-sm text-muted-foreground">No score snapshot yet.</div>
-            )}
-          </div>
+          <SkipTraceScoreBreakdown
+            className="lg:col-span-2"
+            scoreTotal={scoreTotal}
+            confidence={confidence}
+            urgencyTier={urgencyTier}
+            factorsJson={scoreSnapshot?.factorsJson}
+            evidence={evidence}
+          />
         </div>
 
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">

@@ -19,11 +19,20 @@ function nowIso() {
 }
 
 function isDbConnectivityError(error: any): boolean {
+  if (!error) return false;
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
   if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
+  // The Neon serverless driver (WebSocket) surfaces DNS/connect failures as a
+  // message with a null code, so also match on the message and cause chain.
+  const message = String(error?.message || "");
+  if (/network error|non-101|socket hang up|connect econn|getaddrinfo|econnrefused|enotfound|etimedout/i.test(message)) return true;
+  const cause = error?.cause;
+  if (cause && cause !== error) return isDbConnectivityError(cause);
+  const nested = error?.errors;
+  if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
   return false;
 }
 

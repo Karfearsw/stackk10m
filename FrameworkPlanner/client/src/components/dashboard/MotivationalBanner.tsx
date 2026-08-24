@@ -3,18 +3,9 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { resolveBannerConfig, type BannerConfig } from "./bannerConfig";
 
-import banner1 from "@assets/d199ae88-7727-4c89-9b40-70b0d779ba41_1764244434725.png";
-import banner2 from "@assets/14cd99f0-0520-461a-9bab-2ef4d575e651 (1)_1764244434726.png";
-import banner3 from "@assets/fac383a9-5eb3-4f1f-879e-5a8035b6d3c7 (1)_1764244434728.png";
-import banner4 from "@assets/3963cd8c (1)_1764244434728.png";
-import banner5 from "@assets/b8ea7ed5-2ba5-44b1-a73d-b1b73ea26b3d (1)_1764244434728.png";
-import banner6 from "@assets/9402bce5-3c31-480a-b204-8a0d501032c7 (1)_1764244434729.png";
-import banner7 from "@assets/a9abe541-7697-4dd5-8a56-3445face39e4_1764244434729.png";
-
-const defaultBannerImages = [banner1, banner2, banner3, banner4, banner5, banner6, banner7];
-
-const motivationalQuotes = [
+const defaultQuotes = [
   { quote: "Every property has a story. Make yours a success.", author: "Real Estate Wisdom" },
   { quote: "The best investment on Earth is earth.", author: "Louis Glickman" },
   { quote: "Don't wait to buy real estate. Buy real estate and wait.", author: "Will Rogers" },
@@ -41,9 +32,18 @@ export function MotivationalBanner() {
   });
 
   const showQuotes = userData?.showBannerQuotes !== false;
-  const customImages = userData?.customBannerImages || [];
-  
-  const allImages = [...defaultBannerImages, ...customImages];
+  const customQuotes = Array.isArray(userData?.customBannerQuotes) ? userData.customBannerQuotes : [];
+
+  const bannerConfig = resolveBannerConfig(
+    userData?.bannerConfig as BannerConfig | undefined,
+    userData?.customBannerImages,
+  );
+  // Hidden when the user disabled the banner or removed every active image.
+  if (!bannerConfig.enabled) return null;
+  const allImages = bannerConfig.images.filter((img) => img.active).map((img) => img.url);
+  if (allImages.length === 0) return null;
+
+  const quotes = customQuotes.length > 0 ? customQuotes : defaultQuotes;
 
   useEffect(() => {
     const imageInterval = setInterval(() => {
@@ -58,14 +58,14 @@ export function MotivationalBanner() {
   }, [allImages.length]);
 
   useEffect(() => {
-    if (!showQuotes) return;
-    
+    if (!showQuotes || quotes.length === 0) return;
+
     const quoteInterval = setInterval(() => {
-      setCurrentQuoteIndex((prev) => (prev + 1) % motivationalQuotes.length);
+      setCurrentQuoteIndex((prev) => (prev + 1) % quotes.length);
     }, 8000);
 
     return () => clearInterval(quoteInterval);
-  }, [showQuotes]);
+  }, [showQuotes, quotes.length]);
 
   const goToPrevious = () => {
     setIsTransitioning(true);
@@ -83,14 +83,14 @@ export function MotivationalBanner() {
     }, 300);
   };
 
-  const currentQuote = motivationalQuotes[currentQuoteIndex];
+  const currentQuote = quotes[currentQuoteIndex];
 
   return (
     <div className="relative w-full overflow-hidden rounded-xl bg-gradient-to-r from-black via-gray-900 to-black mb-6" data-testid="motivational-banner">
-      {showQuotes && (
+      {showQuotes && quotes.length > 0 && (
         <div className="px-4 md:px-6 py-4 border-b border-white/10">
           <div className="max-w-3xl">
-            <p 
+            <p
               className="text-white text-lg md:text-xl font-semibold italic leading-relaxed transition-all duration-500"
               key={currentQuoteIndex}
             >
@@ -102,7 +102,7 @@ export function MotivationalBanner() {
           </div>
         </div>
       )}
-      
+
       <div className="relative h-48 md:h-56 lg:h-64 overflow-hidden">
         <div
           className={`absolute inset-0 transition-opacity duration-500 ${isTransitioning ? "opacity-0" : "opacity-100"}`}

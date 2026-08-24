@@ -4,12 +4,12 @@ import dotenv from "dotenv";
 
 const frameworkRoot = path.resolve(import.meta.dirname, "..");
 
-const candidateFiles = [
-  path.join(frameworkRoot, ".env.local"),
-  path.join(frameworkRoot, ".env"),
-];
-
-for (const filePath of candidateFiles) {
-  if (!fs.existsSync(filePath)) continue;
-  dotenv.config({ path: filePath, override: false });
+// Load .env first (base defaults), then .env.local (local overrides).
+const baseFile = path.join(frameworkRoot, ".env");
+if (fs.existsSync(baseFile)) {
+  dotenv.config({ path: baseFile, override: true });
+}
+const localFile = path.join(frameworkRoot, ".env.local");
+if (fs.existsSync(localFile)) {
+  dotenv.config({ path: localFile, override: true });
 }

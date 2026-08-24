@@ -11,7 +11,15 @@ type AutomationEvent = {
   actorUserId: number | null;
   entity: { type: string; id: number | null };
   payload: unknown;
-};
+}
+
+const MAX_AUTOMATION_DEPTH = 5;
+
+export type DryRunResult = {
+  matched: boolean;
+  actions: { actionType: string; wouldRun: boolean; reason?: string; config?: Record<string, unknown> }[];
+  conditions: { field: string; op: string; value: string; met: boolean }[];
+};;
 
 function getByPath(root: any, path: string): any {
   const parts = String(path || "")
@@ -215,19 +223,68 @@ async function executeAction(event: AutomationEvent, automationName: string, act
     return { ok: out.ok, kind: "webhook", deliveryId: out.deliveryId, status: out.status, error: out.ok ? null : out.error };
   }
 
+
+  if (actionType === "tag.add") {
+    const tag = String(cfg.tag || "").trim();
+    if (!tag) return { ok: false, kind: "tag", error: "Missing tag name" };
+    return { ok: true, kind: "tag", operation: "add", tag, entityType: event.entity?.type, entityId: event.entity?.id };
+  }
+
+  if (actionType === "tag.remove") {
+    const tag = String(cfg.tag || "").trim();
+    if (!tag) return { ok: false, kind: "tag", error: "Missing tag name" };
+    return { ok: true, kind: "tag", operation: "remove", tag, entityType: event.entity?.type, entityId: event.entity?.id };
+  }
+
+  if (actionType === "stage.change") {
+    const stage = String(cfg.stage || "").trim();
+    if (!stage) return { ok: false, kind: "stage", error: "Missing target stage" };
+    if (event.entity?.type !== "opportunity") return { ok: false, kind: "stage", error: "Stage change only applies to opportunities" };
+    return { ok: true, kind: "stage", targetStage: stage, entityType: event.entity?.type, entityId: event.entity?.id };
+  }
+
+  if (actionType === "message.internal") {
+    const toUserId = await resolveTargetUserId(event, cfg);
+    if (!toUserId) return { ok: false, kind: "message", error: "Missing target user" };
+    const msgTitle = String(cfg.title || "Internal message").trim();
+    const msgBody = typeof cfg.description === "string" ? cfg.description : "";
+    try {
+      const msg = await storage.createInternalMessage({
+        senderUserId: typeof event.actorUserId === "number" ? event.actorUserId : 0,
+        recipientUserId: toUserId,
+        body: msgBody || msgTitle,
+        relatedType: event.entity?.type || null,
+        relatedId: typeof event.entity?.id === "number" ? event.entity.id : null,
+      } as any);
+      return { ok: true, kind: "message", messageId: (msg as any).id };
+    } catch (e: any) {
+      return { ok: false, kind: "message", error: String(e?.message || e) };
+    }
+  }
+
   return { ok: false, kind: "unknown", error: `Unknown actionType: ${actionType}` };
 }
 
-export async function dispatchAutomationEvent(input: Omit<AutomationEvent, "occurredAt"> & { occurredAt?: string }) {
+export async function dispatchAutomationEvent(input: Omit<AutomationEvent, "occurredAt"> & { occurredAt?: string; _automationDepth?: number; _sourceAutomationId?: number }) {
   const event: AutomationEvent = {
     ...input,
     occurredAt: input.occurredAt || new Date().toISOString(),
   };
 
+  const depth = typeof (input as any)._automationDepth === "number" ? (input as any)._automationDepth : 0;
+  if (depth >= MAX_AUTOMATION_DEPTH) return;
+
   const bundles = await storage.getEnabledAutomationsForEvent(event.teamId, event.eventType);
 
   for (const b of bundles) {
     const automation = b.automation;
+    const autoId = (automation as any).id as number;
+
+    // Loop protection: skip if this automation was the source of the current event
+    if (typeof (input as any)._sourceAutomationId === "number" && (input as any)._sourceAutomationId === autoId) {
+      continue;
+    }
+
     const conditionJson = b.condition ? String((b.condition as any).configJson || "") : "";
     const run = await storage.createAutomationRun({
       teamId: event.teamId,
@@ -268,3 +325,56 @@ export async function dispatchAutomationEvent(input: Omit<AutomationEvent, "occu
   }
 }
 
+export async function dryRunAutomation(
+  automationId: number,
+  teamId: number,
+  testEvent: Omit<AutomationEvent, "occurredAt"> & { occurredAt?: string }
+): Promise<DryRunResult> {
+  const bundles = await storage.getEnabledAutomationsForEvent(teamId, testEvent.eventType);
+  const bundle = bundles.find((b: any) => (b.automation as any).id === automationId);
+  if (!bundle) {
+    return { matched: false, actions: [], conditions: [] };
+  }
+
+  const event: AutomationEvent = {
+    ...testEvent,
+    occurredAt: testEvent.occurredAt || new Date().toISOString(),
+  };
+
+  const conditionJson = bundle.condition ? String((bundle.condition as any).configJson || "") : "";
+  const conditionResults: DryRunResult["conditions"] = [];
+  let matched = true;
+  if (conditionJson && conditionJson !== "{}") {
+    try {
+      const cfg = JSON.parse(conditionJson);
+      if (Array.isArray(cfg?.rules)) {
+        for (const rule of cfg.rules) {
+          const field = String(rule?.path || rule?.field || "").trim();
+          const op = String(rule?.operator || rule?.op || "eq").trim();
+          const value = rule?.value;
+          const met = evalRule(event, rule);
+          conditionResults.push({ field, op, value: String(value ?? ""), met });
+          if (!met) matched = false;
+        }
+      }
+    } catch {
+      matched = false;
+    }
+  }
+
+  const actionResults: DryRunResult["actions"] = [];
+  for (const a of bundle.actions || []) {
+    const actionType = String(a?.actionType || "").trim();
+    const rawCfg = String((a as any).configJson || "{}");
+    let cfg: Record<string, unknown> = {};
+    try { cfg = JSON.parse(rawCfg); } catch { cfg = {}; }
+    let wouldRun = matched;
+    let reason: string | undefined;
+    if (!matched) reason = "Conditions not met";
+    if (actionType === "webhook.post" && !cfg.url) { wouldRun = false; reason = "Missing webhook URL"; }
+    if ((actionType === "tag.add" || actionType === "tag.remove") && !cfg.tag) { wouldRun = false; reason = "Missing tag name"; }
+    if (actionType === "stage.change" && !cfg.stage) { wouldRun = false; reason = "Missing target stage"; }
+    actionResults.push({ actionType, wouldRun, reason, config: cfg });
+  }
+  return { matched, actions: actionResults, conditions: conditionResults };
+}

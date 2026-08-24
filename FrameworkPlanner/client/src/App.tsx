@@ -13,6 +13,7 @@ import Signup from "@/pages/signup";
 import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
 import MagicLink from "@/pages/magic-link";
+import PublicListing from "@/pages/public-listing";
 import { getAppVariant } from "@/lib/appVariant";
 
 const Dashboard = React.lazy(() => import("@/pages/dashboard"));
@@ -23,11 +24,14 @@ const PropertyDetail = React.lazy(() => import("@/pages/property-detail"));
 const Properties = React.lazy(() => import("@/pages/properties"));
 const Contracts = React.lazy(() => import("@/pages/contracts"));
 const ContractGenerator = React.lazy(() => import("@/pages/contract-generator"));
+const ContractWizard = React.lazy(() => import("@/pages/contract-wizard"));
+const ContractDetail = React.lazy(() => import("@/pages/contract-detail"));
 const Analytics = React.lazy(() => import("@/pages/analytics"));
 const Settings = React.lazy(() => import("@/pages/settings"));
 const Calculator = React.lazy(() => import("@/pages/calculator"));
 const Timesheet = React.lazy(() => import("@/pages/timesheet"));
 const Notifications = React.lazy(() => import("@/pages/notifications"));
+const MessagesPage = React.lazy(() => import("@/pages/messages"));
 const Playground = React.lazy(() => import("@/pages/playground"));
 const Buyers = React.lazy(() => import("@/pages/buyers"));
 const TasksPage = React.lazy(() => import("@/pages/tasks"));
@@ -96,6 +100,20 @@ function Router() {
       <Route path="/reset-password" component={() => <ResetPassword />} />
       <Route path="/magic-link" component={() => <MagicLink />} />
 
+      {/* Public Listing Route (no auth required) */}
+      <Route path="/l/:token" component={() => (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin" /></div>}>
+          <PublicListing />
+        </Suspense>
+      )} />
+
+      {/* Public E-Sign Route (no auth, token-authenticated) */}
+      <Route path="/sign/:token" component={() => (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin" /></div>}>
+          <SignContractPage />
+        </Suspense>
+      )} />
+
       {/* XP Routes */}
       <Route path="/xp" component={() => <ProtectedRoute component={XpLandingPage} />} />
       <Route path="/xp/experience" component={() => <ProtectedRoute component={XpExperiencePage} />} />
@@ -115,11 +133,14 @@ function Router() {
       <Route path="/opportunities" component={() => <ProtectedRoute component={Properties} />} />
       <Route path="/contracts" component={() => <ProtectedRoute component={Contracts} />} />
       <Route path="/contract-generator" component={() => <ProtectedRoute component={ContractGenerator} />} />
+      <Route path="/contracts/new" component={() => <ProtectedRoute component={ContractWizard} />} />
+      <Route path="/contracts/:id" component={() => <ProtectedRoute component={ContractDetail} />} />
       <Route path="/analytics" component={() => <ProtectedRoute component={Analytics} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
       <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
       <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />
       <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
+      <Route path="/messages" component={() => <ProtectedRoute component={MessagesPage} />} />
       <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />
       <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />
       <Route path="/tasks" component={() => <ProtectedRoute component={TasksPage} />} />
@@ -127,7 +148,6 @@ function Router() {
       <Route path="/today" component={() => <ProtectedRoute component={TodayPage} />} />
       <Route path="/contacts" component={() => <ProtectedRoute component={Contacts} />} />
       <Route path="/search" component={() => <ProtectedRoute component={SearchPage} />} />
-      <Route path="/sign-contract/:id" component={() => <ProtectedRoute component={SignContractPage} />} />
       <Route path="/field" component={() => <ProtectedRoute component={FieldModePage} />} />
       <Route path="/phone" component={() => <ProtectedRoute component={PhoneWorkspace} />} />
       <Route path="/dialer" component={() => <ProtectedRoute component={Dialer} />} />

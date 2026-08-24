@@ -405,12 +405,12 @@ export function DealCalculator({
               </div>
               <div className="space-y-2">
                 <Label>Criteria template</Label>
-                <Select value={values.templateId || ""} onValueChange={(v) => set("templateId", v || null)}>
+                <Select value={values.templateId || "default"} onValueChange={(v) => set("templateId", v === "default" ? null : v)}>
                   <SelectTrigger>
                     <SelectValue placeholder="Default criteria" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Default</SelectItem>
+                    <SelectItem value="default">Default</SelectItem>
                     {templates.map((t) => (
                       <SelectItem key={String(t.id)} value={String(t.id)}>
                         {String(t.name || `Template ${t.id}`)}
