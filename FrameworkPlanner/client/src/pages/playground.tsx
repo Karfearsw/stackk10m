@@ -138,6 +138,35 @@ export default function Playground() {
     hydrate();
   }, [context.address, context.leadId, context.propertyId]);
 
+  const hasContext = Boolean(context.address || context.leadId || context.propertyId || context.sessionId);
+
+  // Resume the most recent saved session when arriving without any context
+  // (e.g. via the dashboard "Resume Playground" action).
+  useEffect(() => {
+    if (hasContext) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/playground/sessions/recent?limit=1", { credentials: "include" });
+        if (!res.ok) return;
+        const items = await res.json();
+        const latest = Array.isArray(items) ? items[0] : null;
+        if (!latest || cancelled) return;
+        const addr = String(latest.address || "").trim();
+        if (addr) {
+          setContext({ address: addr, leadId: null, propertyId: null, sessionId: Number(latest.id) || null });
+          setAddressInput(addr);
+          setResolvedAddress(addr);
+        }
+      } catch {
+        // stay in the intentional empty state
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [hasContext]);
+
   const voiceParseMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/ai/voice/parse", { transcript: voiceTranscript });

@@ -4,6 +4,7 @@ import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useLocation } from "wouter";
+import { QueryError } from "@/components/ui/query-state";
 
 function useQueryParam(name: string) {
   const [value, setValue] = useState<string>("");
@@ -20,10 +21,11 @@ export default function SearchPage() {
   const [page, setPage] = useState(0);
   const limit = 50;
   const offset = page * limit;
-  const { data, isFetching } = useQuery<any>({
+  const { data, isFetching, isError, refetch } = useQuery<any>({
     queryKey: ["/api/search", q, limit, offset],
     queryFn: async () => {
       const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=${limit}&offset=${offset}`);
+      if (!res.ok) throw new Error("Search failed");
       return res.json();
     },
     enabled: q.trim().length >= 2,
@@ -46,6 +48,11 @@ export default function SearchPage() {
         <p className="text-sm text-muted-foreground">Query: <span className="font-medium">{q}</span></p>
       ) : (
         <p className="text-sm text-muted-foreground">Type at least 2 characters to search.</p>
+      )}
+      {isError && (
+        <div className="rounded-md border border-destructive/40">
+          <QueryError message="The search didn't come back. Please try again." onRetry={() => refetch()} />
+        </div>
       )}
       <div className="grid gap-2">
         {(data?.results || []).map((item: any) => (

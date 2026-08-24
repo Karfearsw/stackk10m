@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Copy, ExternalLink, Loader2, Maximize2, RefreshCw, Search, Trash2 } from "lucide-react";
+import { getProxiedUrl } from "@/lib/proxy-url";
 import { useToast } from "@/hooks/use-toast";
 
 type BrowserStatus = "idle" | "loading" | "loaded" | "maybe_blocked";
@@ -174,7 +175,7 @@ export function ResearchHub(props: {
     if (longLoadTimerRef.current) window.clearTimeout(longLoadTimerRef.current);
     longLoadTimerRef.current = window.setTimeout(() => {
       setStatus((s) => (s === "loading" ? "maybe_blocked" : s));
-    }, 4000);
+    }, 8000);
     return () => {
       if (longLoadTimerRef.current) window.clearTimeout(longLoadTimerRef.current);
       longLoadTimerRef.current = null;
@@ -457,10 +458,11 @@ export function ResearchHub(props: {
                               <iframe
                                 key={`fullscreen:${iframeKey}`}
                                 title="Playground browser fullscreen"
-                                src={srcUrl}
+                                src={getProxiedUrl(srcUrl)}
                                 className="h-full w-full"
                                 referrerPolicy="no-referrer"
                                 onLoad={() => setStatus("loaded")}
+                                onError={() => setStatus("maybe_blocked")}
                               />
                             ) : null}
                           </div>
@@ -471,13 +473,18 @@ export function ResearchHub(props: {
                 </Dialog>
 
                 {props.browserMode === "iframe" ? (
-                  <div className="rounded-md border bg-amber-50 text-amber-950 px-4 py-3 text-sm">
-                    <div className="font-medium">Most sites block embedded viewing</div>
-                    <div className="text-amber-900/80">
-                      For security reasons, sites like Zillow, Redfin, and county GIS portals don’t allow embedding. Use the “Open in New Tab” button above to view
-                      them directly.
+                  status === "maybe_blocked" ? (
+                    <div className="rounded-md border bg-amber-50 text-amber-950 px-4 py-3 text-sm">
+                      <div className="font-medium">Page may not display inline</div>
+                      <div className="text-amber-900/80">
+                        This page could not be rendered through the in-app browser. Try "Open in New Tab" or check if the site is available.
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="rounded-md border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+                      In-app browser is active. Pages are proxied to bypass embedding restrictions. Use "Open in New Tab" if a page fails to load.
+                    </div>
+                  )
                 ) : (
                   <div className="rounded-md border bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
                     External first is enabled. Links and searches open in a new tab while the Playground tracks your current URL for notes and comps.
@@ -529,10 +536,11 @@ export function ResearchHub(props: {
                       <iframe
                         key={iframeKey}
                         title="Playground browser"
-                        src={srcUrl}
+                        src={getProxiedUrl(srcUrl)}
                         className="h-full w-full"
                         referrerPolicy="no-referrer"
                         onLoad={() => setStatus("loaded")}
+                        onError={() => setStatus("maybe_blocked")}
                       />
                     ) : null}
                   </div>

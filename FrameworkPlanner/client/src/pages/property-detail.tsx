@@ -2,10 +2,10 @@ import React from "react";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -28,7 +28,16 @@ import {
   Lightbulb,
   FolderOpen,
   Building2,
-  Plus
+  Plus,
+  RefreshCw,
+  Users,
+  Share2,
+  BarChart3,
+  Clock,
+  Tag,
+  Target,
+  TrendingUp,
+  Eye,
 } from "lucide-react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -57,6 +66,8 @@ export default function PropertyDetail() {
   });
   const property = data?.property;
   const lead = data?.lead;
+  const errorStatus = error instanceof Error ? parseInt(String(error.message).split(":")[0], 10) : null;
+  const isNotFound = errorStatus === 404;
   const num = (v: unknown) => (typeof v === "string" ? (Number.isFinite(parseFloat(v)) ? parseFloat(v) : 0) : typeof v === "number" ? (Number.isFinite(v) ? v : 0) : 0);
   const { data: internalComps } = useQuery<any>({
     queryKey: ["/api/opportunities", id, "comps-snapshots"],
@@ -93,6 +104,55 @@ export default function PropertyDetail() {
     },
   });
 
+  const { data: parties = [] } = useQuery<any[]>({
+    queryKey: ["/api/opportunities", id, "parties"],
+    enabled: !!id,
+    queryFn: async () => {
+      const res = await fetch(`/api/opportunities/${id}/parties`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load parties");
+      return res.json();
+    },
+  });
+
+  const { data: listings = [] } = useQuery<any[]>({
+    queryKey: ["/api/opportunities", id, "listings"],
+    enabled: !!id,
+    queryFn: async () => {
+      const res = await fetch(`/api/opportunities/${id}/listings`, { credentials: "include" });
+      if (!res.ok) {
+        if (res.status === 404) return [];
+        throw new Error("Failed to load listings");
+      }
+      return res.json();
+    },
+  });
+
+  const { data: inquiries = [] } = useQuery<any[]>({
+    queryKey: ["/api/opportunities", id, "inquiries"],
+    enabled: !!id,
+    queryFn: async () => {
+      const res = await fetch(`/api/opportunities/${id}/inquiries`, { credentials: "include" });
+      if (!res.ok) {
+        if (res.status === 404) return [];
+        throw new Error("Failed to load inquiries");
+      }
+      return res.json();
+    },
+  });
+
+  const { data: opportunityEvents = [] } = useQuery<any[]>({
+    queryKey: ["/api/opportunities", id, "events"],
+    enabled: !!id,
+    queryFn: async () => {
+      const res = await fetch(`/api/opportunities/${id}/events?limit=100`, { credentials: "include" });
+      if (!res.ok) {
+        if (res.status === 404) return [];
+        throw new Error("Failed to load events");
+      }
+      return res.json();
+    },
+  });
+
   const recomputeMatchesMutation = useMutation({
     mutationFn: async () => {
       const res = await fetch(`/api/opportunities/${id}/buyer-matches/recompute`, { method: "POST", credentials: "include" });
@@ -124,6 +184,54 @@ export default function PropertyDetail() {
       toast({ title: "Buyer assigned" });
     },
     onError: (e: any) => toast({ title: e?.message || "Failed to assign buyer", variant: "destructive" }),
+  });
+
+  const stageChangeMutation = useMutation({
+    mutationFn: async ({ stage, notes }: { stage: string; notes?: string }) => {
+      const res = await fetch(`/api/opportunities/${id}/stage-change`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stage, notes }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error((json as any).message || "Failed to change stage");
+      }
+      return res.json();
+    },
+    onSuccess: (result: any) => {
+      const newStage = result?.newStage || result?.property?.stage;
+      const oldStage = result?.oldStage || "";
+      queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "events"] });
+      toast({
+        title: "Stage Updated",
+        description: `Moved from "${oldStage}" to "${newStage}"`,
+      });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to change stage", variant: "destructive" }),
+  });
+
+  const inquiryStatusMutation = useMutation({
+    mutationFn: async ({ inquiryId, status }: { inquiryId: number; status: string }) => {
+      const res = await fetch(`/api/inquiries/${inquiryId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error((json as any).message || "Failed to update inquiry");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "inquiries"] });
+      toast({ title: "Inquiry status updated" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to update", variant: "destructive" }),
   });
 
   const { data: buyers = [] } = useQuery<any[]>({
@@ -170,6 +278,26 @@ export default function PropertyDetail() {
 
   const [companyDialogOpen, setCompanyDialogOpen] = React.useState(false);
   const [companyLinkForm, setCompanyLinkForm] = React.useState({ companyId: "", role: "" });
+  const [stageDialogOpen, setStageDialogOpen] = React.useState(false);
+  const [stageDialogStage, setStageDialogStage] = React.useState("");
+  const [stageDialogNotes, setStageDialogNotes] = React.useState("");
+  const [listingCreateOpen, setListingCreateOpen] = React.useState(false);
+  const [listingForm, setListingForm] = React.useState({
+    title: "",
+    description: "",
+    visibility: "link_only",
+    password: "",
+    slug: "",
+    exposeAddress: false,
+    exposeComps: false,
+    exposeFinancials: false,
+    exposeDocs: false,
+    contactName: "",
+    contactEmail: "",
+    contactPhone: "",
+  });
+  const [noteDialogOpen, setNoteDialogOpen] = React.useState(false);
+  const [noteText, setNoteText] = React.useState("");
 
   const linkCompanyMutation = useMutation({
     mutationFn: async () => {
@@ -206,6 +334,50 @@ export default function PropertyDetail() {
     onError: (e: any) => toast({ title: e?.message || "Upload failed", variant: "destructive" }),
   });
 
+  if (isLoading) {
+    return (
+      <Layout>
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+        </div>
+      </Layout>
+    );
+  }
+
+  if (isNotFound) {
+    return (
+      <Layout>
+        <div className="flex flex-col items-center justify-center min-h-[400px] text-center">
+          <div className="rounded-full bg-muted p-4 mb-4">
+            <svg className="h-10 w-10 text-muted-foreground" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-semibold mb-2">Opportunity Not Found</h2>
+          <p className="text-muted-foreground mb-4">The opportunity you are looking for does not exist or may have been removed.</p>
+          <a href="/opportunities" className="text-primary hover:underline">Back to Opportunities</a>
+        </div>
+      </Layout>
+    );
+  }
+
+  if (error && !isLoading) {
+    return (
+      <Layout>
+        <div className="flex flex-col items-center justify-center min-h-[400px] text-center">
+          <div className="rounded-full bg-destructive/10 p-4 mb-4">
+            <svg className="h-10 w-10 text-destructive" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+            </svg>
+          </div>
+          <h2 className="text-xl font-semibold mb-2">Failed to Load Opportunity</h2>
+          <p className="text-muted-foreground mb-4">An error occurred while loading this opportunity. Please try again.</p>
+          <a href="/opportunities" className="text-primary hover:underline">Back to Opportunities</a>
+        </div>
+      </Layout>
+    );
+  }
+
   return (
     <Layout>
       <div className="flex flex-col gap-6">
@@ -219,16 +391,31 @@ export default function PropertyDetail() {
               <span>/</span>
               <span>O-{id || "—"}</span>
             </div>
-            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
-              {property?.address || "—"}
+             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
+               {property?.address || "—"}
+               {property?.opportunityType && property.opportunityType !== "acquisition" && (
+                <Badge variant="outline" className="text-xs">
+                  {property.opportunityType.replace("_", " ")}
+                </Badge>
+              )}
+              {property?.stage && (
+                <StageBadge stage={property.stage} />
+              )}
               <Badge variant="default" className="bg-accent text-accent-foreground hover:bg-accent/80">{property?.status ? property.status.replace("_", " ") : "—"}</Badge>
             </h1>
             <div className="flex items-center gap-2 text-muted-foreground">
               <MapPin className="h-4 w-4" />
               {property ? `${property.city || ""}, ${property.state || ""} ${property.zipCode || ""}` : ""}
+              {property?.nextActionAt && (
+                <>
+                  <span>•</span>
+                  <Clock className="h-4 w-4" />
+                  <span>Next action: {new Date(property.nextActionAt).toLocaleDateString()}</span>
+                </>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               variant="outline"
               onClick={() => {
@@ -255,9 +442,9 @@ export default function PropertyDetail() {
               <Calculator className="mr-2 h-4 w-4" />
               Run Comps
             </Button>
-            <Button variant="outline" onClick={() => property?.id && setLocation(`/contracts?tab=create&propertyId=${property.id}`)} disabled={!property?.id}>
+            <Button variant="outline" onClick={() => property?.id && setLocation(`/contract-generator?propertyId=${property.id}`)} disabled={!property?.id}>
               <FileText className="mr-2 h-4 w-4" />
-              Generate Offer
+              Generate Contract
             </Button>
             <Button
               onClick={() => {
@@ -280,16 +467,32 @@ export default function PropertyDetail() {
               <CheckCircle2 className="mr-2 h-4 w-4" />
               Tasks
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                if (!property?.id) return;
-                setLocation(calendarUrl({ relatedEntityType: "opportunity", relatedEntityId: property.id }));
-              }}
-              disabled={!property?.id}
-            >
-              <Calendar className="mr-2 h-4 w-4" />
-              Calendar
+             <Button
+               variant="outline"
+               onClick={() => {
+                 if (!property?.id) return;
+                 setLocation(calendarUrl({ relatedEntityType: "opportunity", relatedEntityId: property.id }));
+               }}
+               disabled={!property?.id}
+             >
+               <Calendar className="mr-2 h-4 w-4" />
+               Calendar
+             </Button>
+            <Button variant="outline" onClick={() => setStageDialogOpen(true)} disabled={!property?.id}>
+              <Tag className="mr-2 h-4 w-4" />
+              Move Stage
+            </Button>
+            <Button variant="outline" onClick={() => setListingCreateOpen(true)} disabled={!property?.id}>
+              <Share2 className="mr-2 h-4 w-4" />
+              Create Public Listing
+            </Button>
+            <Button variant="outline" onClick={() => setNoteDialogOpen(true)} disabled={!property?.id}>
+              <MessageSquare className="mr-2 h-4 w-4" />
+              Add Note
+            </Button>
+            <Button variant="outline" onClick={() => { if (property?.id) setLocation(tasksUrl({ relatedEntityType: "opportunity", relatedEntityId: property.id })); }} disabled={!property?.id}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add Task
             </Button>
           </div>
         </div>
@@ -380,13 +583,27 @@ export default function PropertyDetail() {
                 >
                   Comps
                 </TabsTrigger>
-                <TabsTrigger
-                  value="buyerMatches"
-                  className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2"
-                >
-                  Buyer Matches
-                </TabsTrigger>
-              </TabsList>
+                 <TabsTrigger
+                   value="buyerMatches"
+                   className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2"
+                 >
+                   Buyer Matches
+                 </TabsTrigger>
+                 <TabsTrigger
+                   value="parties"
+                   className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2"
+                 >
+                   <Users className="h-4 w-4 mr-2" />
+                   Parties
+                 </TabsTrigger>
+                 <TabsTrigger
+                   value="publicListing"
+                   className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2"
+                 >
+                   <Share2 className="h-4 w-4 mr-2" />
+                   Public Listing
+                 </TabsTrigger>
+               </TabsList>
               
               <TabsContent value="details" className="mt-6 space-y-6">
                 <Card>
@@ -650,12 +867,49 @@ export default function PropertyDetail() {
                 </Card>
               </TabsContent>
               
+              <TabsContent value="parties">
+                <PartiesSection propertyId={property?.id} parties={parties} onUpdated={() => queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "parties"] })} />
+              </TabsContent>
+
+              <TabsContent value="publicListing">
+                <PublicListingSection
+                  propertyId={property?.id}
+                  listings={listings}
+                  inquiries={inquiries}
+                  onUpdated={() => {
+                    queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "listings"] });
+                    queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "inquiries"] });
+                  }}
+                  onListingCreate={() => setListingCreateOpen(true)}
+                />
+              </TabsContent>
+
               <TabsContent value="activity">
                 <Card>
                   <CardContent className="pt-6">
                     <ActivitySection propertyId={property?.id} leadId={lead?.id} />
                   </CardContent>
                 </Card>
+                {opportunityEvents.length > 0 && (
+                  <Card className="mt-4">
+                    <CardHeader>
+                      <CardTitle className="text-lg">Opportunity Events</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-3">
+                        {opportunityEvents.map((evt: any) => (
+                          <div key={evt.id} className="border rounded-md p-3">
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm font-medium">{evt.title || evt.eventType}</div>
+                              <div className="text-xs text-muted-foreground">{new Date(evt.createdAt).toLocaleString()}</div>
+                            </div>
+                            {evt.description && <div className="text-xs text-muted-foreground mt-1">{evt.description}</div>}
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
               </TabsContent>
             </Tabs>
           </div>
@@ -856,9 +1110,273 @@ export default function PropertyDetail() {
           <Spinner />
         </div>
       )}
-      {error && (
-        <div className="p-4 text-red-600">Failed to load opportunity.</div>
-      )}
+
+
+      {/* Stage Change Dialog */}
+      <Dialog open={stageDialogOpen} onOpenChange={setStageDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Change Opportunity Stage</DialogTitle>
+            <DialogDescription>
+              Current stage: <strong>{property?.stage || "lead"}</strong>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>New Stage</Label>
+              <Select value={stageDialogStage} onValueChange={setStageDialogStage}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select stage" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="lead">Lead</SelectItem>
+                  <SelectItem value="contacted">Contacted</SelectItem>
+                  <SelectItem value="negotiating">Negotiating</SelectItem>
+                  <SelectItem value="under_contract">Under Contract</SelectItem>
+                  <SelectItem value="in_disposition">In Disposition</SelectItem>
+                  <SelectItem value="reserved">Reserved</SelectItem>
+                  <SelectItem value="sold">Sold</SelectItem>
+                  <SelectItem value="closed">Closed</SelectItem>
+                  <SelectItem value="dead">Dead</SelectItem>
+                  <SelectItem value="voided">Voided</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {stageDialogStage && (
+              <div className="bg-muted/50 rounded-md p-3 space-y-2">
+                <div>
+                  <p className="text-xs font-medium mb-1">Expectations for this stage:</p>
+                  <ul className="text-xs text-muted-foreground space-y-1">
+                    {STAGE_EXPECTATIONS[stageDialogStage as any]?.map((item) => (
+                      <li key={item}>• {item}</li>
+                    ))}
+                  </ul>
+                </div>
+                {HIGH_IMPACT_STAGES.has(stageDialogStage) && (
+                  <div className="border-t pt-2">
+                    <p className="text-xs font-medium text-amber-600 mb-1">Automations that will run:</p>
+                    <ul className="text-xs text-muted-foreground space-y-1">
+                      {(STAGE_AUTOMATIONS[stageDialogStage] || []).map((item) => (
+                        <li key={item}>→ {item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>
+                Notes {REASON_REQUIRED_STAGES.has(stageDialogStage) ? <span className="text-red-500">(required for {stageDialogStage})</span> : <span className="text-muted-foreground">(optional)</span>}
+              </Label>
+              <Textarea
+                value={stageDialogNotes}
+                onChange={(e) => setStageDialogNotes(e.target.value)}
+                placeholder={REASON_REQUIRED_STAGES.has(stageDialogStage) ? "Required: explain why this deal is being marked dead/voided..." : "Reason for stage change or additional context..."}
+                rows={3}
+              />
+            </div>
+            {REASON_REQUIRED_STAGES.has(stageDialogStage) && !stageDialogNotes.trim() && (
+              <p className="text-xs text-red-500">A reason is required before moving to {stageDialogStage}.</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setStageDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!stageDialogStage) return;
+                if (REASON_REQUIRED_STAGES.has(stageDialogStage) && !stageDialogNotes.trim()) return;
+                stageChangeMutation.mutate({ stage: stageDialogStage, notes: stageDialogNotes });
+                setStageDialogOpen(false);
+                setStageDialogStage("");
+                setStageDialogNotes("");
+              }}
+              disabled={stageChangeMutation.isPending || !stageDialogStage || (REASON_REQUIRED_STAGES.has(stageDialogStage) && !stageDialogNotes.trim())}
+            >
+              {stageChangeMutation.isPending ? "Changing..." : "Change Stage"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Public Listing Dialog */}
+      <Dialog open={listingCreateOpen} onOpenChange={setListingCreateOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Create Public Listing</DialogTitle>
+            <DialogDescription>Create a shareable link for investors to view property details and submit inquiries without CRM login.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-2">
+            <div className="space-y-2">
+              <Label>Title</Label>
+              <Input
+                value={listingForm.title}
+                onChange={(e) => setListingForm((p) => ({ ...p, title: e.target.value }))}
+                placeholder="Leave blank to use property address"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Description</Label>
+              <Textarea
+                value={listingForm.description}
+                onChange={(e) => setListingForm((p) => ({ ...p, description: e.target.value }))}
+                rows={3}
+                placeholder="Property description for investors..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Visibility</Label>
+              <Select value={listingForm.visibility} onValueChange={(v) => setListingForm((p) => ({ ...p, visibility: v }))}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="public">Public (searchable)</SelectItem>
+                  <SelectItem value="link_only">Link Only (recommended)</SelectItem>
+                  <SelectItem value="password_protected">Password Protected</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {listingForm.visibility === "password_protected" && (
+              <div className="space-y-2">
+                <Label>Password</Label>
+                <Input
+                  type="password"
+                  value={listingForm.password}
+                  onChange={(e) => setListingForm((p) => ({ ...p, password: e.target.value }))}
+                  placeholder="Enter password for listing access"
+                />
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label>Custom Slug (optional)</Label>
+              <Input
+                value={listingForm.slug}
+                onChange={(e) => setListingForm((p) => ({ ...p, slug: e.target.value }))}
+                placeholder="my-property-deal"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Contact Info</Label>
+              <div className="grid grid-cols-2 gap-3">
+                <Input placeholder="Your name" value={listingForm.contactName} onChange={(e) => setListingForm((p) => ({ ...p, contactName: e.target.value }))} />
+                <Input placeholder="Email" value={listingForm.contactEmail} onChange={(e) => setListingForm((p) => ({ ...p, contactEmail: e.target.value }))} />
+                <Input placeholder="Phone" value={listingForm.contactPhone} onChange={(e) => setListingForm((p) => ({ ...p, contactPhone: e.target.value }))} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Fields to Expose</Label>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={listingForm.exposeAddress} onChange={(e) => setListingForm((p) => ({ ...p, exposeAddress: e.target.checked }))} />
+                  Property Address
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={listingForm.exposeComps} onChange={(e) => setListingForm((p) => ({ ...p, exposeComps: e.target.checked }))} />
+                  Comparable Sales (Comps)
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={listingForm.exposeFinancials} onChange={(e) => setListingForm((p) => ({ ...p, exposeFinancials: e.target.checked }))} />
+                  Financial Details
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={listingForm.exposeDocs} onChange={(e) => setListingForm((p) => ({ ...p, exposeDocs: e.target.checked }))} />
+                  Downloadable Documents
+                </label>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setListingCreateOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={async () => {
+                if (!property?.id) return;
+                const payload: any = {
+                  title: listingForm.title || null,
+                  description: listingForm.description || null,
+                  visibility: listingForm.visibility,
+                  slug: listingForm.slug || undefined,
+                  exposeAddress: listingForm.exposeAddress,
+                  exposeComps: listingForm.exposeComps,
+                  exposeFinancials: listingForm.exposeFinancials,
+                  exposeDocs: listingForm.exposeDocs,
+                  contactName: listingForm.contactName || null,
+                  contactEmail: listingForm.contactEmail || null,
+                  contactPhone: listingForm.contactPhone || null,
+                };
+                if (listingForm.visibility === "password_protected" && listingForm.password) {
+                  payload.passwordHash = listingForm.password;
+                }
+                try {
+                  const res = await apiRequest("POST", `/api/opportunities/${property.id}/listings`, payload);
+                  const created: any = await res.json();
+                  setListingCreateOpen(false);
+                  setListingForm({
+                    title: "", description: "", visibility: "link_only", password: "",
+                    slug: "", exposeAddress: false, exposeComps: false, exposeFinancials: false, exposeDocs: false,
+                    contactName: "", contactEmail: "", contactPhone: "",
+                  });
+                  queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "listings"] });
+                  toast({ title: "Listing created" });
+                  if (created?.token) {
+                    const url = `${window.location.origin}/l/${created.token}`;
+                    navigator.clipboard.writeText(url);
+                    toast({ title: "Share link copied to clipboard", description: url });
+                  }
+                } catch (e: any) {
+                  toast({ title: e?.message || "Failed to create listing", variant: "destructive" });
+                }
+              }}
+            >
+              Create Listing
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Note Dialog */}
+      <Dialog open={noteDialogOpen} onOpenChange={setNoteDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Note</DialogTitle>
+          </DialogHeader>
+          <Textarea
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+            placeholder="Enter note..."
+            rows={4}
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNoteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={async () => {
+                if (!property?.id || !noteText.trim()) return;
+                try {
+                  const currentNotes = property?.notes || "";
+                  const timestamp = new Date().toLocaleString();
+                  const newNotes = [currentNotes || "", `[${timestamp}] ${noteText.trim()}`].filter(Boolean).join("\n");
+                  const res = await apiRequest("PATCH", `/api/opportunities/${property.id}`, { notes: newNotes });
+                  await res.json();
+                  setNoteDialogOpen(false);
+                  setNoteText("");
+                  queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id] });
+                  queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+                  toast({ title: "Note added" });
+                } catch (e: any) {
+                  toast({ title: e?.message || "Failed to add note", variant: "destructive" });
+                }
+              }}
+            >
+              Add Note
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }
@@ -1188,14 +1706,15 @@ function LinkLeadDialog({ property }: { property?: any }) {
 
 function DealRoomSection({ propertyId, userId }: { propertyId?: number; userId?: number }) {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [activeBuyerId, setActiveBuyerId] = React.useState<string>("");
-  const [offerForm, setOfferForm] = React.useState({ buyerName: "", sellerName: "", offerAmount: "", status: "pending", notes: "" });
+  const [offerForm, setOfferForm] = React.useState({ buyerName: "", sellerName: "", offerAmount: "", status: "pending", notes: "", earnestMoney: "", financingType: "", closeBy: "", terms: "" });
   const [commForm, setCommForm] = React.useState({ type: "call", subject: "", content: "", direction: "outbound" });
 
-  const { data: offers = [], isLoading: offersLoading } = useQuery<any[]>({
-    queryKey: ["/api/offers", propertyId],
+  const { data: buyerOffers = [], isLoading: offersLoading } = useQuery<any[]>({
+    queryKey: ["/api/opportunities", propertyId, "offers"],
     queryFn: async () => {
-      const res = await fetch(`/api/offers?propertyId=${propertyId}`);
+      const res = await fetch(`/api/opportunities/${propertyId}/offers`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch offers");
       return res.json();
     },
@@ -1246,26 +1765,74 @@ function DealRoomSection({ propertyId, userId }: { propertyId?: number; userId?:
     mutationFn: async () => {
       if (!propertyId) throw new Error("Missing propertyId");
       if (!userId) throw new Error("Missing user");
-      const res = await fetch(`/api/offers`, {
+      const res = await fetch(`/api/opportunities/${propertyId}/offers`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          propertyId,
-          userId,
-          buyerName: offerForm.buyerName || null,
-          sellerName: offerForm.sellerName || null,
-          offerAmount: offerForm.offerAmount ? parseFloat(offerForm.offerAmount) : 0,
-          status: offerForm.status,
+          amount: offerForm.offerAmount ? parseFloat(offerForm.offerAmount) : 0,
+          earnestMoney: offerForm.earnestMoney || null,
+          financingType: offerForm.financingType || null,
+          closeBy: offerForm.closeBy || null,
+          terms: offerForm.terms || null,
           notes: offerForm.notes || null,
         }),
+        credentials: "include",
       });
-      if (!res.ok) throw new Error("Failed to create offer");
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        throw new Error(json?.message || "Failed to create offer");
+      }
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/offers", propertyId] });
-      setOfferForm({ buyerName: "", sellerName: "", offerAmount: "", status: "pending", notes: "" });
+      queryClient.invalidateQueries({ queryKey: ["/api/opportunities", propertyId, "offers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/opportunities", propertyId, "events"] });
+      setOfferForm({ buyerName: "", sellerName: "", offerAmount: "", status: "pending", notes: "", earnestMoney: "", financingType: "", closeBy: "", terms: "" });
     },
+  });
+
+  const counterOffer = useMutation({
+    mutationFn: async ({ offerId, amount }: { offerId: number; amount: number }) => {
+      if (!userId) throw new Error("Missing user");
+      const res = await fetch(`/api/buyer-offers/${offerId}/counter`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount }),
+        credentials: "include",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.message || "Failed to counter offer");
+      return json;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", propertyId, "offers"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", propertyId, "events"] });
+      toast({ title: "Counter-offer created" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to counter", variant: "destructive" }),
+  });
+
+  const setOfferStatus = useMutation({
+    mutationFn: async ({ offerId, status }: { offerId: number; status: string }) => {
+      if (!userId) throw new Error("Missing user");
+      const res = await fetch(`/api/buyer-offers/${offerId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+        credentials: "include",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.message || "Failed to update offer");
+      return json;
+    },
+    onSuccess: async (result: any) => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", propertyId, "offers"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", propertyId, "events"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", propertyId] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", propertyId, "listings"] });
+      toast({ title: `Offer ${String(result?.status || "").replace("_", " ")}` });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to update offer", variant: "destructive" }),
   });
 
   const createAssignment = useMutation({
@@ -1337,69 +1904,128 @@ function DealRoomSection({ propertyId, userId }: { propertyId?: number; userId?:
     <div className="grid gap-6 lg:grid-cols-2">
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Offers</CardTitle>
+          <CardTitle className="text-lg">Buyer Offers</CardTitle>
+          <CardDescription className="text-xs">Track offers, counter-offers, and acceptances. Accepted offers move the deal to Reserved and pause the listing.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <Label>Buyer Name</Label>
-              <Input value={offerForm.buyerName} onChange={(e) => setOfferForm((p) => ({ ...p, buyerName: e.target.value }))} />
-            </div>
-            <div className="space-y-1">
-              <Label>Seller Name</Label>
-              <Input value={offerForm.sellerName} onChange={(e) => setOfferForm((p) => ({ ...p, sellerName: e.target.value }))} />
-            </div>
-            <div className="space-y-1">
-              <Label>Offer Amount</Label>
-              <Input type="number" value={offerForm.offerAmount} onChange={(e) => setOfferForm((p) => ({ ...p, offerAmount: e.target.value }))} />
-            </div>
-            <div className="space-y-1">
-              <Label>Status</Label>
-              <Select value={offerForm.status} onValueChange={(v) => setOfferForm((p) => ({ ...p, status: v }))}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pending">Pending</SelectItem>
-                  <SelectItem value="sent">Sent</SelectItem>
-                  <SelectItem value="accepted">Accepted</SelectItem>
-                  <SelectItem value="rejected">Rejected</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1 col-span-2">
-              <Label>Notes</Label>
-              <Textarea value={offerForm.notes} onChange={(e) => setOfferForm((p) => ({ ...p, notes: e.target.value }))} />
-            </div>
-            <div className="col-span-2 flex justify-end">
-              <Button onClick={() => createOffer.mutate()} disabled={!userId || !offerForm.offerAmount || createOffer.isPending}>
-                Create Offer
-              </Button>
+          <div className="border rounded-md p-3 space-y-3">
+            <p className="text-xs font-medium text-muted-foreground">Log a new offer</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>Offer Amount ($) *</Label>
+                <Input type="number" value={offerForm.offerAmount} onChange={(e) => setOfferForm((p) => ({ ...p, offerAmount: e.target.value }))} />
+              </div>
+              <div className="space-y-1">
+                <Label>Earnest Money ($)</Label>
+                <Input type="number" value={offerForm.earnestMoney} onChange={(e) => setOfferForm((p) => ({ ...p, earnestMoney: e.target.value }))} />
+              </div>
+              <div className="space-y-1">
+                <Label>Financing Type</Label>
+                <Input value={offerForm.financingType} onChange={(e) => setOfferForm((p) => ({ ...p, financingType: e.target.value }))} placeholder="cash, conventional, hard money…" />
+              </div>
+              <div className="space-y-1">
+                <Label>Close By</Label>
+                <Input type="date" value={offerForm.closeBy} onChange={(e) => setOfferForm((p) => ({ ...p, closeBy: e.target.value }))} />
+              </div>
+              <div className="space-y-1 col-span-2">
+                <Label>Terms / Conditions</Label>
+                <Textarea value={offerForm.terms} onChange={(e) => setOfferForm((p) => ({ ...p, terms: e.target.value }))} rows={2} placeholder="Inspection period, contingencies, assignment terms…" />
+              </div>
+              <div className="space-y-1 col-span-2">
+                <Label>Notes</Label>
+                <Textarea value={offerForm.notes} onChange={(e) => setOfferForm((p) => ({ ...p, notes: e.target.value }))} rows={2} />
+              </div>
+              <div className="col-span-2 flex justify-end">
+                <Button onClick={() => createOffer.mutate()} disabled={!userId || !offerForm.offerAmount || createOffer.isPending}>
+                  {createOffer.isPending ? "Saving…" : "Create Offer"}
+                </Button>
+              </div>
             </div>
           </div>
           <Separator />
-          <ScrollArea className="h-56 border rounded-md p-2">
-            {offersLoading ? (
-              <div className="py-6 text-center text-muted-foreground">Loading offers…</div>
-            ) : offers.length ? (
-              <div className="space-y-2">
-                {offers.map((o: any) => (
-                  <div key={o.id} className="flex items-start justify-between border rounded-md p-3">
+          {offersLoading ? (
+            <div className="py-6 text-center text-muted-foreground">Loading offers…</div>
+          ) : buyerOffers.length ? (
+            <div className="border rounded-md scroll-x-container">
+              <div className="min-w-[760px]">
+                <div className="grid grid-cols-8 gap-2 p-2 text-xs text-muted-foreground bg-muted/30">
+                  <div>Version</div>
+                  <div>Amount</div>
+                  <div>EMD</div>
+                  <div>Financing</div>
+                  <div>Close By</div>
+                  <div>Status</div>
+                  <div>Received</div>
+                  <div className="text-right">Actions</div>
+                </div>
+                {buyerOffers.map((o: any) => (
+                  <div key={o.id} className={`grid grid-cols-8 gap-2 p-2 text-sm border-t items-center ${o.superseded ? "opacity-50" : ""}`}>
+                    <div className="font-medium">v{o.version || 1}{o.superseded ? " (superseded)" : ""}</div>
+                    <div className="font-semibold">${Number(o.amount || 0).toLocaleString()}</div>
+                    <div>{o.earnestMoney ? `$${Number(o.earnestMoney).toLocaleString()}` : "—"}</div>
+                    <div>{o.financingType || "—"}</div>
+                    <div>{o.closeBy ? new Date(o.closeBy).toLocaleDateString() : "—"}</div>
                     <div>
-                      <div className="text-sm font-medium">Offer #{o.id}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {o.status} · ${o.offerAmount ? parseInt(String(o.offerAmount), 10).toLocaleString() : "—"}
-                      </div>
-                      {o.buyerName ? <div className="text-xs text-muted-foreground">Buyer: {o.buyerName}</div> : null}
+                      <Badge variant={o.status === "accepted" ? "default" : o.status === "rejected" || o.status === "withdrawn" ? "destructive" : "outline"} className="capitalize">
+                        {String(o.status || "received").replace("_", " ")}
+                      </Badge>
                     </div>
-                    <Badge variant="outline">{o.status}</Badge>
+                    <div className="text-xs text-muted-foreground">{o.createdAt ? new Date(o.createdAt).toLocaleDateString() : "—"}</div>
+                    <div className="flex justify-end gap-1 flex-wrap">
+                      {!o.superseded && o.status !== "accepted" && o.status !== "rejected" && o.status !== "withdrawn" && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              const amount = window.prompt("Counter amount:", o.amount ? String(o.amount) : "");
+                              if (amount === null) return;
+                              const n = Number(amount);
+                              if (!Number.isFinite(n) || n <= 0) return toast({ title: "Enter a valid amount", variant: "destructive" });
+                              counterOffer.mutate({ offerId: o.id, amount: n });
+                            }}
+                            disabled={counterOffer.isPending}
+                          >
+                            Counter
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              if (!window.confirm(`Accept offer #${o.id} for $${Number(o.amount).toLocaleString()}? This moves the deal to Reserved, creates closing tasks, and pauses the public listing.`)) return;
+                              setOfferStatus.mutate({ offerId: o.id, status: "accepted" });
+                            }}
+                            disabled={setOfferStatus.isPending}
+                          >
+                            Accept
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => {
+                              if (window.confirm(`Reject offer #${o.id}?`)) setOfferStatus.mutate({ offerId: o.id, status: "rejected" });
+                            }}
+                            disabled={setOfferStatus.isPending}
+                          >
+                            Reject
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setOfferStatus.mutate({ offerId: o.id, status: "withdrawn" })}
+                            disabled={setOfferStatus.isPending}
+                          >
+                            Withdraw
+                          </Button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
-            ) : (
-              <div className="py-6 text-center text-muted-foreground">No offers yet.</div>
-            )}
-          </ScrollArea>
+            </div>
+          ) : (
+            <div className="py-6 text-center text-muted-foreground">No buyer offers yet. Create one above or from a buyer inquiry.</div>
+          )}
         </CardContent>
       </Card>
 
@@ -1644,6 +2270,536 @@ function AddNoteForm({ leadId, propertyId, initialNotes, onAdded }: { leadId?: n
       <Button size="sm" className="absolute bottom-2 right-2 h-7 px-2" onClick={handleAdd} disabled={disabled}>
         Add
       </Button>
+    </div>
+  );
+}
+
+const STAGE_EXPECTATIONS: Record<string, string[]> = {
+  lead: ["Contact seller", "Initial outreach", "Qualify property"],
+  contacted: ["Schedule showing", "Send CMA", "Gather seller details"],
+  negotiating: ["Review offer terms", "Counter offer", "Finalize contract terms"],
+  under_contract: ["EMD deposit", "Inspection deadline", "Due diligence", "Secure financing"],
+  in_disposition: ["Build buyer list", "Create public listing", "Schedule tours"],
+  reserved: ["Confirm buyer commitment", "Coordinate closing", "Assign contract"],
+  sold: ["Close deal", "Receive assignment fee", "Disburse funds"],
+  closed: ["Post-close wrap-up", "Archive documents"],
+  dead: ["Document reasons", "Attempt re-engagement"],
+  voided: ["Reason recorded", "Cancel related tasks", "Archive"],
+};
+
+// Downstream automations triggered when entering a stage (shown in the stage
+// confirmation dialog so the user knows what will run).
+const STAGE_AUTOMATIONS: Record<string, string[]> = {
+  under_contract: [
+    "Creates a due diligence checklist (EMD, inspection, title, financing, appraisal, walk-through)",
+    "Creates a 'Create public listing' disposition task",
+  ],
+  in_disposition: [
+    "Checks for a published public listing and flags one if missing",
+    "Creates a buyer outreach & follow-up task",
+  ],
+  reserved: [
+    "Creates closing coordination tasks (buyer commitment, title, closing docs)",
+  ],
+  sold: ["Records the closing date", "Archives public listings", "Creates a final deal review task"],
+  closed: ["Records the closing date", "Archives public listings", "Creates a final deal review task"],
+  dead: ["Pauses public listings", "Requires a reason", "Preserves all history"],
+  voided: ["Pauses public listings", "Requires a reason", "Preserves all history"],
+};
+
+const HIGH_IMPACT_STAGES = new Set(["under_contract", "reserved", "sold", "closed", "dead", "voided"]);
+const REASON_REQUIRED_STAGES = new Set(["dead", "voided"]);
+
+function StageBadge({ stage }: { stage: string }) {
+  const stageConfig: Record<string, { label: string; color: string }> = {
+    lead: { label: "Lead", color: "bg-gray-100 text-gray-800" },
+    contacted: { label: "Contacted", color: "bg-blue-100 text-blue-800" },
+    negotiating: { label: "Negotiating", color: "bg-yellow-100 text-yellow-800" },
+    under_contract: { label: "Under Contract", color: "bg-orange-100 text-orange-800" },
+    in_disposition: { label: "In Disposition", color: "bg-purple-100 text-purple-800" },
+    reserved: { label: "Reserved", color: "bg-indigo-100 text-indigo-800" },
+    sold: { label: "Sold", color: "bg-green-100 text-green-800" },
+    closed: { label: "Closed", color: "bg-emerald-100 text-emerald-800" },
+    dead: { label: "Dead", color: "bg-red-100 text-red-800" },
+    voided: { label: "Voided", color: "bg-slate-100 text-slate-800" },
+  };
+  const config = stageConfig[stage] || { label: stage, color: "bg-gray-100 text-gray-800" };
+  return <Badge variant="secondary" className={config.color}>{config.label}</Badge>;
+}
+
+function PartiesSection({ propertyId, parties, onUpdated }: { propertyId?: number; parties: any[]; onUpdated: () => void }) {
+  const { toast } = useToast();
+  const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [form, setForm] = React.useState({ role: "seller", name: "", email: "", phone: "", company: "", notes: "" });
+  const [loading, setLoading] = React.useState(false);
+
+  if (!propertyId) return <div className="py-10 text-center text-muted-foreground">Loading parties…</div>;
+
+  const roleOptions = ["seller", "buyer", "assignee", "lender", "title", "attorney", "partner"];
+
+  const handleAdd = async () => {
+    if (!form.name.trim() || !form.role) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/opportunities/${propertyId}/parties`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to add party");
+      setDialogOpen(false);
+      setForm({ role: "seller", name: "", email: "", phone: "", company: "", notes: "" });
+      onUpdated();
+      toast({ title: "Party added" });
+    } catch (e: any) {
+      toast({ title: e?.message || "Failed to add party", variant: "destructive" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async (partyId: number) => {
+    try {
+      const res = await fetch(`/api/opportunities/parties/${partyId}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error("Failed to remove party");
+      onUpdated();
+      toast({ title: "Party removed" });
+    } catch (e: any) {
+      toast({ title: e?.message || "Failed to remove", variant: "destructive" });
+    }
+  };
+
+  const grouped = React.useMemo(() => {
+    const groups: Record<string, any[]> = {};
+    for (const p of parties || []) {
+      const role = p.role || "other";
+      if (!groups[role]) groups[role] = [];
+      groups[role].push(p);
+    }
+    return groups;
+  }, [parties]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex justify-between items-center">
+        <h3 className="text-lg font-semibold">Opportunity Parties</h3>
+        <Button size="sm" onClick={() => setDialogOpen(true)}>
+          <Plus className="h-4 w-4 mr-2" />
+          Add Party
+        </Button>
+      </div>
+
+      {Object.keys(grouped).length === 0 ? (
+        <div className="text-sm text-muted-foreground py-8 text-center">No parties added yet.</div>
+      ) : (
+        Object.entries(grouped).map(([role, items]) => (
+          <Card key={role}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm capitalize">{role}s</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {items.map((p: any) => (
+                <div key={p.id} className="flex items-center justify-between border rounded-md p-3">
+                  <div>
+                    <div className="font-medium">{p.name || "—"}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {p.email && <span>{p.email}</span>}
+                      {p.email && p.phone && <span> · </span>}
+                      {p.phone && <span>{p.phone}</span>}
+                      {p.company && <span> · {p.company}</span>}
+                    </div>
+                    {p.notes && <div className="text-xs text-muted-foreground mt-1">{p.notes}</div>}
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => handleDelete(p.id)} disabled={loading}>
+                    <XCircle className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ))
+      )}
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Party</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label>Role</Label>
+              <Select value={form.role} onValueChange={(v) => setForm((p) => ({ ...p, role: v }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {roleOptions.map((r) => (
+                    <SelectItem key={r} value={r} className="capitalize">{r}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2"><Label>Name</Label><Input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>Email</Label><Input value={form.email} onChange={(e) => setForm((p) => ({ ...p, email: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm((p) => ({ ...p, phone: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>Company</Label><Input value={form.company} onChange={(e) => setForm((p) => ({ ...p, company: e.target.value }))} /></div>
+            <div className="space-y-2"><Label>Notes</Label><Textarea value={form.notes} onChange={(e) => setForm((p) => ({ ...p, notes: e.target.value }))} rows={3} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleAdd} disabled={loading || !form.name.trim()}>{loading ? "Adding..." : "Add Party"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function PublicListingSection({ propertyId, listings, inquiries, onUpdated, onListingCreate }: { propertyId?: number; listings: any[]; inquiries: any[]; onUpdated: () => void; onListingCreate?: () => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [inquiryFilter, setInquiryFilter] = React.useState<string>("all");
+
+  const { data: teamUsers = [] } = useQuery<any[]>({
+    queryKey: ["/api/users", "team"],
+    queryFn: async () => {
+      const res = await fetch("/api/users", { credentials: "include" });
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
+
+  const convertInquiry = useMutation({
+    mutationFn: async (inquiryId: number) => {
+      const res = await fetch(`/api/inquiries/${inquiryId}/convert`, { method: "POST", credentials: "include" });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.message || "Failed to convert inquiry");
+      return json;
+    },
+    onSuccess: async (result: any) => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", propertyId, "inquiries"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", propertyId, "parties"] });
+      await queryClient.invalidateQueries({ queryKey: ["/api/buyers"] });
+      toast({ title: result?.created ? "Converted to new buyer" : "Linked to existing buyer" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to convert", variant: "destructive" }),
+  });
+
+  const offerFromInquiry = useMutation({
+    mutationFn: async ({ inquiryId, amount }: { inquiryId: number; amount: string }) => {
+      const res = await fetch(`/api/inquiries/${inquiryId}/offer`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount }),
+        credentials: "include",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.message || "Failed to create offer");
+      return json;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", propertyId, "inquiries"] });
+      toast({ title: "Offer created from inquiry" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to create offer", variant: "destructive" }),
+  });
+
+  const assignInquiry = useMutation({
+    mutationFn: async ({ inquiryId, userId }: { inquiryId: number; userId: number | null }) => {
+      const res = await fetch(`/api/inquiries/${inquiryId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignedToUserId: userId }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to assign inquiry");
+      return res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", propertyId, "inquiries"] });
+      toast({ title: "Inquiry assigned" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to assign", variant: "destructive" }),
+  });
+
+  const INQUIRY_STATUS_OPTIONS = ["new", "contacted", "qualified", "offer_received", "negotiating", "won", "lost", "spam"];
+
+  if (!propertyId) return <div className="py-10 text-center text-muted-foreground">Loading listings…</div>;
+
+  const allListings = listings || [];
+  const activeListings = allListings.filter((l: any) => l.status === "published");
+
+  const handleListingStatus = async (listingId: number, status: string) => {
+    try {
+      const res = await fetch(`/api/listings/${listingId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to update listing");
+      onUpdated();
+      toast({ title: status === "published" ? "Listing published" : status === "paused" ? "Listing paused" : "Listing archived" });
+    } catch (e: any) {
+      toast({ title: e?.message || "Failed", variant: "destructive" });
+    }
+  };
+
+  const handleListingDelete = async (listingId: number) => {
+    if (!window.confirm("Delete this public listing? Inquiries linked to it will be kept.")) return;
+    try {
+      const res = await fetch(`/api/listings/${listingId}`, { method: "DELETE", credentials: "include" });
+      if (!res.ok) throw new Error("Failed to delete listing");
+      onUpdated();
+      toast({ title: "Listing deleted" });
+    } catch (e: any) {
+      toast({ title: e?.message || "Failed", variant: "destructive" });
+    }
+  };
+
+  const shareListing = async (listing: any, channel: string, target?: string) => {
+    try {
+      await fetch(`/api/listings/${listing.id}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel, target: target || null }),
+        credentials: "include",
+      });
+      onUpdated();
+    } catch {
+      // Non-blocking: the share action itself still proceeds client-side.
+    }
+  };
+
+  const handleInquiryStatus = async (inquiryId: number, status: string) => {
+    try {
+      const res = await fetch(`/api/inquiries/${inquiryId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to update inquiry");
+      onUpdated();
+      toast({ title: "Inquiry status updated" });
+    } catch (e: any) {
+      toast({ title: e?.message || "Failed", variant: "destructive" });
+    }
+  };
+
+  const statusBadgeVariant = (status: string) => {
+    switch (status) {
+      case "published": return "default";
+      case "paused": return "secondary";
+      case "draft": return "outline";
+      case "archived": return "destructive";
+      default: return "secondary";
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      {allListings.length === 0 ? (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="text-center py-8">
+              <Share2 className="h-12 w-12 text-muted-foreground/30 mx-auto mb-3" />
+              <h3 className="font-medium mb-2">No public listings yet</h3>
+              <p className="text-sm text-muted-foreground mb-4">Create a public listing to share this opportunity with investors.</p>
+              <Button onClick={onListingCreate}>
+                <Share2 className="h-4 w-4 mr-2" />
+                Create Public Listing
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-4">
+          {allListings.map((listing: any) => {
+            const listingInquiries = (inquiries || []).filter((i: any) => i.listingId === listing.id);
+            const isLive = listing.status === "published";
+            return (
+              <Card key={listing.id}>
+                <CardHeader>
+                  <CardTitle className="flex items-center justify-between">
+                    <span>{listing.title || `Listing #${listing.id}`}</span>
+                    <Badge variant={statusBadgeVariant(listing.status)}>{listing.status}</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div><p className="text-muted-foreground">Views</p><p className="font-medium">{listing.viewCount || 0}</p></div>
+                    <div><p className="text-muted-foreground">Visibility</p><p className="font-medium capitalize">{listing.visibility?.replace("_", " ") || "—"}</p></div>
+                    <div><p className="text-muted-foreground">Published</p><p className="font-medium">{listing.publishedAt ? new Date(listing.publishedAt).toLocaleDateString() : "—"}</p></div>
+                    <div><p className="text-muted-foreground">Inquiries</p><p className="font-medium">{listingInquiries.length}</p></div>
+                  </div>
+                  {listing.token && (
+                    <div className="mt-4">
+                      <p className="text-xs text-muted-foreground mb-1">Share Link</p>
+                      <div className="flex items-center gap-2">
+                        <code className="text-sm bg-muted px-2 py-1 rounded break-all">
+                          {`${window.location.origin}/l/${listing.token}`}
+                        </code>
+                        <Button size="sm" variant="outline" onClick={() => {
+                          navigator.clipboard.writeText(`${window.location.origin}/l/${listing.token}`);
+                          toast({ title: "Link copied" });
+                          shareListing(listing, "copy");
+                        }}>Copy</Button>
+                        {isLive && (
+                          <Button size="sm" variant="outline" onClick={() => { window.open(`/l/${listing.token}`, "_blank"); shareListing(listing, "preview"); }}>
+                            Preview
+                          </Button>
+                        )}
+                        {isLive && (
+                          <>
+                            <Button size="sm" variant="outline" onClick={() => {
+                              const target = window.prompt("Email this listing link to:", listing.contactEmail || "");
+                              if (target === null) return;
+                              const url = `${window.location.origin}/l/${listing.token}`;
+                              window.location.href = `mailto:${encodeURIComponent(target || "")}?subject=${encodeURIComponent(listing.title || "Investment opportunity")}&body=${encodeURIComponent(`Check out this investment opportunity: ${url}`)}`;
+                              shareListing(listing, "email", target || "");
+                            }}>
+                              Email
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={() => {
+                              const target = window.prompt("Send this listing link via SMS to:", listing.contactPhone || "");
+                              if (target === null) return;
+                              const url = `${window.location.origin}/l/${listing.token}`;
+                              window.open(`sms:${encodeURIComponent(target || "")}?&body=${encodeURIComponent(`Check out this investment opportunity: ${url}`)}`);
+                              shareListing(listing, "sms", target || "");
+                            }}>
+                              SMS
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    {!isLive && listing.status !== "archived" && (
+                      <Button size="sm" onClick={() => handleListingStatus(listing.id, "published")}>
+                        Publish
+                      </Button>
+                    )}
+                    {isLive && (
+                      <Button size="sm" variant="outline" onClick={() => handleListingStatus(listing.id, "paused")}>
+                        Pause
+                      </Button>
+                    )}
+                    {listing.status !== "archived" && (
+                      <Button size="sm" variant="outline" onClick={() => handleListingStatus(listing.id, "archived")}>
+                        Archive
+                      </Button>
+                    )}
+                    <Button size="sm" variant="ghost" className="text-destructive" onClick={() => handleListingDelete(listing.id)}>
+                      Delete
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {(inquiries || []).length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Mail className="h-5 w-5" />
+              Buyer Inquiries ({inquiries.length})
+            </CardTitle>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {["all", ...INQUIRY_STATUS_OPTIONS].map((s) => {
+                const count = s === "all" ? inquiries.length : inquiries.filter((i: any) => (i.status || "new") === s).length;
+                return (
+                  <Button
+                    key={s}
+                    size="sm"
+                    variant={inquiryFilter === s ? "default" : "outline"}
+                    className="text-xs capitalize"
+                    onClick={() => setInquiryFilter(s)}
+                  >
+                    {s.replace("_", " ")} ({count})
+                  </Button>
+                );
+              })}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {inquiries
+              .filter((i: any) => inquiryFilter === "all" || (i.status || "new") === inquiryFilter)
+              .map((inquiry: any) => {
+                const assignedName = teamUsers.find((u: any) => Number(u.id) === Number(inquiry.assignedToUserId))?.fullName || teamUsers.find((u: any) => Number(u.id) === Number(inquiry.assignedToUserId))?.email;
+                return (
+                  <div key={inquiry.id} className="border rounded-md p-4 space-y-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div>
+                        <span className="font-medium">{inquiry.name}</span>
+                        <span className="text-sm text-muted-foreground ml-2">({inquiry.buyerType})</span>
+                        {assignedName && <span className="text-xs text-muted-foreground ml-2">→ {assignedName}</span>}
+                      </div>
+                      <Select value={inquiry.status || "new"} onValueChange={(v) => handleInquiryStatus(inquiry.id, v)}>
+                        <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {INQUIRY_STATUS_OPTIONS.map((s) => (
+                            <SelectItem key={s} value={s} className="capitalize">{s.replace("_", " ")}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      {inquiry.email && <div><p className="text-muted-foreground">Email</p><p className="font-medium">{inquiry.email}</p></div>}
+                      {inquiry.phone && <div><p className="text-muted-foreground">Phone</p><p className="font-medium">{inquiry.phone}</p></div>}
+                      {inquiry.offerAmount && <div><p className="text-muted-foreground">Offer Amount</p><p className="font-medium text-green-600">${Number(inquiry.offerAmount).toLocaleString()}</p></div>}
+                      {inquiry.company && <div><p className="text-muted-foreground">Company</p><p className="font-medium">{inquiry.company}</p></div>}
+                    </div>
+                    {inquiry.message && <div><p className="text-muted-foreground text-xs mb-1">Message</p><p className="text-sm">{inquiry.message}</p></div>}
+                    {inquiry.proofOfFundsUrl && (
+                      <div><a href={inquiry.proofOfFundsUrl} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:underline">View Proof of Funds</a></div>
+                    )}
+                    <div className="text-xs text-muted-foreground">Received: {new Date(inquiry.createdAt).toLocaleString()}</div>
+                    <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+                      <Button size="sm" variant="outline" onClick={() => convertInquiry.mutate(inquiry.id)} disabled={convertInquiry.isPending}>
+                        Convert to Buyer
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          const amount = window.prompt("Offer amount for this inquiry:", inquiry.offerAmount ? String(inquiry.offerAmount) : "");
+                          if (amount === null) return;
+                          const n = Number(amount);
+                          if (!Number.isFinite(n) || n <= 0) return toast({ title: "Enter a valid offer amount", variant: "destructive" });
+                          offerFromInquiry.mutate({ inquiryId: inquiry.id, amount: String(n) });
+                        }}
+                        disabled={offerFromInquiry.isPending}
+                      >
+                        Create Offer
+                      </Button>
+                      <Select
+                        value={inquiry.assignedToUserId ? String(inquiry.assignedToUserId) : "unassigned"}
+                        onValueChange={(v) => assignInquiry.mutate({ inquiryId: inquiry.id, userId: v === "unassigned" ? null : parseInt(v, 10) })}
+                      >
+                        <SelectTrigger className="w-44 h-8 text-xs"><SelectValue placeholder="Assign to…" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="unassigned">Unassigned</SelectItem>
+                          {teamUsers.map((u: any) => (
+                            <SelectItem key={u.id} value={String(u.id)}>
+                              {u.fullName || u.email}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                );
+              })}
+            {inquiries.filter((i: any) => inquiryFilter === "all" || (i.status || "new") === inquiryFilter).length === 0 && (
+              <div className="text-sm text-muted-foreground">No inquiries with status "{inquiryFilter.replace("_", " ")}".</div>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

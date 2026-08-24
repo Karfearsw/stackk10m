@@ -386,6 +386,10 @@ export function UnderwriteDealWorkspace(props: {
   const handleHotkeys = useRef<(e: KeyboardEvent) => void>(() => {});
   handleHotkeys.current = (e) => {
     if (e.defaultPrevented) return;
+    // Skip hotkeys when user is typing in an input, textarea, or contentEditable
+    const tag = (e.target as HTMLElement)?.tagName;
+    const isEditable = (e.target as HTMLElement)?.isContentEditable;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || isEditable) return;
     const k = e.key.toLowerCase();
     if (k === "c" && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();

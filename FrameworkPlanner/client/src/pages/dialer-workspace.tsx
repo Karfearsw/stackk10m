@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,9 +10,12 @@ import { Switch } from "@/components/ui/switch";
 import { Phone, PhoneOff, Mic, MicOff, Pause, Play } from "lucide-react";
 import { DialerProvider, useDialer } from "@/contexts/DialerContext";
 import { useSignalWire } from "@/hooks/useSignalWire";
+import { useTelephonyEvents } from "@/hooks/useTelephonyEvents";
+import { TelnyxHealthStatus } from "@/components/telephony/TelnyxHealthStatus";
 import { EntityActivity } from "@/components/activity/EntityActivity";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { toast } from "sonner";
 import type { DialerQueueItem } from "@/lib/dialerTypes";
 
 function formatE164(raw: string) {
@@ -47,7 +50,24 @@ const KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
 
 function DialerWorkspaceInner() {
   const { state, activeItem, setListId, setQueue, setActiveIndex, next } = useDialer();
-  const { ready, connectionState, error, call: activeCall, makeCall, endCall, toggleMute, toggleHold } = useSignalWire();
+  const {
+    error: telnyxError,
+    lastError,
+    call: activeCall,
+    callControlId,
+    makeCall,
+    endCall,
+    updateCallState,
+    toggleMute,
+    toggleHold,
+  } = useSignalWire();
+  const { connected: telephonyWsConnected } = useTelephonyEvents({
+    enabled: true,
+    onCallStateChanged: (evt) => {
+      if (evt.callControlId && callControlId && evt.callControlId !== callControlId) return;
+      if (evt.state) updateCallState(evt.state);
+    },
+  });
   const queryClient = useQueryClient();
 
   const [number, setNumber] = useState("");
@@ -57,6 +77,7 @@ function DialerWorkspaceInner() {
   const [queueLoading, setQueueLoading] = useState(false);
   const [callId, setCallId] = useState<number | null>(null);
   const wasConnectedRef = useRef(false);
+  const callFailedRef = useRef(false);
   const lastPatchedStatusRef = useRef<string | null>(null);
 
   const [smsBody, setSmsBody] = useState("");
@@ -152,6 +173,16 @@ function DialerWorkspaceInner() {
     enabled: Boolean(activeItem?.leadId),
   });
 
+  const { data: telnyxHealth, isLoading: healthLoading, refetch: healthRefetch } = useQuery({
+    queryKey: ["/api/telephony/health"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/telephony/health");
+      return await res.json();
+    },
+    refetchInterval: 30000,
+    retry: 1,
+  });
+
   const { data: scriptsData } = useQuery<any>({
     queryKey: ["/api/dialer/scripts", state.listId],
     queryFn: async () => {
@@ -191,14 +222,8 @@ function DialerWorkspaceInner() {
   const patchLead = useMutation({
     mutationFn: async (patch: any) => {
       if (!activeItem?.leadId) throw new Error("Missing leadId");
-      const res = await fetch(`/api/leads/${activeItem.leadId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
+      const res = await apiRequest("PATCH", `/api/leads/${activeItem.leadId}`, patch);
+      return await res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/leads/${activeItem?.leadId}`] });
@@ -207,44 +232,25 @@ function DialerWorkspaceInner() {
   });
 
   const patchCallLog = async (id: number, patch: any) => {
-    const res = await fetch(`/api/telephony/calls/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-      credentials: "include",
-    });
-    if (!res.ok) throw new Error(await res.text());
-    return res.json();
+    const res = await apiRequest("PATCH", `/api/telephony/calls/${id}`, patch);
+    return await res.json();
   };
 
-  const createCallLog = useMutation({
-    mutationFn: async () => {
-      const effectiveLeadId = activeItem?.leadId ?? initial.leadId;
-      if (!effectiveLeadId) throw new Error("Select a lead");
-      const res = await fetch(`/api/telephony/calls`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          direction: "outbound",
-          number: formatted,
-          status: "dialing",
-          startedAt: new Date().toISOString(),
-          leadId: effectiveLeadId,
-          metadata: { leadId: effectiveLeadId, propertyId: initial.propertyId || undefined },
-        }),
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
-    },
-    onSuccess: (log) => {
-      setCallId(log.id);
-      setStatus("dialing");
-      setStartTs(Date.now());
-      wasConnectedRef.current = false;
-      lastPatchedStatusRef.current = "dialing";
-    },
-  });
+  const formatted = useMemo(() => formatE164(number), [number]);
+
+  const startOutboundCall = useCallback(async () => {
+    if (!formatted) return;
+    const effectiveLeadId = activeItem?.leadId ?? initial.leadId;
+    const data = await makeCall(formatted, {
+      metadata: { leadId: effectiveLeadId || undefined, propertyId: initial.propertyId || undefined },
+    });
+    setCallId(data.callLogId);
+    setStatus("dialing");
+    setStartTs(Date.now());
+    wasConnectedRef.current = false;
+    callFailedRef.current = false;
+    lastPatchedStatusRef.current = "dialing";
+  }, [activeItem?.leadId, formatted, initial.leadId, initial.propertyId, lastPatchedStatusRef, makeCall]);
 
   const sendSms = useMutation({
     mutationFn: async () => {
@@ -252,18 +258,20 @@ function DialerWorkspaceInner() {
       if (!effectiveLeadId) throw new Error("Select a lead");
       const to = formatE164(String(activeItem?.ownerPhone || number || ""));
       if (!to) throw new Error("Missing phone number");
-      const res = await fetch(`/api/telephony/sms`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to, body: smsBody, metadata: { leadId: effectiveLeadId, propertyId: initial.propertyId || undefined } }),
-        credentials: "include",
+      if (!smsBody.trim()) throw new Error("Message body is required");
+      const res = await apiRequest("POST", "/api/telephony/sms", {
+        to,
+        body: smsBody,
+        metadata: { leadId: effectiveLeadId, propertyId: initial.propertyId || undefined },
       });
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
+      return await res.json();
     },
     onSuccess: () => {
       setSmsBody("");
       queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || "Failed to send SMS");
     },
   });
 
@@ -286,6 +294,10 @@ function DialerWorkspaceInner() {
     }
     if (activeCall.state === "finished") setStatus("ended");
     if (activeCall.state === "held") setStatus("connected");
+    if (activeCall.state === "failed") {
+      callFailedRef.current = true;
+      setStatus("failed");
+    }
     if (!callId) return;
 
     const durationMs = startTs ? Date.now() - startTs : 0;
@@ -309,8 +321,17 @@ function DialerWorkspaceInner() {
       return;
     }
 
+    if (activeCall.state === "failed" && lastPatchedStatusRef.current !== "failed") {
+      callFailedRef.current = true;
+      lastPatchedStatusRef.current = "failed";
+      patchCallLog(callId, { status: "failed", errorMessage: lastError || "Call failed", endedAt: new Date().toISOString(), durationMs }).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
+      }).catch(() => {});
+      return;
+    }
+
     if (activeCall.state === "finished") {
-      const finalStatus = wasConnectedRef.current ? "answered" : "missed";
+      const finalStatus = callFailedRef.current ? "failed" : wasConnectedRef.current ? "answered" : "missed";
       if (lastPatchedStatusRef.current !== finalStatus) {
         lastPatchedStatusRef.current = finalStatus;
         patchCallLog(callId, { status: finalStatus, endedAt: new Date().toISOString(), durationMs }).then(() => {
@@ -318,7 +339,7 @@ function DialerWorkspaceInner() {
         }).catch(() => {});
       }
     }
-  }, [activeCall?.state, callId, queryClient, startTs]);
+  }, [activeCall?.state, callId, lastError, queryClient, startTs]);
 
   useEffect(() => {
     if (!callId) return;
@@ -326,7 +347,7 @@ function DialerWorkspaceInner() {
     if (status === "idle" || status === "ended" || status === "failed") return;
 
     const durationMs = startTs ? Date.now() - startTs : 0;
-    const finalStatus = wasConnectedRef.current ? "answered" : "missed";
+    const finalStatus = callFailedRef.current ? "failed" : wasConnectedRef.current ? "answered" : "missed";
     if (lastPatchedStatusRef.current !== finalStatus) {
       lastPatchedStatusRef.current = finalStatus;
       patchCallLog(callId, { status: finalStatus, endedAt: new Date().toISOString(), durationMs }).then(() => {
@@ -335,7 +356,6 @@ function DialerWorkspaceInner() {
     }
   }, [activeCall, callId, queryClient, startTs, status]);
 
-  const formatted = useMemo(() => formatE164(number), [number]);
 
   return (
     <Layout>
@@ -367,9 +387,8 @@ function DialerWorkspaceInner() {
                   try {
                     setQueueLoading(true);
                     const qs = new URLSearchParams({ listId: state.listId, limit: "50" });
-                    const res = await fetch(`/api/dialer/queue?${qs.toString()}`, { credentials: "include" });
-                    if (!res.ok) throw new Error(await res.text());
-                    const data = await res.json();
+                     const res = await apiRequest("GET", `/api/dialer/queue?${qs.toString()}`);
+                     const data = await res.json();
                     setQueue(Array.isArray(data.items) ? data.items : []);
                   } finally {
                     setQueueLoading(false);
@@ -413,9 +432,9 @@ function DialerWorkspaceInner() {
             <CardTitle>Phone</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="text-sm text-muted-foreground">
-              Telnyx: {ready ? "Connected" : connectionState === "connecting" ? "Connecting…" : connectionState}
-              {error ? <span className="text-destructive"> • {error}</span> : null}
+            <div className="text-sm text-muted-foreground space-y-1">
+              <TelnyxHealthStatus health={telnyxHealth?.telnyx} loading={healthLoading} onRetry={() => healthRefetch()} />
+              {telnyxError ? <div className="text-xs text-destructive"> • {telnyxError}</div> : null}
             </div>
 
             <div className="space-y-2">
@@ -436,23 +455,14 @@ function DialerWorkspaceInner() {
                   if (!activeItem?.leadId) return;
                   if (!formatted) return;
                   try {
-                    const log = await createCallLog.mutateAsync();
-                    try {
-                      await makeCall(formatted);
-                      setCallId(log.id);
-                    } catch (e: any) {
-                      try {
-                        await patchCallLog(log.id, { status: "failed", errorMessage: String(e?.message || e || "Call failed") });
-                      } catch {}
-                      setStatus("failed");
-                      setCallId(null);
-                    }
+                    await startOutboundCall();
                   } catch {
                     setStatus("failed");
                     setCallId(null);
+                    setStartTs(null);
                   }
                 }}
-                disabled={!formatted || status === "dialing" || status === "connected" || createCallLog.isPending}
+                disabled={!formatted || status === "dialing" || status === "connected"}
               >
                 <Phone className="w-4 h-4 mr-2" />
                 Call
@@ -462,7 +472,7 @@ function DialerWorkspaceInner() {
                 onClick={async () => {
                   const id = callId;
                   const durationMs = startTs ? Date.now() - startTs : 0;
-                  const finalStatus = wasConnectedRef.current ? "answered" : "missed";
+                  const finalStatus = callFailedRef.current ? "failed" : wasConnectedRef.current ? "answered" : "missed";
 
                   try {
                     await endCall();

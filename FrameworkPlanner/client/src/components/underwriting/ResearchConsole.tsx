@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Copy, ExternalLink, Loader2, RefreshCw, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { getProxiedUrl } from "@/lib/proxy-url";
 import { useToast } from "@/hooks/use-toast";
 
 type BrowserStatus = "idle" | "loading" | "loaded" | "maybe_blocked";
@@ -156,7 +157,7 @@ export function ResearchConsole(props: {
     if (longLoadTimerRef.current) window.clearTimeout(longLoadTimerRef.current);
     longLoadTimerRef.current = window.setTimeout(() => {
       setStatus((s) => (s === "loading" ? "maybe_blocked" : s));
-    }, 4000);
+    }, 8000);
     return () => {
       if (longLoadTimerRef.current) window.clearTimeout(longLoadTimerRef.current);
       longLoadTimerRef.current = null;
@@ -265,7 +266,7 @@ export function ResearchConsole(props: {
                 <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/70">
                   <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                    <div>{status === "maybe_blocked" ? "Still loading. This site may block embedding." : "Loading page…"}</div>
+                    <div>{status === "maybe_blocked" ? "Page could not be displayed inline. Try opening it directly." : "Loading page…"}</div>
                     {status === "maybe_blocked" ? (
                       <Button variant="outline" size="sm" onClick={openExternal}>
                         Open in new tab
@@ -279,10 +280,11 @@ export function ResearchConsole(props: {
                 <iframe
                   key={iframeKey}
                   title="Research browser"
-                  src={srcUrl}
+                  src={getProxiedUrl(srcUrl)}
                   className="h-full w-full"
                   referrerPolicy="no-referrer"
                   onLoad={() => setStatus("loaded")}
+                  onError={() => setStatus("maybe_blocked")}
                 />
               ) : null}
             </div>

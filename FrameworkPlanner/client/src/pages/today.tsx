@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useAuth } from "@/contexts/AuthContext";
+import { QueryError } from "@/components/ui/query-state";
 import { apiRequest } from "@/lib/queryClient";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { addDays, endOfDay, format, startOfDay } from "date-fns";
@@ -125,7 +126,7 @@ export default function TodayPage() {
     return `/api/tasks?${p.toString()}`;
   }, [entityFilter.relatedEntityId, entityFilter.relatedEntityType, todayEnd]);
 
-  const { data, isLoading } = useQuery<TaskListResponse>({
+  const { data, isLoading, isError, refetch } = useQuery<TaskListResponse>({
     queryKey: [listKey],
     enabled: !!user,
   });
@@ -209,6 +210,12 @@ export default function TodayPage() {
             <Loader2 className="h-4 w-4 animate-spin" />
             Loading…
           </div>
+        ) : isError ? (
+          <Card>
+            <CardContent className="p-0">
+              <QueryError message="Couldn't load your tasks." onRetry={() => refetch()} />
+            </CardContent>
+          </Card>
         ) : (
           <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <Card>

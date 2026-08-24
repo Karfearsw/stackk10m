@@ -20,6 +20,7 @@ interface AuthContextType {
   user: User | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  verify2FA: (tempToken: string, code: string) => Promise<void>;
   requestMagicLink: (email: string) => Promise<void>;
   consumeMagicLink: (token: string) => Promise<void>;
   devBypass: (email: string, employeeCode: string) => Promise<void>;
@@ -114,6 +115,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as AuthErrorBody | null;
       throw new AuthApiError(res.status, body, 'Login failed');
+    }
+
+    const data = await res.json();
+    if (data.requires2FA) {
+      throw Object.assign(new Error('2FA_REQUIRED'), { requires2FA: true, tempToken: data.tempToken });
+    }
+
+    const { user: userData, token } = data;
+    if (token) setToken(token);
+    setUser(userData);
+    try {
+      await postTimeclock('/api/timeclock/auto-start');
+    } catch {}
+    setLocation('/');
+  };
+
+  const verify2FA: AuthContextType['verify2FA'] = async (tempToken, code) => {
+    const res = await fetch('/api/auth/login/2fa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tempToken, code }),
+      credentials: 'include',
+    });
+
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as AuthErrorBody | null;
+      throw new AuthApiError(res.status, body, '2FA verification failed');
     }
 
     const { user: userData, token } = await res.json();
@@ -229,7 +257,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, requestMagicLink, consumeMagicLink, devBypass, signup, logout, isAuthenticated: !!user }}>
+    <AuthContext.Provider value={{ user, loading, login, verify2FA, requestMagicLink, consumeMagicLink, devBypass, signup, logout, isAuthenticated: !!user }}>
       {children}
     </AuthContext.Provider>
   );

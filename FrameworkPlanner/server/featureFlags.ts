@@ -36,3 +36,38 @@ export function createIsFeatureEnabled(
   };
 }
 
+
+
+/**
+ * Structured FEATURE_DISABLED error response (Phase 7).
+ * Returns a consistent JSON shape so the frontend can render a setup card
+ * instead of a generic QueryError.
+ */
+export function featureDisabledResponse(
+  res: any,
+  feature: string,
+  label: string,
+  action?: string,
+) {
+  res.status(403).json({
+    code: 'FEATURE_DISABLED',
+    feature,
+    message: `${label} is not enabled in this environment.`,
+    action: action || `Enable the ${feature} feature flag and restart the server.`,
+  });
+}
+
+/**
+ * Middleware that blocks a route if a feature flag is disabled.
+ * Usage: app.post('/api/campaigns', requireFeature('campaigns', 'Campaigns'), handler)
+ */
+export function requireFeature(flag: FeatureFlagKey, label: string, action?: string) {
+  const envKey = featureEnvVars[flag];
+  return (req: any, res: any, next: any) => {
+    const enabled = parseEnvBool(process.env[envKey]);
+    if (enabled === false || enabled === null) {
+      return featureDisabledResponse(res, flag, label, action);
+    }
+    next();
+  };
+}

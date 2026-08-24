@@ -30,6 +30,7 @@ describe('Telephony Routes', () => {
 
     // Mock storage to avoid DB access in tests
     storage.getUserById = async (id: number) => ({ id, email: "test@example.com" } as any);
+    storage.getUserByEmail = async () => ({ id: 1, email: "test@example.com" } as any);
     storage.getContacts = async () => ([{ id: 1, name: 'Test User', phone: '+15551230000' } as any]);
     storage.getLeads = async () => ([
       { id: 1, ownerName: "Lead One", ownerPhone: "+15551110000", address: "1 Main St", city: "Orlando", state: "FL", status: "new", doNotCall: false, nextFollowUpAt: null } as any,
@@ -64,6 +65,27 @@ describe('Telephony Routes', () => {
     expect(res.status).toBe(201);
     expect(res.body).toHaveProperty('callControlId');
     expect(res.body).toHaveProperty('callLogId');
+  });
+
+  it('POST /api/telephony/outbound/dispatch rejects non-E.164 numbers', async () => {
+    const res = await request(app)
+      .post('/api/telephony/outbound/dispatch')
+      .send({ toNumber: 'not-a-number' });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('INVALID_TO');
+  });
+
+  it('GET /api/telephony/health returns structured telnyx provider health', async () => {
+    const res = await request(app).get('/api/telephony/health');
+    expect(res.status).toBe(200);
+    expect(res.body.telnyx).toMatchObject({
+      status: 'reachable',
+      code: 200,
+      connectionFound: true,
+      connectionActive: true,
+    });
+    expect(res.body.telnyxDiag).toHaveProperty('telnyxConfigured');
+    expect(res.body).toHaveProperty('defaultFrom');
   });
 
   it('POST /api/telephony/calls creates call log', async () => {

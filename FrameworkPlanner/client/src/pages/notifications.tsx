@@ -6,6 +6,7 @@ import { Bell, Trash2, CheckCircle2, AlertCircle, Info, Loader2 } from "lucide-r
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
+import { QueryError } from "@/components/ui/query-state";
 
 interface Notification {
   id: number;
@@ -23,7 +24,7 @@ export default function Notifications() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
 
-  const { data: notifications = [], isLoading } = useQuery<Notification[]>({
+  const { data: notifications = [], isLoading, isError, refetch } = useQuery<Notification[]>({
     queryKey: [`/api/users/${user?.id}/notifications`],
     enabled: !!user?.id,
   });
@@ -136,6 +137,24 @@ export default function Notifications() {
       <Layout>
         <div className="flex items-center justify-center h-96">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      </Layout>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Layout>
+        <div className="space-y-6">
+          <div className="space-y-1">
+            <h1 className="text-3xl font-bold tracking-tight">Notifications</h1>
+            <p className="text-muted-foreground">Couldn't load your notifications.</p>
+          </div>
+          <Card>
+            <CardContent className="p-0">
+              <QueryError message="The notifications feed didn't load." onRetry={() => refetch()} />
+            </CardContent>
+          </Card>
         </div>
       </Layout>
     );

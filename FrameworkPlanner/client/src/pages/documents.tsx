@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAuth } from "@/contexts/AuthContext";
 import { apiRequest, apiUpload } from "@/lib/queryClient";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, FileText, Plus, RefreshCw } from "lucide-react";
+import { Download, FileText, Plus, RefreshCw, AlertCircle } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
@@ -34,7 +34,7 @@ type DocumentListResponse = { items: VaultDocument[]; total: number };
 type DocumentDetailResponse = { document: VaultDocument; links: any[]; versions: any[] };
 
 const entityTypeOptions = [
-  { value: "", label: "None" },
+  { value: "none", label: "None" },
   { value: "lead", label: "Lead" },
   { value: "opportunity", label: "Opportunity" },
   { value: "buyer", label: "Buyer" },
@@ -46,6 +46,12 @@ const entityTypeOptions = [
 function tagsToString(tags: string[] | null) {
   return (tags || []).join(", ");
 }
+
+function canInlinePreview(mime: string | null | undefined): boolean {
+  const m = String(mime || "").toLowerCase();
+  return /^application\/pdf$/.test(m) || /^image\//.test(m) || /^text\//.test(m);
+}
+
 
 const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
@@ -106,7 +112,7 @@ export default function DocumentsPage() {
 
   const listKey = useMemo(() => `/api/documents?${params.toString()}`, [params]);
 
-  const { data, isLoading, isFetching, refetch } = useQuery<DocumentListResponse>({
+  const { data, isLoading, isFetching, refetch, isError, error: queryError } = useQuery<DocumentListResponse>({
     queryKey: [listKey],
     enabled: !!user,
   });
@@ -128,7 +134,7 @@ export default function DocumentsPage() {
       if (uploadForm.kind.trim()) fd.set("kind", uploadForm.kind.trim());
       if (uploadForm.tags.trim()) fd.set("tags", uploadForm.tags.trim());
       fd.set("isPrivate", uploadForm.isPrivate ? "true" : "false");
-      if (uploadForm.entityType) fd.set("entityType", uploadForm.entityType);
+      if (uploadForm.entityType && uploadForm.entityType !== "none") fd.set("entityType", uploadForm.entityType);
       if (uploadForm.entityId.trim()) fd.set("entityId", uploadForm.entityId.trim());
       if (uploadForm.relation.trim()) fd.set("relation", uploadForm.relation.trim());
       const res = await apiUpload("POST", "/api/documents/upload", fd);
@@ -205,9 +211,9 @@ export default function DocumentsPage() {
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
                       <Label>Link type</Label>
-                      <Select value={uploadForm.entityType} onValueChange={(v) => setUploadForm((p) => ({ ...p, entityType: v }))}>
+                      <Select value={uploadForm.entityType || "none"} onValueChange={(v) => setUploadForm((p) => ({ ...p, entityType: v === "none" ? "" : v }))}>
                         <SelectTrigger>
-                          <SelectValue />
+                          <SelectValue placeholder="None" />
                         </SelectTrigger>
                         <SelectContent>
                           {entityTypeOptions.map((o) => (
@@ -247,6 +253,13 @@ export default function DocumentsPage() {
             {isLoading ? "Loading…" : `${items.length} / ${data?.total ?? 0}`}
           </div>
         </div>
+
+        {isError && (
+          <div className="mb-4 rounded-md border border-destructive bg-destructive/10 p-3 text-sm text-destructive flex items-center gap-2">
+            <AlertCircle className="h-4 w-4" />
+            {String(queryError?.message || "Failed to load documents")}
+          </div>
+        )}
 
         <Table>
           <TableHeader>
@@ -332,6 +345,21 @@ export default function DocumentsPage() {
                         v{String(v.version)} · {String(v.mimeType || v.mime_type || "")}
                       </div>
                     ))}
+                  </div>
+
+                  <div className="space-y-2 border-t pt-3">
+                    <div className="text-sm font-medium">Preview</div>
+                    {canInlinePreview(detail.document.mimeType) ? (
+                      <iframe
+                        src={`/api/documents/${detail.document.id}/preview`}
+                        title={`Preview: ${detail.document.title}`}
+                        className="h-96 w-full rounded-md border bg-muted/20"
+                      />
+                    ) : (
+                      <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                        In-app preview is unavailable for this file type. Use Download to view it.
+                      </div>
+                    )}
                   </div>
                 </>
               )}

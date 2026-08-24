@@ -1,4 +1,4 @@
-import { Building2, Menu, Phone, Users } from "lucide-react";
+import { Building2, Lightbulb, Menu, Phone, Users } from "lucide-react";
 import { useLocation, Link } from "wouter";
 import { cn } from "@/lib/utils";
 
@@ -12,8 +12,8 @@ export function MobileBottomNav({ onMore }: MobileBottomNavProps) {
   const items = [
     { label: "Leads", href: "/leads", icon: Users },
     { label: "Opps", href: "/opportunities", icon: Building2 },
-    { label: "Phone", href: "/phone", icon: Phone },
-    { label: "Contacts", href: "/contacts", icon: Users },
+    { label: "Dial", href: "/dialer-workspace", icon: Phone },
+    { label: "Play", href: "/playground", icon: Lightbulb },
   ] as const;
 
   return (
@@ -27,10 +27,10 @@ export function MobileBottomNav({ onMore }: MobileBottomNavProps) {
           const active = location === item.href || location.startsWith(`${item.href}/`);
           const Icon = item.icon;
           return (
-            <Link key={item.href} href={item.href}>
+            <Link key={item.href} href={item.href} className="flex flex-1 min-w-0">
               <div
                 className={cn(
-                  "flex flex-1 flex-col items-center justify-center gap-1 rounded-md px-2 text-[10px] font-medium",
+                  "flex flex-1 flex-col items-center justify-center gap-1 rounded-md px-1 text-[10px] font-medium",
                   active ? "text-primary" : "text-muted-foreground"
                 )}
               >

@@ -76,6 +76,11 @@ export default function Dashboard() {
   });
   const leads = Array.isArray(leadsResp?.items) ? leadsResp.items : [];
 
+  // True DB counts for widgets that would otherwise be capped by list fetches.
+  const { data: stats } = useQuery<any>({
+    queryKey: ['/api/dashboard/stats'],
+  });
+
   const tasksKey = useMemo(() => {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -126,18 +131,21 @@ export default function Dashboard() {
     const staleCutoff = new Date(todayStart.getTime() - 14 * 24 * 60 * 60 * 1000);
     const staleCutoffYmd = `${staleCutoff.getFullYear()}-${String(staleCutoff.getMonth() + 1).padStart(2, "0")}-${String(staleCutoff.getDate()).padStart(2, "0")}`;
 
+    // Prefer true DB counts; fall back to the (capped) fetched list while loading.
     const staleLeads = (leads || []).filter((l: any) => {
       const lastTouch = l?.lastTouchAt ? new Date(l.lastTouchAt) : null;
       if (!lastTouch || Number.isNaN(lastTouch.valueOf())) return true;
       return lastTouch.getTime() < staleCutoff.getTime();
     });
-    const staleLeadsTop = [...staleLeads]
-      .sort((a: any, b: any) => {
-        const aT = a?.lastTouchAt ? new Date(a.lastTouchAt).getTime() : 0;
-        const bT = b?.lastTouchAt ? new Date(b.lastTouchAt).getTime() : 0;
-        return aT - bT;
-      })
-      .slice(0, 5);
+    const staleLeadsTop = Array.isArray(stats?.staleLeadsTop)
+      ? stats.staleLeadsTop
+      : [...staleLeads]
+          .sort((a: any, b: any) => {
+            const aT = a?.lastTouchAt ? new Date(a.lastTouchAt).getTime() : 0;
+            const bT = b?.lastTouchAt ? new Date(b.lastTouchAt).getTime() : 0;
+            return aT - bT;
+          })
+          .slice(0, 5);
 
     const overdueTasks = (tasks || []).filter((t: any) => {
       if (!t?.dueAt) return false;
@@ -172,7 +180,7 @@ export default function Dashboard() {
 
     return {
       staleCutoffYmd,
-      staleLeadsCount: staleLeads.length,
+      staleLeadsCount: typeof stats?.staleLeadsCount === "number" ? stats.staleLeadsCount : staleLeads.length,
       staleLeadsTop,
       overdueTasksCount: overdueTasks.length,
       overdueTasksTop,
@@ -181,7 +189,7 @@ export default function Dashboard() {
       inFlightContractsCount: inFlightContracts.length,
       inFlightContractsTop,
     };
-  }, [leads, tasks, contractDocuments]);
+  }, [leads, tasks, contractDocuments, stats]);
 
   const kpiData = useMemo(() => {
     const closedDocuments = contractDocuments.filter(doc => doc.status === 'closed');
@@ -202,9 +210,11 @@ export default function Dashboard() {
       return sum + (parseFloat(contract.amount) || 0);
     }, 0);
 
-    const activeLeads = leads.filter((lead: any) => 
-      lead.status === 'new' || lead.status === 'contacted' || lead.status === 'qualified'
-    ).length;
+    const activeLeads = typeof stats?.activeLeads === "number"
+      ? stats.activeLeads
+      : leads.filter((lead: any) =>
+          lead.status === 'new' || lead.status === 'contacted' || lead.status === 'qualified'
+        ).length;
 
     const dealsInPipeline = contractDocuments.filter(doc => 
       doc.status === 'draft' || doc.status === 'sent' || doc.status === 'executed'
@@ -212,8 +222,9 @@ export default function Dashboard() {
 
     const closedDeals = closedDocuments.length;
 
-    const conversionRate = leads.length > 0 
-      ? ((closedDeals / leads.length) * 100).toFixed(1)
+    const totalLeads = typeof stats?.activeLeads === "number" ? stats.activeLeads : leads.length;
+    const conversionRate = totalLeads > 0 
+      ? ((closedDeals / totalLeads) * 100).toFixed(1)
       : "0.0";
 
     return [
@@ -229,7 +240,7 @@ export default function Dashboard() {
       {
         title: "Active Leads",
         value: activeLeads.toString(),
-        change: leads.length ? `${leads.length} total leads` : "No leads yet",
+        change: activeLeads ? `${activeLeads} total leads` : "No leads yet",
         trend: "neutral",
         icon: Users,
         description: "",
@@ -254,7 +265,7 @@ export default function Dashboard() {
         href: "/analytics",
       }
     ];
-  }, [leads, contracts, contractDocuments]);
+  }, [leads, contracts, contractDocuments, stats]);
 
   const groupedActivityLogs = useMemo((): ActivityLog[] => {
     const windowMs = 15 * 60 * 1000;
@@ -358,13 +369,13 @@ export default function Dashboard() {
         </Button>
         <Button size="sm" variant="secondary" onClick={() => setLocation("/phone")}>
           <Phone className="mr-2 h-4 w-4" />
-          Start Dial Session
+          Start Dialing
         </Button>
         <Button size="sm" variant="outline" onClick={() => setLocation("/playground")}>
           <Activity className="mr-2 h-4 w-4" />
           Resume Playground
         </Button>
-        <Button size="sm" variant="outline" onClick={() => setLocation("/contracts?tab=create")}>
+        <Button size="sm" variant="outline" onClick={() => setLocation("/contract-generator")}>
           <FileText className="mr-2 h-4 w-4" />
           New Contract
         </Button>

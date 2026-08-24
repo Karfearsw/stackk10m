@@ -3,17 +3,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
+import { QueryError } from "@/components/ui/query-state";
 
 const COLORS = ["#0a0a0a", "#D4AF37", "#C9A227", "#E7D39C", "#F6EED1"];
 
 export default function Analytics() {
   // Fetch real data
-  const { data: leadsResp, isLoading: leadsLoading } = useQuery<any>({
+  const { data: leadsResp, isLoading: leadsLoading, isError: leadsError, refetch: refetchLeads } = useQuery<any>({
     queryKey: ['/api/leads?limit=500'],
   });
   const leads = Array.isArray(leadsResp?.items) ? leadsResp.items : [];
 
-  const { data: contracts = [], isLoading: contractsLoading } = useQuery<any[]>({
+  const { data: contracts = [], isLoading: contractsLoading, isError: contractsError, refetch: refetchContracts } = useQuery<any[]>({
     queryKey: ['/api/contracts'],
   });
 
@@ -145,6 +146,28 @@ export default function Analytics() {
             </Card>
           ))}
         </div>
+      </Layout>
+    );
+  }
+
+  if (leadsError || contractsError) {
+    return (
+      <Layout>
+        <div className="space-y-1 mb-6">
+          <h1 className="text-3xl font-bold tracking-tight" data-testid="page-title">Analytics</h1>
+          <p className="text-muted-foreground">Key metrics and performance insights for your wholesaling business.</p>
+        </div>
+        <Card>
+          <CardContent className="p-0">
+            <QueryError
+              message="Analytics couldn't load its data sources."
+              onRetry={() => {
+                refetchLeads();
+                refetchContracts();
+              }}
+            />
+          </CardContent>
+        </Card>
       </Layout>
     );
   }

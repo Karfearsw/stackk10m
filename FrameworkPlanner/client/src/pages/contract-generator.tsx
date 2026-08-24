@@ -14,6 +14,16 @@ import { FileText, Download, Plus, Eye, Save, FileSignature, CheckCircle, Send, 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
+import { isTemplateUsable, parseContractGeneratorSearch, withTemplateSelection } from "@/lib/contract-generator-params";
+
+function Row({ label, value }: { label: string; value: any }) {
+  return (
+    <div className="flex justify-between gap-4 border-b border-border/60 py-2">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-medium text-right">{value === "" || value == null ? "—" : String(value)}</span>
+    </div>
+  );
+}
 
 const statusColors: Record<string, string> = {
   draft: "bg-gray-500",
@@ -27,27 +37,19 @@ export default function ContractGenerator() {
   const queryClient = useQueryClient();
   const [location, setLocation] = useLocation();
   const [activeTab, setActiveTab] = useState("list");
-  const deepLink = useMemo(() => {
-    const params = new URLSearchParams(window.location.search);
-    const tab = params.get("tab") || "";
-    const propertyIdRaw = params.get("propertyId") || "";
-    const propertyId = propertyIdRaw ? parseInt(propertyIdRaw, 10) : 0;
-    const status = String(params.get("status") || "").trim();
-    const statusInRaw = String(params.get("statusIn") || "").trim();
-    const statusIn = statusInRaw
-      ? statusInRaw
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean)
-          .slice(0, 10)
-      : (status ? [status] : []);
-    const validTab = tab && ["list", "create", "closing", "templates", "lois"].includes(tab) ? tab : "";
-    return { tab: validTab, propertyId: Number.isFinite(propertyId) ? propertyId : 0, statusIn };
-  }, [location]);
+  // Single source of truth for the template selected in the Create tab.
+  // "Use" on the Templates tab and the ?templateId= URL param both write here.
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+  const deepLink = useMemo(() => parseContractGeneratorSearch(window.location.search), [location]);
 
   useEffect(() => {
     if (deepLink.tab) setActiveTab(deepLink.tab);
   }, [deepLink.tab]);
+
+  // Deep-linked template selection (?templateId=) wins on load.
+  useEffect(() => {
+    if (deepLink.templateId) setSelectedTemplateId(deepLink.templateId);
+  }, [deepLink.templateId]);
 
   // Fetch contracts
   const { data: contracts = [], isLoading: contractsLoading } = useQuery<any[]>({
@@ -131,12 +133,27 @@ export default function ContractGenerator() {
 
           {/* Create Contract Tab */}
           <TabsContent value="create" className="space-y-4">
-            <ContractCreator templates={templates} properties={properties} initialPropertyId={deepLink.propertyId || undefined} />
+            <ContractCreator
+              templates={templates}
+              properties={properties}
+              initialPropertyId={deepLink.propertyId || undefined}
+              selectedTemplateId={selectedTemplateId}
+              onTemplateChange={setSelectedTemplateId}
+            />
           </TabsContent>
 
           {/* Templates Tab */}
           <TabsContent value="templates" className="space-y-4">
-            <TemplatesManager templates={templates} isLoading={templatesLoading} />
+            <TemplatesManager
+              templates={templates}
+              isLoading={templatesLoading}
+              onUseTemplate={(id: string) => {
+                setSelectedTemplateId(id);
+                setActiveTab("create");
+                // Keep the selection in the URL so it survives refresh and stays deep-linkable.
+                setLocation(`/contract-generator${withTemplateSelection(window.location.search, id)}`);
+              }}
+            />
           </TabsContent>
 
           {/* LOIs Tab */}
@@ -150,11 +167,18 @@ export default function ContractGenerator() {
 }
 
 // Contract Creator Component
-function ContractCreator({ templates, properties, initialPropertyId }: { templates: any[], properties: any[], initialPropertyId?: number }) {
+function ContractCreator({ templates, properties, initialPropertyId, selectedTemplateId, onTemplateChange }: {
+  templates: any[];
+  properties: any[];
+  initialPropertyId?: number;
+  selectedTemplateId: string;
+  onTemplateChange: (id: string) => void;
+}) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const appliedInitial = useRef(false);
-  const [selectedTemplate, setSelectedTemplate] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [formData, setFormData] = useState({
     title: "",
     propertyId: "",
@@ -201,11 +225,52 @@ function ContractCreator({ templates, properties, initialPropertyId }: { templat
     },
   });
 
+  const template = templates.find(t => t.id.toString() === selectedTemplateId);
+
+  const getPreviewContent = () => {
+    const base = template?.content || formData.terms;
+    if (!base) return "No template selected and no terms entered yet.";
+    return String(base)
+      .replace(/{{buyerName}}/g, formData.buyerName || "[Buyer Name]")
+      .replace(/{{sellerName}}/g, formData.sellerName || "[Seller Name]")
+      .replace(/{{amount}}/g, formData.amount ? "$" + Number(formData.amount).toLocaleString() : "[Amount]")
+      .replace(/{{propertyAddress}}/g, formData.propertyId ? "Selected property" : "[Property Address]");
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const body = {
+        templateId: selectedTemplateId ? parseInt(selectedTemplateId) : null,
+        propertyId: formData.propertyId ? parseInt(formData.propertyId) : null,
+        title: formData.title,
+        content: template?.content || formData.terms,
+        mergeData: JSON.stringify(formData),
+        status: 'draft',
+      };
+      const response = await fetch('/api/contract-documents', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) throw new Error('Failed to create contract');
+      const created = await response.json();
+      const id = created?.id ?? created?.contract?.id;
+      toast({ title: "Draft saved", description: "Opening PDF export…" });
+      queryClient.invalidateQueries({ queryKey: ['/api/contract-documents'] });
+      if (id) window.open(`/api/contract-documents/${id}/pdf`, "_blank");
+    } catch (e: any) {
+      toast({ title: e?.message || "Export failed", variant: "destructive" });
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const template = templates.find(t => t.id.toString() === selectedTemplate);
+    const template = templates.find(t => t.id.toString() === selectedTemplateId);
     createMutation.mutate({
-      templateId: selectedTemplate ? parseInt(selectedTemplate) : null,
+      templateId: selectedTemplateId ? parseInt(selectedTemplateId) : null,
       propertyId: formData.propertyId ? parseInt(formData.propertyId) : null,
       title: formData.title,
       content: template?.content || formData.terms,
@@ -225,12 +290,12 @@ function ContractCreator({ templates, properties, initialPropertyId }: { templat
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="template">Template (Optional)</Label>
-              <Select value={selectedTemplate} onValueChange={setSelectedTemplate}>
+              <Select value={selectedTemplateId} onValueChange={onTemplateChange}>
                 <SelectTrigger data-testid="select-template">
                   <SelectValue placeholder="Select a template" />
                 </SelectTrigger>
                 <SelectContent>
-                  {templates.map((template: any) => (
+                  {templates.filter((t: any) => isTemplateUsable(t.status)).map((template: any) => (
                     <SelectItem key={template.id} value={template.id.toString()}>
                       {template.name}
                     </SelectItem>
@@ -319,24 +384,76 @@ function ContractCreator({ templates, properties, initialPropertyId }: { templat
               <Save className="w-4 h-4 mr-2" />
               {createMutation.isPending ? "Saving..." : "Save as Draft"}
             </Button>
-            <Button type="button" variant="outline" data-testid="button-preview">
+            <Button type="button" variant="outline" data-testid="button-preview" onClick={() => setPreviewOpen(true)}>
               <Eye className="w-4 h-4 mr-2" />
               Preview
             </Button>
-            <Button type="button" variant="outline" data-testid="button-export-pdf">
+            <Button type="button" variant="outline" data-testid="button-export-pdf" onClick={handleExport} disabled={exporting}>
               <Download className="w-4 h-4 mr-2" />
-              Export as PDF
+              {exporting ? "Saving…" : "Export as PDF"}
             </Button>
           </div>
         </form>
+
+        <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+          <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+            <DialogHeader>
+              <DialogTitle>Contract Preview</DialogTitle>
+            </DialogHeader>
+            <div className="flex-1 overflow-auto border border-border rounded-md bg-muted/30 p-4 font-mono text-sm whitespace-pre-wrap">
+              {getPreviewContent()}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setPreviewOpen(false)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   );
 }
 
 // Templates Manager Component
-function TemplatesManager({ templates, isLoading }: { templates: any[], isLoading: boolean }) {
+function TemplatesManager({ templates, isLoading, onUseTemplate }: { templates: any[], isLoading: boolean, onUseTemplate?: (id: string) => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [showCreate, setShowCreate] = useState(false);
+  const [editing, setEditing] = useState<any>(null);
+  const [savePending, setSavePending] = useState(false);
+
+  const saveEdit = async () => {
+    if (!editing?.id) return;
+    setSavePending(true);
+    try {
+      const payload = {
+        name: editing.name,
+        description: editing.description,
+        category: editing.category,
+        content: editing.content,
+        mergeFields: Array.isArray(editing.mergeFields) ? editing.mergeFields : (editing.mergeFields || "").toString().split(',').map((s: string) => s.trim()).filter(Boolean),
+      };
+      const isApproved = editing.status === "approved";
+      const url = isApproved ? `/api/contract-templates/${editing.id}/revise` : `/api/contract-templates/${editing.id}`;
+      const method = isApproved ? "POST" : "PATCH";
+      const response = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(isApproved ? {} : payload),
+      });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error((json as any).message || "Failed to save");
+      toast({
+        title: isApproved ? "New version created" : "Template updated",
+        description: isApproved ? "Approved templates are immutable, so a draft revision was created." : undefined,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/contract-templates"] });
+      setEditing(null);
+    } catch (e: any) {
+      toast({ title: e?.message || "Save failed", variant: "destructive" });
+    } finally {
+      setSavePending(false);
+    }
+  };
 
   return (
     <Card>
@@ -374,15 +491,43 @@ function TemplatesManager({ templates, isLoading }: { templates: any[], isLoadin
                 className="p-4 border border-border rounded-lg hover:border-primary/50 transition-colors"
                 data-testid={`template-${template.id}`}
               >
-                <h3 className="font-semibold text-foreground mb-1">{template.name}</h3>
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <h3 className="font-semibold text-foreground">{template.name}</h3>
+                  {template.status === "approved" ? (
+                    <Badge className="bg-green-500/15 text-green-400 border-green-500/30 shrink-0" variant="outline">Approved</Badge>
+                  ) : template.status === "archived" ? (
+                    <Badge className="bg-gray-500/15 text-gray-400 border-gray-500/30 shrink-0" variant="outline">Archived</Badge>
+                  ) : (
+                    <Badge className="bg-amber-500/15 text-amber-400 border-amber-500/30 shrink-0" variant="outline">Draft</Badge>
+                  )}
+                </div>
                 <p className="text-sm text-muted-foreground mb-3">{template.description}</p>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground mb-3">
+                  <span className="capitalize">{template.category}</span>
+                  <span>v{template.version ?? 1}</span>
+                  {template.jurisdiction ? <span>{template.jurisdiction}</span> : null}
+                  {template.ownerUserId ? <span>Owner #{template.ownerUserId}</span> : null}
+                  {template.lastReviewedAt ? <span>Reviewed {String(template.lastReviewedAt).slice(0, 10)}</span> : null}
+                </div>
+                {template.status !== "approved" ? (
+                  <p className="text-xs text-amber-400/90 bg-amber-500/5 border border-amber-500/20 rounded-md px-2 py-1.5 mb-3">
+                    Not attorney-approved — have a real-estate attorney review this template for your jurisdiction before use.
+                  </p>
+                ) : null}
                 <div className="flex justify-between items-center">
-                  <span className="text-xs text-muted-foreground capitalize">{template.category}</span>
+                  <span className="text-xs text-muted-foreground capitalize">{template.status}</span>
                   <div className="flex gap-2">
-                    <Button variant="outline" size="sm" data-testid={`button-edit-${template.id}`}>
+                    <Button variant="outline" size="sm" data-testid={`button-edit-${template.id}`} onClick={() => setEditing({ ...template, mergeFields: Array.isArray(template.mergeFields) ? template.mergeFields.join(", ") : (template.mergeFields || "") })}>
                       Edit
                     </Button>
-                    <Button variant="outline" size="sm" data-testid={`button-use-${template.id}`}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      data-testid={`button-use-${template.id}`}
+                      onClick={() => onUseTemplate && onUseTemplate(String(template.id))}
+                      disabled={!isTemplateUsable(template.status)}
+                      title={isTemplateUsable(template.status) ? undefined : "Archived templates can't be used to generate contracts"}
+                    >
                       Use
                     </Button>
                   </div>
@@ -392,6 +537,46 @@ function TemplatesManager({ templates, isLoading }: { templates: any[], isLoadin
           </div>
         )}
       </CardContent>
+
+      <Dialog open={!!editing} onOpenChange={(open) => { if (!open) setEditing(null); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Edit Template{editing?.status === "approved" ? " (creates new version)" : ""}</DialogTitle>
+
+          </DialogHeader>
+          <div className="flex-1 overflow-auto space-y-4">
+            {editing ? (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Name</Label>
+                    <Input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} disabled={editing.status === "approved"} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Category</Label>
+                    <Input value={editing.category} onChange={(e) => setEditing({ ...editing, category: e.target.value })} disabled={editing.status === "approved"} />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Description</Label>
+                  <Input value={editing.description} onChange={(e) => setEditing({ ...editing, description: e.target.value })} disabled={editing.status === "approved"} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Content</Label>
+                  <Textarea value={editing.content} onChange={(e) => setEditing({ ...editing, content: e.target.value })} disabled={editing.status === "approved"} className="min-h-[200px] font-mono text-sm" />
+                </div>
+              </>
+            ) : null}
+          </div>
+          <DialogFooter>
+            {editing?.status === "approved" ? (
+              <p className="text-xs text-muted-foreground mr-auto">Approved templates are locked. Saving creates a new draft version you can then approve.</p>
+            ) : null}
+            <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
+            <Button onClick={saveEdit} disabled={savePending}>{savePending ? "Saving…" : "Save"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -515,6 +700,7 @@ function TemplateCreator({ onClose }: { onClose: () => void }) {
 // LOI Manager Component
 function LOIManager({ lois, properties, isLoading }: { lois: any[], properties: any[], isLoading: boolean }) {
   const [showCreate, setShowCreate] = useState(false);
+  const [viewLoi, setViewLoi] = useState<any>(null);
 
   return (
     <Card>
@@ -556,7 +742,7 @@ function LOIManager({ lois, properties, isLoading }: { lois: any[], properties: 
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" data-testid={`button-view-loi-${loi.id}`}>
+                  <Button variant="outline" size="sm" data-testid={`button-view-loi-${loi.id}`} onClick={() => setViewLoi(loi)}>
                     View
                   </Button>
                 </div>
@@ -565,6 +751,30 @@ function LOIManager({ lois, properties, isLoading }: { lois: any[], properties: 
           </div>
         )}
       </CardContent>
+
+      <Dialog open={!!viewLoi} onOpenChange={(open) => { if (!open) setViewLoi(null); }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Letter of Intent</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto space-y-3 text-sm">
+            {viewLoi ? (
+              <>
+                <Row label="Buyer" value={viewLoi.buyerName} />
+                <Row label="Seller" value={viewLoi.sellerName} />
+                <Row label="Offer Amount" value={viewLoi.offerAmount ? "$" + Number(viewLoi.offerAmount).toLocaleString() : "—"} />
+                <Row label="Earnest Money" value={viewLoi.earnestMoney ? "$" + Number(viewLoi.earnestMoney).toLocaleString() : "—"} />
+                <Row label="Closing Date" value={viewLoi.closingDate || "—"} />
+                <Row label="Status" value={viewLoi.status ? String(viewLoi.status).toUpperCase() : "—"} />
+                <Row label="Special Terms" value={viewLoi.specialTerms || "—"} />
+              </>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setViewLoi(null)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -736,6 +946,26 @@ function ContractsList({
   const [signerName, setSignerName] = useState("");
   const [signerEmail, setSignerEmail] = useState("");
   const [signerUrl, setSignerUrl] = useState("");
+  const [viewOpen, setViewOpen] = useState(false);
+  const [viewContract, setViewContract] = useState<any>(null);
+  const [viewContent, setViewContent] = useState("");
+  const [viewLoading, setViewLoading] = useState(false);
+
+  const openView = async (contract: any) => {
+    setViewContract(contract);
+    setViewContent("");
+    setViewOpen(true);
+    setViewLoading(true);
+    try {
+      const res = await fetch(`/api/contract-documents/${contract.id}/view`);
+      const json = await res.json().catch(() => ({}));
+      setViewContent(String((json as any)?.content ?? ""));
+    } catch {
+      setViewContent("");
+    } finally {
+      setViewLoading(false);
+    }
+  };
 
   const updateStatusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: number, status: string }) => {
@@ -894,7 +1124,7 @@ function ContractsList({
                         Mark as {nextStatus.charAt(0).toUpperCase() + nextStatus.slice(1)}
                       </Button>
                     )}
-                    <Button variant="outline" size="sm" data-testid={`button-view-${contract.id}`}>
+                    <Button variant="outline" size="sm" data-testid={`button-view-${contract.id}`} onClick={() => openView(contract)}>
                       <Eye className="w-4 h-4 mr-2" />
                       View
                     </Button>
@@ -950,6 +1180,27 @@ function ContractsList({
             <Button variant="outline" onClick={() => setSendOpen(false)}>
               Close
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={viewOpen} onOpenChange={setViewOpen}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Contract: {viewContract?.title || ""}</DialogTitle>
+          </DialogHeader>
+          <div className="flex-1 overflow-auto border border-border rounded-md bg-muted/30 p-4 font-mono text-sm whitespace-pre-wrap">
+            {viewLoading ? "Loading…" : (viewContent || "This draft has no rendered content yet.")}
+          </div>
+          <DialogFooter className="justify-end">
+            <Button
+              variant="secondary"
+              onClick={() => viewContract?.id && window.open(`/api/contract-documents/${viewContract.id}/pdf`, "_blank")}
+            >
+              <Download className="w-4 h-4 mr-2" />
+              Download PDF
+            </Button>
+            <Button variant="outline" onClick={() => setViewOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

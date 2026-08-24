@@ -5,38 +5,28 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { QueryError } from "@/components/ui/query-state";
 import { apiRequest } from "@/lib/queryClient";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 
 type AudioAsset = { id: number; name: string; mimeType: string; createdAt: string };
 
+function isNotEnabledError(e: unknown): boolean {
+  const msg = String((e as any)?.message || "");
+  return msg.includes("404:") && msg.includes("Not found");
+}
+
 export default function RvmPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const { data: audioAssets = [] } = useQuery<AudioAsset[]>({
+  const { data: audioAssets = [], error: audioError } = useQuery<AudioAsset[]>({
     queryKey: ["/api/rvm/audio-assets"],
-    queryFn: async () => {
-      try {
-        const res = await apiRequest("GET", "/api/rvm/audio-assets");
-        return res.json();
-      } catch {
-        return [];
-      }
-    },
   });
 
-  const { data: campaigns = [] } = useQuery<any[]>({
+  const { data: campaigns = [], error: campaignsError, refetch: refetchCampaigns, isFetching: campaignsFetching } = useQuery<any[]>({
     queryKey: ["/api/rvm/campaigns"],
-    queryFn: async () => {
-      try {
-        const res = await apiRequest("GET", "/api/rvm/campaigns");
-        return res.json();
-      } catch {
-        return [];
-      }
-    },
   });
 
   const [newCampaignName, setNewCampaignName] = useState("");
@@ -54,17 +44,9 @@ export default function RvmPage() {
     if (!activeCampaign) setActiveCampaignId(null);
   }, [activeCampaignId, activeCampaign, campaigns.length]);
 
-  const { data: drops = [] } = useQuery<any[]>({
+  const { data: drops = [], error: dropsError } = useQuery<any[]>({
     queryKey: ["/api/rvm/campaigns", activeCampaignId, "drops"],
     enabled: !!activeCampaignId,
-    queryFn: async () => {
-      try {
-        const res = await apiRequest("GET", `/api/rvm/campaigns/${activeCampaignId}/drops`);
-        return res.json();
-      } catch {
-        return [];
-      }
-    },
   });
 
   const createCampaignMutation = useMutation({
@@ -151,6 +133,22 @@ export default function RvmPage() {
           <h1 className="text-3xl font-bold tracking-tight">RVM</h1>
           <p className="text-muted-foreground">Ringless voicemail blasting with guardrails.</p>
         </div>
+
+        {campaignsError && (
+          <Card className={isNotEnabledError(campaignsError) ? "" : "border-destructive/40"}>
+            <CardContent className={isNotEnabledError(campaignsError) ? "pt-6 text-sm text-muted-foreground" : "p-0"}>
+              {isNotEnabledError(campaignsError) ? (
+                "RVM is not enabled for this account."
+              ) : (
+                <QueryError message="Couldn't load RVM campaigns." onRetry={() => refetchCampaigns()} />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {audioError && (
+          <p className="text-sm text-destructive">Couldn't load the audio library.</p>
+        )}
 
         <Card>
           <CardHeader>

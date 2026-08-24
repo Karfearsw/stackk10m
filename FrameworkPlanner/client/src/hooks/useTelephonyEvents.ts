@@ -17,14 +17,23 @@ function resolveWsUrl(wsBaseUrl: string | null | undefined, pathWithQuery: strin
 }
 
 async function getWsToken() {
-  const res = await fetch("/api/telephony/ws-token", { method: "POST" });
+  const res = await fetch("/api/telephony/ws-token", { method: "POST", credentials: "include" });
   if (!res.ok) throw new Error("WS token unavailable");
   return res.json() as Promise<{ token: string; expiresAt: string; wsBaseUrl?: string | null }>;
 }
 
-export function useTelephonyEvents(opts?: { enabled?: boolean }) {
+export type TelephonyCallStateEvent = {
+  callControlId: string;
+  state: string;
+  from?: string | null;
+  to?: string | null;
+};
+
+export function useTelephonyEvents(opts?: { enabled?: boolean; onCallStateChanged?: (evt: TelephonyCallStateEvent) => void }) {
   const enabled = opts?.enabled ?? true;
   const queryClient = useQueryClient();
+  const onCallStateChangedRef = useRef(opts?.onCallStateChanged);
+  onCallStateChangedRef.current = opts?.onCallStateChanged;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<number>(0);
   const attemptsRef = useRef(0);
@@ -59,6 +68,16 @@ export function useTelephonyEvents(opts?: { enabled?: boolean }) {
 
     const handleEvent = (evt: TelephonyEvent) => {
       const t = String(evt.type || "");
+      if (t === "call_state_changed") {
+        const payload = evt.payload || {};
+        onCallStateChangedRef.current?.({
+          callControlId: String(payload.callControlId || ""),
+          state: String(payload.state || ""),
+          from: payload.from || null,
+          to: payload.to || null,
+        });
+        return;
+      }
       if (t === "call_log_created" || t === "call_log_updated") {
         queryClient.invalidateQueries({ queryKey: ["/api/telephony/history"] });
         queryClient.invalidateQueries({ queryKey: ["/api/telephony/voicemail", "50"] });

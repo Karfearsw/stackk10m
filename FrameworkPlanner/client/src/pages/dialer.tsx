@@ -9,6 +9,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Phone, PhoneOff, Hash, Asterisk, Plus, Search, Clock, Voicemail, Mic, MicOff, Pause, Play } from "lucide-react";
 import { useSignalWire } from "@/hooks/useSignalWire";
+import { apiRequest } from "@/lib/queryClient";
+import { toast } from "sonner";
 
 function formatE164(raw: string) {
   const digits = raw.replace(/[^\d+]/g, "");
@@ -59,8 +61,7 @@ export default function Dialer() {
   const { data: contacts = [] } = useQuery({
     queryKey: ["/api/telephony/contacts", ""],
     queryFn: async () => {
-      const res = await fetch(`/api/telephony/contacts?query=`);
-      if (!res.ok) throw new Error("Failed to fetch contacts");
+      const res = await apiRequest("GET", "/api/telephony/contacts?query=");
       const json = await res.json();
       return json.items || [];
     },
@@ -69,21 +70,15 @@ export default function Dialer() {
   const { data: history = [], refetch: refetchHistory } = useQuery({
     queryKey: ["/api/telephony/history"],
     queryFn: async () => {
-      const res = await fetch(`/api/telephony/history?limit=50`);
-      if (!res.ok) throw new Error("Failed to fetch history");
-      return res.json();
+      const res = await apiRequest("GET", "/api/telephony/history?limit=50");
+      return await res.json();
     },
     refetchInterval: historyInterval as any,
   });
 
   const patchCallLog = async (id: number, patch: any) => {
     try {
-      const res = await fetch(`/api/telephony/calls/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      if (!res.ok) throw new Error(await res.text());
+      const res = await apiRequest("PATCH", `/api/telephony/calls/${id}`, patch);
       return await res.json();
     } catch {
       return null;
@@ -97,22 +92,20 @@ export default function Dialer() {
 
   const createCall = useMutation({
     mutationFn: async ({ direction, number }: { direction: "outbound"|"inbound"; number: string }) => {
-      // First create the call log
-      const res = await fetch(`/api/telephony/calls`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ direction, number: String(number), status: "dialing", startedAt: new Date().toISOString(), metadata: callMetadataRef.current }),
+      const res = await apiRequest("POST", "/api/telephony/calls", {
+        direction,
+        number: String(number),
+        status: "dialing",
+        startedAt: new Date().toISOString(),
+        metadata: callMetadataRef.current,
       });
-      if (!res.ok) throw new Error(await res.text());
       const log = await res.json();
       
-      // Then make the actual Telnyx call (connects if not ready)
       if (direction === "outbound") {
         try {
           await makeCall(number);
         } catch (error) {
           console.error("Telnyx call failed:", error);
-          // Update call log to failed status
           await patchCallLog(log.id, { status: "failed", endedAt: new Date().toISOString() });
           throw error;
         }
@@ -127,6 +120,9 @@ export default function Dialer() {
       wasConnectedRef.current = false;
       lastPatchedStatusRef.current = "dialing";
       queryClient.invalidateQueries({ queryKey: ["/api/telephony/history"] });
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || "Failed to start call");
     },
   });
 
@@ -150,6 +146,9 @@ export default function Dialer() {
       setStartTs(null);
       wasConnectedRef.current = false;
       queryClient.invalidateQueries({ queryKey: ["/api/telephony/history"] });
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || "Failed to end call");
     },
   });
 

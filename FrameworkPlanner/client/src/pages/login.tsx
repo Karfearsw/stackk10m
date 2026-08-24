@@ -16,9 +16,12 @@ export default function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [employeeCode, setEmployeeCode] = useState('');
+  const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [useBackupCode, setUseBackupCode] = useState(false);
+  const [tempToken, setTempToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [apiError, setApiError] = useState<AuthApiError | null>(null);
-  const { login, requestMagicLink, devBypass } = useAuth();
+  const { login, verify2FA, requestMagicLink, devBypass } = useAuth();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,10 +32,33 @@ export default function Login() {
       await login(email, password);
       toast.success('Welcome back!');
     } catch (error: any) {
-      if (error instanceof AuthApiError && error.status === 503 && getAuth503Guidance(error.code, error.missing)) {
+      if (error.requires2FA) {
+        setTempToken(error.tempToken);
+        setTwoFactorCode('');
+      } else if (error instanceof AuthApiError && error.status === 503 && getAuth503Guidance(error.code, error.missing)) {
         setApiError(error);
       } else {
         toast.error(error.message || 'Invalid email or password');
+      }
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function handle2FASubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!tempToken) return;
+    setIsLoading(true);
+    setApiError(null);
+
+    try {
+      await verify2FA(tempToken, twoFactorCode);
+      toast.success('Welcome back!');
+    } catch (error: any) {
+      if (error instanceof AuthApiError && error.status === 503 && getAuth503Guidance(error.code, error.missing)) {
+        setApiError(error);
+      } else {
+        toast.error(error.message || 'Invalid 2FA code');
       }
     } finally {
       setIsLoading(false);
@@ -81,14 +107,16 @@ export default function Login() {
         <CardHeader className="text-center">
           <div className="flex justify-center mb-2">
             <img
-              src="/logo.jpg"
+              src="/luxe-logo.png"
               alt="Luxe RM Logo"
               className="h-16 w-16 object-contain"
               onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
             />
           </div>
           <CardTitle className="text-2xl font-bold">Luxe RM</CardTitle>
-          <CardDescription>Sign in to your account to continue</CardDescription>
+          <CardDescription>
+            {tempToken ? 'Enter the 6-digit code from your authenticator app' : 'Sign in to your account to continue'}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {apiError && guidance && (
@@ -110,58 +138,121 @@ export default function Login() {
               </AlertDescription>
             </Alert>
           )}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="email"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <PasswordInput
-                id="password"
-                placeholder="Enter your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={isLoading}
-                data-testid="input-login-password"
-              />
-            </div>
-            <div className="flex items-center justify-end">
-              <Link href="/forgot-password" className="text-sm text-primary hover:underline font-medium">
-                Forgot password?
-              </Link>
-            </div>
-            <Button
-              type="button"
-              variant="secondary"
-              className="w-full"
-              disabled={isLoading || !email}
-              onClick={handleMagicLink}
-            >
-              {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Email me a sign-in link
-            </Button>
-            <Button
-              type="submit"
-              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-              disabled={isLoading}
-              data-testid="button-login"
-            >
-              {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Sign In
-            </Button>
-          </form>
 
-          {import.meta.env.DEV && (
+          {!tempToken ? (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  autoComplete="email"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="password">Password</Label>
+                <PasswordInput
+                  id="password"
+                  placeholder="Enter your password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  disabled={isLoading}
+                  data-testid="input-login-password"
+                />
+              </div>
+              <div className="flex items-center justify-end">
+                <Link href="/forgot-password" className="text-sm text-primary hover:underline font-medium">
+                  Forgot password?
+                </Link>
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full"
+                disabled={isLoading || !email}
+                onClick={handleMagicLink}
+              >
+                {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Email me a sign-in link
+              </Button>
+              <Button
+                type="submit"
+                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+                disabled={isLoading}
+                data-testid="button-login"
+              >
+                {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Sign In
+              </Button>
+            </form>
+          ) : (
+            <form onSubmit={handle2FASubmit} className="space-y-4">
+              <div className="flex items-center justify-between p-4 border rounded-lg bg-muted/50">
+                <div className="text-sm">
+                  <p className="font-medium">Verification Method</p>
+                  <p className="text-muted-foreground">
+                    {useBackupCode ? 'Enter one of your backup codes' : 'Enter the 6-digit code from your authenticator app'}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setUseBackupCode(!useBackupCode);
+                    setTwoFactorCode('');
+                  }}
+                >
+                  {useBackupCode ? 'Use TOTP' : 'Use Backup Code'}
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="twoFactorCode">
+                  {useBackupCode ? 'Backup Code' : '2FA Code'}
+                </Label>
+                <Input
+                  id="twoFactorCode"
+                  type="text"
+                  inputMode={useBackupCode ? "text" : "numeric"}
+                  maxLength={useBackupCode ? 10 : 6}
+                  placeholder={useBackupCode ? "XXXXXXXXXX" : "000000"}
+                  value={twoFactorCode}
+                  onChange={(e) => setTwoFactorCode(useBackupCode ? e.target.value.toUpperCase() : e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  required
+                  disabled={isLoading}
+                  autoFocus
+                  data-testid="input-2fa-code"
+                  className="text-center text-2xl tracking-widest"
+                />
+              </div>
+              <Button
+                type="submit"
+                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+                disabled={isLoading || !twoFactorCode}
+                data-testid="button-verify-2fa"
+              >
+                {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Verify
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={() => { setTempToken(null); setTwoFactorCode(''); setUseBackupCode(false); }}
+                disabled={isLoading}
+              >
+                Back
+              </Button>
+            </form>
+          )}
+
+          {import.meta.env.DEV && !tempToken && (
             <div className="mt-4 space-y-3">
               <div className="space-y-2">
                 <Label htmlFor="employeeCode">Employee Access Code</Label>

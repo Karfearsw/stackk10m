@@ -7,14 +7,19 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock, ImageIcon, Camera, Upload, X, Trash2, Server, Database, Phone, Bot } from "lucide-react";
+import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock, ImageIcon, Camera, Upload, X, Trash2, Server, Database, Phone, Bot, Plus, Pencil, Save, ArrowUp, ArrowDown, Eye, EyeOff } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
-import { runTelnyxDiagnostics } from "@/debug/signalwireDiag";
-import { useLocation } from "wouter";
+import { resolveBannerConfig, type BannerConfig } from "@/components/dashboard/bannerConfig";
+import { useLocation, useSearch } from "wouter";
+import { AutomationsContent } from "@/pages/automations";
+import { AuditLogContent } from "@/pages/audit-log";
+import { apiRequest } from "@/lib/queryClient";
+import { TelnyxOnboardingWizard } from "@/components/telnyx/TelnyxOnboardingWizard";
 
 function SettingsContent() {
   const queryClient = useQueryClient();
@@ -30,22 +35,38 @@ function SettingsContent() {
   const [joinInviteCode, setJoinInviteCode] = useState("");
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("member");
+  const [editingQuoteIndex, setEditingQuoteIndex] = useState<number | null>(null);
+  const [newQuoteText, setNewQuoteText] = useState("");
+  const [newQuoteAuthor, setNewQuoteAuthor] = useState("");
+  const [twoFactorQr, setTwoFactorQr] = useState<string | null>(null);
+  const [twoFactorSecret, setTwoFactorSecret] = useState<string | null>(null);
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [generatedBackupCodes, setGeneratedBackupCodes] = useState<string[]>([]);
 
   const [location, setLocation] = useLocation();
+  const search = useSearch();
+  const tabFromUrl = useMemo(() => {
+    const raw = typeof search === "string" ? search.replace(/^\?/, "") : "";
+    return new URLSearchParams(raw).get("tab");
+  }, [search]);
+  const { user } = useAuth();
 
   useEffect(() => {
-    const raw = location.includes("?") ? location.split("?")[1] : "";
-    const tab = new URLSearchParams(raw).get("tab");
-    if (!tab) return;
-    const allowed = new Set(["account", "security", "notifications", "team", "goals", "offers", "pipeline", "appearance", "system"]);
-    if (allowed.has(tab) && tab !== activeTab) setActiveTab(tab);
-  }, [activeTab, location]);
-  const { user } = useAuth();
+    const allowed = new Set(["account", "security", "notifications", "team", "goals", "pipeline", "appearance", "system", "automation", "audit"]);
+    if (tabFromUrl && allowed.has(tabFromUrl) && tabFromUrl !== activeTab) {
+      setActiveTab(tabFromUrl);
+    }
+  }, [tabFromUrl, activeTab]);
 
   // Fetch user data
   const { data: userData, isLoading: userLoading } = useQuery<any>({
     queryKey: [`/api/users/${user!.id}`],
   });
+
+  const bannerConfig = useMemo(
+    () => resolveBannerConfig(userData?.bannerConfig as BannerConfig | undefined, userData?.customBannerImages),
+    [userData?.bannerConfig, userData?.customBannerImages],
+  );
 
   useEffect(() => {
     setPhone(userData?.phone || "");
@@ -90,15 +111,6 @@ function SettingsContent() {
     queryKey: [`/api/users/${user!.id}/goals`],
   });
 
-  // Fetch offers
-  const { data: offers = [], isLoading: offersLoading } = useQuery<any[]>({
-    queryKey: [`/api/offers`],
-    queryFn: async () => {
-      const res = await fetch(`/api/offers?userId=${user!.id}`, { credentials: 'include' });
-      if (!res.ok) throw new Error('Failed to fetch offers');
-      return res.json();
-    },
-  });
 
   const { data: leadPipelineConfig } = useQuery<any>({
     queryKey: ["/api/pipeline-config", "lead"],
@@ -171,20 +183,31 @@ function SettingsContent() {
   const { data: coreHealth, refetch: refetchCore, isFetching: coreFetching } = useQuery<any>({
     queryKey: ["/api/health"],
     queryFn: async () => {
-      const res = await fetch("/api/health", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch core health");
-      return res.json();
+      const res = await apiRequest("GET", "/api/health");
+      return await res.json();
     },
   });
 
   const { data: telephonyHealth, refetch: refetchTelephony, isFetching: telephonyFetching } = useQuery<any>({
     queryKey: ["/api/telephony/health"],
     queryFn: async () => {
-      const res = await fetch("/api/telephony/health", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch telephony health");
-      return res.json();
+      const res = await apiRequest("GET", "/api/telephony/health");
+      return await res.json();
     },
   });
+
+  const [showTelnyxWizard, setShowTelnyxWizard] = useState(false);
+  const [telnyxDiagOpen, setTelnyxDiagOpen] = useState(false);
+  const [telnyxDiagBusy, setTelnyxDiagBusy] = useState(false);
+  const runTelnyxDiagnostic = async () => {
+    setTelnyxDiagOpen(true);
+    setTelnyxDiagBusy(true);
+    try {
+      await refetchTelephony();
+    } finally {
+      setTelnyxDiagBusy(false);
+    }
+  };
 
   const { data: aiConfig, refetch: refetchAi, isFetching: aiFetching } = useQuery<any>({
     queryKey: ["/api/ai/config"],
@@ -202,6 +225,15 @@ function SettingsContent() {
       if (!res.ok) throw new Error("Failed to fetch skip trace config");
       return res.json();
     },
+  });
+
+  const { data: providerReadiness, refetch: refetchReadiness, isFetching: readinessFetching } = useQuery<any>({
+    queryKey: ["/api/system/provider-readiness"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/system/provider-readiness");
+      return await res.json();
+    },
+    refetchInterval: 60000,
   });
 
   // Update user mutation
@@ -453,12 +485,10 @@ function SettingsContent() {
   const toggle2FAMutation = useMutation({
     mutationFn: async (enable: boolean) => {
       if (enable) {
-        // In production, this would generate a secret and return QR code data
-        const secret = Math.random().toString(36).substring(7);
         const res = await fetch(`/api/users/${user!.id}/2fa`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ secret, isEnabled: true, method: 'totp' }),
+          body: JSON.stringify({ method: 'totp' }),
           credentials: 'include',
         });
         if (!res.ok) throw new Error('Failed to enable 2FA');
@@ -472,12 +502,63 @@ function SettingsContent() {
         return null;
       }
     },
-    onSuccess: (_, enable) => {
+    onSuccess: (data) => {
+      if (data?.qrCode) {
+        setTwoFactorQr(data.qrCode);
+        setTwoFactorSecret(data.secret || null);
+      }
       queryClient.invalidateQueries({ queryKey: [`/api/users/${user!.id}/2fa`] });
-      toast.success(enable ? '2FA enabled successfully' : '2FA disabled successfully');
+      toast.success(data?.qrCode ? 'Scan the QR code and enter the verification code' : '2FA disabled successfully');
     },
     onError: () => {
       toast.error('Failed to toggle 2FA');
+    },
+  });
+
+  const verify2FAMutation = useMutation({
+    mutationFn: async (code: string) => {
+      const res = await fetch(`/api/users/${user!.id}/2fa/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: 'Verification failed' }));
+        throw new Error(err.message || 'Verification failed');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      setTwoFactorQr(null);
+      setTwoFactorSecret(null);
+      setTwoFactorCode('');
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${user!.id}/2fa`] });
+      toast.success('2FA enabled and verified successfully');
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || 'Invalid verification code');
+    },
+  });
+
+  const generateBackupCodesMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/users/${user!.id}/backup-codes/generate`, {
+        method: 'POST',
+        credentials: 'include',
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: 'Failed to generate backup codes' }));
+        throw new Error(err.message || 'Failed to generate backup codes');
+      }
+      return res.json() as Promise<{ codes: string[] }>;
+    },
+    onSuccess: (data) => {
+      setGeneratedBackupCodes(data.codes);
+      toast.success('Backup codes generated. Save these somewhere safe.');
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || 'Failed to generate backup codes');
     },
   });
 
@@ -541,10 +622,6 @@ function SettingsContent() {
             <Target className="w-4 h-4 mr-2" />
             Goals
           </TabsTrigger>
-          <TabsTrigger value="offers" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
-            <FileText className="w-4 h-4 mr-2" />
-            Offers
-          </TabsTrigger>
           <TabsTrigger value="pipeline" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <Database className="w-4 h-4 mr-2" />
             Pipeline
@@ -556,6 +633,14 @@ function SettingsContent() {
           <TabsTrigger value="system" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <Server className="w-4 h-4 mr-2" />
             System
+          </TabsTrigger>
+          <TabsTrigger value="automation" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Bot className="w-4 h-4 mr-2" />
+            Automation
+          </TabsTrigger>
+          <TabsTrigger value="audit" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Clock className="w-4 h-4 mr-2" />
+            Audit Logs
           </TabsTrigger>
         </TabsList>
 
@@ -712,37 +797,91 @@ function SettingsContent() {
               <CardDescription>Add an extra layer of security using time-based one-time passwords (TOTP).</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div>
-                  <p className="font-medium">
-                    Status: {twoFactorData?.isEnabled ? 
-                      <span className="text-green-600">Enabled</span> : 
-                      <span className="text-muted-foreground">Disabled</span>
-                    }
-                  </p>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    {twoFactorData?.isEnabled ? 
-                      'Your account is protected with 2FA' : 
-                      'Enhance your account security with 2FA'
-                    }
-                  </p>
-                  {twoFactorData?.isEnabled && (
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Method: {twoFactorData.method === 'totp' ? 'Authenticator App' : 'SMS'}
+              {twoFactorQr && !twoFactorData?.isEnabled ? (
+                <div className="space-y-4 border rounded-lg p-4">
+                  <div className="text-center">
+                    <h4 className="font-medium mb-2">Scan QR Code</h4>
+                    <p className="text-sm text-muted-foreground mb-4">
+                      Use Google Authenticator, Authy, or any TOTP app
                     </p>
+                    <img src={twoFactorQr} alt="2FA QR Code" className="mx-auto w-48 h-48 border rounded-lg" />
+                  </div>
+                  {twoFactorSecret && (
+                    <div className="text-center">
+                      <p className="text-xs text-muted-foreground mb-1">Can't scan? Enter this secret manually:</p>
+                      <code className="text-xs bg-muted px-2 py-1 rounded">{twoFactorSecret}</code>
+                    </div>
                   )}
+                  <div className="space-y-2">
+                    <Label htmlFor="twoFactorVerifyCode">Verification Code</Label>
+                    <Input
+                      id="twoFactorVerifyCode"
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      placeholder="000000"
+                      value={twoFactorCode}
+                      onChange={(e) => setTwoFactorCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    />
+                    <Button
+                      className="w-full"
+                      onClick={() => verify2FAMutation.mutate(twoFactorCode)}
+                      disabled={twoFactorCode.length !== 6 || verify2FAMutation.isPending}
+                    >
+                      {verify2FAMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                      Verify & Enable
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="w-full"
+                      onClick={() => {
+                        setTwoFactorQr(null);
+                        setTwoFactorSecret(null);
+                        setTwoFactorCode('');
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
                 </div>
-                <Button 
-                  onClick={() => toggle2FAMutation.mutate(!twoFactorData?.isEnabled)}
-                  variant={twoFactorData?.isEnabled ? "destructive" : "default"}
-                  className={!twoFactorData?.isEnabled ? "bg-primary hover:bg-primary/90 text-white" : ""}
-                  disabled={toggle2FAMutation.isPending}
-                  data-testid="button-toggle-2fa"
-                >
-                  {toggle2FAMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  {twoFactorData?.isEnabled ? 'Disable 2FA' : 'Enable 2FA'}
-                </Button>
-              </div>
+              ) : (
+                <div className="flex items-center justify-between p-4 border rounded-lg">
+                  <div>
+                    <p className="font-medium">
+                      Status: {twoFactorData?.isEnabled ? 
+                        <span className="text-green-600">Enabled</span> : 
+                        <span className="text-muted-foreground">Disabled</span>
+                      }
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {twoFactorData?.isEnabled ? 
+                        'Your account is protected with 2FA' : 
+                        'Enhance your account security with 2FA'
+                      }
+                    </p>
+                    {twoFactorData?.isEnabled && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Method: {twoFactorData.method === 'totp' ? 'Authenticator App' : 'SMS'}
+                      </p>
+                    )}
+                  </div>
+                  <Button 
+                    onClick={() => {
+                      setTwoFactorQr(null);
+                      setTwoFactorCode('');
+                      toggle2FAMutation.mutate(!twoFactorData?.isEnabled);
+                    }}
+                    variant={twoFactorData?.isEnabled ? "destructive" : "default"}
+                    className={!twoFactorData?.isEnabled ? "bg-primary hover:bg-primary/90 text-white" : ""}
+                    disabled={toggle2FAMutation.isPending}
+                    data-testid="button-toggle-2fa"
+                  >
+                    {toggle2FAMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    {twoFactorData?.isEnabled ? 'Disable 2FA' : 'Enable 2FA'}
+                  </Button>
+                </div>
+              )}
 
               {twoFactorData?.isEnabled && (
                 <div className="border-t pt-4 space-y-4">
@@ -751,9 +890,45 @@ function SettingsContent() {
                     <p className="text-sm text-muted-foreground mb-3">
                       Generate backup codes to use if you lose access to your authenticator app
                     </p>
-                    <Button variant="outline" size="sm" data-testid="button-generate-backup-codes">
-                      Generate Backup Codes
-                    </Button>
+                    {generatedBackupCodes.length > 0 ? (
+                      <div className="space-y-3">
+                        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+                          <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200 mb-2">
+                            Save these codes now. They will not be shown again.
+                          </p>
+                          <div className="grid grid-cols-2 gap-2">
+                            {generatedBackupCodes.map((code, idx) => (
+                              <code key={idx} className="text-sm bg-white dark:bg-gray-800 px-2 py-1 rounded border font-mono">
+                                {code}
+                              </code>
+                            ))}
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="mt-3"
+                            onClick={() => {
+                              navigator.clipboard.writeText(generatedBackupCodes.join('\n'));
+                              toast.success('Backup codes copied to clipboard');
+                            }}
+                          >
+                            Copy All Codes
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        data-testid="button-generate-backup-codes"
+                        onClick={() => generateBackupCodesMutation.mutate()}
+                        disabled={generateBackupCodesMutation.isPending}
+                      >
+                        {generateBackupCodesMutation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                        Generate Backup Codes
+                      </Button>
+                    )}
                   </div>
                   
                   <div>
@@ -836,6 +1011,52 @@ function SettingsContent() {
                           updateNotificationsMutation.mutate({ [type.key]: checked });
                         }}
                         data-testid={`switch-${type.key}`}
+                      />
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Event Categories</CardTitle>
+                  <CardDescription>Fine-grained control over which event types notify you in-app.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {[
+                    { key: "task_assigned", label: "Task Assigned", desc: "A task is assigned to you" },
+                    { key: "task_due", label: "Task Due Soon", desc: "A task is approaching its due date" },
+                    { key: "task_overdue", label: "Task Overdue", desc: "A task is overdue" },
+                    { key: "opportunity_stage_changed", label: "Opportunity Stage Changed", desc: "A deal moves to a new pipeline stage" },
+                    { key: "opportunity_assigned", label: "Opportunity Assigned", desc: "An opportunity is assigned to you" },
+                    { key: "offer_received", label: "Offer Received", desc: "A buyer submits an offer" },
+                    { key: "offer_accepted", label: "Offer Accepted", desc: "An offer is accepted" },
+                    { key: "inquiry_received", label: "Buyer Inquiry", desc: "A public listing inquiry arrives" },
+                    { key: "listing_expired", label: "Listing Expired", desc: "A public listing expires" },
+                    { key: "contract_sent", label: "Contract Sent", desc: "A contract is sent for signature" },
+                    { key: "contract_viewed", label: "Contract Viewed", desc: "A recipient views a contract" },
+                    { key: "contract_signed", label: "Contract Signed", desc: "A contract is signed" },
+                    { key: "contract_declined", label: "Contract Declined", desc: "A contract is declined" },
+                    { key: "contract_expired", label: "Contract Expired", desc: "A signing link expires" },
+                    { key: "missed_call", label: "Missed Call", desc: "You miss an inbound call" },
+                    { key: "inbound_sms", label: "Inbound SMS", desc: "A contact replies by SMS" },
+                    { key: "internal_message", label: "Internal Message", desc: "A team member messages you" },
+                    { key: "voicemail", label: "Voicemail", desc: "A voicemail is left" },
+                    { key: "meeting_invite", label: "Meeting Invitation", desc: "You are invited to a meeting" },
+                  ].map((cat) => (
+                    <div key={cat.key} className="flex items-center justify-between py-2">
+                      <div>
+                        <p className="font-medium">{cat.label}</p>
+                        <p className="text-sm text-muted-foreground">{cat.desc}</p>
+                      </div>
+                      <Switch
+                        checked={notificationPrefs?.categories?.[cat.key] ?? true}
+                        onCheckedChange={(checked) => {
+                          const next = { ...(notificationPrefs?.categories || {}) };
+                          next[cat.key] = checked;
+                          updateNotificationsMutation.mutate({ categories: next });
+                        }}
+                        data-testid={`switch-cat-${cat.key}`}
                       />
                     </div>
                   ))}
@@ -1200,94 +1421,12 @@ function SettingsContent() {
         </TabsContent>
 
         {/* OFFERS TAB */}
-        <TabsContent value="offers" className="mt-6 space-y-6">
-          {offersLoading ? (
-            <Card>
-              <CardContent className="flex items-center justify-center p-8">
-                <Loader2 className="w-6 h-6 animate-spin text-primary" />
-              </CardContent>
-            </Card>
-          ) : (
-            <>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Sent Offers</CardTitle>
-                  <CardDescription>Track all offers you've sent to sellers.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {offers.length === 0 ? (
-                    <div className="text-center py-8 text-muted-foreground">
-                      <FileText className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                      <p>No offers sent yet</p>
-                      <p className="text-sm mt-1">Your sent offers will appear here</p>
-                    </div>
-                  ) : (
-                    offers.map((offer, index) => (
-                      <div key={offer.id} className="border rounded-lg p-4" data-testid={`offer-${index}`}>
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <p className="font-medium">Offer #{offer.id}</p>
-                            <p className="text-sm text-muted-foreground">
-                              {offer.buyerName} → {offer.sellerName}
-                            </p>
-                          </div>
-                          <span className={`text-xs px-2 py-1 rounded-full ${
-                            offer.status === 'accepted' ? 'bg-green-100 text-green-800' :
-                            offer.status === 'rejected' ? 'bg-red-100 text-red-800' :
-                            offer.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
-                            'bg-gray-100 text-gray-800'
-                          }`}>
-                            {offer.status}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="font-semibold text-lg">
-                            ${parseFloat(offer.offerAmount).toLocaleString()}
-                          </span>
-                          {offer.sentDate && (
-                            <span className="text-muted-foreground flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {new Date(offer.sentDate).toLocaleDateString()}
-                            </span>
-                          )}
-                        </div>
-                        {offer.notes && (
-                          <p className="text-xs text-muted-foreground mt-2">{offer.notes}</p>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </CardContent>
-              </Card>
+        <TabsContent value="automation" className="mt-6 space-y-6">
+          <AutomationsContent />
+        </TabsContent>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Offer Statistics</CardTitle>
-                  <CardDescription>Overview of your offer performance.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="text-center">
-                      <p className="text-2xl font-bold">{offers.length}</p>
-                      <p className="text-xs text-muted-foreground">Total Sent</p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-2xl font-bold text-green-600">
-                        {offers.filter(o => o.status === 'accepted').length}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Accepted</p>
-                    </div>
-                    <div className="text-center">
-                      <p className="text-2xl font-bold text-yellow-600">
-                        {offers.filter(o => o.status === 'pending').length}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Pending</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </>
-          )}
+        <TabsContent value="audit" className="mt-6 space-y-6">
+          <AuditLogContent />
         </TabsContent>
 
         <TabsContent value="pipeline" className="mt-6 space-y-6">
@@ -1512,56 +1651,244 @@ function SettingsContent() {
                 />
               </div>
 
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <Label>Show Dashboard Banner</Label>
+                  <p className="text-sm text-muted-foreground">Hide or show the banner on your dashboard</p>
+                </div>
+                <Switch
+                  checked={bannerConfig.enabled}
+                  onCheckedChange={(checked) =>
+                    updateUserMutation.mutate({ bannerConfig: { ...bannerConfig, enabled: checked } })
+                  }
+                  data-testid="switch-show-banner"
+                />
+              </div>
+
               <div className="space-y-3">
-                <Label>Custom Banner Images</Label>
-                <p className="text-sm text-muted-foreground">Add your own motivational images to the banner carousel</p>
-                
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {(userData?.customBannerImages || []).map((img: string, index: number) => (
-                    <div key={index} className="relative group">
+                <Label>Banner Images</Label>
+                <p className="text-sm text-muted-foreground">
+                  Manage every banner image — including the defaults. Remove, reorder, or turn images on/off.
+                </p>
+
+                <div className="space-y-2">
+                  {bannerConfig.images.map((img, index) => (
+                    <div key={img.key} className="flex items-center gap-3 p-2 border rounded-lg">
                       <img
-                        src={img}
-                        alt={`Custom banner ${index + 1}`}
-                        className="w-full h-24 object-cover rounded-lg border"
+                        src={img.url}
+                        alt={img.key}
+                        className="w-20 h-12 object-cover rounded border shrink-0"
                       />
-                      <button
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium truncate">{img.key}</p>
+                        <p className="text-xs text-muted-foreground">{img.active ? "Visible" : "Hidden"}</p>
+                      </div>
+                      <Button
                         type="button"
+                        variant="ghost"
+                        size="icon"
+                        disabled={index === 0}
                         onClick={() => {
-                          const updated = (userData?.customBannerImages || []).filter((_: string, i: number) => i !== index);
-                          updateUserMutation.mutate({ customBannerImages: updated });
+                          const images = [...bannerConfig.images];
+                          [images[index - 1], images[index]] = [images[index], images[index - 1]];
+                          updateUserMutation.mutate({ bannerConfig: { ...bannerConfig, images } });
                         }}
-                        className="absolute top-1 right-1 p-1 bg-destructive text-destructive-foreground rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                        data-testid={`button-remove-banner-${index}`}
+                        aria-label={`Move ${img.key} up`}
+                        data-testid={`button-banner-up-${index}`}
                       >
-                        <X className="w-3 h-3" />
-                      </button>
+                        <ArrowUp className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        disabled={index === bannerConfig.images.length - 1}
+                        onClick={() => {
+                          const images = [...bannerConfig.images];
+                          [images[index + 1], images[index]] = [images[index], images[index + 1]];
+                          updateUserMutation.mutate({ bannerConfig: { ...bannerConfig, images } });
+                        }}
+                        aria-label={`Move ${img.key} down`}
+                        data-testid={`button-banner-down-${index}`}
+                      >
+                        <ArrowDown className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => {
+                          const images = bannerConfig.images.map((i, idx) =>
+                            idx === index ? { ...i, active: !i.active } : i,
+                          );
+                          updateUserMutation.mutate({ bannerConfig: { ...bannerConfig, images } });
+                        }}
+                        aria-label={img.active ? `Hide ${img.key}` : `Show ${img.key}`}
+                        data-testid={`button-banner-toggle-${index}`}
+                      >
+                        {img.active ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => {
+                          const images = bannerConfig.images.filter((_, idx) => idx !== index);
+                          updateUserMutation.mutate({ bannerConfig: { ...bannerConfig, images } });
+                        }}
+                        aria-label={`Remove ${img.key}`}
+                        data-testid={`button-banner-remove-${index}`}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                  {bannerConfig.images.length === 0 && (
+                    <p className="text-sm text-muted-foreground">No banner images. Add one below.</p>
+                  )}
+                </div>
+
+                <label className="cursor-pointer">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onload = (event) => {
+                          const base64 = event.target?.result as string;
+                          const images = [
+                            ...bannerConfig.images,
+                            { key: `custom-${Date.now()}`, url: base64, active: true },
+                          ];
+                          updateUserMutation.mutate({ bannerConfig: { ...bannerConfig, images } });
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                    data-testid="input-banner-image"
+                  />
+                  <div className="w-full h-20 border-2 border-dashed border-muted-foreground/30 rounded-lg flex flex-col items-center justify-center gap-1 hover:border-primary hover:bg-accent/10 transition-colors">
+                    <Upload className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">Add Image</span>
+                  </div>
+                </label>
+              </div>
+
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Custom Quotes</Label>
+                    <p className="text-sm text-muted-foreground">Add your own motivational quotes to the banner carousel</p>
+                  </div>
+                </div>
+                
+                <div className="space-y-2">
+                  {(userData?.customBannerQuotes || []).map((q: any, index: number) => (
+                    <div key={index} className="flex items-start gap-2 p-3 border rounded-lg">
+                      {editingQuoteIndex === index ? (
+                        <div className="flex-1 space-y-2">
+                          <Input
+                            value={q.quote}
+                            onChange={(e) => {
+                              const quotes = [...(userData?.customBannerQuotes || [])];
+                              quotes[index] = { ...quotes[index], quote: e.target.value };
+                              updateUserMutation.mutate({ customBannerQuotes: quotes });
+                            }}
+                            placeholder="Quote text"
+                            data-testid={`input-edit-quote-${index}`}
+                          />
+                          <Input
+                            value={q.author}
+                            onChange={(e) => {
+                              const quotes = [...(userData?.customBannerQuotes || [])];
+                              quotes[index] = { ...quotes[index], author: e.target.value };
+                              updateUserMutation.mutate({ customBannerQuotes: quotes });
+                            }}
+                            placeholder="Author"
+                            data-testid={`input-edit-author-${index}`}
+                          />
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setEditingQuoteIndex(null)}
+                            data-testid={`button-done-edit-quote-${index}`}
+                          >
+                            <Save className="w-4 h-4 mr-1" />
+                            Done
+                          </Button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">"{q.quote}"</p>
+                            <p className="text-xs text-muted-foreground">— {q.author}</p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setEditingQuoteIndex(index)}
+                              data-testid={`button-edit-quote-${index}`}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="text-destructive hover:text-destructive"
+                              onClick={() => {
+                                const quotes = (userData?.customBannerQuotes || []).filter((_: any, i: number) => i !== index);
+                                updateUserMutation.mutate({ customBannerQuotes: quotes });
+                              }}
+                              data-testid={`button-remove-quote-${index}`}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   ))}
                   
-                  <label className="cursor-pointer">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const reader = new FileReader();
-                          reader.onload = (event) => {
-                            const base64 = event.target?.result as string;
-                            const currentImages = userData?.customBannerImages || [];
-                            updateUserMutation.mutate({ customBannerImages: [...currentImages, base64] });
-                          };
-                          reader.readAsDataURL(file);
-                        }
-                      }}
-                      data-testid="input-banner-image"
+                  <div className="flex items-center gap-2 pt-2">
+                    <Input
+                      value={newQuoteText}
+                      onChange={(e) => setNewQuoteText(e.target.value)}
+                      placeholder="Enter a new quote..."
+                      className="flex-1"
+                      data-testid="input-new-quote"
                     />
-                    <div className="w-full h-24 border-2 border-dashed border-muted-foreground/30 rounded-lg flex flex-col items-center justify-center gap-1 hover:border-primary hover:bg-accent/10 transition-colors">
-                      <Upload className="w-5 h-5 text-muted-foreground" />
-                      <span className="text-xs text-muted-foreground">Add Image</span>
-                    </div>
-                  </label>
+                    <Input
+                      value={newQuoteAuthor}
+                      onChange={(e) => setNewQuoteAuthor(e.target.value)}
+                      placeholder="Author"
+                      className="w-40"
+                      data-testid="input-new-quote-author"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      onClick={() => {
+                        if (!newQuoteText.trim()) return;
+                        const quotes = [...(userData?.customBannerQuotes || []), { quote: newQuoteText.trim(), author: newQuoteAuthor.trim() || "Custom" }];
+                        updateUserMutation.mutate({ customBannerQuotes: quotes });
+                        setNewQuoteText("");
+                        setNewQuoteAuthor("");
+                      }}
+                      disabled={!newQuoteText.trim()}
+                      data-testid="button-add-quote"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             </CardContent>
@@ -1570,33 +1897,258 @@ function SettingsContent() {
 
         {/* SYSTEM TAB */}
         <TabsContent value="system" className="mt-6 space-y-6">
+          {/* Provider Readiness Header */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Server className="w-5 h-5" />
-                System Health
+                Communications Provider Status
               </CardTitle>
-              <CardDescription>View comprehensive application diagnostics.</CardDescription>
+              <CardDescription>Unified readiness dashboard for all communication channels.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <Button
-                className="bg-primary text-white hover:bg-primary/90"
-                onClick={() => window.location.assign('/system/health')}
-                aria-label="Open System Health"
-                data-testid="button-system-health"
-              >
-                Open System Health
-              </Button>
-              <Button
-                variant="outline"
-                onClick={() => runTelnyxDiagnostics()}
-                aria-label="Run Telnyx Diagnostics"
-                data-testid="button-telnyx-diagnostics"
-              >
-                Run Telnyx Diagnostics
-              </Button>
+              <div className="flex items-center gap-3 flex-wrap">
+                <Button
+                  className="bg-primary text-white hover:bg-primary/90"
+                  onClick={() => refetchReadiness()}
+                  disabled={readinessFetching}
+                  data-testid="button-refresh-readiness"
+                >
+                  {readinessFetching && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  Re-check All Providers
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => window.location.assign('/system-health')}
+                  data-testid="button-system-health"
+                >
+                  System Health
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => { refetchTelephony(); refetchCore(); }}
+                  disabled={telephonyFetching || coreFetching}
+                  data-testid="button-refresh-all"
+                >
+                  Refresh All
+                </Button>
+              </div>
+              {providerReadiness?.checkedAt && (
+                <p className="text-xs text-muted-foreground">Last checked: {new Date(providerReadiness.checkedAt).toLocaleString()}</p>
+              )}
             </CardContent>
           </Card>
+
+          {/* Setup Wizard Toggle */}
+          <Card className="border-dashed border-primary/30">
+            <CardContent className="py-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium text-sm">New to Telnyx? Use the Setup Wizard</p>
+                  <p className="text-xs text-muted-foreground">Walk through API key, connection ID, messaging profile, and webhook setup with live validation at each step.</p>
+                </div>
+                <Button variant="outline" onClick={() => setShowTelnyxWizard(!showTelnyxWizard)} data-testid="button-toggle-telnyx-wizard">
+                  {showTelnyxWizard ? "Hide Wizard" : "Open Setup Wizard"}
+                </Button>
+              </div>
+              {showTelnyxWizard && (
+                <div className="mt-4">
+                  <TelnyxOnboardingWizard onComplete={() => { setShowTelnyxWizard(false); refetchReadiness(); refetchTelephony(); toast.success("Setup complete! Provider status refreshed."); }} />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Channel Status Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {/* Voice */}
+            <Card className={providerReadiness?.voice?.blocker ? 'border-red-200' : providerReadiness?.voice?.configured ? 'border-green-200' : ''}>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Phone className="h-4 w-4" /> Voice
+                  <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    providerReadiness?.voice?.reachable ? 'bg-green-100 text-green-700' :
+                    providerReadiness?.voice?.configured ? 'bg-yellow-100 text-yellow-700' :
+                    'bg-gray-100 text-gray-500'
+                  }`}>{providerReadiness?.voice?.reachable ? 'Ready' : providerReadiness?.voice?.configured ? 'Issues' : 'Not configured'}</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">Configured</span><span>{providerReadiness?.voice?.configured ? '✓' : '✗'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Connection type</span><span className="font-mono text-xs">{providerReadiness?.voice?.connectionType || '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Connection active</span><span>{providerReadiness?.voice?.connectionActive ? '✓' : '✗'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Default from</span><span className="font-mono text-xs">{providerReadiness?.voice?.defaultFromNumber || '—'}</span></div>
+                {providerReadiness?.voice?.fromNumbers?.length > 0 && (
+                  <div><span className="text-muted-foreground text-xs">Available numbers</span><div className="flex flex-wrap gap-1 mt-1">{providerReadiness.voice.fromNumbers.map((n: string) => <code key={n} className="text-xs bg-muted px-1 rounded">{n}</code>)}</div></div>
+                )}
+                {providerReadiness?.voice?.connectionType === 'sip_credential' && (
+                  <div className="rounded-md bg-red-50 border border-red-200 p-2 text-xs text-red-700 mt-2">
+                    ⚠ TELNYX_CONNECTION_ID appears to be a SIP Credential, not a Call Control Application. Update it in Telnyx portal.
+                  </div>
+                )}
+                {providerReadiness?.voice?.blocker && providerReadiness.voice.connectionType !== 'sip_credential' && (
+                  <p className="text-xs text-red-600 mt-2">{providerReadiness.voice.blocker}</p>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* SMS */}
+            <Card className={providerReadiness?.sms?.blocker ? 'border-red-200' : providerReadiness?.sms?.configured ? 'border-green-200' : ''}>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Phone className="h-4 w-4" /> SMS
+                  <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    providerReadiness?.sms?.configured ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                  }`}>{providerReadiness?.sms?.configured ? 'Ready' : 'Not configured'}</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">Configured</span><span>{providerReadiness?.sms?.configured ? '✓' : '✗'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Messaging profile</span><span>{providerReadiness?.sms?.messagingProfilePresent ? '✓' : '✗'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Default from</span><span className="font-mono text-xs">{providerReadiness?.sms?.defaultFromNumber || '—'}</span></div>
+                {providerReadiness?.sms?.blocker && <p className="text-xs text-red-600 mt-2">{providerReadiness.sms.blocker}</p>}
+              </CardContent>
+            </Card>
+
+            {/* Video */}
+            <Card className={providerReadiness?.video?.blocker ? 'border-yellow-200' : providerReadiness?.video?.configured ? 'border-green-200' : ''}>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Phone className="h-4 w-4" /> Video Meetings
+                  <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    providerReadiness?.video?.roomsApiAvailable ? 'bg-green-100 text-green-700' :
+                    providerReadiness?.video?.configured ? 'bg-yellow-100 text-yellow-700' :
+                    'bg-gray-100 text-gray-500'
+                  }`}>{providerReadiness?.video?.roomsApiAvailable ? 'Ready' : providerReadiness?.video?.configured ? 'Degraded' : 'Not enabled'}</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">Configured</span><span>{providerReadiness?.video?.configured ? '✓' : '✗'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Rooms API</span><span>{providerReadiness?.video?.roomsApiAvailable ? '✓' : '✗'}</span></div>
+                {providerReadiness?.video?.blocker && <p className="text-xs text-amber-600 mt-2">{providerReadiness.video.blocker}</p>}
+              </CardContent>
+            </Card>
+
+            {/* Email */}
+            <Card className={providerReadiness?.email?.blocker ? 'border-yellow-200' : providerReadiness?.email?.configured ? 'border-green-200' : ''}>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Bot className="h-4 w-4" /> Email
+                  <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    providerReadiness?.email?.configured ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                  }`}>{providerReadiness?.email?.configured ? `Active (${providerReadiness.email.activeProvider})` : 'Not configured'}</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">Provider</span><span>{providerReadiness?.email?.activeProvider || '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">From address</span><span className="font-mono text-xs">{providerReadiness?.email?.fromAddress || '—'}</span></div>
+                <div className="flex justify-between"><span className="text-muted-foreground">Telnyx Email</span><span>{providerReadiness?.email?.telnyxEssionEnabled ? 'enabled' : 'disabled'}</span></div>
+                {providerReadiness?.email?.blocker && <p className="text-xs text-amber-600 mt-2">{providerReadiness.email.blocker}</p>}
+              </CardContent>
+            </Card>
+
+            {/* Document Storage */}
+            <Card className={providerReadiness?.documentStorage?.configured ? 'border-green-200' : ''}>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Database className="h-4 w-4" /> Document Storage
+                  <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    providerReadiness?.documentStorage?.configured ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+                  }`}>{providerReadiness?.documentStorage?.configured ? 'Ready' : 'Not configured'}</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">Configured</span><span>{providerReadiness?.documentStorage?.configured ? '✓' : '✗'}</span></div>
+                {providerReadiness?.documentStorage?.blocker && <p className="text-xs text-amber-600 mt-2">{providerReadiness.documentStorage.blocker}</p>}
+              </CardContent>
+            </Card>
+
+            {/* Webhook */}
+            <Card className={providerReadiness?.webhook?.configured ? 'border-green-200' : 'border-yellow-200'}>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Server className="h-4 w-4" /> Webhook
+                  <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    providerReadiness?.webhook?.configured ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
+                  }`}>{providerReadiness?.webhook?.configured ? 'Configured' : 'Not set'}</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <div className="flex justify-between"><span className="text-muted-foreground">URL present</span><span>{providerReadiness?.webhook?.publicUrlPresent ? '✓' : '✗'}</span></div>
+                {providerReadiness?.webhook?.configured && (
+                  <div className="flex items-center gap-2">
+                    <span className="text-muted-foreground text-xs">URL:</span>
+                    <code className="text-xs bg-muted px-1 rounded truncate max-w-[200px]" title={providerReadiness.webhook.publicUrlPresent ? '' : ''}>{providerReadiness.webhook.publicUrlPresent ? ('').replace(/^https?:\/\/[^/]+/, '***') : '—'}</code>
+                  </div>
+                )}
+                {providerReadiness?.webhook?.blocker && <p className="text-xs text-amber-600 mt-2">{providerReadiness.webhook.blocker}</p>}
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Feature Flags */}
+          {providerReadiness?.featureFlags && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Feature Flags</CardTitle>
+                <CardDescription>Current feature flag state for your environment.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {Object.entries(providerReadiness.featureFlags).map(([key, enabled]) => (
+                    <div key={key} className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${enabled ? 'bg-green-500' : 'bg-gray-300'}`} />
+                      <span className="text-sm capitalize">{key.replace(/_/g, ' ')}</span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Portal Setup Guide (collapsed) */}
+          <details className="group">
+            <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground flex items-center gap-2">
+              <span className="group-open:rotate-90 transition-transform">▶</span>
+              Telnyx Portal Setup Guide
+            </summary>
+            <div className="mt-4 space-y-4 text-sm">
+              <div className="rounded-md border p-3 space-y-2">
+                <p className="font-medium">Voice Setup</p>
+                <ol className="list-decimal list-inside space-y-1 text-xs text-muted-foreground">
+                  <li>Create or confirm a Call Control Application in Telnyx portal</li>
+                  <li>Set webhook URL to: <code className="bg-muted px-1 rounded">{'https://your-domain.com/api/v1/telecom/webhooks/telnyx'}</code></li>
+                  <li>Assign at least one voice-capable DID to the app</li>
+                  <li>Copy the Call Control Application ID into TELNYX_CONNECTION_ID</li>
+                  <li>Confirm it is NOT a SIP Credential connection</li>
+                </ol>
+              </div>
+              <div className="rounded-md border p-3 space-y-2">
+                <p className="font-medium">SMS Setup</p>
+                <ol className="list-decimal list-inside space-y-1 text-xs text-muted-foreground">
+                  <li>Create or confirm Messaging Profile in Telnyx portal</li>
+                  <li>Assign DID to messaging profile</li>
+                  <li>Copy profile ID into TELNYX_MESSAGING_PROFILE_ID</li>
+                </ol>
+              </div>
+              <div className="rounded-md border p-3 space-y-2">
+                <p className="font-medium">Video Setup</p>
+                <ol className="list-decimal list-inside space-y-1 text-xs text-muted-foreground">
+                  <li>Confirm Video API / rooms capability is enabled on your account</li>
+                  <li>Set TELNYX_VIDEO_ENABLED=true</li>
+                  <li>Rooms are created server-side; clients join with short-lived tokens</li>
+                </ol>
+              </div>
+              <div className="rounded-md border p-3 space-y-2">
+                <p className="font-medium">Email Setup</p>
+                <ol className="list-decimal list-inside space-y-1 text-xs text-muted-foreground">
+                  <li>For Resend: set RESEND_API_KEY + RESEND_FROM</li>
+                  <li>For Telnyx Email: confirm beta access, verify sending domain, set TELNYX_EMAIL_ENABLED=true</li>
+                  <li>Publish required DNS records (SPF, DKIM, MX, DMARC)</li>
+                </ol>
+              </div>
+            </div>
+          </details>
 
           <Card>
             <CardHeader>
@@ -1625,7 +2177,6 @@ function SettingsContent() {
                       <div className="text-sm font-medium">{skipTraceFetching ? "checking…" : "ready"}</div>
                     </div>
                   </div>
-
                   <div className="space-y-2">
                     <Label>Default mode</Label>
                     <Select
@@ -1637,18 +2188,9 @@ function SettingsContent() {
                         <SelectValue placeholder="Select default mode" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="provider" disabled={Array.isArray(skipTraceConfig?.allowedModes) && !skipTraceConfig.allowedModes.includes("provider")}>
-                          Provider
-                        </SelectItem>
-                        <SelectItem
-                          value="public_research"
-                          disabled={Array.isArray(skipTraceConfig?.allowedModes) && !skipTraceConfig.allowedModes.includes("public_research")}
-                        >
-                          Public
-                        </SelectItem>
-                        <SelectItem value="both" disabled={Array.isArray(skipTraceConfig?.allowedModes) && !skipTraceConfig.allowedModes.includes("both")}>
-                          Both
-                        </SelectItem>
+                        <SelectItem value="provider" disabled={Array.isArray(skipTraceConfig?.allowedModes) && !skipTraceConfig.allowedModes.includes("provider")}>Provider</SelectItem>
+                        <SelectItem value="public_research" disabled={Array.isArray(skipTraceConfig?.allowedModes) && !skipTraceConfig.allowedModes.includes("public_research")}>Public</SelectItem>
+                        <SelectItem value="both" disabled={Array.isArray(skipTraceConfig?.allowedModes) && !skipTraceConfig.allowedModes.includes("both")}>Both</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1657,29 +2199,26 @@ function SettingsContent() {
             </CardContent>
           </Card>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Legacy System Health Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Database className="w-5 h-5" />
-                  Database
+                  <Database className="w-5 h-5" /> Database
                 </CardTitle>
                 <CardDescription>Connectivity and query health.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm">Status</span>
-                  <span className={`text-sm font-medium ${coreHealth?.db === "connected" ? "text-green-600" : "text-red-600"}`}>
-                    {coreHealth?.db || "unknown"}
-                  </span>
+                  <span className={`text-sm font-medium ${coreHealth?.db === "connected" ? "text-green-600" : "text-red-600"}`}>{coreHealth?.db || "unknown"}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span className="text-sm">Last check</span>
                   <span className="text-xs text-muted-foreground">{coreHealth?.timestamp ? new Date(coreHealth.timestamp).toLocaleString() : "-"}</span>
                 </div>
                 <Button variant="outline" size="sm" onClick={() => refetchCore()} disabled={coreFetching}>
-                  {coreFetching && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Refresh
+                  {coreFetching && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Refresh
                 </Button>
               </CardContent>
             </Card>
@@ -1687,43 +2226,14 @@ function SettingsContent() {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Phone className="w-5 h-5" />
-                  Dialer (Telnyx)
-                </CardTitle>
-                <CardDescription>REST outbound + webhook reachability.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Telnyx</span>
-                  <span className={`text-sm font-medium ${telephonyHealth?.telnyx === "reachable" ? "text-green-600" : telephonyHealth?.telnyx === "unconfigured" ? "text-yellow-600" : "text-red-600"}`}>
-                    {telephonyHealth?.telnyx || "unknown"}
-                  </span>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">Default From: {telephonyHealth?.defaultFrom || "not set"}</p>
-                  <p className="text-xs text-muted-foreground">Numbers: {Array.isArray(telephonyHealth?.numbers) ? telephonyHealth.numbers.join(", ") : "-"}</p>
-                </div>
-                <Button variant="outline" size="sm" onClick={() => refetchTelephony()} disabled={telephonyFetching}>
-                  {telephonyFetching && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Refresh
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Bot className="w-5 h-5" />
-                  AI SMS
+                  <Bot className="w-5 h-5" /> AI SMS
                 </CardTitle>
                 <CardDescription>Credentials readiness for SMS automation.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm">Configured</span>
-                  <span className={`text-sm font-medium ${aiConfig?.ready ? "text-green-600" : "text-red-600"}`}>
-                    {aiConfig?.ready ? "yes" : "no"}
-                  </span>
+                  <span className={`text-sm font-medium ${aiConfig?.ready ? "text-green-600" : "text-red-600"}`}>{aiConfig?.ready ? "yes" : "no"}</span>
                 </div>
                 {!aiConfig?.ready && Array.isArray(aiConfig?.missing) && aiConfig.missing.length > 0 && (
                   <div>
@@ -1732,12 +2242,13 @@ function SettingsContent() {
                   </div>
                 )}
                 <Button variant="outline" size="sm" onClick={() => refetchAi()} disabled={aiFetching}>
-                  {aiFetching && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                  Refresh
+                  {aiFetching && <Loader2 className="w-4 h-4 mr-2 animate-spin" />} Refresh
                 </Button>
               </CardContent>
             </Card>
           </div>
+
+
         </TabsContent>
       </Tabs>
     </Layout>

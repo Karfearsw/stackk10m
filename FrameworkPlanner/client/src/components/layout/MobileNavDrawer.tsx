@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { Link, useLocation } from "wouter";
 import { LogOut } from "lucide-react";
-import { navigation } from "./Sidebar";
+import { primaryNavigation, menuGroups } from "./Sidebar";
 
 type MobileNavDrawerProps = {
   open: boolean;
@@ -13,6 +13,25 @@ type MobileNavDrawerProps = {
 export function MobileNavDrawer({ open, onOpenChange }: MobileNavDrawerProps) {
   const [location] = useLocation();
   const { user, logout } = useAuth();
+
+  const renderNavItem = (item: { name: string; href: string; icon: any }) => {
+    const active = location === item.href || (item.href !== "/" && location.startsWith(item.href));
+    const Icon = item.icon;
+    return (
+      <Link key={item.href} href={item.href}>
+        <div
+          className={cn(
+            "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium",
+            active ? "bg-primary text-primary-foreground" : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-white"
+          )}
+          onClick={() => onOpenChange(false)}
+        >
+          <Icon className="h-5 w-5 shrink-0" />
+          <span className="min-w-0 truncate">{item.name}</span>
+        </div>
+      </Link>
+    );
+  };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -28,24 +47,17 @@ export function MobileNavDrawer({ open, onOpenChange }: MobileNavDrawerProps) {
 
           <div className="flex-1 scroll-y-container px-2 py-3">
             <div className="space-y-1">
-              {navigation.map((item) => {
-                const active = location === item.href || (item.href !== "/" && location.startsWith(item.href));
-                const Icon = item.icon;
-                return (
-                  <Link key={item.href} href={item.href}>
-                    <div
-                      className={cn(
-                        "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium",
-                        active ? "bg-primary text-primary-foreground" : "text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-white"
-                      )}
-                      onClick={() => onOpenChange(false)}
-                    >
-                      <Icon className="h-5 w-5 shrink-0" />
-                      <span className="min-w-0 truncate">{item.name}</span>
-                    </div>
-                  </Link>
-                );
-              })}
+              {primaryNavigation.map(renderNavItem)}
+              
+              <div className="pt-4 mt-2">
+                <p className="px-3 text-xs font-medium text-sidebar-foreground/50 uppercase tracking-wider mb-2">More</p>
+                {menuGroups.map((group) => (
+                  <div key={group.name} className="mb-2">
+                    <p className="px-3 text-xs font-medium text-sidebar-foreground/40 uppercase tracking-wider mt-3 mb-1">{group.name}</p>
+                    {group.items.map(renderNavItem)}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 

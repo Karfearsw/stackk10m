@@ -6,7 +6,7 @@ import multer from "multer";
 import { createRequire } from "node:module";
 import { storage } from "./storage.js";
 import { computeManualTimeEntry, MAX_TIME_ENTRY_HOURS } from "./lib/time-entry-math.js";
-import { db } from "./db.js";
+import { db, pool } from "./db.js";
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
 import { publishTelephonyEvent } from "./telephony/pubsub.js";
@@ -37,11 +37,17 @@ import {
   insertContractSchema,
   insertContractTemplateSchema,
   insertContractDocumentSchema,
+  insertContractEnvelopeSchema,
+  insertContractSignerSchema,
+  insertContractEventSchema,
+  insertContractFieldSchema,
   insertDocumentVersionSchema,
   insertLoiSchema,
   insertUserSchema,
   insertTwoFactorAuthSchema,
   insertBackupCodeSchema,
+  twoFactorAuth,
+  backupCodes,
   insertTeamSchema,
   insertTeamMemberSchema,
   insertTeamActivityLogSchema,
@@ -75,23 +81,29 @@ import {
   crmImportJobs,
   auditEvents,
   users,
+  insertOpportunityPartySchema,
+  insertPublicListingSchema,
+  insertBuyerInquirySchema,
+  insertOpportunityEventSchema,
+  opportunityParties, publicListings, buyerInquiries, opportunityEvents,
+  defaultNotificationCategories, insertInternalMessageSchema, insertCalendarEventSchema
 } from "./shared-schema.js";
 import { z } from "zod";
 import { computeArvFromComps, computeDealMath, computeRepairTotal, underwritingSchemaV1, underwritingTemplateConfigSchema } from "../shared/underwriting.js";
 import { createSkipTraceJob, isHttpError, runProviderSkipTraceForEntity, runSkipTraceJob } from "./services/skipTrace/orchestrator.js";
 import { hydrateSkipTraceResultForApi, mergeSkipTraceResult } from "./services/skipTrace/merge.js";
 import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
-import { telnyx, createTelnyxWebhookRouter } from "./services/telecom/telnyx-client.js";
+import { telnyx, TelnyxConfigError, createTelnyxWebhookRouter } from "./services/telecom/telnyx-client.js";
 import { sendResendEmail } from "./services/messaging/resend.js";
 import { getAuthStatusSnapshot, getEmailProviderMissing } from "./auth/config.js";
 import { isEmailNotConfiguredError, sendAuthError } from "./auth/errors.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
 import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
-import { createIsFeatureEnabled } from "./featureFlags.js";
+import { createIsFeatureEnabled, requireFeature } from "./featureFlags.js";
+import { getProviderReadiness } from "./services/telecom/provider-readiness.js";
 import { writeAuditEvent } from "./services/audit/writeAuditEvent.js";
-import { dispatchAutomationEvent } from "./services/automations/engine.js";
-
+import { dispatchAutomationEvent, dryRunAutomation } from "./services/automations/engine.js";
 const require = createRequire(import.meta.url);
 const packageJson: any = (() => {
   try {
@@ -102,16 +114,19 @@ const packageJson: any = (() => {
 })();
 import { mergeTemplate } from "./services/esign/merge.js";
 import { generateSignedPdfBase64 } from "./services/esign/pdf.js";
+import { buildMergeData, applyTemplateToContract, validateContractForSend } from "./services/contracts/contract-service.js";
+import { sendContractSigningEmail, sendContractReminderEmail } from "./services/contracts/email.js";
+import { startContractReminderWorker } from "./cron/contract-reminders.js";
 import { getPropertyPhotoSignedUrl, uploadPropertyPhoto, isPropertyPhotoStorageConfigured } from "./media/propertyPhotos.js";
 import Stripe from "stripe";
 import { getDocumentSignedUrl, isDocumentVaultConfigured, makeDocumentStorageKey, sha256Hex, uploadDocumentObject } from "./media/documentVault.js";
-
+import speakeasy from "speakeasy";
+import QRCode from "qrcode";
 function authJwtSecret() {
   const secret = process.env.AUTH_JWT_SECRET || process.env.SESSION_SECRET;
   if (!secret || !String(secret).trim()) return null;
   return new TextEncoder().encode(String(secret));
 }
-
 const MAGIC_SIGNATURES: { mime: string; patterns: [number, number[]][] }[] = [
   {
     mime: "application/pdf",
@@ -167,7 +182,6 @@ const MAGIC_SIGNATURES: { mime: string; patterns: [number, number[]][] }[] = [
     ],
   },
 ];
-
 function detectMimeFromMagic(buf: Buffer): string | null {
   for (const entry of MAGIC_SIGNATURES) {
     for (const [offset, bytes] of entry.patterns) {
@@ -185,7 +199,6 @@ function detectMimeFromMagic(buf: Buffer): string | null {
   }
   return null;
 }
-
 function isDbConnectivityError(error: any): boolean {
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
@@ -196,13 +209,16 @@ function isDbConnectivityError(error: any): boolean {
   const nested = error?.errors;
   if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
   const message = String(error?.message || "");
-  return message.includes("DATABASE_URL");
+  if (message.includes("DATABASE_URL")) return true;
+  // Neon serverless driver (WebSocket) surfaces DNS/connect failures as a message with a null code.
+  if (/network error|non-101|socket hang up|connect econn|getaddrinfo|econnrefused|enotfound|etimedout/i.test(message)) return true;
+  const cause = error?.cause;
+  if (cause && cause !== error) return isDbConnectivityError(cause);
+  return false;
 }
-
 function parseLimitOffset(query: any): { limit: number; offset: number } {
   const DEFAULT_LIMIT = 50;
   const MAX_LIMIT = process.env.NODE_ENV === "production" ? 100 : 500;
-
   let limit: number = DEFAULT_LIMIT;
   const limitRaw = query?.limit;
   if (typeof limitRaw === "string" && limitRaw.trim() !== "") {
@@ -211,7 +227,6 @@ function parseLimitOffset(query: any): { limit: number; offset: number } {
       limit = Math.min(parsed, MAX_LIMIT);
     }
   }
-
   let offset = 0;
   const offsetRaw = query?.offset;
   if (typeof offsetRaw === "string" && offsetRaw.trim() !== "") {
@@ -220,10 +235,8 @@ function parseLimitOffset(query: any): { limit: number; offset: number } {
       offset = parsed;
     }
   }
-
   return { limit, offset };
 }
-
 async function issueAuthToken(payload: { sub: string; email?: string }) {
   const secret = authJwtSecret();
   if (!secret) return null;
@@ -234,34 +247,112 @@ async function issueAuthToken(payload: { sub: string; email?: string }) {
     .setExpirationTime("7d")
     .sign(secret);
 }
-
 function isManagerUser(user: any) {
   const role = String(user?.role || "").toLowerCase();
   return !!user?.isSuperAdmin || role === "admin" || role === "manager" || role === "owner";
 }
-
 function isAdminUser(user: any) {
   return isManagerUser(user);
 }
-
+function isSameUserOrAdmin(user: any, targetUserId: number): boolean {
+  return Number(user?.id) === Number(targetUserId) || isManagerUser(user);
+}
+// Simple in-memory rate limiter for 2FA verification attempts (per user + IP).
+const twoFactorAttempts = new Map<string, { count: number; resetAt: number }>();
+function checkTwoFactorRateLimit(key: string, max: number = 5, windowMs: number = 15 * 60 * 1000): boolean {
+  const now = Date.now();
+  const entry = twoFactorAttempts.get(key);
+  if (!entry || entry.resetAt < now) {
+    twoFactorAttempts.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (entry.count >= max) return false;
+  entry.count += 1;
+  return true;
+}
+// Idempotent, preference-aware notification creation. Dedupes via event_key;
+// respects the user's granular category + global in-app toggle.
+async function notifyUser(opts: {
+  userId: number;
+  category: string;
+  title: string;
+  description?: string | null;
+  relatedType?: string | null;
+  relatedId?: number | null;
+  eventKey?: string | null;
+}): Promise<boolean> {
+  try {
+    const prefs = await storage.getNotificationPreferencesByUserId(opts.userId);
+    if (prefs && prefs.inAppEnabled === false) return false;
+    const base = defaultNotificationCategories();
+    const stored = prefs?.categories && typeof prefs.categories === "object" ? prefs.categories : {};
+    const cats = { ...base, ...stored };
+    if (cats[opts.category] === false) return false;
+    const created = await storage.createUserNotificationDedup({
+      userId: opts.userId,
+      type: opts.category,
+      title: opts.title,
+      description: opts.description ?? null,
+      read: false,
+      relatedId: opts.relatedId ?? null,
+      relatedType: opts.relatedType ?? null,
+      eventKey: opts.eventKey ?? null,
+    } as any);
+    return Boolean(created);
+  } catch (error) {
+    console.error("[notifyUser] failed:", error);
+    return false;
+  }
+}
+// Resolve the assigned owner of an opportunity and notify them (preference-aware, deduped).
+async function notifyOpportunityOwner(opts: {
+  propertyId: number;
+  category: string;
+  title: string;
+  description?: string | null;
+  eventKey: string;
+  actorUserId?: number | null;
+  relatedType?: string;
+}): Promise<void> {
+  try {
+    const property = await storage.getPropertyById(opts.propertyId);
+    const ownerId = Number((property as any)?.assignedTo);
+    if (!ownerId) return;
+    if (opts.actorUserId && Number(opts.actorUserId) === ownerId) return;
+    await notifyUser({
+      userId: ownerId,
+      category: opts.category,
+      title: opts.title,
+      description: opts.description ?? null,
+      relatedType: opts.relatedType ?? "opportunity",
+      relatedId: opts.propertyId,
+      eventKey: opts.eventKey,
+    });
+  } catch (error) {
+    console.error("[notifyOpportunityOwner] failed:", error);
+  }
+}
+function userDisplayName(user: any): string {
+  const first = String(user?.firstName || "").trim();
+  const last = String(user?.lastName || "").trim();
+  const name = [first, last].filter(Boolean).join(" ");
+  return name || String(user?.email || "team member");
+}
 function isoDateOnly(input: unknown) {
   if (!input) return null;
   const d = input instanceof Date ? input : new Date(String(input));
   if (Number.isNaN(d.getTime())) return null;
   return d.toISOString().slice(0, 10);
 }
-
 function parseMoney(input: unknown) {
   const n = Number.parseFloat(String(input ?? ""));
   if (!Number.isFinite(n)) return null;
   return n;
 }
-
 async function ensureCommissionLedgerForEvent(event: any) {
   const sourceType = String(event?.sourceType || "");
   const sourceId = Number(event?.sourceId);
   if (!sourceType || !Number.isFinite(sourceId)) return;
-
   let participants = await storage.listDealParticipants({ sourceType, sourceId });
   if (!participants.length) {
     let derivedUserId: number | null = null;
@@ -285,9 +376,7 @@ async function ensureCommissionLedgerForEvent(event: any) {
       participants = await storage.listDealParticipants({ sourceType, sourceId });
     }
   }
-
   if (!participants.length) return;
-
   const gross = parseMoney(event?.grossAmount);
   for (const p of participants) {
     const pct = parseMoney((p as any).splitPct);
@@ -301,14 +390,12 @@ async function ensureCommissionLedgerForEvent(event: any) {
     } as any);
   }
 }
-
 async function syncCommissionEventsForContract(contract: any) {
   const contractId = Number(contract?.id);
   if (!Number.isFinite(contractId)) return;
   const signDate = isoDateOnly(contract?.signDate);
   const closeDate = isoDateOnly(contract?.closeDate);
   const grossAmount = parseMoney(contract?.amount);
-
   if (signDate) {
     const ev = await storage.upsertCommissionEvent({
       sourceType: "contract",
@@ -320,7 +407,6 @@ async function syncCommissionEventsForContract(contract: any) {
     } as any);
     await ensureCommissionLedgerForEvent(ev);
   }
-
   if (closeDate) {
     const ev = await storage.upsertCommissionEvent({
       sourceType: "contract",
@@ -333,14 +419,12 @@ async function syncCommissionEventsForContract(contract: any) {
     await ensureCommissionLedgerForEvent(ev);
   }
 }
-
 async function syncCommissionEventsForDealAssignment(assignment: any) {
   const id = Number(assignment?.id);
   if (!Number.isFinite(id)) return;
   const payoutReceived = Boolean((assignment as any).payoutReceived);
   const payoutAmount = parseMoney((assignment as any).payoutAmount);
   const closingDate = isoDateOnly((assignment as any).closingDate) || isoDateOnly(new Date());
-
   if (payoutReceived) {
     const ev = await storage.upsertCommissionEvent({
       sourceType: "deal_assignment",
@@ -353,16 +437,13 @@ async function syncCommissionEventsForDealAssignment(assignment: any) {
     await ensureCommissionLedgerForEvent(ev);
   }
 }
-
 function isConciergeUser(user: any) {
   const role = String(user?.role || "").trim().toLowerCase();
   return role === "concierge";
 }
-
 function isXpOpsUser(user: any) {
   return isAdminUser(user) || isConciergeUser(user);
 }
-
 async function requireAuth(req: any, res: any) {
   const userId = req.session?.userId;
   if (!userId) {
@@ -376,7 +457,6 @@ async function requireAuth(req: any, res: any) {
   }
   return user;
 }
-
 function teamRoleRank(role: unknown) {
   const r = String(role || "").trim().toLowerCase();
   if (r === "owner") return 4;
@@ -385,7 +465,6 @@ function teamRoleRank(role: unknown) {
   if (r === "viewer") return 1;
   return 0;
 }
-
 async function requireTeamMembership(req: any, res: any, input: { teamId: number; minRole?: "viewer" | "member" | "admin" | "owner" }) {
   const user = await requireAuth(req, res);
   if (!user) return null;
@@ -402,7 +481,6 @@ async function requireTeamMembership(req: any, res: any, input: { teamId: number
   }
   return { user, membership };
 }
-
 async function getOrInitActiveTeamId(req: any, userId: number): Promise<number | null> {
   try {
     const active = typeof req.session?.activeTeamId === "number" ? req.session.activeTeamId : null;
@@ -418,7 +496,6 @@ async function getOrInitActiveTeamId(req: any, userId: number): Promise<number |
     return null;
   }
 }
-
 async function requireActiveTeam(req: any, res: any, input?: { minRole?: "viewer" | "member" | "admin" | "owner" }) {
   const user = await requireAuth(req, res);
   if (!user) return null;
@@ -440,11 +517,9 @@ async function requireActiveTeam(req: any, res: any, input?: { minRole?: "viewer
   }
   return { user, membership, teamId };
 }
-
 function makeInviteCode() {
   return crypto.randomBytes(6).toString("hex");
 }
-
 async function requireAssigneeInActiveTeam(req: any, res: any, user: any, assigneeUserId: number) {
   const teamId = await getOrInitActiveTeamId(req, user.id);
   if (!teamId) {
@@ -460,13 +535,10 @@ async function requireAssigneeInActiveTeam(req: any, res: any, user: any, assign
   }
   return true;
 }
-
 const isFeatureEnabled = createIsFeatureEnabled(storage.getUserFeatureFlag.bind(storage));
-
 function isImportExportEntityType(entityType: string) {
   return entityType === "lead" || entityType === "opportunity" || entityType === "contact" || entityType === "buyer";
 }
-
 async function writeAuthAuditLog(input: {
   action: string;
   outcome: string;
@@ -492,27 +564,22 @@ async function writeAuthAuditLog(input: {
     `);
   } catch {}
 }
-
 function isLoopbackIp(ip: string | undefined) {
   if (!ip) return false;
   const v = ip.trim();
   return v === "127.0.0.1" || v === "::1" || v === "::ffff:127.0.0.1";
 }
-
 function isDevEmployeeBypassEnabled() {
   if (process.env.NODE_ENV === "production") return false;
   const v = String(process.env.DEV_AUTH_BYPASS_ENABLED || "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes" || v === "on";
 }
-
 function toAddressKey(address: string) {
   return address.trim().toLowerCase();
 }
-
 function skipTraceCacheKey(input: { ownerName: string; address: string; city: string; state: string; zipCode: string }) {
   return `${input.ownerName}|${input.address}|${input.city}|${input.state}|${input.zipCode}`.trim().toLowerCase();
 }
-
 function parseJsonArrayText(v: any): string[] {
   if (!v) return [];
   if (Array.isArray(v)) return v.map((x) => String(x)).filter(Boolean);
@@ -524,7 +591,6 @@ function parseJsonArrayText(v: any): string[] {
     return [];
   }
 }
-
 function resolvePropertyImageSrc(v: unknown): string | null {
   const s = typeof v === "string" ? v.trim() : "";
   if (!s) return null;
@@ -534,17 +600,14 @@ function resolvePropertyImageSrc(v: unknown): string | null {
   }
   return s;
 }
-
 function resolvePropertyImages(images: unknown): string[] {
   if (!Array.isArray(images)) return [];
   return images.map(resolvePropertyImageSrc).filter((x): x is string => !!x);
 }
-
 function toNumberOrNull(v: unknown): number | null {
   const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
   return Number.isFinite(n) ? n : null;
 }
-
 function haversineMiles(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
   const R = 3958.7613;
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -557,7 +620,175 @@ function haversineMiles(a: { lat: number; lng: number }, b: { lat: number; lng: 
     Math.sin(dLng / 2) * Math.sin(dLng / 2) * Math.cos(lat1) * Math.cos(lat2);
   return 2 * R * Math.asin(Math.sqrt(h));
 }
-
+// ===== OPPORTUNITY STAGE WORKFLOW CONSTANTS =====
+export const OPPORTUNITY_STAGES = [
+  "lead",
+  "contacted",
+  "negotiating",
+  "under_contract",
+  "in_disposition",
+  "reserved",
+  "sold",
+  "closed",
+  "dead",
+  "voided",
+] as const;
+export type OpportunityStage = (typeof OPPORTUNITY_STAGES)[number];
+export const OPPORTUNITY_TYPE_OPTIONS = [
+  "acquisition",
+  "disposition",
+  "assignment",
+  "buy_and_hold",
+  "flip",
+  "other",
+] as const;
+export type OpportunityType = (typeof OPPORTUNITY_TYPE_OPTIONS)[number];
+export const OPPORTUNITY_STATUS_OPTIONS = [
+  "active",
+  "pending",
+  "on_hold",
+  "delayed",
+  "archived",
+] as const;
+export type OpportunityStatus = (typeof OPPORTUNITY_STATUS_OPTIONS)[number];
+export const OPPORTUNITY_STAGE_CONFIG: Record<OpportunityStage, { label: string; expects: string[] }> = {
+  lead: { label: "Lead", expects: ["Contact seller", "Initial outreach", "Qualify property"] },
+  contacted: { label: "Contacted", expects: ["Schedule showing", "Send CMA", "Gather seller details"] },
+  negotiating: { label: "Negotiating", expects: ["Review offer terms", "Counter offer", "Finalize contract terms"] },
+  under_contract: { label: "Under Contract", expects: ["EMD deposit", "Inspection deadline", "Due diligence", "Secure financing"] },
+  in_disposition: { label: "In Disposition", expects: ["Build buyer list", "Create public listing", "Schedule tours"] },
+  reserved: { label: "Reserved", expects: ["Confirm buyer commitment", "Coordinate closing", "Assign contract"] },
+  sold: { label: "Sold", expects: ["Close deal", "Receive assignment fee", "Disburse funds"] },
+  closed: { label: "Closed", expects: ["Post-close wrap-up", "Archive documents"] },
+  dead: { label: "Dead", expects: ["Document reasons", "Attempt re-engagement"] },
+  voided: { label: "Voided", expects: ["Reason recorded", "Cancel related tasks", "Archive"] },
+};
+export function isValidStage(stage: string): stage is OpportunityStage {
+  return (OPPORTUNITY_STAGES as readonly string[]).includes(stage);
+}
+export function canTransitionStage(from: OpportunityStage, to: OpportunityStage): boolean {
+  if (from === to) return true;
+  const terminal = new Set(["closed", "dead", "voided"]);
+  if (terminal.has(from) && !terminal.has(to)) return false;
+  return true;
+}
+export function generateSlug(title: string): string {
+  const base = String(title || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+  const rand = crypto.randomBytes(4).toString("hex");
+  return `${base || "listing"}-${rand}`;
+}
+export function generateListingToken(): string {
+  return crypto.randomBytes(24).toString("hex");
+}
+export async function logOpportunityEvent(
+  opportunityId: number,
+  eventType: string,
+  title: string,
+  description?: string,
+  actorUserId?: number,
+  actorType: string = "user",
+  metadata?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await storage.createOpportunityEvent({
+      opportunityId,
+      eventType,
+      title,
+      description: description || null,
+      actorType: actorType as any,
+      actorUserId: actorUserId || null,
+      metadataJson: metadata ? JSON.stringify(metadata) : null,
+    } as any);
+  } catch {}
+}
+// Create an opportunity-linked task only if one with the same title does not
+// already exist (idempotency guard for stage-triggered automations).
+export async function ensureOpportunityTask(
+  propertyId: number,
+  userId: number,
+  def: { title: string; description?: string; type: string; priority: string; dueAt: Date },
+): Promise<boolean> {
+  try {
+    const existing = await storage.getTasksByRelatedEntity("opportunity", propertyId);
+    const key = String(def.title || "").trim();
+    if (existing.some((t: any) => String(t.title || "").trim() === key)) return false;
+    await createTask({
+      relatedEntityType: "opportunity",
+      relatedEntityId: propertyId,
+      assignedToUserId: userId,
+      title: def.title,
+      description: def.description ?? null,
+      type: def.type,
+      priority: def.priority,
+      dueAt: def.dueAt,
+      createdBy: userId,
+    } as any);
+    return true;
+  } catch {
+    return false;
+  }
+}
+export async function transitionOpportunityStage(
+  propertyId: number,
+  newStage: string,
+  user: { id: number },
+  ip?: string,
+): Promise<void> {
+  const property = await storage.getPropertyById(propertyId);
+  if (!property) return;
+  const oldStage = (property as any).stage || "lead";
+  if (!isValidStage(newStage)) {
+    newStage = "lead";
+  }
+  const valid = canTransitionStage(oldStage as OpportunityStage, newStage as OpportunityStage);
+  if (!valid && oldStage !== newStage) return;
+  const now = new Date();
+  await storage.updateProperty(propertyId, {
+    stage: newStage,
+    stageChangedAt: now,
+    lastActivityAt: now,
+  });
+  await logOpportunityEvent(
+    propertyId,
+    "stage_changed",
+    `Stage changed to ${OPPORTUNITY_STAGE_CONFIG[newStage as OpportunityStage]?.label || newStage}`,
+    `Moved from '${oldStage}' to '${newStage}'`,
+    user.id,
+    "user",
+    { oldStage, newStage, ip },
+  );
+  try {
+    const teamId = await getOrInitActiveTeamId({ session: { userId: user.id } } as any, user.id);
+    if (teamId) {
+      await dispatchAutomationEvent({
+        eventType: "opportunity.stage_changed",
+        teamId,
+        actorUserId: user.id,
+        entity: { type: "opportunity", id: propertyId },
+        payload: { oldStage, newStage, propertyId },
+      });
+    }
+  } catch {}
+}
+const inquiryRateLimiter = new Map<string, number[]>();
+function checkInquiryRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const windowMs = 15 * 60 * 1000;
+  const maxRequests = 5;
+  const timestamps = inquiryRateLimiter.get(ip) || [];
+  const valid = timestamps.filter((t) => now - t < windowMs);
+  if (valid.length >= maxRequests) {
+    inquiryRateLimiter.set(ip, valid);
+    return false;
+  }
+  valid.push(now);
+  inquiryRateLimiter.set(ip, valid);
+  return true;
+}
 export async function registerRoutes(
   app: Express,
   opts?: { mode?: "server" | "serverless" },
@@ -589,21 +820,17 @@ export async function registerRoutes(
     },
   });
   const mode = opts?.mode ?? "server";
-
   app.use("/api", async (req, _res, next) => {
     try {
       if (req.session?.userId) return next();
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith("Bearer ")) return next();
-
       const secret = authJwtSecret();
       if (!secret) return next();
-
       const token = authHeader.slice("Bearer ".length);
       const { payload } = await jwtVerify(token, secret);
       const sub = payload.sub ? parseInt(String(payload.sub), 10) : NaN;
       if (!Number.isFinite(sub)) return next();
-
       req.session.userId = sub;
       if (typeof payload.email === "string") req.session.email = payload.email;
       next();
@@ -611,35 +838,27 @@ export async function registerRoutes(
       next();
     }
   });
-
   app.use("/api/v1/telecom/webhooks/telnyx", createTelnyxWebhookRouter());
-
   app.get("/api/crm/fields", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     const entityType = String(req.query.entityType || "");
     if (!isImportExportEntityType(entityType)) {
       return res.status(400).json({ message: "Invalid entityType" });
     }
     return res.json({ entityType, fields: getCrmFieldDefs(entityType as any) });
   });
-
   app.post("/api/crm/import/preview", upload.single("file"), async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     const entityType = String(req.body.entityType || "");
     if (!isImportExportEntityType(entityType)) {
       return res.status(400).json({ message: "Invalid entityType" });
     }
-
     const file = (req as any).file as Express.Multer.File | undefined;
     if (!file) return res.status(400).json({ message: "file is required" });
-
     const format = detectFormat(file.originalname, file.mimetype);
     if (!format) return res.status(400).json({ message: "Unsupported file type" });
-
     const parsed = await parseUpload(file.buffer, format);
     const headers = parsed.headers;
     const samples = parsed.rows.slice(0, 5);
@@ -653,25 +872,19 @@ export async function registerRoutes(
       totalRows: parsed.rows.length,
     });
   });
-
   app.post("/api/crm/import/jobs", upload.single("file"), async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     const entityType = String(req.body.entityType || "");
     if (!isImportExportEntityType(entityType)) {
       return res.status(400).json({ message: "Invalid entityType" });
     }
-
     const file = (req as any).file as Express.Multer.File | undefined;
     if (!file) return res.status(400).json({ message: "file is required" });
-
     const mapping = req.body.mapping ? JSON.parse(String(req.body.mapping)) : {};
     const options = req.body.options ? JSON.parse(String(req.body.options)) : { onDuplicate: "merge" };
-
     const format = detectFormat(file.originalname, file.mimetype);
     if (!format) return res.status(400).json({ message: "Unsupported file type" });
-
     const fileBase64 = file.buffer.toString("base64");
     const job = await createImportJob({
       entityType: entityType as any,
@@ -682,7 +895,6 @@ export async function registerRoutes(
       mapping,
       options,
     });
-
     if (mode === "server") {
       setImmediate(() => {
         processImportJob(job.id).catch((e: any) => {
@@ -699,31 +911,24 @@ export async function registerRoutes(
     } else {
       await processImportJob(job.id, { maxRows: 100, maxBatches: 1, resume: true });
     }
-
     return res.status(201).json({ jobId: job.id });
   });
-
   app.post("/api/crm/import/jobs/:id/run", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     const jobId = parseInt(req.params.id, 10);
     if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
-
     const job = await getImportJob(jobId);
     if (!job) return res.status(404).json({ message: "Not found" });
     if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
-
     await processImportJob(jobId, { maxRows: 100, maxBatches: 1, resume: true });
     const nextJob = await getImportJob(jobId);
     const errors = await listImportJobErrors(jobId, 50);
     return res.json({ job: nextJob, errors });
   });
-
   app.get("/api/crm/import/jobs", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     const rows = await db
       .select()
       .from(crmImportJobs)
@@ -732,33 +937,25 @@ export async function registerRoutes(
       .limit(20);
     return res.json({ jobs: rows });
   });
-
   app.get("/api/crm/import/jobs/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     const jobId = parseInt(req.params.id, 10);
     if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
-
     const job = await getImportJob(jobId);
     if (!job) return res.status(404).json({ message: "Not found" });
     if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
-
     const errors = await listImportJobErrors(jobId, 50);
     return res.json({ job, errors });
   });
-
   app.get("/api/crm/import/jobs/:id/errors.csv", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     const jobId = parseInt(req.params.id, 10);
     if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
-
     const job = await getImportJob(jobId);
     if (!job) return res.status(404).json({ message: "Not found" });
     if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
-
     const errors = await listImportJobErrors(jobId, 10000);
     const esc = (v: any) => {
       const s = String(v ?? "");
@@ -767,26 +964,21 @@ export async function registerRoutes(
     };
     const lines = ["rowNumber,errors,rawRow"];
     for (const e of errors) lines.push([e.rowNumber, e.errors, e.rawRow || ""].map(esc).join(","));
-
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="import-errors-${jobId}.csv"`);
     return res.send(lines.join("\n"));
   });
-
   app.post("/api/crm/export/jobs", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     const entityType = String(req.body.entityType || "");
     if (!isImportExportEntityType(entityType)) {
       return res.status(400).json({ message: "Invalid entityType" });
     }
     const format = String(req.body.format || "csv");
     if (format !== "csv" && format !== "xlsx") return res.status(400).json({ message: "Invalid format" });
-
     const filters = req.body.filters || {};
     const columns = Array.isArray(req.body.columns) ? req.body.columns : [];
-
     const { job, token } = await createExportJob({
       entityType: entityType as any,
       createdBy: user.id,
@@ -794,7 +986,6 @@ export async function registerRoutes(
       filters,
       columns,
     });
-
     if (mode === "server") {
       setImmediate(() => {
         processExportJob(job.id).catch((e: any) => {
@@ -811,31 +1002,24 @@ export async function registerRoutes(
     } else {
       await processExportJob(job.id, { resume: true });
     }
-
     const downloadUrl = `/api/crm/export/files/${job.id}/download?token=${encodeURIComponent(token)}`;
     return res.status(201).json({ jobId: job.id, downloadUrl });
   });
-
   app.post("/api/crm/export/jobs/:id/run", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     const exportId = parseInt(req.params.id, 10);
     if (!Number.isFinite(exportId)) return res.status(400).json({ message: "Invalid export id" });
-
     const job = await getExportJob(exportId);
     if (!job) return res.status(404).json({ message: "Not found" });
     if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
-
     await processExportJob(exportId, { resume: true });
     const nextJob = await getExportJob(exportId);
     return res.json({ job: nextJob });
   });
-
   app.get("/api/crm/export/jobs", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     const rows = await db
       .select()
       .from(crmExportFiles)
@@ -844,56 +1028,44 @@ export async function registerRoutes(
       .limit(20);
     return res.json({ jobs: rows });
   });
-
   app.get("/api/crm/export/jobs/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     const exportId = parseInt(req.params.id, 10);
     if (!Number.isFinite(exportId)) return res.status(400).json({ message: "Invalid export id" });
-
     const job = await getExportJob(exportId);
     if (!job) return res.status(404).json({ message: "Not found" });
     if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
-
     return res.json({ job });
   });
-
   app.post("/api/crm/export/jobs/:id/renew-download", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     const exportId = parseInt(req.params.id, 10);
     if (!Number.isFinite(exportId)) return res.status(400).json({ message: "Invalid export id" });
-
     const job = await getExportJob(exportId);
     if (!job) return res.status(404).json({ message: "Not found" });
     if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
     if (job.status !== "completed") return res.status(409).json({ message: "Export not ready" });
-
     const { token } = await renewExportToken(exportId);
     const downloadUrl = `/api/crm/export/files/${exportId}/download?token=${encodeURIComponent(token)}`;
     return res.json({ downloadUrl });
   });
-
   app.get("/api/crm/export/files/:id/download", async (req, res) => {
     const exportId = parseInt(req.params.id, 10);
     if (!Number.isFinite(exportId)) return res.status(400).json({ message: "Invalid export id" });
     const token = String(req.query.token || "");
     if (!token) return res.status(401).json({ message: "Missing token" });
-
     const job = await getExportJob(exportId);
     if (!job) return res.status(404).json({ message: "Not found" });
     if (job.status !== "completed") return res.status(409).json({ message: "Export not ready" });
     if (!verifyExportToken(job as any, token)) return res.status(403).json({ message: "Invalid token" });
     if (!job.contentBase64 || !job.mimeType) return res.status(500).json({ message: "Export content missing" });
-
     const buf = Buffer.from(String(job.contentBase64), "base64");
     res.setHeader("Content-Type", job.mimeType);
     res.setHeader("Content-Disposition", `attachment; filename="${job.filename || `export-${exportId}`}"`);
     return res.send(buf);
   });
-
   // HEALTH CHECK
   app.get("/api/health", async (req, res) => {
     try {
@@ -905,7 +1077,6 @@ export async function registerRoutes(
       res.status(500).json({ status: "error", db: "disconnected", message: error.message });
     }
   });
-
   app.get("/api/version", async (_req, res) => {
     const version = String(process.env.APP_VERSION || packageJson?.version || "0.0.0");
     const commitSha =
@@ -919,9 +1090,7 @@ export async function registerRoutes(
     const buildId = String(process.env.VERCEL_BUILD_ID || process.env.BUILD_ID || "") || null;
     res.json({ version, commitSha, buildId, nodeEnv: process.env.NODE_ENV || null });
   });
-
   const stripeApiVersion = "2026-04-22.dahlia";
-
   function xpNormalizeSlug(input: string): string {
     return String(input || "")
       .trim()
@@ -930,7 +1099,6 @@ export async function registerRoutes(
       .replace(/^-+/, "")
       .replace(/-+$/, "");
   }
-
   function xpParseDate(input: unknown): Date | null {
     if (input instanceof Date) return Number.isFinite(input.getTime()) ? input : null;
     const s = String(input || "").trim();
@@ -938,13 +1106,11 @@ export async function registerRoutes(
     const d = new Date(s);
     return Number.isFinite(d.getTime()) ? d : null;
   }
-
   function xpMoneyToCents(input: unknown): number {
     const n = typeof input === "number" ? input : parseFloat(String(input || "0"));
     if (!Number.isFinite(n) || n <= 0) return 0;
     return Math.round(n * 100);
   }
-
   const xpPaymentModeSchema = z.enum(["deposit", "full"]);
   const xpItinerarySchema = z
     .object({
@@ -958,7 +1124,6 @@ export async function registerRoutes(
         .default([]),
     })
     .strict();
-
   function xpStringList(input: unknown): string[] | null {
     if (!input) return null;
     if (Array.isArray(input)) {
@@ -968,12 +1133,11 @@ export async function registerRoutes(
     const raw = String(input || "").trim();
     if (!raw) return null;
     const items = raw
-      .split(/\r?\n|,/g)
-      .map((x) => x.trim())
+      .split(",")
+      .map((v) => String(v || "").trim())
       .filter(Boolean);
     return items.length ? items : null;
   }
-
   async function xpPickAdminUser(): Promise<any | null> {
     try {
       const users = await storage.getUsers(200, 0);
@@ -986,33 +1150,26 @@ export async function registerRoutes(
       return null;
     }
   }
-
   app.get("/api/xp/experiences", async (_req, res) => {
     const items = await storage.listXpExperiences({ activeOnly: true });
     return res.json({ items });
   });
-
   app.get("/api/xp/experiences/:slug", async (req, res) => {
     const slug = String(req.params.slug || "").trim();
     const experience = await storage.getXpExperienceBySlug(slug);
     if (!experience || !(experience as any).active) return res.status(404).json({ message: "Not found" });
     return res.json({ experience });
   });
-
   app.get("/api/xp/experiences/:slug/availability", async (req, res) => {
     const slug = String(req.params.slug || "").trim();
     const experience = await storage.getXpExperienceBySlug(slug);
     if (!experience || !(experience as any).active) return res.status(404).json({ message: "Not found" });
-
     const from = xpParseDate(req.query.from);
     const to = xpParseDate(req.query.to);
     if (!from || !to) return res.status(400).json({ message: "from and to are required" });
     if (to.getTime() <= from.getTime()) return res.status(400).json({ message: "Invalid range" });
-
     const mode = String((experience as any).mode || "time_slot");
-
     const out: any = { experienceId: (experience as any).id, mode };
-
     if (mode === "time_slot" || mode === "both") {
       const slots = await storage.listXpTimeSlots((experience as any).id, { from, to, activeOnly: true });
       const items = [];
@@ -1029,7 +1186,6 @@ export async function registerRoutes(
       }
       out.timeSlots = items;
     }
-
     if (mode === "date_range" || mode === "both") {
       const blackouts = await storage.listXpBlackouts((experience as any).id, { from, to });
       const bookings = (await storage.listXpBookings({ experienceId: (experience as any).id, from, to, limit: 500, offset: 0 })).items;
@@ -1039,36 +1195,29 @@ export async function registerRoutes(
         .map((b: any) => ({ startAt: b.startAt, endAt: b.endAt }));
       out.capacity = Number((experience as any).capacity || 1);
     }
-
     return res.json(out);
   });
-
   app.post("/api/xp/bookings/checkout", async (req, res) => {
     const body = req.body || {};
     const experienceSlug = String(body.experienceSlug || "").trim();
     const experience = await storage.getXpExperienceBySlug(experienceSlug);
     if (!experience || !(experience as any).active) return res.status(404).json({ message: "Not found" });
-
     const mode = String((experience as any).mode || "time_slot");
     const kindRaw = String(body.kind || "").trim();
     const kind = kindRaw === "date_range" ? "date_range" : "time_slot";
     if (mode !== "both" && mode !== kind) return res.status(400).json({ message: "Invalid kind for experience" });
-
     const customerName = String(body.customerName || "").trim();
     const customerEmail = String(body.customerEmail || "").trim();
     const customerPhone = String(body.customerPhone || "").trim() || null;
     if (!customerName || !customerEmail) return res.status(400).json({ message: "Missing customer fields" });
-
     const startAt = xpParseDate(body.startAt);
     const endAt = xpParseDate(body.endAt);
     if (!startAt || !endAt) return res.status(400).json({ message: "Missing startAt/endAt" });
     if (endAt.getTime() <= startAt.getTime()) return res.status(400).json({ message: "Invalid window" });
-
     const experienceId = Number((experience as any).id);
     if (await storage.hasXpBlackoutOverlap({ experienceId, startAt, endAt })) {
       return res.status(409).json({ message: "Unavailable" });
     }
-
     if (kind === "time_slot") {
       const slots = await storage.listXpTimeSlots(experienceId, { from: startAt, to: startAt, activeOnly: true });
       const slot = slots.find((s: any) => new Date(s.startAt).getTime() === startAt.getTime() && new Date(s.endAt).getTime() === endAt.getTime());
@@ -1081,18 +1230,14 @@ export async function registerRoutes(
       const cap = Number((experience as any).capacity || 1);
       if (used >= cap) return res.status(409).json({ message: "Unavailable" });
     }
-
     const paymentModeRaw = String((experience as any).paymentMode || "deposit").trim().toLowerCase();
     const paymentMode = xpPaymentModeSchema.safeParse(paymentModeRaw);
     if (!paymentMode.success) return res.status(400).json({ message: "Invalid payment mode" });
-
     const dueNowAmount = paymentMode.data === "full" ? (experience as any).priceTotal : (experience as any).depositAmount;
     const cents = xpMoneyToCents(dueNowAmount);
     if (!cents) return res.status(400).json({ message: "Invalid amount" });
-
     const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
     if (!stripeKey) return res.status(500).json({ message: "Stripe is not configured" });
-
     const booking = await storage.createXpBookingPending({
       experienceId,
       kind,
@@ -1108,10 +1253,8 @@ export async function registerRoutes(
       stripePaymentIntentId: null,
       stripeCustomerId: null,
     } as any);
-
     const stripe = new Stripe(stripeKey, { apiVersion: stripeApiVersion });
     const origin = `${req.protocol}://${req.get("host")}`;
-
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       success_url: `${origin}/xp/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
@@ -1139,12 +1282,9 @@ export async function registerRoutes(
         paymentMode: paymentMode.data,
       },
     });
-
     await storage.updateXpBookingStripeSession((booking as any).id, session.id);
-
     return res.status(201).json({ checkoutUrl: session.url });
   });
-
   app.get("/api/xp/bookings/session/:sessionId", async (req, res) => {
     const sessionId = String(req.params.sessionId || "").trim();
     if (!sessionId) return res.status(400).json({ message: "Missing sessionId" });
@@ -1174,37 +1314,29 @@ export async function registerRoutes(
         : null,
     });
   });
-
   app.post("/api/stripe/webhook", async (req, res) => {
     const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
     const webhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || "").trim();
     if (!stripeKey || !webhookSecret) return res.status(500).json({ message: "Stripe is not configured" });
-
     const sig = String(req.headers["stripe-signature"] || "").trim();
     if (!sig) return res.status(400).json({ message: "Missing stripe-signature" });
-
     const stripe = new Stripe(stripeKey, { apiVersion: stripeApiVersion });
-
     const raw = Buffer.isBuffer((req as any).rawBody)
       ? ((req as any).rawBody as Buffer)
       : Buffer.from(JSON.stringify(req.body || {}));
-
     let event: Stripe.Event;
     try {
       event = stripe.webhooks.constructEvent(raw, sig, webhookSecret);
     } catch (e: any) {
       return res.status(400).json({ message: String(e?.message || e) });
     }
-
     if (await storage.hasStripeEvent(event.id)) return res.json({ received: true });
     await storage.recordStripeEvent({ eventId: event.id, type: event.type, payload: { id: event.id, type: event.type, created: event.created } } as any);
-
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
       const sessionId = String(session.id || "").trim();
       const paymentIntentId = typeof session.payment_intent === "string" ? session.payment_intent : null;
       const stripeCustomerId = typeof session.customer === "string" ? session.customer : null;
-
       const booking = await storage.getXpBookingByStripeSessionId(sessionId);
       if (booking && String((booking as any).status) !== "confirmed") {
         const confirmed = await storage.confirmXpBookingByStripeSessionId({ sessionId, paymentIntentId, stripeCustomerId });
@@ -1238,10 +1370,8 @@ export async function registerRoutes(
         }
       }
     }
-
     return res.json({ received: true });
   });
-
   app.get("/api/xp/admin/experiences", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1249,7 +1379,6 @@ export async function registerRoutes(
     const items = await storage.listXpExperiences({ activeOnly: false });
     return res.json({ items });
   });
-
   app.post("/api/xp/admin/experiences", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1275,15 +1404,12 @@ export async function registerRoutes(
         itinerary: z.any().optional().nullable(),
       })
       .strict();
-
     const parsed = schema.safeParse(req.body || {});
     if (!parsed.success) return res.status(400).json({ message: "Invalid payload" });
     const body = parsed.data;
-
     const slug = xpNormalizeSlug(body.slug);
     const title = body.title;
     if (!slug || !title) return res.status(400).json({ message: "Missing fields" });
-
     const priceTotalCents = body.priceTotal != null ? xpMoneyToCents(body.priceTotal) : 0;
     const depositCents = xpMoneyToCents(body.depositAmount);
     if (body.paymentMode === "full") {
@@ -1291,10 +1417,8 @@ export async function registerRoutes(
     } else {
       if (!depositCents) return res.status(400).json({ message: "depositAmount is required" });
     }
-
     const itineraryParsed = body.itinerary ? xpItinerarySchema.safeParse(body.itinerary) : null;
     if (body.itinerary && !itineraryParsed?.success) return res.status(400).json({ message: "Invalid itinerary" });
-
     const row = await storage.createXpExperience({
       slug,
       title,
@@ -1316,7 +1440,6 @@ export async function registerRoutes(
     } as any);
     return res.status(201).json({ experience: row });
   });
-
   app.patch("/api/xp/admin/experiences/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1360,7 +1483,6 @@ export async function registerRoutes(
         patch.itinerary = itin.data;
       }
     }
-
     const nextPaymentMode = String(patch.paymentMode || "").trim();
     const paymentMode = nextPaymentMode ? xpPaymentModeSchema.safeParse(nextPaymentMode) : null;
     const current = await storage.getXpExperienceById(id);
@@ -1374,11 +1496,9 @@ export async function registerRoutes(
       const effectiveDeposit = Object.prototype.hasOwnProperty.call(patch, "depositAmount") ? patch.depositAmount : (current as any).depositAmount;
       if (!xpMoneyToCents(effectiveDeposit)) return res.status(400).json({ message: "depositAmount is required" });
     }
-
     const row = await storage.updateXpExperience(id, patch);
     return res.json({ experience: row });
   });
-
   app.delete("/api/xp/admin/experiences/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1388,7 +1508,6 @@ export async function registerRoutes(
     const row = await storage.deactivateXpExperience(id);
     return res.json({ experience: row });
   });
-
   app.get("/api/xp/admin/experiences/:id/time-slots", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1400,7 +1519,6 @@ export async function registerRoutes(
     const items = await storage.listXpTimeSlots(id, { from, to, activeOnly: false });
     return res.json({ items });
   });
-
   app.post("/api/xp/admin/experiences/:id/time-slots", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1415,7 +1533,6 @@ export async function registerRoutes(
     const row = await storage.createXpTimeSlot({ experienceId: id, startAt, endAt, capacity, active: req.body?.active !== false } as any);
     return res.status(201).json({ timeSlot: row });
   });
-
   app.delete("/api/xp/admin/time-slots/:slotId", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1425,7 +1542,6 @@ export async function registerRoutes(
     await storage.deleteXpTimeSlot(slotId);
     return res.json({ ok: true });
   });
-
   app.get("/api/xp/admin/experiences/:id/blackouts", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1437,7 +1553,6 @@ export async function registerRoutes(
     const items = await storage.listXpBlackouts(id, { from, to });
     return res.json({ items });
   });
-
   app.post("/api/xp/admin/experiences/:id/blackouts", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1451,7 +1566,6 @@ export async function registerRoutes(
     const row = await storage.createXpBlackout({ experienceId: id, startAt, endAt, reason: String(req.body?.reason || "").trim() || null } as any);
     return res.status(201).json({ blackout: row });
   });
-
   app.delete("/api/xp/admin/blackouts/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1461,7 +1575,6 @@ export async function registerRoutes(
     await storage.deleteXpBlackout(id);
     return res.json({ ok: true });
   });
-
   app.get("/api/xp/admin/bookings", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1495,7 +1608,6 @@ export async function registerRoutes(
     });
     return res.json(out);
   });
-
   app.get("/api/xp/admin/bookings/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1510,7 +1622,6 @@ export async function registerRoutes(
     const experience = await storage.getXpExperienceById(Number((booking as any).experienceId));
     return res.json({ booking, experience: experience || null });
   });
-
   app.post("/api/xp/admin/bookings/:id/cancel", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1521,13 +1632,11 @@ export async function registerRoutes(
     if (!row) return res.status(404).json({ message: "Not found" });
     return res.json({ booking: row });
   });
-
   function parseNullableInt(v: any): number | null {
     if (v === undefined || v === null || v === "") return null;
     const n = typeof v === "number" ? v : parseInt(String(v), 10);
     return Number.isFinite(n) ? n : null;
   }
-
   app.get("/api/xp/admin/locations", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1539,7 +1648,6 @@ export async function registerRoutes(
     const items = await storage.listXpLocations({ activeOnly });
     return res.json({ items });
   });
-
   app.post("/api/xp/admin/locations", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1558,7 +1666,6 @@ export async function registerRoutes(
     } as any);
     return res.status(201).json({ location: row });
   });
-
   app.patch("/api/xp/admin/locations/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1577,7 +1684,6 @@ export async function registerRoutes(
     const row = await storage.updateXpLocation(id, patch);
     return res.json({ location: row });
   });
-
   app.delete("/api/xp/admin/locations/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1587,7 +1693,6 @@ export async function registerRoutes(
     const row = await storage.deactivateXpLocation(id);
     return res.json({ location: row });
   });
-
   app.get("/api/xp/admin/vehicles", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1604,7 +1709,6 @@ export async function registerRoutes(
     });
     return res.json({ items });
   });
-
   app.post("/api/xp/admin/vehicles", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1620,7 +1724,6 @@ export async function registerRoutes(
     } as any);
     return res.status(201).json({ vehicle: row });
   });
-
   app.patch("/api/xp/admin/vehicles/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1636,7 +1739,6 @@ export async function registerRoutes(
     const row = await storage.updateXpVehicle(id, patch);
     return res.json({ vehicle: row });
   });
-
   app.delete("/api/xp/admin/vehicles/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1646,7 +1748,6 @@ export async function registerRoutes(
     const row = await storage.deactivateXpVehicle(id);
     return res.json({ vehicle: row });
   });
-
   app.get("/api/xp/admin/concierges", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1658,7 +1759,6 @@ export async function registerRoutes(
     });
     return res.json({ items: safe });
   });
-
   app.put("/api/xp/admin/bookings/:id/assignment", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1670,7 +1770,6 @@ export async function registerRoutes(
     if (isConciergeUser(user) && Number(booking.assignment?.conciergeUserId || 0) !== Number(user.id)) {
       return res.status(404).json({ message: "Not found" });
     }
-
     const locationId = req.body?.locationId !== undefined ? parseNullableInt(req.body?.locationId) : booking.assignment?.locationId ?? null;
     const vehicleId = req.body?.vehicleId !== undefined ? parseNullableInt(req.body?.vehicleId) : booking.assignment?.vehicleId ?? null;
     const conciergeUserId = isAdminUser(user)
@@ -1678,17 +1777,14 @@ export async function registerRoutes(
         ? parseNullableInt(req.body?.conciergeUserId)
         : booking.assignment?.conciergeUserId ?? null
       : Number(user.id);
-
     const assignment = await storage.upsertXpBookingAssignment({
       bookingId: id,
       locationId,
       vehicleId,
       conciergeUserId,
     });
-
     return res.json({ assignment });
   });
-
   app.get("/api/xp/admin/bookings/:id/notes", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1703,7 +1799,6 @@ export async function registerRoutes(
     const items = await storage.listXpBookingNotes(id);
     return res.json({ items });
   });
-
   app.post("/api/xp/admin/bookings/:id/notes", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -1721,32 +1816,26 @@ export async function registerRoutes(
     const note = await storage.createXpBookingNote({ bookingId: id, authorUserId: Number(user.id), body } as any);
     return res.status(201).json({ note });
   });
-
   app.get("/api/address/suggest", async (req, res) => {
     try {
       const qRaw = (req.query.q as string) || "";
       const q = qRaw.trim();
       if (q.length < 2) return res.json({ q: qRaw, provider: null, suggestions: [] });
-
       const providerHint = String(process.env.ADDRESS_PROVIDER || "").toLowerCase();
       const mapboxToken = process.env.MAPBOX_ACCESS_TOKEN || process.env.MAPBOX_TOKEN;
       const smartyAuthId = process.env.SMARTY_AUTH_ID || process.env.SMARTY_STREETS_AUTH_ID;
       const smartyAuthToken = process.env.SMARTY_AUTH_TOKEN || process.env.SMARTY_STREETS_AUTH_TOKEN;
-
       const canUseMapbox = !!mapboxToken;
       const canUseSmarty = !!(smartyAuthId && smartyAuthToken);
-
       const provider =
         providerHint === "mapbox" && canUseMapbox ? "mapbox"
         : providerHint === "smarty" && canUseSmarty ? "smarty"
         : canUseMapbox ? "mapbox"
         : canUseSmarty ? "smarty"
         : null;
-
       if (!provider) {
         return res.json({ q: qRaw, provider: null, suggestions: [] });
       }
-
       if (provider === "mapbox") {
         const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?autocomplete=true&types=address&country=US&limit=8&access_token=${encodeURIComponent(String(mapboxToken))}`;
         const r = await fetch(url);
@@ -1769,7 +1858,6 @@ export async function registerRoutes(
         });
         return res.json({ q: qRaw, provider, suggestions });
       }
-
       const url = `https://us-autocomplete-pro.api.smarty.com/lookup?search=${encodeURIComponent(q)}&auth-id=${encodeURIComponent(String(smartyAuthId))}&auth-token=${encodeURIComponent(String(smartyAuthToken))}&max_results=8`;
       const r = await fetch(url);
       if (!r.ok) return res.status(502).json({ message: "Address provider error" });
@@ -1787,7 +1875,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   // GLOBAL SEARCH
   app.get("/api/search", async (req, res) => {
     const startedAt = Date.now();
@@ -1800,10 +1887,8 @@ export async function registerRoutes(
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 20;
       const offset = req.query.offset ? parseInt(req.query.offset as string) : 0;
       if (!q) return res.json({ q: qRaw, results: [], counts: { leads: 0, properties: 0, contacts: 0, companies: 0, documents: 0, total: 0 } });
-
       const term = `%${q}%`;
       const canViewPrivateDocs = isManagerUser(user);
-
       const countsPromises = [
         db.execute(sql`SELECT COUNT(*)::int AS c FROM leads l WHERE 
           lower(l.address) LIKE lower(${term}) OR lower(l.city) LIKE lower(${term}) OR lower(l.state) LIKE lower(${term}) OR
@@ -1827,14 +1912,12 @@ export async function registerRoutes(
             ) AND (${canViewPrivateDocs} OR d.is_private = false OR d.created_by = ${user.id})`)
           : Promise.resolve({ rows: [{ c: 0 }] } as any),
       ];
-
       const [leadCountRow, propertyCountRow, contactCountRow, companyCountRow, documentCountRow] = await Promise.all(countsPromises);
       const leadCount = (leadCountRow as any).rows?.[0]?.c ?? 0;
       const propertyCount = (propertyCountRow as any).rows?.[0]?.c ?? 0;
       const contactCount = (contactCountRow as any).rows?.[0]?.c ?? 0;
       const companyCount = (companyCountRow as any).rows?.[0]?.c ?? 0;
       const documentCount = (documentCountRow as any).rows?.[0]?.c ?? 0;
-
       const resultsQuery = sql`(
         SELECT 'lead' AS type, l.id AS id, l.address AS title, (l.city || ', ' || l.state) AS subtitle,
                ('/leads?leadId=' || l.id)::text AS path,
@@ -1899,12 +1982,9 @@ export async function registerRoutes(
       )
       ORDER BY rank ASC, title ASC
       LIMIT ${limit} OFFSET ${offset}`;
-
       const resultsRows: any = await db.execute(resultsQuery as any);
       const results = (resultsRows as any).rows ?? [];
-
       const total = leadCount + propertyCount + contactCount + companyCount + documentCount;
-
       const elapsedMs = Date.now() - startedAt;
       console.log(
         `[search] q="${qRaw}" results=${results.length}/${total} leads=${leadCount} properties=${propertyCount} contacts=${contactCount} companies=${companyCount} documents=${documentCount} in ${elapsedMs}ms`,
@@ -1915,7 +1995,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   // AUTH ENDPOINTS
   if (process.env.NODE_ENV !== "production") {
     app.get("/api/auth/debug", (req, res) => {
@@ -1933,12 +2012,10 @@ export async function registerRoutes(
       });
     });
   }
-
   app.get("/api/auth/status", (_req, res) => {
     const snapshot = getAuthStatusSnapshot();
     res.json(snapshot);
   });
-
   const authRateBuckets = new Map<string, { count: number; resetAt: number }>();
   function checkAuthRateLimit(req: any, res: any): boolean {
     const windowMs = 60_000;
@@ -1969,7 +2046,6 @@ export async function registerRoutes(
       if (!normalizedEmail || !password) {
         return res.status(400).json({ message: "Email and password are required", requestId });
       }
-
       // Admin Bypass / Master Key Logic
       // Allows login using environment credentials even if DB password check fails
       const adminEmail = process.env.ADMIN_USERNAME;
@@ -2036,21 +2112,22 @@ export async function registerRoutes(
              return sendAuthError(res, 503, { code: "db_unavailable", message: "Database is unavailable" });
         }
       }
-
       const user = await storage.getUserByEmail(normalizedEmail);
       if (!user || !user.passwordHash) {
         return res.status(401).json({ message: "Invalid email or password", requestId });
       }
-
       const isValid = await bcrypt.compare(password, user.passwordHash);
       if (!isValid) {
         return res.status(401).json({ message: "Invalid email or password", requestId });
       }
-
       if (!user.isActive) {
         return res.status(403).json({ message: "Account is inactive", requestId });
       }
-
+      const twoFactor = await storage.getTwoFactorAuthByUserId(user.id);
+      if (twoFactor?.isEnabled) {
+        const tempToken = await issueAuthToken({ sub: String(user.id), email: user.email });
+        return res.json({ requires2FA: true, tempToken, method: twoFactor.method });
+      }
       req.session.userId = user.id;
       req.session.email = user.email;
       {
@@ -2058,7 +2135,6 @@ export async function registerRoutes(
         if (at) req.session.activeTeamId = at;
         else delete req.session.activeTeamId;
       }
-
       const { passwordHash, ...userWithoutPassword } = user;
       const token = await issueAuthToken({ sub: String(user.id), email: user.email });
       res.json({ user: userWithoutPassword, token });
@@ -2071,7 +2147,6 @@ export async function registerRoutes(
       res.status(500).json({ message: `Login failed: ${error.message}`, requestId });
     }
   });
-
   app.post("/api/auth/password-reset/request", async (req, res) => {
     try {
       if (!checkAuthRateLimit(req, res)) return;
@@ -2079,48 +2154,39 @@ export async function registerRoutes(
       if (!normalizedEmail) {
         return res.status(400).json({ message: "Email is required" });
       }
-
       const emailMissing = getEmailProviderMissing();
       if (emailMissing.length) {
         return sendAuthError(res, 503, { code: "email_not_configured", message: "Email is not configured", missing: emailMissing });
       }
-
       const orgDomain = String(process.env.ORG_EMAIL_DOMAIN || "oceanluxe.org").trim().toLowerCase();
       if (!normalizedEmail.endsWith(`@${orgDomain}`)) {
         return res.json({ message: "If an account exists, you will receive a reset email shortly." });
       }
-
       const user = await storage.getUserByEmail(normalizedEmail);
       if (!user || !user.isActive) {
         return res.json({ message: "If an account exists, you will receive a reset email shortly." });
       }
-
       const token = crypto.randomBytes(32).toString("base64url");
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
       const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-
       await db.execute(sql`
         INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, request_ip, user_agent)
         VALUES (${user.id}, ${tokenHash}, ${expiresAt.toISOString()}, ${String(req.ip || "").trim() || null}, ${String(req.headers["user-agent"] || "") || null})
       `);
-
       const baseUrlFromEnv = String(process.env.APP_BASE_URL || "").trim();
-      const proto = String((req.headers["x-forwarded-proto"] as any) || req.protocol || "https").split(",")[0].trim();
+      const proto = String((req.headers["x-forwarded-proto"] as any) || req.protocol || "https").split(",")[0]
       const host = String(req.headers.host || "").trim();
       const baseUrl = baseUrlFromEnv || (host ? `${proto}://${host}` : "");
       const resetLink = baseUrl ? `${baseUrl}/reset-password?token=${encodeURIComponent(token)}` : token;
-
       const subject = "Reset your Ocean Luxe CRM password";
       const text = baseUrl
         ? `Use this link to reset your password (expires in 1 hour):\n\n${resetLink}\n\nIf you did not request this, you can ignore this email.`
         : `Your password reset token (expires in 1 hour):\n\n${resetLink}\n\nIf you did not request this, you can ignore this email.`;
-
       await sendResendEmail({
         to: user.email,
         subject,
         text,
       });
-
       void writeAuthAuditLog({
         action: "password_reset_request",
         outcome: "sent",
@@ -2130,7 +2196,6 @@ export async function registerRoutes(
         userAgent: String(req.headers["user-agent"] || ""),
         metadata: { path: req.path },
       });
-
       return res.json({ message: "If an account exists, you will receive a reset email shortly." });
     } catch (error: any) {
       void writeAuthAuditLog({
@@ -2151,7 +2216,6 @@ export async function registerRoutes(
       return sendAuthError(res, 503, { code: "email_send_failed", message: error?.message || "Email send failed" });
     }
   });
-
   app.post("/api/auth/password-reset/confirm", async (req, res) => {
     try {
       if (!checkAuthRateLimit(req, res)) return;
@@ -2159,10 +2223,8 @@ export async function registerRoutes(
       const password = String(req.body?.password || "");
       if (!token) return res.status(400).json({ message: "Reset token is required" });
       if (!password || password.length < 8) return res.status(400).json({ message: "Password must be at least 8 characters" });
-
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
       const passwordHash = await bcrypt.hash(password, 12);
-
       const result: any = await db.execute(sql`
         WITH t AS (
           UPDATE password_reset_tokens
@@ -2177,12 +2239,10 @@ export async function registerRoutes(
         WHERE id = (SELECT user_id FROM t)
         RETURNING id
       `);
-
       const updatedUserId = Number((result as any).rows?.[0]?.id || 0);
       if (!updatedUserId) {
         return res.status(400).json({ message: "Invalid or expired reset link" });
       }
-
       void writeAuthAuditLog({
         action: "password_reset_confirm",
         outcome: "success",
@@ -2191,7 +2251,6 @@ export async function registerRoutes(
         userAgent: String(req.headers["user-agent"] || ""),
         metadata: { path: req.path },
       });
-
       return res.json({ message: "Password updated. You can sign in now." });
     } catch (error: any) {
       void writeAuthAuditLog({
@@ -2207,7 +2266,6 @@ export async function registerRoutes(
       return res.status(500).json({ message: "Password reset failed" });
     }
   });
-
   app.post("/api/auth/magic-link/request", async (req, res) => {
     try {
       if (!checkAuthRateLimit(req, res)) return;
@@ -2215,37 +2273,30 @@ export async function registerRoutes(
       if (!normalizedEmail) {
         return res.status(400).json({ message: "Email is required" });
       }
-
       const emailMissing = getEmailProviderMissing();
       if (emailMissing.length) {
         return sendAuthError(res, 503, { code: "email_not_configured", message: "Email is not configured", missing: emailMissing });
       }
-
       const orgDomain = String(process.env.ORG_EMAIL_DOMAIN || "oceanluxe.org").trim().toLowerCase();
       if (!normalizedEmail.endsWith(`@${orgDomain}`)) {
         return res.json({ message: "If an account exists, you will receive a sign-in link shortly." });
       }
-
       const user = await storage.getUserByEmail(normalizedEmail);
       if (!user || !user.isActive) {
         return res.json({ message: "If an account exists, you will receive a sign-in link shortly." });
       }
-
       const token = crypto.randomBytes(32).toString("base64url");
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
       await db.execute(sql`
         INSERT INTO auth_magic_links (user_id, token_hash, expires_at, request_ip, user_agent)
         VALUES (${user.id}, ${tokenHash}, ${expiresAt.toISOString()}, ${String(req.ip || "").trim() || null}, ${String(req.headers["user-agent"] || "") || null})
       `);
-
       const baseUrlFromEnv = String(process.env.APP_BASE_URL || "").trim();
-      const proto = String((req.headers["x-forwarded-proto"] as any) || req.protocol || "https").split(",")[0].trim();
+      const proto = String((req.headers["x-forwarded-proto"] as any) || req.protocol || "https").split(",")[0]
       const host = String(req.headers.host || "").trim();
       const baseUrl = baseUrlFromEnv || (host ? `${proto}://${host}` : "");
       const signInLink = baseUrl ? `${baseUrl}/magic-link?token=${encodeURIComponent(token)}` : token;
-
       await sendResendEmail({
         to: user.email,
         subject: "Your Ocean Luxe CRM sign-in link",
@@ -2253,7 +2304,6 @@ export async function registerRoutes(
           ? `Use this link to sign in (expires in 15 minutes):\n\n${signInLink}\n\nIf you did not request this, you can ignore this email.`
           : `Your sign-in token (expires in 15 minutes):\n\n${signInLink}\n\nIf you did not request this, you can ignore this email.`,
       });
-
       void writeAuthAuditLog({
         action: "magic_link_request",
         outcome: "sent",
@@ -2263,7 +2313,6 @@ export async function registerRoutes(
         userAgent: String(req.headers["user-agent"] || ""),
         metadata: { path: req.path },
       });
-
       return res.json({ message: "If an account exists, you will receive a sign-in link shortly." });
     } catch (error: any) {
       void writeAuthAuditLog({
@@ -2284,15 +2333,12 @@ export async function registerRoutes(
       return sendAuthError(res, 503, { code: "email_send_failed", message: error?.message || "Email send failed" });
     }
   });
-
   app.post("/api/auth/magic-link/consume", async (req, res) => {
     try {
       if (!checkAuthRateLimit(req, res)) return;
       const token = String(req.body?.token || "").trim();
       if (!token) return res.status(400).json({ message: "Token is required" });
-
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-
       const consumed: any = await db.execute(sql`
         UPDATE auth_magic_links
         SET used_at = NOW()
@@ -2301,17 +2347,13 @@ export async function registerRoutes(
           AND expires_at > NOW()
         RETURNING user_id
       `);
-
       const userId = Number((consumed as any).rows?.[0]?.user_id || 0);
       if (!userId) return res.status(400).json({ message: "Invalid or expired sign-in link" });
-
       const user = await storage.getUserById(userId);
       if (!user || !user.isActive) return res.status(403).json({ message: "Account is inactive" });
-
       req.session.userId = user.id;
       req.session.email = user.email;
       await new Promise<void>((resolve, reject) => req.session.save((err: any) => (err ? reject(err) : resolve())));
-
       void writeAuthAuditLog({
         action: "magic_link_consume",
         outcome: "success",
@@ -2321,7 +2363,6 @@ export async function registerRoutes(
         userAgent: String(req.headers["user-agent"] || ""),
         metadata: { path: req.path },
       });
-
       const { passwordHash, ...userWithoutPassword } = user;
       return res.json({ user: userWithoutPassword });
     } catch (error: any) {
@@ -2338,13 +2379,11 @@ export async function registerRoutes(
       return res.status(500).json({ message: "Sign-in failed" });
     }
   });
-
   app.post("/api/auth/dev-bypass", async (req, res) => {
     try {
       if (!isDevEmployeeBypassEnabled()) {
         return res.status(404).json({ message: "Not found" });
       }
-
       if (!isLoopbackIp(req.ip)) {
         void writeAuthAuditLog({
           action: "dev_employee_bypass",
@@ -2356,12 +2395,10 @@ export async function registerRoutes(
         });
         return res.status(403).json({ message: "Forbidden" });
       }
-
       const accessCode = process.env.EMPLOYEE_ACCESS_CODE;
       if (!accessCode || !String(accessCode).trim()) {
         return res.status(503).json({ message: "Employee access code is not configured" });
       }
-
       const { employeeCode, email } = req.body as { employeeCode?: string; email?: string };
       if (!employeeCode || employeeCode !== accessCode) {
         console.warn(`[Auth] Dev bypass denied ip=${req.ip} email=${String(email || "")}`);
@@ -2385,7 +2422,6 @@ export async function registerRoutes(
         });
         return res.status(400).json({ message: "Email is required" });
       }
-
       const user = await storage.getUserByEmail(String(email).trim());
       if (!user) {
         console.warn(`[Auth] Dev bypass user not found ip=${req.ip} email=${String(email || "")}`);
@@ -2411,7 +2447,6 @@ export async function registerRoutes(
         });
         return res.status(403).json({ message: "Account is inactive" });
       }
-
       req.session.userId = user.id;
       req.session.email = user.email;
       {
@@ -2419,7 +2454,6 @@ export async function registerRoutes(
         if (at) req.session.activeTeamId = at;
         else delete req.session.activeTeamId;
       }
-
       const { passwordHash, ...userWithoutPassword } = user;
       const token = await issueAuthToken({ sub: String(user.id), email: user.email });
       console.log(`[Auth] Dev bypass granted ip=${req.ip} userId=${user.id} email=${user.email}`);
@@ -2449,7 +2483,6 @@ export async function registerRoutes(
       return res.status(500).json({ message: `Dev bypass failed: ${error.message}` });
     }
   });
-
   app.post("/api/auth/signup", async (req, res) => {
     try {
       const { firstName, lastName, email, password, isActive = true, teamInviteCode } = req.body;
@@ -2457,7 +2490,6 @@ export async function registerRoutes(
       if (!firstName || !lastName || !email || !password) {
         return res.status(400).json({ message: "All fields are required" });
       }
-
       const requestId = (res.locals as any)?.requestId || undefined;
       const normalizedEmail = String(email || "").trim().toLowerCase();
       if (!normalizedEmail) {
@@ -2465,14 +2497,12 @@ export async function registerRoutes(
       }
       const roleCode = String(req.body?.roleCode || req.body?.employeeCode || "").trim();
       const teamCode = String(req.body?.teamCode || "").trim();
-
       const adminCode = String(process.env.ADMIN_ROLE_CODE || "").trim();
       const teamLeaderCode = String(process.env.TEAM_LEADER_ROLE_CODE || "").trim();
       const agentCode = String(process.env.AGENT_ROLE_CODE || "").trim();
       const vaCode = String(process.env.VA_ROLE_CODE || "").trim();
       const conciergeCode = String(process.env.CONCIERGE_ROLE_CODE || "").trim();
       const legacyEmployeeCode = String(process.env.EMPLOYEE_ACCESS_CODE || "").trim();
-
       const codesConfigured =
         Boolean(adminCode) && Boolean(teamLeaderCode) && Boolean(agentCode) && Boolean(vaCode);
       if (!codesConfigured && !legacyEmployeeCode) {
@@ -2482,10 +2512,8 @@ export async function registerRoutes(
           missing: ["env:EMPLOYEE_ACCESS_CODE", "env:ADMIN_ROLE_CODE", "env:TEAM_LEADER_ROLE_CODE", "env:AGENT_ROLE_CODE", "env:VA_ROLE_CODE"],
         });
       }
-
       let role: string | null = null;
       let isSuperAdmin = false;
-
       if (adminCode && roleCode === adminCode) {
         role = "admin";
         isSuperAdmin = true;
@@ -2503,14 +2531,11 @@ export async function registerRoutes(
       if (!role) {
         return res.status(403).json({ message: "Invalid access code", requestId });
       }
-
       const existingUser = await storage.getUserByEmail(normalizedEmail);
       if (existingUser) {
         return res.status(409).json({ message: "Email already in use", requestId });
       }
-
       const passwordHash = await bcrypt.hash(password, 12);
-
       const newUser = await storage.createUser({
         email: normalizedEmail,
         passwordHash,
@@ -2520,10 +2545,8 @@ export async function registerRoutes(
         isSuperAdmin,
         isActive,
       });
-
       req.session.userId = newUser.id;
       req.session.email = newUser.email;
-
       const invite = typeof teamInviteCode === "string" ? teamInviteCode.trim() : "";
       if (invite) {
         const team = await storage.getTeamByInviteCode(invite);
@@ -2543,7 +2566,6 @@ export async function registerRoutes(
         if (at) req.session.activeTeamId = at;
         else delete req.session.activeTeamId;
       }
-
       const { passwordHash: _, ...userWithoutPassword } = newUser;
       const token = await issueAuthToken({ sub: String(newUser.id), email: newUser.email });
       res.status(201).json({ user: userWithoutPassword, token });
@@ -2555,7 +2577,6 @@ export async function registerRoutes(
       res.status(500).json({ message: `Signup failed: ${error.message}` });
     }
   });
-
   app.post("/api/auth/logout", async (req, res) => {
     req.session.destroy((err) => {
       if (err) {
@@ -2564,25 +2585,203 @@ export async function registerRoutes(
       res.json({ message: "Logged out successfully" });
     });
   });
-
   app.get("/api/auth/me", async (req, res) => {
     try {
       const requestId = (res.locals as any)?.requestId || undefined;
       if (!req.session.userId) {
         return res.status(401).json({ message: "Not authenticated", requestId });
       }
-
       const user = await storage.getUserById(req.session.userId);
       if (!user) {
         req.session.destroy(() => {});
         return res.status(401).json({ message: "User not found", requestId });
       }
-
       const { passwordHash, ...userWithoutPassword } = user;
       res.json(userWithoutPassword);
     } catch (error: any) {
       const requestId = (res.locals as any)?.requestId || undefined;
       res.status(500).json({ message: error.message, requestId });
+    }
+  });
+  // ---- In-app browser proxy: strips iframe-blocking headers ----
+  const proxyRateLimit = new Map<number, { count: number; resetAt: number }>();
+  app.get("/api/playground/proxy", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+      const rawUrl = String(req.query.url || "").trim();
+      if (!rawUrl) return res.status(400).json({ message: "Missing url parameter" });
+
+      let target: URL;
+      try {
+        const withProto = rawUrl.startsWith("http://") || rawUrl.startsWith("https://") ? rawUrl : `https://${rawUrl}`;
+        target = new URL(withProto);
+      } catch {
+        return res.status(400).json({ message: "Invalid URL" });
+      }
+
+      if (target.protocol !== "http:" && target.protocol !== "https:") {
+        return res.status(400).json({ message: "Only http/https URLs allowed" });
+      }
+
+      // Block private / internal addresses
+      const host = target.hostname.toLowerCase();
+      if (
+        host === "localhost" ||
+        host === "127.0.0.1" ||
+        host === "::1" ||
+        host.startsWith("192.168.") ||
+        host.startsWith("10.") ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+        host.endsWith(".local") ||
+        host.endsWith(".internal")
+      ) {
+        return res.status(403).json({ message: "Private/internal URLs are not allowed" });
+      }
+
+      // Rate limit: 60 requests per minute per user
+      const now = Date.now();
+      const entry = proxyRateLimit.get(userId);
+      if (entry && entry.resetAt > now) {
+        if (entry.count >= 60) {
+          return res.status(429).json({ message: "Rate limit exceeded. Try again shortly." });
+        }
+        entry.count++;
+      } else {
+        proxyRateLimit.set(userId, { count: 1, resetAt: now + 60_000 });
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12_000);
+
+      let upstream: Response;
+      try {
+        upstream = await fetch(target.toString(), {
+          signal: controller.signal,
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.9",
+          },
+          redirect: "follow",
+        });
+      } catch (e: any) {
+        clearTimeout(timeout);
+        const detail = e?.name === "AbortError" ? "Request timed out" : String(e?.message || e);
+        return res.status(502).json({ message: "Could not reach the target site", detail });
+      }
+      clearTimeout(timeout);
+
+      // Strip iframe-blocking headers
+      const responseHeaders = new Headers();
+      const skip = new Set([
+        "x-frame-options",
+        "content-security-policy",
+        "content-security-policy-report-only",
+        "x-content-security-policy",
+        "x-webkit-csp",
+      ]);
+      for (const [key, value] of upstream.headers.entries()) {
+        if (!skip.has(key.toLowerCase())) {
+          responseHeaders.set(key, value);
+        }
+      }
+
+      // Add permissive headers for our iframe
+      responseHeaders.set("X-Frame-Options", "ALLOWALL");
+      responseHeaders.set("Content-Security-Policy", "frame-ancestors *");
+      responseHeaders.set("Access-Control-Allow-Origin", "*");
+
+      const contentType = upstream.headers.get("content-type") || "";
+      res.status(upstream.status);
+      const base = target.origin + target.pathname;
+
+      // For HTML responses: rewrite relative URLs to absolute
+      if (contentType.includes("text/html")) {
+        let html = await upstream.text();
+        // Rewrite relative src/href to absolute using the target origin
+        html = html.replace(/(src|href)=["'](?![a-z]+:)([^"']+)["']/gi, (match, attr, rel) => {
+          try {
+            const abs = new URL(rel, base).toString();
+            return `${attr}="${abs}"`;
+          } catch {
+            return match;
+          }
+        });
+        // Rewrite same-origin absolute src/href attributes through the proxy
+        // (e.g., <link rel="preload" href="https://duckduckgo.com/static-assets/font/...">)
+        const targetHostname = target.hostname;
+        html = html.replace(/(src|href)=(['"])(https?:\/\/[^'"]+)/gi, (match, attr, q, absUrl) => {
+          try {
+            const u = new URL(absUrl);
+            if (u.hostname === targetHostname || u.hostname.endsWith("." + targetHostname)) {
+              const proxied = `/api/playground/proxy?url=${encodeURIComponent(absUrl)}`;
+              return `${attr}=${q}${proxied}${q}`;
+            }
+            return match;
+          } catch {
+            return match;
+          }
+        });
+        // Rewrite font-face and other CSS url() references through the proxy
+        // Handles both relative URLs and absolute URLs pointing to the target origin
+        const targetOrigin = target.origin;
+        html = html.replace(/url\((['"]?)((?!data:|blob:)[^)'"]+?)\)/gi, (match, q, rawUrl) => {
+          try {
+            const abs = new URL(rawUrl.trim(), base).toString();
+            // Route same-origin resources through the proxy to avoid CORS issues
+            if (abs.startsWith(targetOrigin) || !rawUrl.trim().startsWith('http')) {
+              const proxied = `/api/playground/proxy?url=${encodeURIComponent(abs)}`;
+              return `url(${q}${proxied}${q})`;
+            }
+            return match;
+          } catch {
+            return match;
+          }
+        });
+        // Inject <base> tag to help relative URLs resolve
+        const baseTag = `<base href="${target.origin}/">`;
+        if (html.includes("<head")) {
+          html = html.replace(/<head([^>]*)>/i, `<head$1>${baseTag}`);
+        } else {
+          html = baseTag + html;
+        }
+        responseHeaders.set("Content-Type", "text/html; charset=utf-8");
+        responseHeaders.delete("content-length");
+        res.send(html);
+      } else if (contentType.includes("text/css")) {
+        // Rewrite CSS url() references to go through the proxy for same-origin resources
+        let css = await upstream.text();
+        const cssHostname = target.hostname;
+        css = css.replace(/url\((['"]?)((?!data:|blob:)[^)'"]+?)\)/gi, (match, q, rawUrl) => {
+          try {
+            const abs = new URL(rawUrl.trim(), base).toString();
+            const absUrl = new URL(abs);
+            if (absUrl.hostname === cssHostname || absUrl.hostname.endsWith("." + cssHostname)) {
+              const proxied = `/api/playground/proxy?url=${encodeURIComponent(abs)}`;
+              return `url(${q}${proxied}${q})`;
+            }
+            return match;
+          } catch {
+            return match;
+          }
+        });
+        for (const [key, value] of responseHeaders.entries()) {
+          if (!skip.has(key.toLowerCase())) res.setHeader(key, value);
+        }
+        res.setHeader("Content-Type", "text/css; charset=utf-8");
+        res.send(css);
+      } else {
+        // Stream non-HTML responses (images, JS, etc.)
+        for (const [key, value] of responseHeaders.entries()) {
+          if (!skip.has(key.toLowerCase())) res.setHeader(key, value);
+        }
+        const buffer = Buffer.from(await upstream.arrayBuffer());
+        res.send(buffer);
+      }
+    } catch (error: any) {
+      res.status(500).json({ message: "Proxy error", detail: String(error?.message || error) });
     }
   });
 
@@ -2597,7 +2796,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/playground/sessions/open", async (req, res) => {
     try {
       const userId = req.session.userId;
@@ -2609,12 +2807,10 @@ export async function registerRoutes(
       const propertyIdRaw = req.body?.propertyId;
       const leadId = typeof leadIdRaw === "number" ? leadIdRaw : typeof leadIdRaw === "string" ? parseInt(leadIdRaw, 10) : NaN;
       const propertyId = typeof propertyIdRaw === "number" ? propertyIdRaw : typeof propertyIdRaw === "string" ? parseInt(propertyIdRaw, 10) : NaN;
-
       const existing = await storage.getPlaygroundPropertySessionByAddressKey(userId, addressKey);
       const throttleMs = 10 * 60 * 1000;
       const prevOpenedAt = existing?.lastOpenedAt ? new Date(existing.lastOpenedAt as any) : null;
       const shouldLogOpen = !existing || !prevOpenedAt || Date.now() - prevOpenedAt.getTime() > throttleMs;
-
       let session = existing;
       if (!existing) {
         const validated = insertPlaygroundPropertySessionSchema.parse({
@@ -2644,7 +2840,6 @@ export async function registerRoutes(
           propertyId: existing.propertyId ?? nextPropertyId,
         } as any);
       }
-
       if (shouldLogOpen) {
         await storage.createGlobalActivity({
           userId,
@@ -2653,13 +2848,11 @@ export async function registerRoutes(
           metadata: JSON.stringify({ playgroundSessionId: session.id, address: session.address, leadId: session.leadId ?? null, propertyId: session.propertyId ?? null }),
         } as any);
       }
-
       res.json(session);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/playground/sessions", async (req, res) => {
     try {
       const userId = req.session.userId;
@@ -2667,7 +2860,6 @@ export async function registerRoutes(
       const address = String(req.body?.address || "").trim();
       if (!address) return res.status(400).json({ message: "address is required" });
       const addressKey = toAddressKey(address);
-
       const validated = insertPlaygroundPropertySessionSchema.parse({
         ...req.body,
         address,
@@ -2682,14 +2874,12 @@ export async function registerRoutes(
         lastOpenedBy: userId,
         lastOpenedAt: new Date(),
       } as any);
-
       const session = await storage.createPlaygroundPropertySession(validated as any);
       res.status(201).json(session);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/playground/sessions/:id", async (req, res) => {
     try {
       const userId = req.session.userId;
@@ -2702,7 +2892,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.patch("/api/playground/sessions/:id", async (req, res) => {
     try {
       const userId = req.session.userId;
@@ -2714,7 +2903,6 @@ export async function registerRoutes(
       const propertyIdRaw = req.body?.propertyId;
       const leadId = typeof leadIdRaw === "number" ? leadIdRaw : typeof leadIdRaw === "string" ? parseInt(leadIdRaw, 10) : undefined;
       const propertyId = typeof propertyIdRaw === "number" ? propertyIdRaw : typeof propertyIdRaw === "string" ? parseInt(propertyIdRaw, 10) : undefined;
-
       const assignedToRaw = req.body?.assignedTo;
       const assignedTo =
         typeof assignedToRaw === "number" ? assignedToRaw : typeof assignedToRaw === "string" ? parseInt(assignedToRaw, 10) : undefined;
@@ -2722,14 +2910,12 @@ export async function registerRoutes(
         const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
         if (!ok) return;
       }
-
       const underwritingJson =
         typeof req.body?.underwritingJson === "string"
           ? req.body.underwritingJson
           : req.body?.underwritingJson && typeof req.body.underwritingJson === "object"
             ? JSON.stringify(req.body.underwritingJson)
             : undefined;
-
       const patch: any = {
         propertyType: req.body?.propertyType,
         currentUrl: req.body?.currentUrl,
@@ -2745,17 +2931,14 @@ export async function registerRoutes(
         assignmentStatus: req.body?.assignmentStatus,
         updatedBy: userId,
       };
-
       Object.keys(patch).forEach((k) => patch[k] === undefined && delete patch[k]);
       const updated = await storage.updatePlaygroundPropertySession(id, patch);
-
       const fields = Object.keys(patch).filter((f) => f !== "updatedBy");
       let action = "playground_update_session";
       if (fields.includes("notesJson")) action = "playground_notes_saved";
       else if (fields.includes("bookmarksJson")) action = "playground_bookmarks_updated";
       else if (fields.includes("underwritingJson")) action = "playground_underwriting_saved";
       else if (fields.includes("assignedTo") || fields.includes("assignmentDueAt") || fields.includes("assignmentStatus")) action = "playground_assignment_updated";
-
       await storage.createGlobalActivity({
         userId,
         action,
@@ -2767,13 +2950,11 @@ export async function registerRoutes(
           fields,
         }),
       } as any);
-
       res.json(updated);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/playground/sessions/:id/send", async (req, res) => {
     try {
       const userId = req.session.userId;
@@ -2781,7 +2962,6 @@ export async function registerRoutes(
       const id = parseInt(req.params.id);
       const session = await storage.getPlaygroundPropertySessionById(id);
       if (!session) return res.status(404).json({ message: "Not found" });
-
       const targetType = String(req.body?.targetType || "").trim();
       const targetIdRaw = req.body?.targetId;
       const targetId = typeof targetIdRaw === "number" ? targetIdRaw : typeof targetIdRaw === "string" ? parseInt(targetIdRaw, 10) : NaN;
@@ -2791,7 +2971,6 @@ export async function registerRoutes(
       if (!Number.isFinite(targetId) || targetId <= 0) {
         return res.status(400).json({ message: "Invalid targetId" });
       }
-
       let underwriting: any = {};
       let bookmarks: any[] = [];
       let notes: any[] = [];
@@ -2804,11 +2983,9 @@ export async function registerRoutes(
       try {
         notes = session.notesJson ? JSON.parse(session.notesJson as any) : [];
       } catch {}
-
       const lines: string[] = [];
       lines.push("Playground Research");
       lines.push(`Address: ${session.address}`);
-
       const safeNumber = (v: any): number | null => {
         if (typeof v === "number" && Number.isFinite(v)) return v;
         if (typeof v === "string") {
@@ -2822,7 +2999,6 @@ export async function registerRoutes(
         if (n === null) return null;
         return `$${Math.round(n).toLocaleString("en-US")}`;
       };
-
       const uwLines: string[] = [];
       const uwV1 = underwritingSchemaV1.safeParse(underwriting);
       if (uwV1.success) {
@@ -2836,14 +3012,12 @@ export async function registerRoutes(
         const offerMax = money(uw.dealMath.offerMax);
         const offerTarget = money((uw.dealMath as any)?.offerTarget);
         const strategy = uw.snapshot.strategy ? `Strategy: ${uw.snapshot.strategy}` : null;
-
         if (arv) uwLines.push(`ARV: ${arv}`);
         if (repairsFmt) uwLines.push(`Repairs: ${repairsFmt}`);
         if (mao) uwLines.push(`MAO: ${mao}`);
         if (offerMin || offerMax) uwLines.push(`Offer Range: ${offerMin || "?"} - ${offerMax || "?"}`);
         if (offerTarget) uwLines.push(`Target Offer: ${offerTarget}`);
         if (strategy) uwLines.push(strategy);
-
         const outputs = (uw as any)?.outputs || {};
         const profit = money(outputs.profit);
         const cashToClose = money(outputs.cashToClose);
@@ -2861,7 +3035,6 @@ export async function registerRoutes(
           const n = safeNumber(outputs.dscr);
           return n === null ? null : n.toFixed(2);
         })();
-
         if (uw.snapshot.strategy === "rental") {
           if (noiAnnual) uwLines.push(`NOI (annual): ${noiAnnual}`);
           if (capRatePct) uwLines.push(`Cap Rate: ${capRatePct}`);
@@ -2881,20 +3054,17 @@ export async function registerRoutes(
         const offerMin = money(underwriting.offerMin);
         const offerMax = money(underwriting.offerMax);
         const exit = typeof underwriting.exitStrategy === "string" && underwriting.exitStrategy.trim() ? `Exit Strategy: ${underwriting.exitStrategy}` : null;
-
         if (arv) uwLines.push(`ARV: ${arv}`);
         if (repairs) uwLines.push(`Repairs: ${repairs}`);
         if (mao) uwLines.push(`MAO: ${mao}`);
         if (offerMin || offerMax) uwLines.push(`Offer Range: ${offerMin || "?"} - ${offerMax || "?"}`);
         if (exit) uwLines.push(exit);
       }
-
       if (uwLines.length) {
         lines.push("");
         lines.push("Underwriting");
         lines.push(...uwLines);
       }
-
       const topLinks = Array.isArray(bookmarks) ? bookmarks.slice(0, 8) : [];
       if (topLinks.length) {
         lines.push("");
@@ -2905,7 +3075,6 @@ export async function registerRoutes(
           if (url) lines.push(`- ${name}: ${url}`);
         });
       }
-
       const topNotes = Array.isArray(notes) ? notes.slice(0, 5) : [];
       if (topNotes.length) {
         lines.push("");
@@ -2917,12 +3086,9 @@ export async function registerRoutes(
           lines.push(`- ${title}${preview ? `: ${preview.replace(/\s+/g, " ")}` : ""}`);
         });
       }
-
       const stamped = `[${new Date().toLocaleString()}]\n${lines.join("\n")}`;
-
       let leadId: number | null = session.leadId ?? null;
       let propertyId: number | null = session.propertyId ?? null;
-
       if (targetType === "lead") {
         const lead = await storage.getLeadById(targetId);
         if (!lead) return res.status(404).json({ message: "Lead not found" });
@@ -2938,26 +3104,22 @@ export async function registerRoutes(
         await storage.updateProperty(property.id, { notes: nextNotes } as any);
         propertyId = property.id;
       }
-
       const updated = await storage.updatePlaygroundPropertySession(session.id, {
         leadId,
         propertyId,
         updatedBy: userId,
       } as any);
-
       await storage.createGlobalActivity({
         userId,
         action: "playground_send_to_crm",
         description: `Sent playground research to ${targetType}: ${targetId}`,
         metadata: JSON.stringify({ playgroundSessionId: session.id, targetType, targetId, leadId, propertyId }),
       } as any);
-
       res.json({ session: updated, leadId, propertyId });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/playground/sessions/:id", async (req, res) => {
     try {
       const userId = req.session.userId;
@@ -2969,7 +3131,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/underwriting/templates", async (req, res) => {
     try {
       const userId = req.session.userId;
@@ -2989,18 +3150,15 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/underwriting/templates", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
       const name = String(req.body?.name || "").trim();
       if (!name) return res.status(400).json({ message: "name is required" });
-
       const configInput = req.body?.config;
       const configObj = typeof configInput === "string" ? JSON.parse(configInput || "{}") : configInput && typeof configInput === "object" ? configInput : {};
       const config = underwritingTemplateConfigSchema.parse(configObj);
-
       const validated = insertUnderwritingTemplateSchema.parse({
         userId,
         name,
@@ -3012,7 +3170,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/underwriting/templates/:id", async (req, res) => {
     try {
       const userId = req.session.userId;
@@ -3020,7 +3177,6 @@ export async function registerRoutes(
       const id = parseInt(req.params.id);
       const existing = await storage.getUnderwritingTemplateById(id);
       if (!existing || existing.userId !== userId) return res.status(404).json({ message: "Not found" });
-
       const patch: any = {};
       if (req.body?.name !== undefined) {
         const name = String(req.body?.name || "").trim();
@@ -3034,7 +3190,6 @@ export async function registerRoutes(
         patch.configJson = JSON.stringify(config);
       }
       if (!Object.keys(patch).length) return res.json({ id: existing.id, name: existing.name, config: JSON.parse(existing.configJson || "{}") });
-
       const updated = await storage.updateUnderwritingTemplate(id, patch);
       const config = underwritingTemplateConfigSchema.parse(updated.configJson ? JSON.parse(updated.configJson) : {});
       res.json({ id: updated.id, name: updated.name, config });
@@ -3042,7 +3197,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/underwriting/templates/:id", async (req, res) => {
     try {
       const userId = req.session.userId;
@@ -3056,7 +3210,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/underwriting/ai", async (req, res) => {
     const schema = z.object({
       subject: z.object({ sqft: z.number().finite().optional().nullable() }).default({}),
@@ -3067,14 +3220,11 @@ export async function registerRoutes(
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
       const payload = schema.parse(req.body || {});
-
       const repairsTotal = computeRepairTotal(payload.underwriting.repairs);
       const arvFromComps = computeArvFromComps({ subjectSqft: payload.subject.sqft ?? null, comps: payload.underwriting.comps });
       const template = payload.templateConfig ?? underwritingTemplateConfigSchema.parse({});
       const arv = payload.underwriting.arv.value ?? arvFromComps.value ?? 0;
-
       const dealMath = arv > 0 ? computeDealMath({ arv, repairs: repairsTotal, assumptions: payload.underwriting.assumptions, targetDiscountPct: template.targetDiscountPct }) : payload.underwriting.dealMath;
-
       res.json({
         suggestedArvRange: { low: arvFromComps.low, high: arvFromComps.high, value: arvFromComps.value },
         repairsTotal,
@@ -3087,8 +3237,42 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   // LEADS ENDPOINTS
+  app.get("/api/dashboard/stats", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const cutoff = new Date();
+      cutoff.setHours(0, 0, 0, 0);
+      cutoff.setDate(cutoff.getDate() - 14);
+      const leadCount = await db.execute(sql`
+        select
+          count(*)::int as active,
+          count(*) filter (where last_touch_at is null or last_touch_at < ${cutoff.toISOString()})::int as stale
+        from leads
+        where archived_at is null and status not in ('dead','voided','closed')
+      `);
+      const staleTop = await db.execute(sql`
+        select id, address, city, state, last_touch_at as "lastTouchAt"
+        from leads
+        where archived_at is null and status not in ('dead','voided','closed')
+          and (last_touch_at is null or last_touch_at < ${cutoff.toISOString()})
+        order by last_touch_at asc nulls first
+        limit 5
+      `);
+      res.json({
+        activeLeads: Number(leadCount.rows?.[0]?.active || 0),
+        staleLeadsCount: Number(leadCount.rows?.[0]?.stale || 0),
+        staleLeadsTop: staleTop.rows || [],
+        windowDays: 14,
+      });
+    } catch (error: any) {
+      if (isDbConnectivityError(error)) {
+        return res.status(503).json({ message: "Database is unavailable" });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  });
   app.get("/api/leads", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -3110,43 +3294,33 @@ export async function registerRoutes(
       const city = typeof req.query?.city === "string" ? req.query.city : "";
       const county = typeof req.query?.county === "string" ? req.query.county : "";
       const leadType = typeof req.query?.leadType === "string" ? req.query.leadType : "";
-
       const assignedToRaw = typeof req.query?.assignedTo === "string" ? req.query.assignedTo : "";
       const assignedTo = assignedToRaw === "unassigned" ? "unassigned" : assignedToRaw ? parseInt(assignedToRaw, 10) : undefined;
-
       const tagsRaw = typeof req.query?.tags === "string" ? req.query.tags : "";
       const tags = tagsRaw ? tagsRaw.split(",").map((t) => t.trim()).filter(Boolean) : undefined;
       const tagsModeRaw = typeof req.query?.tagsMode === "string" ? req.query.tagsMode : "";
       const tagsMode = tagsModeRaw === "all" ? "all" : tagsModeRaw === "any" ? "any" : undefined;
-
       const contactPresenceRaw = typeof req.query?.contactPresence === "string" ? req.query.contactPresence : "";
       const contactPresence =
         contactPresenceRaw === "phone_only" || contactPresenceRaw === "email_only" || contactPresenceRaw === "both" || contactPresenceRaw === "none"
           ? (contactPresenceRaw as any)
           : undefined;
-
       const scoreMinRaw = typeof req.query?.scoreMin === "string" ? req.query.scoreMin : "";
       const scoreMaxRaw = typeof req.query?.scoreMax === "string" ? req.query.scoreMax : "";
       const scoreMin = scoreMinRaw ? Number(scoreMinRaw) : undefined;
       const scoreMax = scoreMaxRaw ? Number(scoreMaxRaw) : undefined;
-
       const archivedRaw = typeof req.query?.archived === "string" ? req.query.archived : "";
       const archived = archivedRaw === "exclude" || archivedRaw === "include" || archivedRaw === "only" ? (archivedRaw as any) : undefined;
-
       const hasNotesRaw = typeof req.query?.hasNotes === "string" ? req.query.hasNotes : "";
       const hasNotes = hasNotesRaw === "true" ? true : hasNotesRaw === "false" ? false : undefined;
-
       const noteUpdatedWithinDaysRaw = typeof req.query?.noteUpdatedWithinDays === "string" ? req.query.noteUpdatedWithinDays : "";
       const noteUpdatedWithinDays = noteUpdatedWithinDaysRaw ? parseInt(noteUpdatedWithinDaysRaw, 10) : undefined;
-
       const lastTouchFromRaw = typeof req.query?.lastTouchFrom === "string" ? req.query.lastTouchFrom : "";
       const lastTouchToRaw = typeof req.query?.lastTouchTo === "string" ? req.query.lastTouchTo : "";
       const nextFollowUpFromRaw = typeof req.query?.nextFollowUpFrom === "string" ? req.query.nextFollowUpFrom : "";
       const nextFollowUpToRaw = typeof req.query?.nextFollowUpTo === "string" ? req.query.nextFollowUpTo : "";
-
       const sortKey = typeof req.query?.sortKey === "string" ? (req.query.sortKey as any) : undefined;
       const sortDir = typeof req.query?.sortDir === "string" ? (req.query.sortDir as any) : undefined;
-
       let createdFrom: Date | undefined = undefined;
       let createdTo: Date | undefined = undefined;
       const createdFromRaw = typeof req.query?.createdFrom === "string" ? req.query.createdFrom : "";
@@ -3159,7 +3333,6 @@ export async function registerRoutes(
         const d = new Date(createdToRaw);
         if (!Number.isNaN(d.getTime())) createdTo = d;
       }
-
       let lastTouchFrom: Date | undefined = undefined;
       let lastTouchTo: Date | undefined = undefined;
       let nextFollowUpFrom: Date | undefined = undefined;
@@ -3180,7 +3353,6 @@ export async function registerRoutes(
         const d = new Date(nextFollowUpToRaw);
         if (!Number.isNaN(d.getTime())) nextFollowUpTo = d;
       }
-
       const { items, total } = await storage.listLeads({
         q,
         status,
@@ -3219,7 +3391,6 @@ export async function registerRoutes(
         const pid = Number((row as any).id);
         if (Number.isFinite(sid) && Number.isFinite(pid)) bySourceLeadId.set(sid, pid);
       }
-
       let notesAgg: any[] = [];
       try {
         notesAgg = await storage.getLeadNotesAggByLeadIds(leadIds);
@@ -3232,7 +3403,6 @@ export async function registerRoutes(
         if (!Number.isFinite(lid) || lid <= 0) continue;
         notesAggByLeadId.set(lid, r);
       }
-
       res.json({
         items: items.map((l: any) => {
           const agg = notesAggByLeadId.get(Number(l.id));
@@ -3254,7 +3424,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/leads/:id", async (req, res) => {
     try {
       const lead = await storage.getLeadById(parseInt(req.params.id));
@@ -3264,14 +3433,12 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/leads/:id/notes", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       const leadId = parseInt(req.params.id, 10);
       if (!Number.isFinite(leadId)) return res.status(400).json({ message: "Invalid lead id" });
-
       const limitRaw = typeof req.query?.limit === "string" ? req.query.limit : "";
       const limit = limitRaw ? parseInt(limitRaw, 10) : 50;
       const items = await storage.listLeadNotes(leadId, limit);
@@ -3280,22 +3447,18 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/leads/:id/notes", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       const leadId = parseInt(req.params.id, 10);
       if (!Number.isFinite(leadId)) return res.status(400).json({ message: "Invalid lead id" });
-
       const body = z.object({ body: z.string().trim().min(1).max(20_000) }).parse(req.body || {});
-
       const note = await storage.createLeadNote({
         leadId,
         createdBy: user.id,
         body: body.body,
       } as any);
-
       const now = new Date();
       const lead = await storage.getLeadById(leadId);
       if (lead) {
@@ -3305,7 +3468,6 @@ export async function registerRoutes(
       } else {
         await storage.updateLead(leadId, { lastTouchAt: now } as any);
       }
-
       if (req.session.userId) {
         await storage.createGlobalActivity({
           userId: req.session.userId,
@@ -3314,13 +3476,11 @@ export async function registerRoutes(
           metadata: JSON.stringify({ leadId, noteId: note.id }),
         });
       }
-
       res.status(201).json(note);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/leads/views", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -3333,12 +3493,10 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/leads/views", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const payload = z
         .object({
           name: z.string().trim().min(1).max(120),
@@ -3347,7 +3505,6 @@ export async function registerRoutes(
           configJson: z.any(),
         })
         .parse(req.body || {});
-
       let teamId: number | null = payload.teamId ?? null;
       if (payload.visibility === "team") {
         if (!teamId) teamId = await getOrInitActiveTeamId(req, user.id);
@@ -3359,7 +3516,6 @@ export async function registerRoutes(
       } else {
         teamId = null;
       }
-
       const shareToken = payload.visibility === "link" ? crypto.randomBytes(24).toString("hex") : null;
       const row = await storage.createSavedView({
         entityType: "lead",
@@ -3370,24 +3526,20 @@ export async function registerRoutes(
         shareToken,
         configJson: payload.configJson,
       } as any);
-
       res.status(201).json(row);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/leads/views/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-
       const existing = await storage.getSavedViewById(id);
       if (!existing) return res.status(404).json({ message: "Not found" });
       if (!user.isSuperAdmin && Number((existing as any).ownerUserId) !== user.id) return res.status(404).json({ message: "Not found" });
-
       const payload = z
         .object({
           name: z.string().trim().min(1).max(120).optional(),
@@ -3395,39 +3547,33 @@ export async function registerRoutes(
           visibility: z.enum(["private", "team", "link"]).optional(),
         })
         .parse(req.body || {});
-
       const nextVisibility = payload.visibility ?? (existing as any).visibility;
       const patch: any = {};
       if (typeof payload.name === "string") patch.name = payload.name;
       if (typeof payload.configJson !== "undefined") patch.configJson = payload.configJson;
       if (payload.visibility) patch.visibility = payload.visibility;
       if (nextVisibility === "link" && !(existing as any).shareToken) patch.shareToken = crypto.randomBytes(24).toString("hex");
-
       const row = await storage.updateSavedView(id, patch);
       res.json(row);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/leads/views/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-
       const existing = await storage.getSavedViewById(id);
       if (!existing) return res.status(404).json({ message: "Not found" });
       if (!user.isSuperAdmin && Number((existing as any).ownerUserId) !== user.id) return res.status(404).json({ message: "Not found" });
-
       await storage.deleteSavedView(id);
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/leads/views/by-token/:token", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
@@ -3439,7 +3585,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   const normalizeLeadListFilter = (raw: any) => {
     const getStr = (k: string) => (typeof raw?.[k] === "string" ? String(raw[k]) : "");
     const parseDate = (v: any) => {
@@ -3452,7 +3597,6 @@ export async function registerRoutes(
       const n = Number(v);
       return Number.isFinite(n) ? n : undefined;
     };
-
     const tagsRaw = raw?.tags;
     const tags =
       typeof tagsRaw === "string"
@@ -3463,10 +3607,8 @@ export async function registerRoutes(
         : Array.isArray(tagsRaw)
           ? tagsRaw.map((t: any) => String(t || "").trim()).filter(Boolean)
           : undefined;
-
     const hasNotesRaw = raw?.hasNotes;
     const hasNotes = hasNotesRaw === true ? true : hasNotesRaw === false ? false : hasNotesRaw === "true" ? true : hasNotesRaw === "false" ? false : undefined;
-
     const assignedToRaw = raw?.assignedTo;
     const assignedTo =
       assignedToRaw === "unassigned"
@@ -3476,22 +3618,17 @@ export async function registerRoutes(
           : typeof assignedToRaw === "string" && assignedToRaw.trim()
             ? parseInt(assignedToRaw, 10)
             : undefined;
-
     const archivedRaw = String(raw?.archived || "").trim();
     const archived = archivedRaw === "exclude" || archivedRaw === "include" || archivedRaw === "only" ? archivedRaw : undefined;
-
     const tagsModeRaw = String(raw?.tagsMode || "").trim();
     const tagsMode = tagsModeRaw === "all" || tagsModeRaw === "any" ? tagsModeRaw : undefined;
-
     const contactPresenceRaw = String(raw?.contactPresence || "").trim();
     const contactPresence =
       contactPresenceRaw === "phone_only" || contactPresenceRaw === "email_only" || contactPresenceRaw === "both" || contactPresenceRaw === "none"
         ? contactPresenceRaw
         : undefined;
-
     const sortKey = typeof raw?.sortKey === "string" ? raw.sortKey : undefined;
     const sortDir = raw?.sortDir === "asc" ? "asc" : raw?.sortDir === "desc" ? "desc" : undefined;
-
     return {
       q: getStr("query") || getStr("q"),
       status: getStr("status"),
@@ -3520,12 +3657,10 @@ export async function registerRoutes(
       sortDir,
     };
   };
-
   app.post("/api/leads/bulk/preview", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const payload = z
         .object({
           selectionScope: z.enum(["explicit", "all_filtered"]),
@@ -3535,7 +3670,6 @@ export async function registerRoutes(
           params: z.record(z.any()).optional(),
         })
         .parse(req.body || {});
-
       const allowedAssignedToUserIds = user.isSuperAdmin
         ? undefined
         : await (async () => {
@@ -3547,27 +3681,22 @@ export async function registerRoutes(
               .map((m: any) => Number(m.userId))
               .filter((n: any) => Number.isFinite(n) && n > 0);
           })();
-
       if (payload.selectionScope === "explicit") {
         const ids = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
         if (!ids.length) return res.json({ totalTargets: 0, validLeadIds: [] });
-
         const whereAllowed =
           allowedAssignedToUserIds && allowedAssignedToUserIds.length
             ? sql`AND (assigned_to IS NULL OR assigned_to IN (${sql.join(allowedAssignedToUserIds.map((id) => sql`${id}`), sql`,`)}))`
             : sql``;
-
         const rows: any = await db.execute(sql`
           SELECT id
           FROM leads
           WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
           ${whereAllowed}
         `);
-
         const validLeadIds = ((rows as any).rows || []).map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n) && n > 0);
         return res.json({ totalTargets: validLeadIds.length, validLeadIds });
       }
-
       const f = normalizeLeadListFilter(payload.filter || {});
       const { total } = await storage.listLeads({
         ...(f as any),
@@ -3575,18 +3704,15 @@ export async function registerRoutes(
         limit: 1,
         offset: 0,
       });
-
       res.json({ totalTargets: total });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/leads/bulk/jobs", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const payload = z
         .object({
           selectionScope: z.enum(["explicit", "all_filtered"]),
@@ -3596,7 +3722,6 @@ export async function registerRoutes(
           params: z.record(z.any()).optional(),
         })
         .parse(req.body || {});
-
       const allowedAssignedToUserIds = user.isSuperAdmin
         ? undefined
         : await (async () => {
@@ -3608,7 +3733,6 @@ export async function registerRoutes(
               .map((m: any) => Number(m.userId))
               .filter((n: any) => Number.isFinite(n) && n > 0);
           })();
-
       const job = await storage.createLeadBulkActionJob({
         createdBy: user.id,
         status: "queued",
@@ -3622,20 +3746,16 @@ export async function registerRoutes(
         failed: 0,
         resultJson: null,
       } as any);
-
       setImmediate(async () => {
         const updateJob = async (patch: any) => {
           try {
             await storage.updateLeadBulkActionJob(job.id, patch);
           } catch {}
         };
-
         const startAt = new Date();
         await updateJob({ status: "running", startedAt: startAt, updatedAt: startAt });
-
         const runBatchUpdate = async (ids: number[]) => {
           if (!ids.length) return { processed: 0, succeeded: 0, failed: 0 };
-
           if (payload.action === "set_status") {
             const nextStatus = String((payload.params as any)?.status || "").trim();
             if (!nextStatus) throw new Error("Missing status");
@@ -3646,7 +3766,6 @@ export async function registerRoutes(
             `);
             return { processed: ids.length, succeeded: ids.length, failed: 0 };
           }
-
           if (payload.action === "assign") {
             const nextAssignedTo = Number((payload.params as any)?.assignedTo);
             if (!Number.isFinite(nextAssignedTo) || nextAssignedTo <= 0) throw new Error("Invalid assignedTo");
@@ -3657,7 +3776,6 @@ export async function registerRoutes(
             `);
             return { processed: ids.length, succeeded: ids.length, failed: 0 };
           }
-
           if (payload.action === "archive") {
             await db.execute(sql`
               UPDATE leads
@@ -3666,7 +3784,6 @@ export async function registerRoutes(
             `);
             return { processed: ids.length, succeeded: ids.length, failed: 0 };
           }
-
           if (payload.action === "unarchive") {
             await db.execute(sql`
               UPDATE leads
@@ -3675,7 +3792,6 @@ export async function registerRoutes(
             `);
             return { processed: ids.length, succeeded: ids.length, failed: 0 };
           }
-
           if (payload.action === "export") {
             const { job: exportJob, token } = await createExportJob({
               entityType: "lead",
@@ -3689,16 +3805,13 @@ export async function registerRoutes(
             await updateJob({ resultJson: { exportId: finalExport.id, token }, updatedAt: new Date() });
             return { processed: ids.length, succeeded: ids.length, failed: 0 };
           }
-
           return { processed: ids.length, succeeded: 0, failed: ids.length };
         };
-
         try {
           let totalTargets = 0;
           let processed = 0;
           let succeeded = 0;
           let failed = 0;
-
           if (payload.selectionScope === "explicit") {
             const rawIds = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
             const unique = Array.from(new Set(rawIds));
@@ -3714,7 +3827,6 @@ export async function registerRoutes(
             `);
             const ids = ((rows as any).rows || []).map((r: any) => Number(r.id)).filter((n: any) => Number.isFinite(n) && n > 0);
             totalTargets = ids.length;
-
             const out = await runBatchUpdate(ids);
             processed += out.processed;
             succeeded += out.succeeded;
@@ -3733,18 +3845,15 @@ export async function registerRoutes(
               if (!totalTargets) totalTargets = page.total;
               const ids = (page.items || []).map((l: any) => Number(l.id)).filter((n: any) => Number.isFinite(n) && n > 0);
               if (!ids.length) break;
-
               const out = await runBatchUpdate(ids);
               processed += out.processed;
               succeeded += out.succeeded;
               failed += out.failed;
-
               offset += pageSize;
               await updateJob({ totalTargets, processed, succeeded, failed, updatedAt: new Date() });
               if (offset >= totalTargets) break;
             }
           }
-
           await updateJob({ status: "completed", totalTargets, processed, succeeded, failed, finishedAt: new Date(), updatedAt: new Date() });
         } catch (err: any) {
           await updateJob({
@@ -3755,13 +3864,11 @@ export async function registerRoutes(
           });
         }
       });
-
       res.status(201).json({ jobId: job.id, status: job.status });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/leads/bulk/jobs/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -3776,19 +3883,15 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/ai/voice/parse", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
-
       const payload = z.object({ transcript: z.string().trim().min(1).max(5000) }).parse(req.body || {});
       const t = payload.transcript.toLowerCase();
-
       let action: "set_status" | "assign" | "archive" | "unarchive" | "export" | "add_note" | "playground_append_note" | null = null;
       const params: any = {};
-
       const playgroundNoteMatch =
         t.match(/playground\s+note[:\s]+([\s\S]{1,5000})/) ||
         t.match(/add\s+playground\s+note[:\s]+([\s\S]{1,5000})/) ||
@@ -3797,7 +3900,6 @@ export async function registerRoutes(
         action = "playground_append_note";
         params.note = String(playgroundNoteMatch[1] || "").trim();
       }
-
       const noteMatch =
         !action &&
         (t.match(/add\s+note[:\s]+([\s\S]{1,5000})/) ||
@@ -3807,11 +3909,9 @@ export async function registerRoutes(
         action = "add_note";
         params.body = String(noteMatch[1] || "").trim();
       }
-
       if (t.includes("unarchive")) action = "unarchive";
       else if (t.includes("archive")) action = "archive";
       else if (t.includes("export")) action = "export";
-
       const statusMatch =
         t.match(/status\s+to\s+([a-z0-9_\- ]{2,40})/) ||
         t.match(/mark\s+as\s+([a-z0-9_\- ]{2,40})/) ||
@@ -3820,7 +3920,6 @@ export async function registerRoutes(
         action = "set_status";
         params.status = String(statusMatch[1] || "").trim();
       }
-
       if (t.includes("assign to me")) {
         action = "assign";
         params.assignedTo = user.id;
@@ -3831,19 +3930,16 @@ export async function registerRoutes(
           params.assignedTo = Number(assignMatch[1]);
         }
       }
-
       res.json({ action, params, transcript: payload.transcript });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/ai/voice/preview", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
-
       const payload = z
         .object({
           parsed: z.object({ action: z.string().nullable(), params: z.record(z.any()).default({}), transcript: z.string().optional() }),
@@ -3858,14 +3954,11 @@ export async function registerRoutes(
             .optional(),
         })
         .parse(req.body || {});
-
       const action = payload.parsed.action as any;
       const params = payload.parsed.params || {};
-
       if (action === "playground_append_note") {
         const note = String(params.note || "").trim();
         if (!note) return res.status(400).json({ message: "Missing note" });
-
         const ctx = payload.playground || {};
         const sessionId = typeof ctx.sessionId === "number" && Number.isFinite(ctx.sessionId) ? ctx.sessionId : null;
         const address = String(ctx.address || "").trim();
@@ -3880,7 +3973,6 @@ export async function registerRoutes(
         } else {
           return res.status(400).json({ message: "Missing playground sessionId or address" });
         }
-
         return res.json({
           changes: [],
           notes: null,
@@ -3892,7 +3984,6 @@ export async function registerRoutes(
           },
         });
       }
-
       if (action === "add_note") {
         const body = String(params.body || "").trim();
         const ids = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
@@ -3900,17 +3991,14 @@ export async function registerRoutes(
         if (!body) return res.status(400).json({ message: "Missing note body" });
         return res.json({ changes: [], notes: { leadIdsCount: ids.length, bodyPreview: body.slice(0, 280) }, playground: null });
       }
-
       const ids = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
       if (!ids.length) return res.json({ changes: [], notes: null, playground: null });
-
       const leadRows: any = await db.execute(sql`
         SELECT id, status, assigned_to as "assignedTo", archived_at as "archivedAt"
         FROM leads
         WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
       `);
       const leadsRows = (leadRows as any).rows || [];
-
       const changes = leadsRows.map((r: any) => {
         const next: any = { id: Number(r.id) };
         if (action === "set_status") next.status = String(params.status || "").trim();
@@ -3919,19 +4007,16 @@ export async function registerRoutes(
         if (action === "unarchive") next.archivedAt = null;
         return { before: r, next };
       });
-
       res.json({ changes, notes: null, playground: null });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/ai/voice/apply", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
-
       const payload = z
         .object({
           parsed: z.object({ action: z.string().nullable(), params: z.record(z.any()).default({}), transcript: z.string().optional() }),
@@ -3947,20 +4032,16 @@ export async function registerRoutes(
             .optional(),
         })
         .parse(req.body || {});
-
       const action = payload.parsed.action as any;
       const params = payload.parsed.params || {};
-
       if (action === "playground_append_note") {
         const note = String(params.note || "").trim();
         if (!note) return res.status(400).json({ message: "Missing note" });
-
         const ctx = payload.playground || {};
         const sessionId = typeof ctx.sessionId === "number" && Number.isFinite(ctx.sessionId) ? ctx.sessionId : null;
         const address = String(ctx.address || "").trim();
         const leadId = typeof ctx.leadId === "number" && Number.isFinite(ctx.leadId) ? ctx.leadId : undefined;
         const propertyId = typeof ctx.propertyId === "number" && Number.isFinite(ctx.propertyId) ? ctx.propertyId : undefined;
-
         let session: any | null = null;
         if (sessionId) {
           session = await storage.getPlaygroundPropertySessionById(sessionId);
@@ -3989,7 +4070,6 @@ export async function registerRoutes(
         } else {
           return res.status(400).json({ message: "Missing playground sessionId or address" });
         }
-
         const prevNotesJson = String((session as any).notesJson || "[]");
         let notesArr: any[] = [];
         try {
@@ -3998,11 +4078,9 @@ export async function registerRoutes(
         } catch {
           notesArr = [];
         }
-
         const noteEntry = { id: crypto.randomBytes(8).toString("hex"), createdAt: new Date().toISOString(), createdBy: user.id, body: note };
         const nextNotesJson = JSON.stringify([...notesArr, noteEntry]);
         const updated = await storage.updatePlaygroundPropertySession((session as any).id, { notesJson: nextNotesJson, updatedBy: user.id } as any);
-
         const actionLog = await storage.createAiActionLog({
           createdBy: user.id,
           entityType: "playground",
@@ -4011,27 +4089,22 @@ export async function registerRoutes(
           selectionJson: { playground: { sessionId: (updated as any).id, address: (updated as any).address, leadId: (updated as any).leadId ?? null, propertyId: (updated as any).propertyId ?? null } },
           appliedJson: { action, params },
         } as any);
-
         const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
         await storage.createAiActionUndo({
           aiActionLogId: actionLog.id,
           undoJson: [{ sessionId: (updated as any).id, prevNotesJson }],
           expiresAt,
         } as any);
-
         await storage.createGlobalActivity({
           userId: user.id,
           action: "playground_voice_append_note",
           description: "Voice appended playground note",
           metadata: JSON.stringify({ playgroundSessionId: (updated as any).id }),
         } as any);
-
         return res.json({ ok: true, actionLogId: actionLog.id, applied: 1, playgroundSessionId: (updated as any).id });
       }
-
       const ids = (payload.leadIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0);
       if (!ids.length) return res.json({ ok: true, applied: 0 });
-
       if (action === "add_note") {
         const body = String(params.body || "").trim();
         if (!body) return res.status(400).json({ message: "Missing note body" });
@@ -4040,7 +4113,6 @@ export async function registerRoutes(
           await storage.createLeadNote({ leadId, createdBy: user.id, body } as any);
         }
         await db.execute(sql`UPDATE leads SET last_touch_at = NOW(), updated_at = NOW() WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})`);
-
         const actionLog = await storage.createAiActionLog({
           createdBy: user.id,
           entityType: "lead",
@@ -4049,38 +4121,32 @@ export async function registerRoutes(
           selectionJson: { leadIds: ids },
           appliedJson: { action, params },
         } as any);
-
         const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
         await storage.createAiActionUndo({
           aiActionLogId: actionLog.id,
           undoJson: [],
           expiresAt,
         } as any);
-
         await storage.createGlobalActivity({
           userId: user.id,
           action: "lead_voice_add_note",
           description: "Voice added lead note",
           metadata: JSON.stringify({ leadIdsCount: ids.length }),
         } as any);
-
         return res.json({ ok: true, actionLogId: actionLog.id, applied: ids.length, createdAt: now.toISOString() });
       }
-
       const rows: any = await db.execute(sql`
         SELECT id, status, assigned_to as "assignedTo", archived_at as "archivedAt"
         FROM leads
         WHERE id IN (${sql.join(ids.map((id) => sql`${id}`), sql`,`)})
       `);
       const beforeRows = (rows as any).rows || [];
-
       const undoJson = beforeRows.map((r: any) => ({
         id: Number(r.id),
         status: r.status ?? null,
         assignedTo: r.assignedTo ?? null,
         archivedAt: r.archivedAt ?? null,
       }));
-
       const actionLog = await storage.createAiActionLog({
         createdBy: user.id,
         entityType: "lead",
@@ -4089,14 +4155,12 @@ export async function registerRoutes(
         selectionJson: { leadIds: ids },
         appliedJson: { action, params },
       } as any);
-
       const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
       await storage.createAiActionUndo({
         aiActionLogId: actionLog.id,
         undoJson,
         expiresAt,
       } as any);
-
       if (action === "set_status") {
         const nextStatus = String(params.status || "").trim();
         if (!nextStatus) return res.status(400).json({ message: "Missing status" });
@@ -4140,31 +4204,25 @@ export async function registerRoutes(
       } else {
         return res.status(400).json({ message: "Unsupported voice action" });
       }
-
       res.json({ ok: true, actionLogId: actionLog.id, applied: ids.length });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/ai/voice/undo", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
-
       const payload = z.object({ aiActionLogId: z.coerce.number().int().positive() }).parse(req.body || {});
       const undo = await storage.getAiActionUndoByActionId(payload.aiActionLogId);
       if (!undo) return res.status(404).json({ message: "Not found" });
-
       const expiresAt = (undo as any).expiresAt ? new Date((undo as any).expiresAt) : null;
       if (expiresAt && expiresAt.getTime() < Date.now()) return res.status(400).json({ message: "Undo window expired" });
       if ((undo as any).undoneAt) return res.status(400).json({ message: "Already undone" });
-
       const undoJson = Array.isArray((undo as any).undoJson) ? (undo as any).undoJson : [];
       const leadRows = undoJson.filter((r: any) => Number.isFinite(Number(r?.id)) && Number(r?.id) > 0);
       const sessionRows = undoJson.filter((r: any) => Number.isFinite(Number(r?.sessionId)) && Number(r?.sessionId) > 0);
-
       for (const row of leadRows) {
         const id = Number(row.id);
         await db.execute(sql`
@@ -4176,20 +4234,17 @@ export async function registerRoutes(
           WHERE id = ${id}
         `);
       }
-
       for (const row of sessionRows) {
         const sessionId = Number(row.sessionId);
         const prevNotesJson = typeof row.prevNotesJson === "string" ? row.prevNotesJson : "[]";
         await storage.updatePlaygroundPropertySession(sessionId, { notesJson: prevNotesJson, updatedBy: user.id } as any);
       }
-
       await storage.updateAiActionUndo((undo as any).id, { undoneAt: new Date() } as any);
       res.json({ ok: true, restored: leadRows.length + sessionRows.length, restoredLeads: leadRows.length, restoredPlayground: sessionRows.length });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/audit/runs", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4202,7 +4257,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/audit/runs", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4214,7 +4268,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/audit/runs/:id/findings", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4227,14 +4280,12 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/audit/runs/:id/findings", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       const runId = parseInt(req.params.id, 10);
       if (!Number.isFinite(runId)) return res.status(400).json({ message: "Invalid run id" });
-
       const payload = z
         .object({
           severity: z.enum(["low", "medium", "high", "critical"]),
@@ -4249,7 +4300,6 @@ export async function registerRoutes(
           prdSection: z.string().trim().max(500).optional().nullable(),
         })
         .parse(req.body || {});
-
       const row = await storage.createAppAuditFinding({
         runId,
         severity: payload.severity,
@@ -4264,26 +4314,21 @@ export async function registerRoutes(
         prdSection: payload.prdSection ?? null,
         status: "open",
       } as any);
-
       res.status(201).json(row);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/audit/runs/:id/seed-pages", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       const runId = parseInt(req.params.id, 10);
       if (!Number.isFinite(runId)) return res.status(400).json({ message: "Invalid run id" });
-
       const payload = z.object({ mode: z.enum(["append", "replace"]).default("append") }).parse(req.body || {});
-
       if (payload.mode === "replace") {
         await db.execute(sql`DELETE FROM app_audit_findings WHERE run_id = ${runId}`);
       }
-
       const pages: Array<{ title: string; area: string; affectedPages: string[]; description: string; fixPlan: string }> = [
         {
           title: "Dashboard: KPI correctness + work-queue links",
@@ -4419,7 +4464,6 @@ export async function registerRoutes(
           fixPlan: "Create findings for UX correctness and conversion flow; defer enhancements unless blocking.",
         },
       ];
-
       const created: any[] = [];
       for (const p of pages) {
         const row = await storage.createAppAuditFinding({
@@ -4438,20 +4482,17 @@ export async function registerRoutes(
         } as any);
         created.push(row);
       }
-
       res.status(201).json({ createdCount: created.length });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/audit/findings/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-
       if (!user.isSuperAdmin) {
         const rows: any = await db.execute(sql`
           SELECT r.created_by as "createdBy"
@@ -4463,7 +4504,6 @@ export async function registerRoutes(
         const createdBy = Number((rows as any).rows?.[0]?.createdBy);
         if (!Number.isFinite(createdBy) || createdBy !== user.id) return res.status(404).json({ message: "Not found" });
       }
-
       const payload = z
         .object({
           severity: z.enum(["low", "medium", "high", "critical"]).optional(),
@@ -4479,19 +4519,16 @@ export async function registerRoutes(
           status: z.enum(["open", "in_progress", "resolved", "ignored"]).optional(),
         })
         .parse(req.body || {});
-
       const row = await storage.updateAppAuditFinding(id, payload as any);
       res.json(row);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/audit/release-gate", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const rows: any = await db.execute(sql`
         SELECT 
           f.id as "id",
@@ -4509,9 +4546,7 @@ export async function registerRoutes(
         ORDER BY f.updated_at DESC, f.id DESC
         LIMIT 50
       `);
-
       const blockingItems = Array.isArray((rows as any).rows) ? (rows as any).rows : [];
-
       res.json({
         ok: blockingItems.length === 0,
         blockingCount: blockingItems.length,
@@ -4521,12 +4556,10 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/skip-trace/config", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const enabled = await isFeatureEnabled(user.id, "skip_trace");
       if (!enabled) {
         return res.json({
@@ -4536,14 +4569,11 @@ export async function registerRoutes(
           allowedModes: [],
         });
       }
-
       const providerName = getSkipTraceProvider().name;
       const publicResearchEnabled = String(process.env.SKIP_TRACE_PUBLIC_RESEARCH_ENABLED || "")
         .trim()
         .toLowerCase() === "true";
-
       const allowedModes = publicResearchEnabled ? ["provider", "public_research", "both"] : ["provider"];
-
       res.json({
         enabled: true,
         providerName,
@@ -4554,13 +4584,11 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/skip-trace/jobs", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
-
       const body = z
         .object({
           entityType: z.enum(["lead", "opportunity"]),
@@ -4568,39 +4596,32 @@ export async function registerRoutes(
           mode: z.enum(["provider", "public_research", "both"]),
         })
         .parse(req.body);
-
       const job = await createSkipTraceJob({
         entityType: body.entityType,
         entityId: body.entityId,
         mode: body.mode,
         requestedByUserId: user.id,
       });
-
       if (body.mode === "provider") {
         const out = await runSkipTraceJob(job.id);
         return res.json({ jobId: out.job.id, status: out.job.status });
       }
-
       res.json({ jobId: job.id, status: job.status });
     } catch (error: any) {
       if (isHttpError(error)) return res.status(error.statusCode).json({ message: error.message });
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/skip-trace/jobs/:jobId/run", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
-
       const jobId = parseInt(req.params.jobId, 10);
       if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
-
       const job = await storage.getSkipTraceJobById(jobId);
       if (!job) return res.status(404).json({ message: "Not found" });
       if (!user.isSuperAdmin && (job as any).requestedByUserId && Number((job as any).requestedByUserId) !== user.id) return res.status(404).json({ message: "Not found" });
-
       const out = await runSkipTraceJob(job.id);
       res.json({ jobId: out.job.id, status: out.job.status });
     } catch (error: any) {
@@ -4608,39 +4629,30 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/skip-trace/jobs/:jobId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
-
       const jobId = parseInt(req.params.jobId, 10);
       if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
-
       const job = await storage.getSkipTraceJobById(jobId);
       if (!job) return res.status(404).json({ message: "Not found" });
       if (!user.isSuperAdmin && (job as any).requestedByUserId && Number((job as any).requestedByUserId) !== user.id) return res.status(404).json({ message: "Not found" });
-
       const events = await storage.listSkipTraceJobEvents(job.id, 500);
       const evidence = await storage.listSkipTraceEvidence(job.id, 500);
       const scoreSnapshot = (await storage.listLeadScoreSnapshotsByJobId(job.id))[0] ?? null;
-
       const entityType = String((job as any).entityType || "").trim().toLowerCase();
       const entityId = Number((job as any).entityId);
-
       const lead = entityType === "lead" ? ((await storage.getLeadById(entityId)) ?? null) : null;
       const property = entityType === "opportunity" ? ((await storage.getPropertyById(entityId)) ?? null) : null;
-
       const providerRow =
         entityType === "lead"
           ? await storage.getLatestSkipTraceForLead(entityId)
           : entityType === "opportunity"
             ? await storage.getLatestSkipTraceForProperty(entityId)
             : null;
-
       const providerResult = providerRow && (providerRow as any).jobId === job.id ? hydrateSkipTraceResultForApi(providerRow as any) : null;
-
       const merged =
         entityType === "lead" || entityType === "opportunity"
           ? mergeSkipTraceResult({
@@ -4653,7 +4665,6 @@ export async function registerRoutes(
               scoreSnapshot: scoreSnapshot as any,
             })
           : null;
-
       res.json({
         job,
         events,
@@ -4667,20 +4678,16 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/leads/:id/skip-trace/latest", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
-
       const leadId = parseInt(req.params.id);
       const lead = await storage.getLeadById(leadId);
       if (!lead) return res.status(404).json({ message: "Lead not found" });
-
       const row = await storage.getLatestSkipTraceForLead(leadId);
       if (!row) return res.json(null);
-
       return res.json({
         ...row,
         phones: parseJsonArrayText((row as any).phonesJson),
@@ -4690,13 +4697,11 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/leads/:id/skip-trace", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
-
       const leadId = parseInt(req.params.id);
       const out = await runProviderSkipTraceForEntity({ entityType: "lead", entityId: leadId, requestedByUserId: user.id });
       if ("pending" in out && out.pending) {
@@ -4708,7 +4713,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/lead-source-options", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4753,7 +4757,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/lead-source-options", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4783,7 +4786,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/campaigns", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4795,7 +4797,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/campaigns", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4809,7 +4810,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/campaigns/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4827,7 +4827,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/campaigns/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4840,7 +4839,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/campaigns/:id/steps", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4853,7 +4851,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.put("/api/campaigns/:id/steps", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4890,7 +4887,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/campaigns/:id/enroll", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4911,7 +4907,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/campaigns/:id/stats", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4924,13 +4919,12 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   function inSendWindow(now: Date, start?: string | null, end?: string | null) {
     const s = String(start || "").trim();
     const e = String(end || "").trim();
     if (!/^\d{2}:\d{2}$/.test(s) || !/^\d{2}:\d{2}$/.test(e)) return true;
-    const [sh, sm] = s.split(":").map((x) => parseInt(x, 10));
-    const [eh, em] = e.split(":").map((x) => parseInt(x, 10));
+    const [sh, sm] = s.split(":").map(Number)
+    const [eh, em] = e.split(":").map(Number)
     if (![sh, sm, eh, em].every((n) => Number.isFinite(n))) return true;
     const mins = now.getHours() * 60 + now.getMinutes();
     const startM = sh * 60 + sm;
@@ -4938,7 +4932,6 @@ export async function registerRoutes(
     if (startM <= endM) return mins >= startM && mins <= endM;
     return mins >= startM || mins <= endM;
   }
-
   app.get("/api/rvm/audio-assets", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4950,7 +4943,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/rvm/audio-assets", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4968,7 +4960,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/rvm/audio-assets/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4981,7 +4972,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/rvm/campaigns", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4993,7 +4983,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/rvm/campaigns", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -5021,7 +5010,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/rvm/campaigns/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -5043,7 +5031,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/rvm/campaigns/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -5056,7 +5043,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/rvm/campaigns/:id/drops", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -5069,7 +5055,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/rvm/campaigns/:id/launch", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -5081,7 +5066,6 @@ export async function registerRoutes(
         audioAssetId: z.number().int().positive().optional().nullable(),
       });
       const payload = schema.parse(req.body || {});
-
       const campaignRows: any = await db.execute(sql`
         SELECT id, user_id, name, send_window_start, send_window_end, daily_cap, audio_asset_id
         FROM rvm_campaigns
@@ -5091,15 +5075,12 @@ export async function registerRoutes(
       const campaign = (campaignRows as any).rows?.[0];
       if (!campaign) return res.status(404).json({ message: "Campaign not found" });
       if (Number(campaign.user_id) !== user.id) return res.status(403).json({ message: "Forbidden" });
-
       const audioAssetId = payload.audioAssetId || Number(campaign.audio_asset_id || 0);
       if (!audioAssetId) return res.status(400).json({ message: "Audio asset is required" });
-
       const now = new Date();
       if (!inSendWindow(now, campaign.send_window_start, campaign.send_window_end)) {
         return res.status(400).json({ message: "Outside allowed send window" });
       }
-
       const todayRows: any = await db.execute(sql`
         SELECT COUNT(*)::int AS cnt
         FROM rvm_drops d
@@ -5111,7 +5092,6 @@ export async function registerRoutes(
       const dailyCap = Number(campaign.daily_cap || 0) || 500;
       const remaining = Math.max(0, dailyCap - todayCount);
       if (remaining <= 0) return res.status(400).json({ message: "Daily RVM cap reached" });
-
       const toLaunch = payload.leadIds.slice(0, remaining);
       const leadsRows: any = await db.execute(sql`
         SELECT id, owner_phone, do_not_call, do_not_text
@@ -5119,7 +5099,6 @@ export async function registerRoutes(
         WHERE id = ANY(${toLaunch})
       `);
       const leadRows = (leadsRows as any).rows || [];
-
       const eligible: { leadId: number; to: string }[] = [];
       const failed: any[] = [];
       for (const r of leadRows) {
@@ -5136,11 +5115,9 @@ export async function registerRoutes(
         }
         eligible.push({ leadId, to: phone });
       }
-
       const provider = getRvmProvider();
       const results = await provider.requestDrops({ audioAssetId, toNumbers: eligible.map((x) => x.to) });
       const nowIso = new Date();
-
       const dropsToInsert: any[] = [];
       for (const e of eligible) {
         const r = results.find((x) => x.toNumber === e.to);
@@ -5168,29 +5145,24 @@ export async function registerRoutes(
           error: f.reason,
         });
       }
-
       await storage.createRvmDrops(dropsToInsert as any);
       await storage.updateRvmCampaign(id, { status: "launched", audioAssetId } as any);
-
       await storage.createGlobalActivity({
         userId: user.id,
         action: "rvm_campaign_launched",
         description: `RVM campaign launched: ${String(campaign.name || "")}`,
         metadata: JSON.stringify({ campaignId: id, requested: payload.leadIds.length, eligible: eligible.length, failed: failed.length }),
       } as any);
-
       res.json({ requested: payload.leadIds.length, launched: eligible.length, failed: failed.length, cappedAt: remaining });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/sync", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "field_mode"))) return res.status(404).json({ message: "Not found" });
-
       const schema = z.object({
         actions: z.array(
           z.object({
@@ -5201,7 +5173,6 @@ export async function registerRoutes(
         ),
       });
       const payload = schema.parse(req.body || {});
-
       const results: any[] = [];
       for (const a of payload.actions) {
         const existing = await storage.getSyncIdempotency(user.id, a.idempotencyKey);
@@ -5213,7 +5184,6 @@ export async function registerRoutes(
           }
           continue;
         }
-
         let out: any = { idempotencyKey: a.idempotencyKey, ok: true };
         try {
           if (a.type === "create_lead") {
@@ -5267,17 +5237,14 @@ export async function registerRoutes(
         } catch (e: any) {
           out = { idempotencyKey: a.idempotencyKey, ok: false, error: String(e?.message || e) };
         }
-
         await storage.createSyncIdempotency({ userId: user.id, idempotencyKey: a.idempotencyKey, responseJson: JSON.stringify(out) } as any);
         results.push(out);
       }
-
       res.json({ results });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/leads", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -5287,15 +5254,12 @@ export async function registerRoutes(
       if (!source || source === "__custom__") {
         return res.status(400).json({ message: "Lead source is required" });
       }
-
       const assignedTo = (validated as any).assignedTo;
       if (typeof assignedTo === "number") {
         const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
         if (!ok) return;
       }
-
       const dedupeKey = computeLeadDedupeKey(validated as any);
-
       try {
         const dupRows: any = await db.execute(sql`
           SELECT id FROM leads
@@ -5307,7 +5271,6 @@ export async function registerRoutes(
           return res.status(409).json({ message: "Duplicate lead: address and owner already exist", leadId: existingId });
         }
       } catch {}
-
       const lead = await storage.createLead({ ...(validated as any), dedupeKey } as any);
       
       if (req.session.userId) {
@@ -5318,7 +5281,6 @@ export async function registerRoutes(
           metadata: JSON.stringify({ leadId: lead.id, address: lead.address }),
         });
       }
-
       try {
         await onLeadCreated({
           leadId: lead.id,
@@ -5327,7 +5289,6 @@ export async function registerRoutes(
           createdBy: Number(req.session.userId || 0),
         });
       } catch {}
-
       try {
         const teamId = await getOrInitActiveTeamId(req, user.id);
         if (teamId) {
@@ -5346,14 +5307,12 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/leads/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       const partial = insertLeadSchema.partial().parse(req.body) as Partial<InsertLead>;
       const id = parseInt(req.params.id);
-
       const assignedTo = (partial as any).assignedTo;
       if (typeof assignedTo === "number") {
         const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
@@ -5393,7 +5352,6 @@ export async function registerRoutes(
           metadata: JSON.stringify({ leadId: lead.id, address: lead.address }),
         });
       }
-
       try {
         await onLeadStatusChanged({
           leadId: lead.id,
@@ -5404,7 +5362,6 @@ export async function registerRoutes(
           actorUserId: Number(req.session.userId || 0),
         });
       } catch {}
-
       try {
         const beforeStatus = String((before as any)?.status || "");
         const afterStatus = String((lead as any)?.status || "");
@@ -5442,7 +5399,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/leads/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -5464,7 +5420,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   // Convert lead to property (lead must be under_contract status)
   app.post("/api/leads/:id/convert-to-property", async (req, res) => {
     try {
@@ -5477,31 +5432,25 @@ export async function registerRoutes(
         return res.status(404).json({ message: "Lead not found" });
       }
       
-      // Normalize status check (case-insensitive, trim whitespace)
-      const normalizedStatus = lead.status?.toLowerCase().trim();
-      if (normalizedStatus !== "under_contract") {
-        return res.status(400).json({ 
-          message: "Lead must be 'under contract' status before converting to property" 
-        });
-      }
-      
       // Check if property already exists from this lead (DB has unique index but check first for better UX)
       const existingProperty = await storage.getPropertyBySourceLeadId(leadId);
       if (existingProperty) {
         return res.status(409).json({ 
-          message: "Property already exists for this lead",
+          message: "Opportunity already exists for this lead",
           propertyId: existingProperty.id
         });
       }
       
-      // Create property from lead data - validate with schema
+      // Create property from lead data - validate with schema. The sourceLeadId
+      // link carries owner contacts, score, and notes into the opportunity's
+      // deal room (the detail route resolves the linked lead).
       const propertyData = insertPropertySchema.parse({
         address: lead.address,
         city: lead.city,
         state: lead.state,
         zipCode: lead.zipCode,
         price: lead.estimatedValue || null,
-        status: "under_contract",
+        status: "active",
         sourceLeadId: lead.id,
         leadSource: (lead as any).source || null,
         notes: lead.notes || null,
@@ -5522,7 +5471,6 @@ export async function registerRoutes(
           }),
         });
       }
-
       try {
         const teamId = await getOrInitActiveTeamId(req, user.id);
         if (teamId) {
@@ -5563,7 +5511,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   // OPPORTUNITIES ENDPOINTS (New Terminology)
   app.get("/api/opportunities", async (req, res) => {
     try {
@@ -5587,7 +5534,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/opportunities/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -5595,20 +5541,17 @@ export async function registerRoutes(
       const id = parseInt(req.params.id);
       const property = await storage.getPropertyById(id);
       if (!property) return res.status(404).json({ message: "Opportunity not found" });
-
       let lead: any = null;
       if (property.sourceLeadId) {
         try {
           lead = await storage.getLeadById(property.sourceLeadId);
         } catch {}
       }
-
       res.json({ property: { ...(property as any), images: resolvePropertyImages((property as any).images) }, lead });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/opportunities/:id/companies", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
@@ -5620,7 +5563,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/opportunities/:id/companies", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
@@ -5628,11 +5570,9 @@ export async function registerRoutes(
       const opportunityId = parseInt(req.params.id, 10);
       const schema = insertCompanyLinkSchema.omit({ teamId: true, entityType: true, entityId: true } as any);
       const validated: any = schema.parse(req.body || {});
-
       const companyId = Number(validated.companyId);
       const company = await storage.getCompanyById(companyId);
       if (!company || company.teamId !== ctx.teamId) return res.status(404).json({ message: "Company not found" });
-
       const link = await storage.createCompanyLink({
         teamId: ctx.teamId,
         companyId,
@@ -5640,7 +5580,6 @@ export async function registerRoutes(
         entityId: opportunityId,
         role: typeof validated.role === "string" ? validated.role : null,
       } as any);
-
       try {
         await writeAuditEvent({
           teamId: ctx.teamId,
@@ -5656,13 +5595,11 @@ export async function registerRoutes(
           requestId: (res.locals as any)?.requestId || null,
         });
       } catch {}
-
       res.status(201).json(link);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/opportunities/:id/companies/:linkId", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
@@ -5673,7 +5610,6 @@ export async function registerRoutes(
       const target = existing.find((r: any) => Number(r.link?.id) === linkId);
       if (!target) return res.status(404).json({ message: "Not found" });
       await storage.deleteCompanyLinkForTeam(ctx.teamId, linkId);
-
       try {
         await writeAuditEvent({
           teamId: ctx.teamId,
@@ -5689,13 +5625,11 @@ export async function registerRoutes(
           requestId: (res.locals as any)?.requestId || null,
         });
       } catch {}
-
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/property-photos/:key", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -5707,7 +5641,6 @@ export async function registerRoutes(
     if (!url) return res.status(404).json({ message: "Not found" });
     res.redirect(url);
   });
-
   app.post("/api/opportunities/:id/photos", upload.array("photos", 20), async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -5718,13 +5651,10 @@ export async function registerRoutes(
       if (!isPropertyPhotoStorageConfigured()) {
         return res.status(503).json({ code: "photo_storage_not_configured", message: "Photo storage is not configured" });
       }
-
       const files = Array.isArray((req as any).files) ? ((req as any).files as any[]) : [];
       if (!files.length) return res.status(400).json({ message: "No files uploaded" });
-
       const existingRaw = Array.isArray((property as any).images) ? (property as any).images.filter(Boolean) : [];
       const uploaded: string[] = [];
-
       for (const f of files) {
         const out = await uploadPropertyPhoto({
           opportunityId,
@@ -5734,27 +5664,22 @@ export async function registerRoutes(
         });
         uploaded.push(`property-photo:${out.storageKey}`);
       }
-
       const updated = await storage.updateProperty(opportunityId, { images: [...existingRaw, ...uploaded] } as any);
       res.json({ property: { ...(updated as any), images: resolvePropertyImages((updated as any).images) } });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/opportunities/:id/skip-trace/latest", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
-
       const propertyId = parseInt(req.params.id);
       const property = await storage.getPropertyById(propertyId);
       if (!property) return res.status(404).json({ message: "Opportunity not found" });
-
       const row = await storage.getLatestSkipTraceForProperty(propertyId);
       if (!row) return res.json(null);
-
       return res.json({
         ...row,
         phones: parseJsonArrayText((row as any).phonesJson),
@@ -5764,13 +5689,11 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/opportunities/:id/skip-trace", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
-
       const propertyId = parseInt(req.params.id);
       const ownerNameOverride = req.body?.ownerName ? String(req.body.ownerName).trim() : null;
       const out = await runProviderSkipTraceForEntity({ entityType: "opportunity", entityId: propertyId, requestedByUserId: user.id, ownerNameOverride });
@@ -5783,7 +5706,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/opportunities/:id/comps/snapshots", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -5791,7 +5713,6 @@ export async function registerRoutes(
       const opportunityId = parseInt(req.params.id, 10);
       const rows = await storage.getCompSnapshotRowsByOpportunity(opportunityId, 500);
       if (!rows.length) return res.json({ avgArv: null, avgRent: null, saleComps: [], rentalComps: [] });
-
       const ids = Array.from(new Set(rows.map((r: any) => Number(r.compPropertyId)).filter(Number.isFinite)));
       const compsById = new Map<number, any>();
       if (ids.length) {
@@ -5803,7 +5724,6 @@ export async function registerRoutes(
         `);
         for (const r of (out as any).rows || []) compsById.set(Number(r.id), r);
       }
-
       const sale: any[] = [];
       const rental: any[] = [];
       for (const r of rows) {
@@ -5821,22 +5741,18 @@ export async function registerRoutes(
         if (base.isRentalComp) rental.push(base);
         else sale.push(base);
       }
-
       const avg = (vals: Array<number | null>) => {
         const xs = vals.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
         if (!xs.length) return null;
         return xs.reduce((a, b) => a + b, 0) / xs.length;
       };
-
       const avgArv = avg(sale.map((x) => x.soldPrice));
       const avgRent = avg(rental.map((x) => x.rentPerMonth));
-
       res.json({ avgArv, avgRent, saleComps: sale, rentalComps: rental });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/opportunities/:id/comps/pull", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -5844,7 +5760,6 @@ export async function registerRoutes(
       const opportunityId = parseInt(req.params.id, 10);
       const property = await storage.getPropertyById(opportunityId);
       if (!property) return res.status(404).json({ message: "Opportunity not found" });
-
       const dealSqft = typeof (property as any).sqft === "number" ? (property as any).sqft : (property as any).sqft ? Number((property as any).sqft) : null;
       const dealType = String((property as any).propertyType || "").trim();
       const dealLat = toNumberOrNull((property as any).latitude);
@@ -5852,12 +5767,10 @@ export async function registerRoutes(
       if (!dealSqft || !Number.isFinite(dealSqft)) return res.status(400).json({ message: "Opportunity is missing square footage" });
       if (!dealType) return res.status(400).json({ message: "Opportunity is missing property type" });
       if (dealLat === null || dealLng === null) return res.status(400).json({ message: "Opportunity is missing latitude/longitude" });
-
       const saleMinSqft = Math.floor(dealSqft * 0.85);
       const saleMaxSqft = Math.ceil(dealSqft * 1.15);
       const rentMinSqft = Math.floor(dealSqft * 0.8);
       const rentMaxSqft = Math.ceil(dealSqft * 1.2);
-
       const saleOut: any = await db.execute(sql`
         SELECT id, latitude, longitude, sqft, sold_price, sold_date
         FROM properties
@@ -5882,9 +5795,7 @@ export async function registerRoutes(
           AND rented_date >= (CURRENT_DATE - INTERVAL '12 months')
           AND latitude IS NOT NULL AND longitude IS NOT NULL
       `);
-
       const dealPoint = { lat: dealLat, lng: dealLng };
-
       const saleRows = ((saleOut as any).rows || [])
         .map((r: any) => {
           const d = haversineMiles(dealPoint, { lat: toNumberOrNull(r.latitude) ?? 0, lng: toNumberOrNull(r.longitude) ?? 0 });
@@ -5893,7 +5804,6 @@ export async function registerRoutes(
         .filter((r: any) => Number.isFinite(r.distanceMiles) && r.distanceMiles <= 1)
         .sort((a: any, b: any) => a.distanceMiles - b.distanceMiles)
         .slice(0, 25);
-
       const rentalRows = ((rentalOut as any).rows || [])
         .map((r: any) => {
           const d = haversineMiles(dealPoint, { lat: toNumberOrNull(r.latitude) ?? 0, lng: toNumberOrNull(r.longitude) ?? 0 });
@@ -5902,7 +5812,6 @@ export async function registerRoutes(
         .filter((r: any) => Number.isFinite(r.distanceMiles) && r.distanceMiles <= 2)
         .sort((a: any, b: any) => a.distanceMiles - b.distanceMiles)
         .slice(0, 25);
-
       const rowsToPersist: any[] = [
         ...saleRows.map((r: any) => ({
           compPropertyId: Number(r.id),
@@ -5921,33 +5830,26 @@ export async function registerRoutes(
           rentPerMonth: r.rent_per_month != null ? String(r.rent_per_month) : null,
         })),
       ];
-
       await storage.replaceCompSnapshotRows(opportunityId, rowsToPersist as any);
-
       const avg = (vals: Array<number | null>) => {
         const xs = vals.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
         if (!xs.length) return null;
         return xs.reduce((a, b) => a + b, 0) / xs.length;
       };
-
       const avgArv = avg(saleRows.map((r: any) => toNumberOrNull(r.sold_price)));
       const avgRent = avg(rentalRows.map((r: any) => toNumberOrNull(r.rent_per_month)));
-
       res.json({ avgArv, avgRent, saleCount: saleRows.length, rentalCount: rentalRows.length });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   async function recomputeBuyerMatches(opportunityId: number, userId: number) {
     const property = await storage.getPropertyById(opportunityId);
     if (!property) throw new Error("Opportunity not found");
-
     const dealZipCode = String((property as any).zipCode || "").trim();
     const dealState = String((property as any).state || "").trim();
     const dealPrice = toNumberOrNull((property as any).price);
     const dealRepairCost = toNumberOrNull((property as any).repairCost ?? (property as any).repair_cost);
-
     const snapshotRows = await storage.getCompSnapshotRowsByOpportunity(opportunityId, 500);
     const saleRows = snapshotRows.filter((r: any) => !r.isRentalComp);
     const avgArvFromSnapshots = (() => {
@@ -5956,22 +5858,18 @@ export async function registerRoutes(
       return vals.reduce((a, b) => a + b, 0) / vals.length;
     })();
     const dealArv = avgArvFromSnapshots ?? toNumberOrNull((property as any).arv);
-
     const dealSpread =
       dealArv !== null && dealPrice !== null
         ? dealArv - dealPrice - (dealRepairCost ?? 0)
         : null;
-
     const buyers = await storage.getBuyers(2000, 0);
     const buyerIds = (buyers || []).map((b: any) => Number(b.id)).filter(Number.isFinite);
-
     const profilesById = new Map<number, any>();
     if (buyerIds.length) {
       const idsSql = sql.join(buyerIds.map((id) => sql`${id}`), sql`, `);
       const out: any = await db.execute(sql`SELECT * FROM buyer_profiles WHERE id IN (${idsSql})`);
       for (const r of (out as any).rows || []) profilesById.set(Number(r.id), r);
     }
-
     const historyBuyerIds = new Set<number>();
     if (dealZipCode) {
       const out: any = await db.execute(sql`
@@ -5982,19 +5880,15 @@ export async function registerRoutes(
       `);
       for (const r of (out as any).rows || []) historyBuyerIds.add(Number(r.buyer_id));
     }
-
     const scored = (buyers || [])
       .map((b: any) => {
         const buyerId = Number(b.id);
         const profile = profilesById.get(buyerId) || null;
-
         const targetZips = Array.isArray(profile?.target_zips) ? profile.target_zips.map(String) : Array.isArray(b.zipCodes) ? b.zipCodes.map(String) : [];
         const targetStates = Array.isArray(profile?.target_states) ? profile.target_states.map(String) : [];
         const minSpread = toNumberOrNull(profile?.min_spread);
-
         let score = 0;
         const reasons: string[] = [];
-
         if (dealZipCode && targetZips.includes(dealZipCode)) {
           score += 0.4;
           reasons.push(`Invests in ${dealZipCode}`);
@@ -6011,22 +5905,18 @@ export async function registerRoutes(
           score += 0.3;
           reasons.push(`Has bought in ${dealZipCode}`);
         }
-
         const scoreInt = Math.max(0, Math.round(score * 1000));
         return { buyerId, scoreInt, reasons };
       })
       .filter((m: any) => m.scoreInt > 0)
       .sort((a: any, b: any) => b.scoreInt - a.scoreInt)
       .slice(0, 50);
-
     await storage.replaceDealBuyerMatches(
       opportunityId,
       scored.map((m: any) => ({ buyerId: m.buyerId, score: m.scoreInt, reasons: m.reasons, computedAt: new Date() })) as any,
     );
-
     return scored;
   }
-
   app.get("/api/opportunities/:id/buyer-matches", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -6044,7 +5934,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/opportunities/:id/buyer-matches/recompute", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -6056,20 +5945,17 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/opportunities", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       const validated = insertPropertySchema.parse(req.body);
       const dedupeKey = computeOpportunityDedupeKey(validated as any);
-
       const assignedTo = (validated as any).assignedTo;
       if (typeof assignedTo === "number") {
         const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
         if (!ok) return;
       }
-
       try {
         const dupRows: any = await db.execute(sql`
           SELECT id FROM properties
@@ -6081,7 +5967,6 @@ export async function registerRoutes(
           return res.status(409).json({ message: "Duplicate opportunity: address already exists", opportunityId: existingId });
         }
       } catch {}
-
       const property = await storage.createProperty({ ...(validated as any), dedupeKey } as any);
       
       if (req.session.userId) {
@@ -6092,7 +5977,6 @@ export async function registerRoutes(
           metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
         });
       }
-
       try {
         const teamId = await getOrInitActiveTeamId(req, user.id);
         if (teamId) {
@@ -6126,14 +6010,12 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/opportunities/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       const partial = insertPropertySchema.partial().parse(req.body);
       const id = parseInt(req.params.id);
-
       const assignedTo = (partial as any).assignedTo;
       if (typeof assignedTo === "number") {
         const ok = await requireAssigneeInActiveTeam(req, res, user, assignedTo);
@@ -6159,7 +6041,6 @@ export async function registerRoutes(
           metadata: JSON.stringify({ propertyId: property.id, address: property.address }),
         });
       }
-
       try {
         const beforeStatus = String((before as any)?.status || "");
         const afterStatus = String((property as any)?.status || "");
@@ -6197,7 +6078,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/opportunities/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -6219,7 +6099,522 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
+  // OPPORTUNITY STAGE WORKFLOW
+  app.post("/api/opportunities/:id/stage-change", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const propertyId = parseInt(req.params.id, 10);
+      const { stage, notes } = req.body || {};
+      const newStage = String(stage || "").trim();
+      if (!isValidStage(newStage)) {
+        return res.status(400).json({ message: "Invalid stage" });
+      }
+      const property = await storage.getPropertyById(propertyId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const oldStage = (property as any).stage || "lead";
+      if (!canTransitionStage(oldStage, newStage)) {
+        return res.status(400).json({ message: `Cannot transition from '${oldStage}' to '${newStage}'` });
+      }
+      if ((newStage === "dead" || newStage === "voided") && !String(notes || "").trim()) {
+        return res.status(400).json({ message: `A reason is required to move to '${newStage}'. Add notes describing why the deal is ${newStage}.` });
+      }
+      const now = new Date();
+      await storage.updateProperty(propertyId, {
+        stage: newStage,
+        stageChangedAt: now,
+        lastActivityAt: now,
+      });
+      await logOpportunityEvent(
+        propertyId,
+        "stage_changed",
+        `Stage changed to ${OPPORTUNITY_STAGE_CONFIG[newStage]?.label || newStage}`,
+        notes || `Moved from '${oldStage}' to '${newStage}'`,
+        user.id,
+        "user",
+        { oldStage, newStage },
+      );
+      try {
+        const teamId = await getOrInitActiveTeamId(req, user.id);
+        if (teamId) {
+          await dispatchAutomationEvent({
+            eventType: "opportunity.stage_changed",
+            teamId,
+            actorUserId: user.id,
+            entity: { type: "opportunity", id: propertyId },
+            payload: { oldStage, newStage, opportunity: { ...(property as any), stage: newStage } },
+          });
+          await writeAuditEvent({
+            teamId,
+            actorUserId: user.id,
+            entityType: "opportunity",
+            entityId: propertyId,
+            action: "opportunity_stage_changed",
+            before: { stage: oldStage },
+            after: { stage: newStage },
+            kind: "update",
+            ip: req.ip,
+            userAgent: String(req.headers["user-agent"] || ""),
+            requestId: (res.locals as any)?.requestId || null,
+          });
+        }
+      } catch {}
+      // Notify the assigned owner about high-impact stage transitions (deduped per stage).
+      if (["under_contract", "in_disposition", "reserved", "sold", "closed", "dead", "voided"].includes(newStage)) {
+        await notifyOpportunityOwner({
+          propertyId,
+          category: "stage_changed",
+          title: `Opportunity moved to ${OPPORTUNITY_STAGE_CONFIG[newStage]?.label || newStage}`,
+          description: `${(property as any)?.address || `Opportunity #${propertyId}`} moved from '${oldStage}' to '${newStage}'.${notes ? ` Reason: ${notes}` : ""}`,
+          eventKey: `stage:${propertyId}:${newStage}`,
+          actorUserId: user.id,
+        });
+      }
+      // Stage-specific automations (idempotent). Every task is created through
+      // ensureOpportunityTask which skips creation when an identical title already
+      // exists for this opportunity, so re-saves and stage back/forth do not
+      // duplicate checklist items.
+      const stageNow = new Date();
+      const day = 24 * 60 * 60 * 1000;
+      if (newStage === "under_contract") {
+        await logOpportunityEvent(propertyId, "under_contract_entered", "Entered Under Contract", "Opportunity is now under contract. Check due diligence items.", user.id, "user", { oldStage });
+        const inspectionDue = new Date(stageNow.getTime() + 10 * day);
+        const emdDue = new Date(stageNow.getTime() + 3 * day);
+        const ddDefs = [
+          { title: "[Due Diligence] Deposit Earnest Money (EMD)", type: "due_diligence", priority: "high", dueAt: emdDue },
+          { title: "[Due Diligence] Schedule Property Inspection", type: "due_diligence", priority: "high", dueAt: inspectionDue },
+          { title: "[Due Diligence] Review Title Report", type: "due_diligence", priority: "medium", dueAt: new Date(stageNow.getTime() + 7 * day) },
+          { title: "[Due Diligence] Secure Financing", type: "due_diligence", priority: "medium", dueAt: new Date(stageNow.getTime() + 5 * day) },
+          { title: "[Due Diligence] Order Appraisal", type: "due_diligence", priority: "medium", dueAt: new Date(stageNow.getTime() + 3 * day) },
+          { title: "[Due Diligence] Coordinate Walk-Through", type: "due_diligence", priority: "low", dueAt: inspectionDue },
+        ];
+        let ddCreated = 0;
+        for (const d of ddDefs) {
+          if (await ensureOpportunityTask(propertyId, user.id, d)) ddCreated += 1;
+        }
+        if (ddCreated > 0) {
+          await logOpportunityEvent(propertyId, "checklist_created", "Due Diligence Checklist Created", `Auto-created ${ddCreated} due diligence tasks for under_contract stage.`, user.id, "system", { count: ddCreated });
+        }
+        if (await ensureOpportunityTask(propertyId, user.id, { title: "[Disposition] Create public listing for investors", type: "disposition", priority: "high", dueAt: new Date(stageNow.getTime() + 2 * day) })) {
+          await logOpportunityEvent(propertyId, "disposition_checklist_created", "Disposition Checklist Created", "Auto-created disposition task (create public listing).", user.id, "system", {});
+        }
+      }
+      if (newStage === "in_disposition") {
+        await logOpportunityEvent(propertyId, "disposition_started", "Started Disposition", "Opportunity is now in the disposition phase.", user.id, "user", { oldStage });
+        try {
+          const listings = await storage.getPublicListingsByOpportunity(propertyId);
+          if (!listings.some((l: any) => l.status === "published")) {
+            await logOpportunityEvent(propertyId, "listing_required", "Create Public Listing", "No published public listing exists. Create or publish a listing to begin buyer outreach.", user.id, "system", {});
+          }
+        } catch {}
+        if (await ensureOpportunityTask(propertyId, user.id, { title: "[Disposition] Buyer outreach & follow up", type: "disposition", priority: "high", dueAt: new Date(stageNow.getTime() + 1 * day) })) {
+          await logOpportunityEvent(propertyId, "buyer_outreach_task_created", "Buyer Outreach Task Created", "Auto-created buyer outreach task for disposition.", user.id, "system", {});
+        }
+      }
+      if (newStage === "reserved") {
+        await logOpportunityEvent(propertyId, "reserved_entered", "Opportunity Reserved", "A buyer has committed. Coordinate closing and confirm the assignment.", user.id, "user", { oldStage });
+        const closingDefs = [
+          { title: "[Closing] Confirm buyer commitment / EMD", type: "closing", priority: "high", dueAt: new Date(stageNow.getTime() + 2 * day) },
+          { title: "[Closing] Coordinate title & closing", type: "closing", priority: "high", dueAt: new Date(stageNow.getTime() + 7 * day) },
+          { title: "[Closing] Order closing documents", type: "closing", priority: "medium", dueAt: new Date(stageNow.getTime() + 5 * day) },
+        ];
+        let closingCreated = 0;
+        for (const d of closingDefs) {
+          if (await ensureOpportunityTask(propertyId, user.id, d)) closingCreated += 1;
+        }
+        if (closingCreated > 0) {
+          await logOpportunityEvent(propertyId, "closing_checklist_created", "Closing Coordination Checklist Created", `Auto-created ${closingCreated} closing coordination tasks.`, user.id, "system", { count: closingCreated });
+        }
+      }
+      if (newStage === "sold" || newStage === "closed") {
+        await logOpportunityEvent(
+          propertyId,
+          newStage === "sold" ? "sold_entered" : "closed_entered",
+          newStage === "sold" ? "Opportunity Sold" : "Deal Closed",
+          newStage === "sold" ? "Opportunity moved to sold. Record proceeds and archive listing." : "Deal closed. Wrap up documents and disburse funds.",
+          user.id,
+          "user",
+          { oldStage },
+        );
+        try {
+          const fresh = await storage.getPropertyById(propertyId);
+          if (fresh && !(fresh as any).closingDate) {
+            await storage.updateProperty(propertyId, { closingDate: stageNow });
+          }
+        } catch {}
+        try {
+          const listings = await storage.getPublicListingsByOpportunity(propertyId);
+          for (const l of listings) {
+            if (l.status === "published") await storage.updatePublicListing(l.id, { status: "archived" });
+          }
+        } catch {}
+        if (await ensureOpportunityTask(propertyId, user.id, { title: "[Closing] Final deal review & wrap-up", type: "closing", priority: "medium", dueAt: new Date(stageNow.getTime() + 3 * day) })) {
+          await logOpportunityEvent(propertyId, "final_review_task_created", "Final Deal Review Task Created", "Auto-created final deal review task.", user.id, "system", {});
+        }
+      }
+      if (newStage === "dead" || newStage === "voided") {
+        const reason = String(notes || "").trim();
+        await logOpportunityEvent(
+          propertyId,
+          newStage === "dead" ? "dead_entered" : "voided_entered",
+          newStage === "dead" ? "Opportunity Marked Dead" : "Opportunity Voided",
+          reason || "No reason provided.",
+          user.id,
+          "user",
+          { oldStage, reason },
+        );
+        try {
+          const listings = await storage.getPublicListingsByOpportunity(propertyId);
+          for (const l of listings) {
+            if (l.status === "published") await storage.updatePublicListing(l.id, { status: "paused" });
+          }
+        } catch {}
+      }
+      const updated = await storage.getPropertyById(propertyId);
+      res.json({ property: { ...(updated as any), images: resolvePropertyImages((updated as any).images) }, oldStage, newStage });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // OPPORTUNITY PARTIES
+  app.get("/api/opportunities/:id/parties", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const parties = await storage.getOpportunityParties(opportunityId);
+      res.json(parties);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/opportunities/:id/parties", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const validated = insertOpportunityPartySchema.parse({ ...(req.body || {}), opportunityId });
+      const party = await storage.createOpportunityParty(validated as any);
+      await logOpportunityEvent(opportunityId, "party_added", "Party added", `Added ${party.role}: ${party.name || party.email || party.phone || ""}`, user.id, "user", { partyId: party.id, role: party.role });
+      res.status(201).json(party);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.patch("/api/opportunities/parties/:partyId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const partyId = parseInt(req.params.partyId, 10);
+      const party = await storage.getOpportunityPartyById(partyId);
+      if (!party) return res.status(404).json({ message: "Party not found" });
+      const validated = insertOpportunityPartySchema.partial().parse(req.body || {});
+      const updated = await storage.updateOpportunityParty(partyId, validated as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.delete("/api/opportunities/parties/:partyId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const partyId = parseInt(req.params.partyId, 10);
+      const party = await storage.getOpportunityPartyById(partyId);
+      if (!party) return res.status(404).json({ message: "Party not found" });
+      await storage.deleteOpportunityParty(partyId);
+      await logOpportunityEvent(party.opportunityId, "party_removed", "Party removed", `Removed ${party.role}: ${party.name || party.email || ""} `, user.id, "user", { partyId, role: party.role });
+      res.json({ message: "Party removed" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // PUBLIC LISTINGS (CRM-facing)
+  app.get("/api/opportunities/:id/listings", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const listings = await storage.getPublicListingsByOpportunity(opportunityId);
+      res.json(listings);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/opportunities/:id/listings", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const body = req.body || {};
+      const slug = String(body.slug || "").trim() || generateSlug(property.address || `opportunity-${opportunityId}`);
+      const existing = await storage.getPublicListingBySlug(slug);
+      if (existing && existing.opportunityId !== opportunityId) {
+        return res.status(400).json({ message: "Slug already in use" });
+      }
+      const token = body.token || generateListingToken();
+      const validated = insertPublicListingSchema.parse({
+        ...(body as any),
+        opportunityId,
+        slug,
+        token,
+      });
+      const listing = await storage.createPublicListing(validated as any);
+      await logOpportunityEvent(opportunityId, "listing_created", "Public listing created", `Created listing: ${listing.title || slug}`, user.id, "user", { listingId: listing.id, slug });
+      res.status(201).json(listing);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.patch("/api/listings/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const listingId = parseInt(req.params.id, 10);
+      const existing = await storage.getPublicListingById(listingId);
+      if (!existing) return res.status(404).json({ message: "Listing not found" });
+      const validated = insertPublicListingSchema.partial().parse(req.body || {});
+      const updated = await storage.updatePublicListing(listingId, validated as any);
+      if (req.body?.status === "published" && !existing?.publishedAt) {
+        await storage.updatePublicListing(listingId, { publishedAt: new Date(), status: "published" } as any);
+        await logOpportunityEvent(existing.opportunityId, "listing_published", "Listing published", "Public listing is now live.", user.id, "user", { listingId });
+      }
+      if (req.body?.status === "archived") {
+        await logOpportunityEvent(existing.opportunityId, "listing_archived", "Listing archived", "Public listing has been archived.", user.id, "user", { listingId });
+      }
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.delete("/api/listings/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const listingId = parseInt(req.params.id, 10);
+      await storage.deletePublicListing(listingId);
+      res.json({ message: "Listing deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // Log a listing share action to the opportunity timeline.
+  app.post("/api/listings/:id/share", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const listingId = parseInt(req.params.id, 10);
+      const listing = await storage.getPublicListingById(listingId);
+      if (!listing) return res.status(404).json({ message: "Listing not found" });
+      const body = req.body || {};
+      const channel = String(body.channel || "link").slice(0, 20);
+      const target = String(body.target || "").trim().slice(0, 255) || null;
+      await logOpportunityEvent(
+        listing.opportunityId,
+        "listing_shared",
+        `Listing shared via ${channel}`,
+        target ? `Share link sent to ${target} (${channel}).` : `Share link copied (${channel}).`,
+        user.id,
+        "user",
+        { listingId, channel, target },
+      );
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // BUYER INQUIRIES (CRM-facing)
+  app.get("/api/opportunities/:id/inquiries", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const inquiries = await storage.getBuyerInquiries(opportunityId);
+      res.json(inquiries);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+app.patch("/api/inquiries/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const inquiryId = parseInt(req.params.id, 10);
+      const inquiry = await storage.getBuyerInquiryById(inquiryId);
+      if (!inquiry) return res.status(404).json({ message: "Inquiry not found" });
+      const body = req.body || {};
+      const INQUIRY_STATUSES = ["new", "contacted", "qualified", "offer_received", "negotiating", "won", "lost", "spam"];
+      const patch: Record<string, unknown> = {};
+      if (body.status) {
+        const status = String(body.status);
+        if (!INQUIRY_STATUSES.includes(status)) return res.status(400).json({ message: "Invalid inquiry status" });
+        patch.status = status;
+      }
+      if (body.notes !== undefined) patch.notes = body.notes;
+      if (body.assignedToUserId !== undefined) patch.assignedToUserId = body.assignedToUserId === null || body.assignedToUserId === "" ? null : parseInt(body.assignedToUserId, 10);
+      const updated = await storage.updateBuyerInquiry(inquiryId, patch as any);
+      if (patch.status && patch.status !== (inquiry as any).status) {
+        await logOpportunityEvent(
+          inquiry.opportunityId,
+          "inquiry_status_changed",
+          `Inquiry ${String(patch.status).replace("_", " ")}`,
+          `${inquiry.name}'s inquiry (${inquiry.email || inquiry.phone || "no contact"}) marked ${String(patch.status).replace("_", " ")}.`,
+          user.id,
+          "user",
+          { inquiryId, from: (inquiry as any).status, to: patch.status },
+        );
+      }
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  // Convert a buyer inquiry into a Buyer contact (dedupe by email/phone) and link
+  // it to the opportunity as a buyer party.
+  app.post("/api/inquiries/:id/convert", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const inquiryId = parseInt(req.params.id, 10);
+      const inquiry = await storage.getBuyerInquiryById(inquiryId);
+      if (!inquiry) return res.status(404).json({ message: "Inquiry not found" });
+      const email = String(inquiry.email || "").trim().toLowerCase();
+      const phone = String(inquiry.phone || "").trim().replace(/[^\d+]/g, "");
+      let buyer: any = null;
+      let created = false;
+      if (email || phone) {
+        const existing = await storage.getBuyers(1000);
+        buyer = existing.find(
+          (b: any) =>
+            (email && String(b.email || "").trim().toLowerCase() === email) ||
+            (phone && String(b.phone || "").trim().replace(/[^\d+]/g, "") === phone),
+        ) || null;
+      }
+      if (!buyer) {
+        buyer = await storage.createBuyer({
+          name: String(inquiry.name || "Unknown Buyer"),
+          email: email || null,
+          phone: inquiry.phone ? String(inquiry.phone).trim() : null,
+          company: inquiry.company || null,
+          buyerType: String(inquiry.buyerType || "individual"),
+          proofOfFunds: Boolean(inquiry.proofOfFundsUrl),
+          proofOfFundsNotes: inquiry.proofOfFundsUrl ? `POF from inquiry #${inquiry.id}` : null,
+          notes: inquiry.message || null,
+          status: "active",
+          dedupeKey: email ? `email:${email}` : phone ? `phone:${phone}` : `name:${String(inquiry.name || "").toLowerCase()}`,
+        } as any);
+        created = true;
+      }
+      // Link as buyer party (dedupe by email/phone within this opportunity).
+      const parties = await storage.getOpportunityParties(inquiry.opportunityId);
+      const alreadyParty = parties.some(
+        (p: any) =>
+          p.role === "buyer" &&
+          ((email && String(p.email || "").trim().toLowerCase() === email) ||
+            (phone && String(p.phone || "").trim().replace(/[^\d+]/g, "") === phone) ||
+            (buyer.id && p.contactId === buyer.id)),
+      );
+      let party: any = null;
+      if (!alreadyParty) {
+        party = await storage.createOpportunityParty({
+          opportunityId: inquiry.opportunityId,
+          contactId: buyer.id,
+          role: "buyer",
+          name: String(inquiry.name || buyer.name || "Buyer"),
+          email: email || null,
+          phone: phone || null,
+          company: inquiry.company || null,
+          notes: `Converted from buyer inquiry #${inquiry.id}`,
+        } as any);
+      } else {
+        party = parties.find(
+          (p: any) =>
+            p.role === "buyer" &&
+            ((email && String(p.email || "").trim().toLowerCase() === email) ||
+              (phone && String(p.phone || "").trim().replace(/[^\d+]/g, "") === phone) ||
+              (buyer.id && p.contactId === buyer.id)),
+        ) || null;
+      }
+      // Mark inquiry qualified.
+      if (String((inquiry as any).status || "new") === "new") {
+        await storage.updateBuyerInquiry(inquiryId, { status: "qualified" } as any);
+      }
+      await logOpportunityEvent(
+        inquiry.opportunityId,
+        "inquiry_converted",
+        "Inquiry Converted to Buyer",
+        `${inquiry.name} converted to buyer${created ? "" : " (matched existing buyer)"}.`,
+        user.id,
+        "user",
+        { inquiryId, buyerId: buyer.id, created, partyId: party?.id || null },
+      );
+      res.status(201).json({ buyer, party, created, alreadyParty: !!party && !created && !!alreadyParty });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  // Create a buyer offer directly from an inquiry.
+  app.post("/api/inquiries/:id/offer", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const inquiryId = parseInt(req.params.id, 10);
+      const inquiry = await storage.getBuyerInquiryById(inquiryId);
+      if (!inquiry) return res.status(404).json({ message: "Inquiry not found" });
+      const body = req.body || {};
+      const amount = body.amount !== undefined && body.amount !== "" ? Number(body.amount) : inquiry.offerAmount ? Number(inquiry.offerAmount) : NaN;
+      if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ message: "A valid offer amount is required" });
+      const offer = await storage.createBuyerOffer({
+        opportunityId: inquiry.opportunityId,
+        buyerInquiryId: inquiry.id,
+        buyerContactId: null,
+        amount: String(amount),
+        earnestMoney: body.earnestMoney !== undefined && body.earnestMoney !== "" ? String(Number(body.earnestMoney)) : null,
+        financingType: body.financingType ? String(body.financingType).slice(0, 50) : null,
+        closeBy: body.closeBy ? new Date(body.closeBy) : null,
+        terms: body.terms ? String(body.terms) : inquiry.message || null,
+        assignmentTerms: body.assignmentTerms ? String(body.assignmentTerms) : null,
+        notes: body.notes ? String(body.notes) : null,
+        status: "received",
+        version: 1,
+        parentOfferId: null,
+        superseded: false,
+        createdBy: user.id,
+      } as any);
+      if (String((inquiry as any).status || "new") === "new") {
+        await storage.updateBuyerInquiry(inquiryId, { status: "offer_received" } as any);
+      }
+      await logOpportunityEvent(inquiry.opportunityId, "offer_created", "Offer Created from Inquiry", `Offer of $${amount.toLocaleString()} created from ${inquiry.name}'s inquiry.`, user.id, "user", { offerId: offer.id, inquiryId: inquiry.id, amount: String(amount) });
+      res.status(201).json(offer);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+    // OPPORTUNITY EVENTS
+  app.get("/api/opportunities/:id/events", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const limit = parseInt(String(req.query.limit || "100"), 10);
+      const events = await storage.getOpportunityEvents(opportunityId, limit);
+      res.json(events);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   // PROPERTIES ENDPOINTS (Legacy Proxies)
   app.get("/api/properties", async (req, res) => {
     try {
@@ -6232,31 +6627,25 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   // DIALER WORKSPACE ENDPOINTS (Queue)
   app.get("/api/dialer/lists", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     res.json([
       { id: "new", name: "New leads" },
       { id: "followups_due", name: "Follow-ups due" },
       { id: "all_callable", name: "All callable" },
     ]);
   });
-
   app.get("/api/dialer/scripts", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     try {
       const listIdRaw = typeof req.query.listId === "string" ? req.query.listId : "";
       const listId = String(listIdRaw || "").trim() || null;
-
       let where = sql`user_id = ${user.id}`;
       if (listId) where = sql`${where} AND (list_id IS NULL OR list_id = ${listId})`;
       else where = sql`${where} AND list_id IS NULL`;
-
       const result: any = await db.execute(sql`
         SELECT id, list_id as "listId", name, content, is_default as "isDefault", created_at as "createdAt", updated_at as "updatedAt"
         FROM dialer_scripts
@@ -6268,21 +6657,17 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/dialer/scripts", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     try {
       const name = String(req.body?.name || "").trim();
       const content = String(req.body?.content || "");
       const listId = String(req.body?.listId || "").trim() || null;
       const isDefault = Boolean(req.body?.isDefault);
-
       if (!name) return res.status(400).json({ message: "Missing name" });
       if (name.length > 120) return res.status(400).json({ message: "Name too long" });
       if (content.length > 50_000) return res.status(400).json({ message: "Content too long" });
-
       const listKey = listId || "";
       if (isDefault) {
         await db.execute(sql`
@@ -6291,7 +6676,6 @@ export async function registerRoutes(
           WHERE user_id = ${user.id} AND COALESCE(list_id, '') = ${listKey}
         `);
       }
-
       const result: any = await db.execute(sql`
         INSERT INTO dialer_scripts (user_id, list_id, name, content, is_default, created_at, updated_at)
         VALUES (${user.id}, ${listId}, ${name}, ${content}, ${isDefault}, now(), now())
@@ -6302,15 +6686,12 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/dialer/scripts/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     try {
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-
       const before: any = await db.execute(sql`
         SELECT id, user_id as "userId", list_id as "listId", name, content, is_default as "isDefault"
         FROM dialer_scripts
@@ -6319,16 +6700,13 @@ export async function registerRoutes(
       `);
       const existing = (before.rows || [])[0];
       if (!existing) return res.status(404).json({ message: "Not found" });
-
       const nameNext = typeof req.body?.name === "string" ? String(req.body.name).trim() : existing.name;
       const contentNext = typeof req.body?.content === "string" ? String(req.body.content) : existing.content;
       const listIdNext = typeof req.body?.listId === "string" ? (String(req.body.listId).trim() || null) : existing.listId;
       const isDefaultNext = typeof req.body?.isDefault === "boolean" ? Boolean(req.body.isDefault) : Boolean(existing.isDefault);
-
       if (!nameNext) return res.status(400).json({ message: "Missing name" });
       if (nameNext.length > 120) return res.status(400).json({ message: "Name too long" });
       if (contentNext.length > 50_000) return res.status(400).json({ message: "Content too long" });
-
       const listKey = (listIdNext || "");
       if (isDefaultNext) {
         await db.execute(sql`
@@ -6337,7 +6715,6 @@ export async function registerRoutes(
           WHERE user_id = ${user.id} AND COALESCE(list_id, '') = ${listKey}
         `);
       }
-
       const result: any = await db.execute(sql`
         UPDATE dialer_scripts
         SET
@@ -6354,38 +6731,30 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/dialer/scripts/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     try {
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-
       await db.execute(sql`DELETE FROM dialer_scripts WHERE id = ${id} AND user_id = ${user.id}`);
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/dialer/queue", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-
     try {
       const listId = String(req.query.listId || "new");
       const rawLimit = req.query.limit ? parseInt(String(req.query.limit), 10) : 50;
       const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(200, rawLimit)) : 50;
-
       const conditions: any[] = [
         sql`l.owner_phone IS NOT NULL`,
         sql`COALESCE(l.do_not_call, false) = false`,
       ];
-
       let orderBy: any = sql`l.created_at DESC`;
-
       if (listId === "new") {
         conditions.push(sql`COALESCE(l.status, '') = 'new'`);
         orderBy = sql`l.created_at DESC`;
@@ -6398,7 +6767,6 @@ export async function registerRoutes(
       } else {
         return res.status(400).json({ message: "Invalid listId" });
       }
-
       const where = sql.join(conditions, sql` AND `);
       try {
         const result: any = await db.execute(sql`
@@ -6444,7 +6812,6 @@ export async function registerRoutes(
           const prev = lastCallByLeadId.get(lid);
           if (!prev || iso > prev) lastCallByLeadId.set(lid, iso);
         }
-
         const now = Date.now();
         const filtered = (leadsList || [])
           .filter((l: any) => Boolean(l.ownerPhone) && !l.doNotCall)
@@ -6465,20 +6832,17 @@ export async function registerRoutes(
             nextFollowUpAt: l.nextFollowUpAt ? new Date(l.nextFollowUpAt).toISOString() : null,
             lastCallAt: lastCallByLeadId.get(l.id) || null,
           }));
-
         return res.json({ listId, items: filtered });
       }
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   // TELEPHONY ENDPOINTS (Dialer)
   app.post("/api/telephony/calls", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const { direction, number, contactId, status, startedAt, metadata, leadId } = req.body || {};
       const resolvedLeadId = leadId ? Number(leadId) : metadata?.leadId ? Number(metadata.leadId) : null;
       const log = await storage.createCallLog({
@@ -6514,12 +6878,10 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/telephony/calls/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const id = parseInt(req.params.id);
       let beforeStatus: string | null = null;
       let beforeMetadataText: string | null = null;
@@ -6534,7 +6896,6 @@ export async function registerRoutes(
       const patch = { ...(req.body || {}) };
       const followUpAtRaw = patch.followUpAt;
       delete patch.followUpAt;
-
       if (patch.metadata && typeof patch.metadata !== "string") patch.metadata = JSON.stringify(patch.metadata);
       if (patch.status && ["answered", "missed", "failed", "ended"].includes(String(patch.status))) {
         patch.endedAt = new Date();
@@ -6552,7 +6913,6 @@ export async function registerRoutes(
       const metaLeadId = meta?.leadId ? Number(meta.leadId) : null;
       const propertyId = meta?.propertyId ? Number(meta.propertyId) : null;
       const effectiveLeadId = (typeof updated.leadId === "number" ? updated.leadId : null) || beforeLeadId || metaLeadId;
-
       if (nextStatus && nextStatus !== beforeStatus) {
         const terminal = new Set(["answered", "missed", "failed"]);
         if (terminal.has(nextStatus)) {
@@ -6566,7 +6926,6 @@ export async function registerRoutes(
           }
         }
       }
-
       if ((patch.disposition || patch.note) && (effectiveLeadId || propertyId)) {
         await storage.createGlobalActivity({
           userId: user.id,
@@ -6575,7 +6934,6 @@ export async function registerRoutes(
           metadata: JSON.stringify({ leadId: effectiveLeadId || undefined, propertyId: propertyId || undefined, callLogId: updated.id, disposition: patch.disposition || undefined }),
         } as any);
       }
-
       if (followUpAtRaw && effectiveLeadId) {
         const followUpAt = new Date(followUpAtRaw);
         if (!Number.isNaN(followUpAt.valueOf())) {
@@ -6586,7 +6944,6 @@ export async function registerRoutes(
             description: `Follow-up scheduled: ${followUpAt.toLocaleString()}`,
             metadata: JSON.stringify({ leadId: effectiveLeadId, callLogId: updated.id }),
           } as any);
-
           try {
             const dueFrom = new Date(followUpAt.getTime() - 60 * 1000);
             const dueTo = new Date(followUpAt.getTime() + 60 * 1000);
@@ -6630,11 +6987,9 @@ export async function registerRoutes(
           } catch {}
         }
       }
-
       if (patch.disposition === "do_not_call" && effectiveLeadId) {
         await storage.updateLead(effectiveLeadId, { doNotCall: true } as any);
       }
-
       res.json(updated);
       {
         const evt = { type: "call_log_updated", payload: { id: updated.id, status: updated.status, number: updated.number, direction: updated.direction } } as const;
@@ -6645,12 +7000,10 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/telephony/history", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const { limit, offset, status, contactId } = req.query as any;
       const items = await storage.getCallLogs(
         limit ? parseInt(limit) : undefined,
@@ -6668,12 +7021,10 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/telephony/contacts", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const q = (req.query.query as string || "").toLowerCase();
       const all = await storage.getContacts(100, 0);
       const filtered = all.filter(c => (
@@ -6684,7 +7035,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/telephony/spam/flag", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -6705,7 +7055,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/telephony/spam/unflag", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -6723,7 +7072,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/telephony/analytics/summary", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -6737,7 +7085,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/telephony/voicemail", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -6759,7 +7106,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/telephony/presence", async (req, res) => {
     try {
       const number = req.query.number as string;
@@ -6769,37 +7115,191 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/telephony/health", async (req, res) => {
     try {
       // Check database connectivity
       await storage.getUserByEmail("test@example.com");
-      
       // Check Telnyx connectivity
       const telnyxResult = await telnyx.healthCheck();
       const telnyxDiag = telnyx.diagnostics();
-      
-      res.json({ 
-        status: "ok", 
-        db: "connected", 
+      const apiKey = String(process.env.TELNYX_API_KEY || "");
+      const connectionId = String(process.env.TELNYX_CONNECTION_ID || "");
+      const messagingProfileId = String(process.env.TELNYX_MESSAGING_PROFILE_ID || "");
+      const defaultFrom = String(process.env.TELNYX_DEFAULT_FROM_NUMBER || "");
+      const webhookUrl = String(process.env.TELNYX_WEBHOOK_URL || "");
+      // Heuristic: Telnyx Call Control Application IDs are numeric; SIP Credential
+      // Connection IDs are UUIDs and are NOT valid for /v2/calls dialing.
+      const looksLikeCallControl = /^\d+$/.test(connectionId);
+      const looksLikeSipCredential = !looksLikeCallControl && /^[0-9a-fA-F-]{20,}$/.test(connectionId) && connectionId.includes("-");
+      const voiceDetail = telnyxResult.message || "Unknown";
+      const voice = {
+        configured: Boolean(apiKey && connectionId),
+        connectionIdPresent: Boolean(connectionId),
+        connectionType: looksLikeSipCredential ? "sip_credential" : looksLikeCallControl ? "call_control_application" : "unknown",
+        connectionActive: Boolean(telnyxResult.connectionActive),
+        callControlReady: telnyxResult.status === "reachable" && !looksLikeSipCredential,
+        defaultFromNumber: defaultFrom || null,
+        detail: looksLikeSipCredential
+          ? "TELNYX_CONNECTION_ID looks like a SIP Credential Connection ID. Dialing via /v2/calls requires a Call Control Application ID (numeric)."
+          : voiceDetail,
+        code: telnyxResult.code ?? null,
+        hint: (telnyxResult as any).hint || null,
+        telnyxErrorCode: (telnyxResult as any).telnyxErrorCode || null,
+      };
+      const messaging = {
+        configured: Boolean(apiKey && messagingProfileId),
+        messagingProfilePresent: Boolean(messagingProfileId),
+        defaultFromNumber: defaultFrom || null,
+        detail: !messagingProfileId ? "TELNYX_MESSAGING_PROFILE_ID is missing; SMS will not send." : "Messaging profile configured.",
+      };
+      const webhook = {
+        configured: Boolean(webhookUrl),
+        publicUrlPresent: Boolean(webhookUrl),
+        detail: !webhookUrl ? "TELNYX_WEBHOOK_URL is missing; call events and inbound SMS will not be received." : "Webhook URL configured.",
+      };
+      const overallStatus =
+        telnyxResult.status === "unconfigured" ? "unconfigured"
+        : telnyxResult.status === "reachable" ? "reachable"
+        : telnyxResult.status === "degraded" ? "degraded"
+        : "unreachable";
+      res.json({
+        status: overallStatus,
+        checkedAt: new Date().toISOString(),
+        voice,
+        messaging,
+        webhook,
+        db: "connected",
         telnyx: telnyxResult,
         telnyxDiag,
         timestamp: new Date().toISOString(),
         numbers: process.env.DIALER_NUMBERS_JSON ? JSON.parse(process.env.DIALER_NUMBERS_JSON) : [],
-        defaultFrom: process.env.TELNYX_DEFAULT_FROM_NUMBER || null
+        defaultFrom: defaultFrom || null,
       });
     } catch (error: any) {
       console.error("Telephony health check failed:", error);
-      res.status(500).json({ 
-        status: "error", 
-        db: "disconnected", 
+      res.status(500).json({
+        status: "error",
+        checkedAt: new Date().toISOString(),
+        voice: { configured: false, connectionIdPresent: false, connectionActive: false, callControlReady: false, detail: "Health check failed" },
+        messaging: { configured: false, messagingProfilePresent: false, detail: "Health check failed" },
+        webhook: { configured: false, publicUrlPresent: false, detail: "Health check failed" },
+        db: "disconnected",
         telnyx: { status: "error", code: null, message: error?.message || "Health check failed", connectionFound: false, connectionActive: false, httpStatus: null },
         telnyxDiag: telnyx.diagnostics(),
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       });
     }
   });
+  // Telnyx Onboarding Wizard: Live Validation
+  app.post("/api/telnyx/validate/api-key", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { apiKey } = req.body || {};
+      const key = String(apiKey || "").trim();
+      if (!key) return res.status(400).json({ ok: false, error: "API key is required" });
+      const headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+      try {
+        const response = await fetch("https://api.telnyx.com/v2/connections", { headers, signal: AbortSignal.timeout(15000) });
+        const body: any = await response.json().catch(() => ({}));
+        if (response.ok) {
+          const connections = body?.data || [];
+          return res.json({ ok: true, status: "valid", message: `Authenticated. Found ${connections.length} connection(s).`, connectionCount: connections.length, connections: connections.map((c: any) => ({ id: c.id, name: c.name, state: c.state || c.status })) });
+        }
+        const errCode = body?.errors?.[0]?.code || null;
+        const errDetail = body?.errors?.[0]?.detail || body?.errors?.[0]?.title || "Authentication failed";
+        let classification = "invalid";
+        let hint = "Copy a fresh API key from Telnyx Portal -> Account -> API Keys.";
+        if (String(errCode) === "10009") { classification = "malformed"; hint = "Key looks malformed. Generate a new V2 key in Telnyx portal."; }
+        else if (String(errCode) === "20002") { classification = "revoked"; hint = "This key has been revoked. Generate a new key."; }
+        else if (String(errCode) === "20008") { classification = "invalid"; hint = "Key is invalid. Copy it fresh from Telnyx portal."; }
+        else if (response.status === 403) { classification = "no_permission"; hint = "Key is valid but lacks permissions."; }
+        return res.json({ ok: false, status: classification, message: errDetail, hint, telnyxErrorCode: errCode, httpStatus: response.status });
+      } catch (fetchErr: any) {
+        return res.json({ ok: false, status: "unreachable", message: fetchErr?.message || "Could not reach Telnyx API" });
+      }
+    } catch (error: any) { res.status(500).json({ ok: false, error: error?.message || "Validation failed" }); }
+  });
 
+  app.post("/api/telnyx/validate/connection", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { apiKey, connectionId } = req.body || {};
+      const key = String(apiKey || "").trim();
+      const connId = String(connectionId || "").trim();
+      if (!key || !connId) return res.status(400).json({ ok: false, error: "Both apiKey and connectionId are required" });
+      const headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+      try {
+        const response = await fetch(`https://api.telnyx.com/v2/connections/${connId}`, { headers, signal: AbortSignal.timeout(15000) });
+        const body: any = await response.json().catch(() => ({}));
+        if (response.ok) {
+          const conn = body?.data || body;
+          const state = String(conn?.state || conn?.status || "").toLowerCase();
+          const isActive = state === "active" || state === "online" || state === "ready";
+          const isNumeric = /^\d+$/.test(connId);
+          const looksLikeSip = !isNumeric && /^[0-9a-fA-F-]{20,}$/.test(connId) && connId.includes("-");
+          const connType = looksLikeSip ? "sip_credential" : isNumeric ? "call_control_application" : "unknown";
+          let typeWarning = "";
+          if (looksLikeSip) typeWarning = "This is a SIP Credential ID, not a Call Control Application. Outbound calling requires a Call Control Application (numeric ID).";
+          return res.json({ ok: true, status: isActive ? "active" : "inactive", message: isActive ? `Connection "${conn.name || connId}" is active.` : `Connection found, state: "${state}".`, connectionType: connType, connectionName: conn.name || null, connectionState: state, typeWarning });
+        }
+        const errDetail = body?.errors?.[0]?.detail || body?.errors?.[0]?.title || "Connection not found";
+        return res.json({ ok: false, status: "not_found", message: errDetail, hint: "Verify Connection ID in Telnyx Portal -> Voice -> Call Control Applications." });
+      } catch (fetchErr: any) {
+        return res.json({ ok: false, status: "unreachable", message: fetchErr?.message || "Could not reach Telnyx API" });
+      }
+    } catch (error: any) { res.status(500).json({ ok: false, error: error?.message || "Validation failed" }); }
+  });
+
+  app.post("/api/telnyx/validate/messaging-profile", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { apiKey, profileId, fromNumber } = req.body || {};
+      const key = String(apiKey || "").trim();
+      const pid = String(profileId || "").trim();
+      const from = String(fromNumber || "").trim();
+      if (!key || !pid) return res.status(400).json({ ok: false, error: "Both apiKey and profileId are required" });
+      const headers = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+      try {
+        const response = await fetch(`https://api.telnyx.com/v2/messaging_profiles/${pid}`, { headers, signal: AbortSignal.timeout(15000) });
+        const body: any = await response.json().catch(() => ({}));
+        if (response.ok) {
+          const profile = body?.data || body;
+          const numbers = profile?.numbers || [];
+          let numberCheck = null;
+          if (from) {
+            const e164 = /^\+\d{10,15}$/.test(from);
+            if (!e164) { numberCheck = { valid: false, message: "From number must be E.164 format (e.g. +15551234567)" }; }
+            else {
+              const assigned = numbers.some((n: any) => String(n.phone_number || n) === from);
+              numberCheck = assigned
+                ? { valid: true, message: `Number ${from} is assigned to this profile.` }
+                : { valid: false, message: `Number ${from} is not assigned. Assign it in Telnyx Portal -> Messaging -> Profiles.` };
+            }
+          }
+          return res.json({ ok: true, status: "found", message: `Profile "${profile.name || pid}" found with ${numbers.length} number(s).`, profileName: profile.name || null, numberCount: numbers.length, numbers: numbers.slice(0, 10).map((n: any) => String(n.phone_number || n)), numberCheck });
+        }
+        const errDetail = body?.errors?.[0]?.detail || body?.errors?.[0]?.title || "Profile not found";
+        return res.json({ ok: false, status: "not_found", message: errDetail, hint: "Verify Profile ID in Telnyx Portal -> Messaging -> Profiles." });
+      } catch (fetchErr: any) {
+        return res.json({ ok: false, status: "unreachable", message: fetchErr?.message || "Could not reach Telnyx API" });
+      }
+    } catch (error: any) { res.status(500).json({ ok: false, error: error?.message || "Validation failed" }); }
+  });
+
+  // COMMS READINESS — unified channel status (Phase 9)
+  app.get("/api/comms/readiness", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const readiness = await getProviderReadiness();
+      res.json(readiness);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Readiness check failed" });
+    }
+  });
   // SYSTEM HEALTH (Aggregated diagnostics)
   app.get("/api/system/health", async (_req, res) => {
     try {
@@ -6809,12 +7309,10 @@ export async function registerRoutes(
         await storage.getUserByEmail("test@example.com");
         dbStatus = "connected";
       } catch (_e) {}
-
       // Telnyx reachability
       const telnyxResult = await telnyx.healthCheck();
       const telnyxStatus = telnyxResult.status;
       const telnyxDiag = telnyx.diagnostics();
-
       // Env vars presence
       const required = [
         "DATABASE_URL",
@@ -6827,7 +7325,6 @@ export async function registerRoutes(
         "TELNYX_DEFAULT_FROM_NUMBER",
       ];
       const missing = required.filter((k) => !process.env[k] || String(process.env[k]).trim() === "");
-
       // Sessions store check (ensure table exists)
       let sessionsOk = true;
       try {
@@ -6836,14 +7333,12 @@ export async function registerRoutes(
       } catch (_e) {
         sessionsOk = true; // keep optimistic; pg-simple auto-creates table
       }
-
       // Next steps
       const nextSteps: string[] = [];
       if (missing.length) nextSteps.push(`Add missing env vars: ${missing.join(", ")}`);
       if (telnyxStatus !== "reachable") nextSteps.push("Verify Telnyx credentials and number capabilities");
       if (dbStatus !== "connected") nextSteps.push("Verify DATABASE_URL and Neon availability");
       if (!process.env.TELNYX_DEFAULT_FROM_NUMBER) nextSteps.push("Set TELNYX_DEFAULT_FROM_NUMBER for outbound caller ID");
-
       let releaseGate: { ok: boolean; blockingCritical: number } = { ok: true, blockingCritical: 0 };
       try {
         const gateRows: any = await db.execute(sql`
@@ -6855,9 +7350,46 @@ export async function registerRoutes(
         const n = Number((gateRows as any).rows?.[0]?.count ?? 0);
         releaseGate = { ok: n === 0, blockingCritical: Number.isFinite(n) ? n : 0 };
       } catch {}
-
       if (!releaseGate.ok) nextSteps.push(`Release gate blocked: ${releaseGate.blockingCritical} Critical findings are still open`);
+      // Expanded module matrix (Phase 5G). Each entry reports state, last check,
+      // a safe detail, and the actionable next step. Provider credentials are
+      // never included.
+      const checkedAt = new Date().toISOString();
+      const has = (key: string) => Boolean(process.env[key] && String(process.env[key]).trim() !== "");
+      const telnyxReady = telnyxResult.status === "reachable";
+      // Feature flag state matrix (Phase 7)
+      const pf = (v: string | undefined): boolean => {
+        if (!v) return false;
+        const s = v.trim().toLowerCase();
+        return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+      };
+      const featureFlags = [
+        { key: 'esign', label: 'E-Sign', enabled: pf(process.env.FEATURE_ESIGN), action: 'Enable FEATURE_ESIGN to allow contract electronic signatures' },
+        { key: 'rvm', label: 'RVM (Ringless Voicemail)', enabled: pf(process.env.FEATURE_RVM), action: 'Enable FEATURE_RVM to allow ringless voicemail campaigns' },
+        { key: 'skip_trace', label: 'Skip Trace', enabled: pf(process.env.FEATURE_SKIP_TRACE), action: 'Enable FEATURE_SKIP_TRACE to allow lead skip tracing' },
+        { key: 'campaigns', label: 'Campaigns', enabled: pf(process.env.FEATURE_CAMPAIGNS), action: 'Enable FEATURE_CAMPAIGNS to allow campaign creation and management' },
+        { key: 'field_mode', label: 'Field Mode', enabled: pf(process.env.FEATURE_FIELD_MODE), action: 'Enable FEATURE_FIELD_MODE for field-agent mode' },
+        { key: 'comps', label: 'Comps / Valuation', enabled: pf(process.env.FEATURE_COMPS), action: 'Enable FEATURE_COMPS for property comparisons' },
+        { key: 'buyer_match', label: 'Buyer Match', enabled: pf(process.env.FEATURE_BUYER_MATCH), action: 'Enable FEATURE_BUYER_MATCH for automated buyer matching' },
+        { key: 'voice_playground', label: 'Voice Playground', enabled: pf(process.env.FEATURE_VOICE_PLAYGROUND), action: 'Enable FEATURE_VOICE_PLAYGROUND for voice research' },
+      ];
 
+      const modules = [
+        { key: "app", label: "CRM API / server", state: "healthy", detail: "Server is responding", lastChecked: checkedAt },
+        { key: "database", label: "Database", state: dbStatus === "connected" ? "healthy" : "unavailable", detail: dbStatus === "connected" ? "Database reachable" : "Database unreachable — check DATABASE_URL / Neon availability", lastChecked: checkedAt },
+        { key: "storage", label: "File storage", state: has("S3_BUCKET") || has("STORAGE_BUCKET") ? "healthy" : "unconfigured", detail: has("S3_BUCKET") || has("STORAGE_BUCKET") ? "Storage bucket configured" : "No storage bucket configured — uploads may fall back to local storage", lastChecked: checkedAt },
+        { key: "file_preview", label: "Document preview", state: has("S3_BUCKET") || has("STORAGE_BUCKET") ? "healthy" : "unconfigured", detail: "PDF/image preview works from stored files; office formats may require conversion setup", lastChecked: checkedAt },
+        { key: "jobs", label: "Background jobs / queues", state: has("CRON_SECRET") || has("JOBS_ENABLED") ? "healthy" : "unconfigured", detail: "No background job runner configured — reminders/digests run on-demand", lastChecked: checkedAt },
+        { key: "email", label: "Email provider", state: has("RESEND_API_KEY") || has("SMTP_HOST") || has("EMAIL_FROM") ? "healthy" : "unconfigured", detail: has("RESEND_API_KEY") || has("SMTP_HOST") ? "Email provider configured" : "No email provider configured — email notifications are disabled", lastChecked: checkedAt },
+        { key: "telnyx_voice", label: "Telnyx Voice", state: telnyxReady ? "healthy" : telnyxResult.status === "unconfigured" ? "unconfigured" : "unavailable", detail: telnyxResult.message || "Unknown", hint: (telnyxResult as any).hint || null, lastChecked: checkedAt },
+        { key: "telnyx_sms", label: "Telnyx SMS", state: telnyxReady && has("TELNYX_MESSAGING_PROFILE_ID") ? "healthy" : !has("TELNYX_MESSAGING_PROFILE_ID") ? "unconfigured" : "unavailable", detail: !has("TELNYX_MESSAGING_PROFILE_ID") ? "TELNYX_MESSAGING_PROFILE_ID missing" : "SMS requires valid Telnyx credentials", lastChecked: checkedAt },
+        { key: "telnyx_webhook", label: "Telnyx webhook", state: has("TELNYX_WEBHOOK_URL") ? "healthy" : "unconfigured", detail: has("TELNYX_WEBHOOK_URL") ? "Webhook URL configured" : "TELNYX_WEBHOOK_URL missing — call events / inbound SMS not received", lastChecked: checkedAt },
+        { key: "skip_trace", label: "Skip trace provider", state: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") ? "healthy" : "unconfigured", detail: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") ? "Skip trace provider configured" : "No skip trace provider configured — skip trace is unavailable until configured", lastChecked: checkedAt },
+        { key: "calendar", label: "Calendar / meetings", state: "healthy", detail: "Internal CRM calendar active; external calendar sync requires an opt-in connector", lastChecked: checkedAt },
+        { key: "campaigns", label: "Ad / campaign providers", state: has("META_ADS_TOKEN") || has("GOOGLE_ADS_TOKEN") ? "healthy" : "unconfigured", detail: has("META_ADS_TOKEN") || has("GOOGLE_ADS_TOKEN") ? "Ad provider configured" : "No ad network credentials — campaign planning works, live ad delivery is off", lastChecked: checkedAt },
+        { key: "automations", label: "Automation engine", state: "healthy", detail: "Automation engine available (trigger/conditions/actions)", lastChecked: checkedAt },
+        { key: "playground", label: "Playground / research", state: has("PLAYGROUND_URL") || has("DEEP_RESEARCH_API_KEY") ? "healthy" : "unconfigured", detail: has("PLAYGROUND_URL") || has("DEEP_RESEARCH_API_KEY") ? "Research service configured" : "No research provider configured — deep research will show setup guidance", lastChecked: checkedAt },
+      ];
       res.json({
         status: missing.length === 0 && dbStatus === "connected" && telnyxStatus === "reachable" ? "ok" : "warn",
         env: { nodeEnv: process.env.NODE_ENV || "", missing },
@@ -6869,25 +7401,24 @@ export async function registerRoutes(
         sessions: { ok: sessionsOk },
         releaseGate,
         nextSteps,
+        modules,
+        features: featureFlags,
         timestamp: new Date().toISOString(),
       });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/telephony/sms", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const { to, from, body, metadata } = req.body || {};
       if (!to || !body) return res.status(400).json({ error: "Missing to/body", code: "MISSING_FIELDS" });
       const resolvedFrom = from || process.env.TELNYX_DEFAULT_FROM_NUMBER || "";
       if (!resolvedFrom) {
         return res.status(400).json({ error: "Missing fromNumber", code: "MISSING_FROM" });
       }
-
       const e164Re = /^\+[1-9]\d{1,14}$/;
       if (!e164Re.test(String(to))) {
         return res.status(400).json({ error: "Invalid E.164 destination number", code: "INVALID_TO" });
@@ -6895,7 +7426,6 @@ export async function registerRoutes(
       if (!String(body).trim()) {
         return res.status(400).json({ error: "SMS body cannot be empty", code: "EMPTY_BODY" });
       }
-
       let sid: string | null = null;
       let smsStatus = "queued";
       try {
@@ -6904,13 +7434,19 @@ export async function registerRoutes(
         smsStatus = "queued";
       } catch (error: any) {
         console.error("Telnyx SMS failed:", error);
+        if (error instanceof TelnyxConfigError) {
+          return res.status(503).json({
+            error: `Telnyx is not configured. Add the missing variables in Settings → System: ${error.missingEnv.join(", ")}.`,
+            code: "TELNYX_NOT_CONFIGURED",
+            detail: null,
+          });
+        }
         return res.status(error?.status || 502).json({
           error: error?.message || "SMS send failed",
           code: error?.code || "TELNYX_SMS_ERROR",
           detail: error?.detail || null,
         });
       }
-
       if (metadata && typeof metadata === "object") {
         const leadId = (metadata as any).leadId ? Number((metadata as any).leadId) : null;
         const propertyId = (metadata as any).propertyId ? Number((metadata as any).propertyId) : null;
@@ -6931,22 +7467,22 @@ export async function registerRoutes(
       res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
     }
   });
-
   app.post("/api/telephony/outbound/dispatch", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const { toNumber, fromNumber, metadata } = req.body || {};
       if (!toNumber || !String(toNumber).trim()) {
         return res.status(400).json({ error: "toNumber is required", code: "MISSING_TO" });
       }
-
       const resolvedFrom = fromNumber || process.env.TELNYX_DEFAULT_FROM_NUMBER || "";
       if (!resolvedFrom) {
         return res.status(400).json({ error: "Missing fromNumber", code: "MISSING_FROM" });
       }
-
+      const e164Re = /^\+[1-9]\d{1,14}$/;
+      if (!e164Re.test(String(toNumber))) {
+        return res.status(400).json({ error: "Invalid E.164 destination number", code: "INVALID_TO" });
+      }
       let callControlId: string | null = null;
       let callLog: any = null;
       try {
@@ -6957,13 +7493,19 @@ export async function registerRoutes(
         callControlId = result.callControlId;
       } catch (error: any) {
         console.error("Telnyx outbound dispatch failed:", error);
+        if (error instanceof TelnyxConfigError) {
+          return res.status(503).json({
+            error: `Telnyx is not configured. Add the missing variables in Settings → System: ${error.missingEnv.join(", ")}.`,
+            code: "TELNYX_NOT_CONFIGURED",
+            detail: null,
+          });
+        }
         return res.status(error?.status || 502).json({
           error: error?.message || "Outbound dispatch failed",
           code: error?.code || "TELNYX_DIAL_ERROR",
           detail: error?.detail || null,
         });
       }
-
       try {
         callLog = await storage.createCallLog({
           userId: user.id,
@@ -6976,7 +7518,6 @@ export async function registerRoutes(
       } catch (e) {
         console.error("Failed to persist call log:", e);
       }
-
       if (metadata && typeof metadata === "object") {
         const metaLeadId = (metadata as any).leadId ? Number((metadata as any).leadId) : null;
         const propertyId = (metadata as any).propertyId ? Number((metadata as any).propertyId) : null;
@@ -6991,35 +7532,37 @@ export async function registerRoutes(
           } catch {}
         }
       }
-
       res.status(201).json({ callControlId, callLogId: callLog?.id || null });
     } catch (error: any) {
       console.error("Outbound dispatch route error:", error);
       res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
     }
   });
-
   app.post("/api/telephony/outbound/:callControlId/hangup", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const callControlId = String(req.params.callControlId || "").trim();
       if (!callControlId) {
         return res.status(400).json({ error: "callControlId is required", code: "MISSING_CALL_CONTROL_ID" });
       }
-
       try {
         await telnyx.hangup(callControlId);
       } catch (error: any) {
         console.error("Telnyx hangup failed:", error);
+        if (error instanceof TelnyxConfigError) {
+          return res.status(503).json({
+            error: `Telnyx is not configured. Add the missing variables in Settings → System: ${error.missingEnv.join(", ")}.`,
+            code: "TELNYX_NOT_CONFIGURED",
+            detail: null,
+          });
+        }
         return res.status(error?.status || 502).json({
           error: error?.message || "Hangup failed",
           code: error?.code || "TELNYX_HANGUP_ERROR",
           detail: error?.detail || null,
         });
       }
-
       res.json({ ok: true, callControlId });
     } catch (error: any) {
       console.error("Hangup route error:", error);
@@ -7027,10 +7570,221 @@ export async function registerRoutes(
     }
   });
 
+  // ── Call Control: Mute ──────────────────────────────────────────────
+  app.post("/api/telephony/outbound/:callControlId/mute", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const callControlId = String(req.params.callControlId || "").trim();
+      if (!callControlId) return res.status(400).json({ error: "callControlId required", code: "MISSING_CALL_CONTROL_ID" });
+      const muted = Boolean(req.body?.muted ?? true);
+      try {
+        await telnyx.mute(callControlId, muted);
+      } catch (error: any) {
+        if (error instanceof TelnyxConfigError) {
+          return res.status(503).json({ error: `Telnyx not configured: ${error.missingEnv.join(", ")}`, code: "TELNYX_NOT_CONFIGURED" });
+        }
+        return res.status(error?.status || 502).json({ error: error?.message || "Mute failed", code: error?.code || "TELNYX_MUTE_ERROR" });
+      }
+      res.json({ ok: true, callControlId, muted });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
+
+  // ── Call Control: Hold ──────────────────────────────────────────────
+  app.post("/api/telephony/outbound/:callControlId/hold", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const callControlId = String(req.params.callControlId || "").trim();
+      if (!callControlId) return res.status(400).json({ error: "callControlId required", code: "MISSING_CALL_CONTROL_ID" });
+      const action = String(req.body?.action || "hold");
+      try {
+        if (action === "unhold") {
+          await telnyx.unhold(callControlId);
+        } else {
+          await telnyx.hold(callControlId);
+        }
+      } catch (error: any) {
+        if (error instanceof TelnyxConfigError) {
+          return res.status(503).json({ error: `Telnyx not configured: ${error.missingEnv.join(", ")}`, code: "TELNYX_NOT_CONFIGURED" });
+        }
+        return res.status(error?.status || 502).json({ error: error?.message || "Hold failed", code: error?.code || "TELNYX_HOLD_ERROR" });
+      }
+      res.json({ ok: true, callControlId, action });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
+
+  // ── Call Control: Transfer ──────────────────────────────────────────
+  app.post("/api/telephony/outbound/:callControlId/transfer", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const callControlId = String(req.params.callControlId || "").trim();
+      if (!callControlId) return res.status(400).json({ error: "callControlId required", code: "MISSING_CALL_CONTROL_ID" });
+      const to = String(req.body?.to || "").trim();
+      if (!to) return res.status(400).json({ error: "Transfer destination required", code: "MISSING_TO" });
+      try {
+        await telnyx.transfer(callControlId, to);
+      } catch (error: any) {
+        if (error instanceof TelnyxConfigError) {
+          return res.status(503).json({ error: `Telnyx not configured: ${error.missingEnv.join(", ")}`, code: "TELNYX_NOT_CONFIGURED" });
+        }
+        return res.status(error?.status || 502).json({ error: error?.message || "Transfer failed", code: error?.code || "TELNYX_TRANSFER_ERROR" });
+      }
+      res.json({ ok: true, callControlId, transferredTo: to });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
+
+  // ── Provider Readiness ──────────────────────────────────────────────
+  app.get("/api/system/provider-readiness", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const readiness = await getProviderReadiness();
+      return res.json(readiness);
+    } catch (error: any) {
+      console.error("Provider readiness check failed:", error);
+      res.status(500).json({ error: error?.message || "Internal error" });
+    }
+  });
+
+  // ── Video Rooms ─────────────────────────────────────────────────────
+  app.post("/api/video/rooms", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { name, maxParticipants, propertyId } = req.body || {};
+      if (!name || !String(name).trim()) return res.status(400).json({ error: "Room name is required", code: "MISSING_NAME" });
+
+      const { telnyxVideo } = await import("./services/telecom/video.js");
+      let room;
+      try {
+        room = await telnyxVideo.createRoom({
+          name: String(name).trim(),
+          maxParticipants: maxParticipants ? Number(maxParticipants) : undefined,
+        });
+      } catch (error: any) {
+        return res.status(error?.status || 502).json({ error: error?.message || "Video room creation failed", code: "VIDEO_ROOM_ERROR" });
+      }
+
+      // Persist to database
+      let dbRoom: any = null;
+      try {
+        const result = await pool.query(
+          `INSERT INTO video_rooms (room_id, room_sid, name, created_by, property_id, status, max_participants, created_at)
+           VALUES ($1, $2, $3, $4, $5, 'active', $6, NOW())
+           RETURNING *`,
+          [room.roomId, room.roomSid, room.name, user.id, propertyId || null, room.maxParticipants],
+        );
+        dbRoom = (result as any).rows?.[0];
+      } catch (e) {
+        console.error("Failed to persist video room:", e);
+      }
+
+      // Log activity
+      if (propertyId) {
+        try {
+          await storage.createGlobalActivity({
+            userId: user.id,
+            action: "video_room_created",
+            description: `Created meeting: ${room.name}`,
+            metadata: JSON.stringify({ roomId: room.roomId, propertyId, roomSid: room.roomSid }),
+          } as any);
+          await logOpportunityEvent(Number(propertyId), "video_room_created", `Meeting created: ${room.name}`, undefined, user.id);
+        } catch {}
+      }
+
+      res.status(201).json({ ...room, dbId: dbRoom?.id || null });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
+
+  app.get("/api/video/rooms/:roomId/join", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const roomId = String(req.params.roomId || "").trim();
+      if (!roomId) return res.status(400).json({ error: "roomId required" });
+
+      const identity = req.query.identity ? String(req.query.identity) : `${user.firstName || ""} ${user.lastName || ""}`.trim() || `User ${user.id}`;
+
+      const { telnyxVideo } = await import("./services/telecom/video.js");
+      try {
+        const joinResult = await telnyxVideo.getJoinToken(roomId, identity);
+        return res.json(joinResult);
+      } catch (error: any) {
+        return res.status(error?.status || 502).json({ error: error?.message || "Failed to get join token", code: "VIDEO_JOIN_ERROR" });
+      }
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
+
+  app.post("/api/video/rooms/:roomId/end", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const roomId = String(req.params.roomId || "").trim();
+      if (!roomId) return res.status(400).json({ error: "roomId required" });
+
+      const { telnyxVideo } = await import("./services/telecom/video.js");
+      try {
+        await telnyxVideo.endRoom(roomId);
+      } catch (error: any) {
+        return res.status(error?.status || 502).json({ error: error?.message || "Failed to end room", code: "VIDEO_END_ERROR" });
+      }
+
+      // Update DB
+      try {
+        await pool.query(
+          "UPDATE video_rooms SET status = 'ended', ended_at = NOW() WHERE room_id = $1",
+          [roomId],
+        );
+      } catch {}
+
+      res.json({ ok: true, roomId });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
+
+  app.get("/api/video/health", async (_req, res) => {
+    try {
+      const { telnyxVideo } = await import("./services/telecom/video.js");
+      const health = await telnyxVideo.healthCheck();
+      return res.json(health);
+    } catch (error: any) {
+      res.status(500).json({ configured: false, reachable: false, roomsApiAvailable: false, blocker: error?.message || "Check failed" });
+    }
+  });
+
+  app.get("/api/video/rooms", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const status = String(req.query.status || "active");
+      const limit = Math.min(100, parseInt(String(req.query.limit || "20"), 10) || 20);
+
+      const result = await pool.query(
+        "SELECT * FROM video_rooms WHERE status = $1 ORDER BY created_at DESC LIMIT $2",
+        [status, limit],
+      );
+      return res.json({ rooms: (result as any).rows || [] });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Internal error" });
+    }
+  });
+
   function normalizeDigits(value: any) {
     return String(value || "").replace(/[^\d]/g, "");
   }
-
   async function findLeadMatchByPhone(rawPhone: any): Promise<{ leadId: number; userId: number } | null> {
     const digits = normalizeDigits(rawPhone);
     if (digits.length < 7) return null;
@@ -7049,7 +7803,6 @@ export async function registerRoutes(
     const userId = row.assigned_to ? Number(row.assigned_to) : 0;
     return { leadId, userId: Number.isFinite(userId) ? userId : 0 };
   }
-
   async function findCallLogIdByCallSid(callSid: any): Promise<number | null> {
     const sid = String(callSid || "").trim();
     if (!sid) return null;
@@ -7064,7 +7817,6 @@ export async function registerRoutes(
     const row = (rows as any).rows?.[0];
     return row?.id ? Number(row.id) : null;
   }
-
   app.get("/api/properties/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
@@ -7081,7 +7833,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/properties", async (req, res) => {
     try {
       const validated = insertPropertySchema.parse(req.body);
@@ -7101,7 +7852,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/properties/:id", async (req, res) => {
     try {
       const partial = insertPropertySchema.partial().parse(req.body);
@@ -7121,7 +7871,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/properties/:id", async (req, res) => {
     try {
       const property = await storage.getPropertyById(parseInt(req.params.id));
@@ -7141,7 +7890,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   // CONTRACTS ENDPOINTS
   app.get("/api/contracts", async (req, res) => {
     try {
@@ -7157,7 +7905,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/contracts/:id", async (req, res) => {
     try {
       const contract = await storage.getContractById(parseInt(req.params.id));
@@ -7167,7 +7914,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/contracts", async (req, res) => {
     try {
       const validated = insertContractSchema.parse(req.body);
@@ -7180,7 +7926,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/contracts/:id", async (req, res) => {
     try {
       const partial = insertContractSchema.partial().parse(req.body);
@@ -7193,7 +7938,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/contracts/:id", async (req, res) => {
     try {
       await storage.deleteContract(parseInt(req.params.id));
@@ -7202,7 +7946,284 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
+  app.post("/api/contracts/:id/send", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const contract = await storage.getContractById(parseInt(req.params.id));
+      if (!contract) return res.status(404).json({ message: "Contract not found" });
+      if (contract.status === "sent" || contract.status === "viewed" || contract.status === "partially_signed" || contract.status === "signed" || contract.status === "executed") {
+        return res.status(400).json({ message: `Contract already sent or executed` });
+      }
+      const updated = await storage.updateContract(contract.id, { status: "sent", sentAt: new Date() } as any);
+      const signers = await storage.getContractSignersByContract(contract.id);
+      const signingUrlBase = `${process.env.APP_URL || "http://localhost:3000"}/api/sign/signers/`;
+      for (const signer of signers) {
+        if (signer.status === "signed" || signer.status === "declined") continue;
+        const token = signer.tokenHash || crypto.createHash("sha256").update(`${signer.id}-${Date.now()}`).digest("hex");
+        if (token !== signer.tokenHash) {
+          await storage.updateContractSigner(signer.id, { tokenHash: token } as any);
+        }
+        if (signer.email) {
+          try {
+            await sendContractSigningEmail({
+              to: signer.email,
+              signerName: signer.name,
+              contractTitle: contract.title || contract.notes || `Contract #${contract.id}`,
+              signingUrl: `${signingUrlBase}${token}`,
+              expiresAt: signer.expiresAt || undefined,
+            });
+          } catch (e) {
+            console.error(`[Contracts] Failed to send email to ${signer.email}:`, e);
+          }
+        }
+        await storage.updateContractSigner(signer.id, {
+          status: "sent",
+          sentAt: new Date(),
+        } as any);
+      }
+      await storage.createContractEvent({
+        contractId: contract.id,
+        actorType: "user",
+        actorUserId: user.id,
+        eventType: "sent",
+        payloadJson: JSON.stringify({ signerCount: signers.length }),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+      });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/contracts/:id/void", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const contract = await storage.getContractById(parseInt(req.params.id));
+      if (!contract) return res.status(404).json({ message: "Contract not found" });
+      if (contract.status === "executed" || contract.status === "voided") {
+        return res.status(400).json({ message: `Cannot void contract from status: ${contract.status}` });
+      }
+      const { reason } = req.body || {};
+      const updated = await storage.updateContract(contract.id, { status: "voided", voidedAt: new Date(), voidedReason: reason || null } as any);
+      await storage.createContractEvent({
+        contractId: contract.id,
+        actorType: "user",
+        actorUserId: user.id,
+        eventType: "voided",
+        payloadJson: JSON.stringify({ reason }),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+      });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/contracts/:id/execute", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const contract = await storage.getContractById(parseInt(req.params.id));
+      if (!contract) return res.status(404).json({ message: "Contract not found" });
+      if (contract.status !== "signed") {
+        return res.status(400).json({ message: `Cannot execute contract from status: ${contract.status}` });
+      }
+      const updated = await storage.updateContract(contract.id, { status: "executed", executedAt: new Date() } as any);
+      await storage.createContractEvent({
+        contractId: contract.id,
+        actorType: "user",
+        actorUserId: user.id,
+        eventType: "executed",
+        payloadJson: JSON.stringify({}),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+      });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/contracts/:id/upload-signed", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const contract = await storage.getContractById(parseInt(req.params.id));
+      if (!contract) return res.status(404).json({ message: "Contract not found" });
+      const { documentId, reason } = req.body || {};
+      const updated = await storage.updateContract(contract.id, {
+        status: "signed",
+        executedDocumentId: documentId || null,
+        signedAt: new Date(),
+      } as any);
+      await storage.createContractEvent({
+        contractId: contract.id,
+        actorType: "user",
+        actorUserId: user.id,
+        eventType: "document_uploaded",
+        payloadJson: JSON.stringify({ documentId, reason }),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+      });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/contracts/:id/validate", async (req, res) => {
+    try {
+      const contract = await storage.getContractById(parseInt(req.params.id));
+      if (!contract) return res.status(404).json({ message: "Contract not found" });
+      const signers = await storage.getContractSignersByContract(contract.id);
+      const fields = await storage.getContractFieldsByContract(contract.id);
+      const errors = validateContractForSend(contract, signers, fields);
+      res.json({ valid: errors.length === 0, errors });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/contracts/:id/generate-document", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const contract = await storage.getContractById(parseInt(req.params.id));
+      if (!contract) return res.status(404).json({ message: "Contract not found" });
+      const template = contract.templateId ? await storage.getContractTemplateById(contract.templateId) : null;
+      if (!template) return res.status(400).json({ message: "Template is required" });
+      const [property, buyer, seller, lead] = await Promise.all([
+        contract.propertyId ? storage.getPropertyById(contract.propertyId) : null,
+        contract.buyerId ? storage.getBuyerById(contract.buyerId) : null,
+        contract.sellerContactId ? storage.getContactById(contract.sellerContactId) : null,
+        contract.leadId ? storage.getLeadById(contract.leadId) : null,
+      ]);
+      const mergeData = buildMergeData({
+        property: property || undefined,
+        buyer: buyer || undefined,
+        seller: seller || undefined,
+        lead: lead || undefined,
+      });
+      const content = applyTemplateToContract(contract, template, mergeData);
+      const doc = await storage.createContractDocument({
+        templateId: template.id,
+        propertyId: contract.propertyId,
+        title: `${template.name} - Contract #${contract.id}`,
+        documentType: "contract",
+        status: "draft",
+        content,
+        mergeData: JSON.stringify(mergeData),
+        createdBy: String(user.id),
+      } as any);
+      await storage.updateContract(contract.id, { generatedDocumentId: doc.id } as any);
+      await storage.createContractEvent({
+        contractId: contract.id,
+        actorType: "user",
+        actorUserId: user.id,
+        eventType: "generated",
+        payloadJson: JSON.stringify({ documentId: doc.id }),
+      });
+      res.status(201).json(doc);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.get("/api/contracts/:id/signers", async (req, res) => {
+    try {
+      const signers = await storage.getContractSignersByContract(parseInt(req.params.id));
+      res.json(signers);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/contracts/:id/signers", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const validated = insertContractSignerSchema.parse(req.body);
+      const signer = await storage.createContractSigner({ ...validated, contractId: parseInt(req.params.id) });
+      await storage.createContractEvent({
+        contractId: parseInt(req.params.id),
+        actorType: "user",
+        actorUserId: user.id,
+        eventType: "signer_added",
+        payloadJson: JSON.stringify({ signerId: signer.id }),
+      });
+      res.status(201).json(signer);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.patch("/api/contracts/signers/:signerId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const partial = insertContractSignerSchema.partial().parse(req.body);
+      const signer = await storage.updateContractSigner(parseInt(req.params.signerId), partial);
+      res.json(signer);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.get("/api/contracts/:id/events", async (req, res) => {
+    try {
+      const events = await storage.getContractEventsByContract(parseInt(req.params.id));
+      res.json(events);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.get("/api/contracts/:id/fields", async (req, res) => {
+    try {
+      const fields = await storage.getContractFieldsByContract(parseInt(req.params.id));
+      res.json(fields);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/contracts/:id/fields", async (req, res) => {
+    try {
+      const validated = insertContractFieldSchema.parse(req.body);
+      const field = await storage.createContractField({ ...validated, contractId: parseInt(req.params.id) });
+      res.status(201).json(field);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.patch("/api/contracts/fields/:fieldId", async (req, res) => {
+    try {
+      const partial = insertContractFieldSchema.partial().parse(req.body);
+      const field = await storage.updateContractField(parseInt(req.params.fieldId), partial);
+      res.json(field);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.delete("/api/contracts/fields/:fieldId", async (req, res) => {
+    try {
+      await storage.deleteContractField(parseInt(req.params.fieldId));
+      res.json({ message: "Field deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/contract-templates/:id/preview", async (req, res) => {
+    try {
+      const template = await storage.getContractTemplateById(parseInt(req.params.id));
+      if (!template) return res.status(404).json({ message: "Template not found" });
+      const { propertyId, buyerId, sellerContactId, leadId } = req.body || {};
+      const [property, buyer, seller, lead] = await Promise.all([
+        propertyId ? storage.getPropertyById(parseInt(propertyId)) : null,
+        buyerId ? storage.getBuyerById(parseInt(buyerId)) : null,
+        sellerContactId ? storage.getContactById(parseInt(sellerContactId)) : null,
+        leadId ? storage.getLeadById(parseInt(leadId)) : null,
+      ]);
+      const mergeData = buildMergeData({ property: property || undefined, buyer: buyer || undefined, seller: seller || undefined, lead: lead || undefined });
+      const content = applyTemplateToContract({}, template, mergeData);
+      res.json({ content, mergeData, fields: template.mergeFields || [] });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   // CONTACTS ENDPOINTS
   app.get("/api/contacts", async (req, res) => {
     try {
@@ -7231,7 +8252,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/contacts/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -7243,7 +8263,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/contacts", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -7255,7 +8274,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/contacts/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -7267,7 +8285,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/contacts/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -7278,7 +8295,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/companies", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
@@ -7292,7 +8308,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/companies", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
@@ -7320,7 +8335,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/companies/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
@@ -7333,7 +8347,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.patch("/api/companies/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
@@ -7364,7 +8377,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/companies/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
@@ -7393,7 +8405,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/companies/:id/people", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
@@ -7407,7 +8418,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/companies/:id/people", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
@@ -7441,7 +8451,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/companies/:companyId/people/:companyPersonId", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
@@ -7471,19 +8480,16 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/documents", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
       if (!ctx) return;
-
       const { limit, offset } = parseLimitOffset(req.query);
       const q = typeof req.query?.q === "string" ? req.query.q : "";
       const tag = typeof req.query?.tag === "string" ? req.query.tag : "";
       const entityType = typeof req.query?.entityType === "string" ? req.query.entityType : "";
       const entityIdRaw = typeof req.query?.entityId === "string" ? req.query.entityId : "";
       const entityId = entityIdRaw ? parseInt(entityIdRaw, 10) : undefined;
-
       const out = await storage.listDocuments({
         teamId: ctx.teamId,
         q,
@@ -7498,14 +8504,12 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   function canViewVaultDocument(ctx: { user: any; membership: any }, document: any) {
     if (!document) return false;
     if (!document.isPrivate) return true;
     if (Number(document.createdBy) === Number(ctx.user.id)) return true;
     return teamRoleRank(ctx.membership?.role) >= teamRoleRank("admin") || isManagerUser(ctx.user);
   }
-
   app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
@@ -7515,15 +8519,12 @@ export async function registerRoutes(
       }
       const file: any = (req as any).file;
       if (!file) return res.status(400).json({ message: "Missing file" });
-
       const titleRaw = typeof req.body?.title === "string" ? req.body.title : "";
       const title = titleRaw.trim() || String(file.originalname || "Document");
       const kind = typeof req.body?.kind === "string" ? req.body.kind.trim() : null;
-
       const isPrivateRaw = (req.body as any)?.isPrivate;
       const isPrivate =
         isPrivateRaw === true || String(isPrivateRaw || "").trim().toLowerCase() === "true" || String(isPrivateRaw || "").trim() === "1";
-
       const tagsRaw = (req.body as any)?.tags;
       let tags: string[] | null = null;
       if (Array.isArray(tagsRaw)) {
@@ -7532,12 +8533,11 @@ export async function registerRoutes(
         try {
           const parsed = JSON.parse(tagsRaw);
           if (Array.isArray(parsed)) tags = parsed.map((t) => String(t || "").trim()).filter(Boolean);
-          else tags = tagsRaw.split(",").map((t) => t.trim()).filter(Boolean);
+          else tags = tagsRaw.split(",")
         } catch {
-          tags = tagsRaw.split(",").map((t) => t.trim()).filter(Boolean);
+          tags = tagsRaw.split(",")
         }
       }
-
       const buf = Buffer.from(file.buffer);
       
       // Magic byte validation
@@ -7549,7 +8549,6 @@ export async function registerRoutes(
       const storageKey = makeDocumentStorageKey({ teamId: ctx.teamId, originalName: String(file.originalname || "file") });
       const sha = sha256Hex(buf);
       await uploadDocumentObject({ storageKey, contentType: String(file.mimetype || "application/octet-stream"), body: buf });
-
       const doc = await storage.createDocument({
         teamId: ctx.teamId,
         title,
@@ -7562,7 +8561,6 @@ export async function registerRoutes(
         isPrivate,
         createdBy: ctx.user.id,
       } as any);
-
       const v1 = await storage.createVaultDocumentVersion({
         teamId: ctx.teamId,
         documentId: doc.id,
@@ -7573,12 +8571,10 @@ export async function registerRoutes(
         sha256: sha,
         createdBy: ctx.user.id,
       } as any);
-
       const entityType = typeof req.body?.entityType === "string" ? req.body.entityType.trim() : "";
       const entityIdRaw = typeof req.body?.entityId === "string" ? req.body.entityId.trim() : "";
       const entityId = entityIdRaw ? parseInt(entityIdRaw, 10) : NaN;
       const relation = typeof req.body?.relation === "string" ? req.body.relation.trim() : null;
-
       const links: any[] = [];
       if (entityType && Number.isFinite(entityId) && entityId > 0) {
         const link = await storage.createDocumentLink({
@@ -7590,7 +8586,6 @@ export async function registerRoutes(
         } as any);
         links.push(link);
       }
-
       try {
         await writeAuditEvent({
           teamId: ctx.teamId,
@@ -7606,13 +8601,11 @@ export async function registerRoutes(
           requestId: (res.locals as any)?.requestId || null,
         });
       } catch {}
-
       res.status(201).json({ document: doc, links, versions: [v1] });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/documents/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
@@ -7628,7 +8621,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/documents/:id/download", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
@@ -7644,7 +8636,30 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
+  // Phase 6: in-app preview. Streams the stored object inline so PDFs and
+  // images render in a browser viewport without forcing a download. The
+  // storage key / signed URL is never exposed to the client.
+  app.get("/api/documents/:id/preview", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
+      if (!ctx) return;
+      const id = parseInt(req.params.id, 10);
+      const doc = await storage.getDocumentById(id);
+      if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      if (!canViewVaultDocument(ctx, doc)) return res.status(403).json({ message: "Forbidden" });
+      const url = await getDocumentSignedUrl({ storageKey: String(doc.storageKey), expiresInSeconds: 60 * 5 });
+      if (!url) return res.status(503).json({ code: "document_vault_not_configured", message: "Document vault is not configured for preview" });
+      const upstream = await fetch(url as string);
+      if (!upstream.ok) return res.status(502).json({ message: "Preview source unavailable" });
+      const buffer = Buffer.from(await upstream.arrayBuffer());
+      res.setHeader("Content-Type", String(doc.mimeType || "application/octet-stream"));
+      res.setHeader("Content-Disposition", "inline");
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.send(buffer);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   app.post("/api/documents/:id/link", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
@@ -7652,10 +8667,8 @@ export async function registerRoutes(
       const documentId = parseInt(req.params.id, 10);
       const doc = await storage.getDocumentById(documentId);
       if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-
       const schema = insertDocumentLinkSchema.omit({ id: true, createdAt: true, teamId: true, documentId: true } as any);
       const validated: any = schema.parse(req.body || {});
-
       const link = await storage.createDocumentLink({
         teamId: ctx.teamId,
         documentId,
@@ -7663,7 +8676,6 @@ export async function registerRoutes(
         entityId: validated.entityId,
         relation: typeof validated.relation === "string" ? validated.relation : null,
       } as any);
-
       try {
         await writeAuditEvent({
           teamId: ctx.teamId,
@@ -7679,13 +8691,11 @@ export async function registerRoutes(
           requestId: (res.locals as any)?.requestId || null,
         });
       } catch {}
-
       res.status(201).json(link);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/documents/:id/link/:linkId", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
@@ -7693,12 +8703,10 @@ export async function registerRoutes(
       const documentId = parseInt(req.params.id, 10);
       const doc = await storage.getDocumentById(documentId);
       if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-
       const linkId = parseInt(req.params.linkId, 10);
       const link = await storage.getDocumentLinkById(linkId);
       if (!link || link.teamId !== ctx.teamId || link.documentId !== documentId) return res.status(404).json({ message: "Not found" });
       await storage.deleteDocumentLinkForTeam(ctx.teamId, linkId);
-
       try {
         await writeAuditEvent({
           teamId: ctx.teamId,
@@ -7714,13 +8722,11 @@ export async function registerRoutes(
           requestId: (res.locals as any)?.requestId || null,
         });
       } catch {}
-
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/documents/:id/versions", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
@@ -7735,7 +8741,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/documents/:id/versions", upload.single("file"), async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
@@ -7747,18 +8752,14 @@ export async function registerRoutes(
       const doc = await storage.getDocumentById(documentId);
       if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
       if (!canViewVaultDocument(ctx, doc)) return res.status(403).json({ message: "Forbidden" });
-
       const file: any = (req as any).file;
       if (!file) return res.status(400).json({ message: "Missing file" });
-
       const versions = await storage.getVaultDocumentVersions(documentId);
       const nextVersion = versions.length ? Math.max(...versions.map((v: any) => Number(v.version) || 0)) + 1 : 1;
-
       const buf = Buffer.from(file.buffer);
       const storageKey = makeDocumentStorageKey({ teamId: ctx.teamId, originalName: String(file.originalname || "file") });
       const sha = sha256Hex(buf);
       await uploadDocumentObject({ storageKey, contentType: String(file.mimetype || "application/octet-stream"), body: buf });
-
       const v = await storage.createVaultDocumentVersion({
         teamId: ctx.teamId,
         documentId,
@@ -7769,7 +8770,6 @@ export async function registerRoutes(
         sha256: sha,
         createdBy: ctx.user.id,
       } as any);
-
       const updated = await storage.updateDocument(documentId, {
         storageKey,
         mimeType: String(file.mimetype || "application/octet-stream"),
@@ -7777,7 +8777,6 @@ export async function registerRoutes(
         sha256: sha,
         updatedAt: new Date(),
       } as any);
-
       try {
         await writeAuditEvent({
           teamId: ctx.teamId,
@@ -7793,13 +8792,11 @@ export async function registerRoutes(
           requestId: (res.locals as any)?.requestId || null,
         });
       } catch {}
-
       res.status(201).json({ document: updated, version: v });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/automations", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
@@ -7811,16 +8808,13 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/automations", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
       if (!ctx) return;
-
       const baseSchema = insertAutomationSchema.omit({ teamId: true } as any);
       const base: any = baseSchema.parse(req.body || {});
       const automation = await storage.createAutomation({ ...base, teamId: ctx.teamId } as any);
-
       const triggersRaw = Array.isArray(req.body?.triggers) ? req.body.triggers : [];
       const triggers = triggersRaw
         .map((t: any) => ({
@@ -7829,7 +8823,6 @@ export async function registerRoutes(
         }))
         .filter((t: any) => t.eventType);
       await storage.replaceAutomationTriggers(ctx.teamId, automation.id, triggers);
-
       const conditionRaw = req.body?.condition;
       const conditionJson =
         typeof conditionRaw?.configJson === "string"
@@ -7838,7 +8831,6 @@ export async function registerRoutes(
             ? JSON.stringify(conditionRaw)
             : "{}";
       await storage.upsertAutomationCondition(ctx.teamId, automation.id, conditionJson);
-
       const actionsRaw = Array.isArray(req.body?.actions) ? req.body.actions : [];
       const actions = actionsRaw
         .map((a: any, idx: number) => ({
@@ -7848,14 +8840,12 @@ export async function registerRoutes(
         }))
         .filter((a: any) => a.actionType);
       await storage.replaceAutomationActions(ctx.teamId, automation.id, actions);
-
       const out = {
         automation,
         triggers: await storage.getAutomationTriggers(automation.id),
         condition: await storage.getAutomationCondition(automation.id),
         actions: await storage.getAutomationActions(automation.id),
       };
-
       try {
         await writeAuditEvent({
           teamId: ctx.teamId,
@@ -7871,13 +8861,11 @@ export async function registerRoutes(
           requestId: (res.locals as any)?.requestId || null,
         });
       } catch {}
-
       res.status(201).json(out);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/automations/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
@@ -7895,7 +8883,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.patch("/api/automations/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
@@ -7903,11 +8890,9 @@ export async function registerRoutes(
       const id = parseInt(req.params.id, 10);
       const before = await storage.getAutomationById(id);
       if (!before || before.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
-
       const baseSchema = insertAutomationSchema.partial().omit({ teamId: true } as any);
       const patch: any = baseSchema.parse(req.body || {});
       const updated = await storage.updateAutomation(id, { ...patch, updatedAt: new Date() } as any);
-
       if (Array.isArray(req.body?.triggers)) {
         const triggers = (req.body.triggers as any[])
           .map((t: any) => ({
@@ -7917,14 +8902,12 @@ export async function registerRoutes(
           .filter((t: any) => t.eventType);
         await storage.replaceAutomationTriggers(ctx.teamId, id, triggers);
       }
-
       if (typeof req.body?.condition !== "undefined") {
         const c = req.body.condition;
         const conditionJson =
           typeof c?.configJson === "string" ? String(c.configJson) : typeof c === "object" && c ? JSON.stringify(c) : "{}";
         await storage.upsertAutomationCondition(ctx.teamId, id, conditionJson);
       }
-
       if (Array.isArray(req.body?.actions)) {
         const actions = (req.body.actions as any[])
           .map((a: any, idx: number) => ({
@@ -7935,14 +8918,12 @@ export async function registerRoutes(
           .filter((a: any) => a.actionType);
         await storage.replaceAutomationActions(ctx.teamId, id, actions);
       }
-
       const out = {
         automation: updated,
         triggers: await storage.getAutomationTriggers(id),
         condition: await storage.getAutomationCondition(id),
         actions: await storage.getAutomationActions(id),
       };
-
       try {
         await writeAuditEvent({
           teamId: ctx.teamId,
@@ -7958,13 +8939,11 @@ export async function registerRoutes(
           requestId: (res.locals as any)?.requestId || null,
         });
       } catch {}
-
       res.json(out);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/automations/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
@@ -7993,7 +8972,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/automations/:id/runs", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
@@ -8008,18 +8986,45 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
+  // Dry-run an automation against a test event
+  app.post("/api/automations/:id/test", async (req, res) => {
+    try {
+      const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
+      if (!ctx) return;
+      const id = parseInt(req.params.id, 10);
+      const automation = await storage.getAutomationById(id);
+      if (!automation || automation.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
+      const { eventType, entity } = req.body || {};
+      if (!eventType || typeof eventType !== "string") {
+        return res.status(400).json({ message: "eventType is required" });
+      }
+      const result = await dryRunAutomation(id, ctx.teamId, {
+        eventType,
+        occurredAt: new Date().toISOString(),
+        teamId: ctx.teamId,
+        actorUserId: ctx.user.id,
+        entity: { type: entity?.type || "lead", id: entity?.id || null },
+        payload: req.body?.payload || {},
+      });
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   // CONTRACT TEMPLATES ENDPOINTS
   app.get("/api/contract-templates", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
-      const templates = await storage.getContractTemplates(limit, offset);
+      const category = typeof req.query?.category === "string" ? req.query.category : undefined;
+      const jurisdiction = typeof req.query?.jurisdiction === "string" ? req.query.jurisdiction : undefined;
+      const status = typeof req.query?.status === "string" ? req.query.status : undefined;
+      const q = typeof req.query?.q === "string" ? req.query.q : undefined;
+      const templates = await storage.getContractTemplates({ limit, offset, category, jurisdiction, status, q });
       res.json(templates);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/contract-templates/:id", async (req, res) => {
     try {
       const template = await storage.getContractTemplateById(parseInt(req.params.id));
@@ -8029,27 +9034,40 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/contract-templates", async (req, res) => {
     try {
-      const validated = insertContractTemplateSchema.parse(req.body);
-      const template = await storage.createContractTemplate(validated);
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const validated: any = insertContractTemplateSchema.parse(req.body);
+      const template = await storage.createContractTemplate({
+        ...validated,
+        ownerUserId: user.id,
+        status: validated.status || "draft",
+        version: 1,
+      } as any);
       res.status(201).json(template);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/contract-templates/:id", async (req, res) => {
     try {
-      const partial = insertContractTemplateSchema.partial().parse(req.body);
-      const template = await storage.updateContractTemplate(parseInt(req.params.id), partial);
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const current = await storage.getContractTemplateById(id);
+      if (!current) return res.status(404).json({ message: "Template not found" });
+      const partial: any = insertContractTemplateSchema.partial().parse(req.body);
+      // Editing content/name of an approved template is not allowed in place — require /revise.
+      if (partial.content !== undefined && current.status === "approved") {
+        return res.status(400).json({ message: "Approved templates are immutable. Use /revise to create a new version." });
+      }
+      const template = await storage.updateContractTemplate(id, partial);
       res.json(template);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/contract-templates/:id", async (req, res) => {
     try {
       await storage.deleteContractTemplate(parseInt(req.params.id));
@@ -8058,7 +9076,40 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
+  // Phase 6 governance: approve/publish a template (admin/manager).
+  app.post("/api/contract-templates/:id/approve", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Requires manager or admin role" });
+      const id = parseInt(req.params.id);
+      const template = await storage.getContractTemplateById(id);
+      if (!template) return res.status(404).json({ message: "Template not found" });
+      const approved = await storage.approveContractTemplate(id, user.id);
+      res.json(approved);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // Phase 6 governance: editing an approved template must not overwrite history.
+  // Creates a new draft version with lineage (parentTemplateId, version+1).
+  app.post("/api/contract-templates/:id/revise", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const template = await storage.getContractTemplateById(id);
+      if (!template) return res.status(404).json({ message: "Template not found" });
+      if (template.status !== "approved") {
+        return res.status(400).json({ message: "Only approved templates require versioning. Edit drafts directly." });
+      }
+      const clone = await storage.cloneContractTemplate(id, user.id);
+      if (!clone) return res.status(500).json({ message: "Failed to create revision" });
+      res.status(201).json(clone);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   // CONTRACT DOCUMENTS ENDPOINTS
   app.get("/api/contract-documents", async (req, res) => {
     try {
@@ -8069,7 +9120,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/contract-documents/:id", async (req, res) => {
     try {
       const document = await storage.getContractDocumentById(parseInt(req.params.id));
@@ -8079,8 +9129,70 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
-  app.post("/api/contract-documents", async (req, res) => {
+    // Phase 6: rendered text preview of a generated contract document.
+  app.get("/api/contract-documents/:id/view", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const doc = await storage.getContractDocumentById(parseInt(req.params.id));
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+      const content = String(doc.content ?? "");
+      res.json({ id: doc.id, title: doc.title, documentType: doc.documentType, content });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  function wrapText(text: string, maxChars: number = 95): string[] {
+    const words = String(text).split(/\s+/);
+    const out: string[] = [];
+    let line = "";
+    for (const w of words) {
+      if ((line + " " + w).trim().length > maxChars) {
+        if (line) out.push(line.trim());
+        line = w;
+      } else {
+        line = line ? line + " " + w : w;
+      }
+    }
+    if (line) out.push(line.trim());
+    return out;
+  }
+  // Phase 6: generate a printable PDF from a contract document using pdf-lib.
+  app.get("/api/contract-documents/:id/pdf", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const doc = await storage.getContractDocumentById(parseInt(req.params.id));
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+      const pdfLib = await import("pdf-lib");
+      const pdf = await pdfLib.PDFDocument.create();
+      const lines = String(doc.content ?? "").split(/\r?\n/);
+      const page = pdf.addPage([612, 792]);
+      const helvetica = await pdf.embedFont(pdfLib.StandardFonts.Helvetica);
+      let y = 750;
+      for (const raw of lines) {
+        const line = String(raw).trim();
+        if (!line) { y -= 14; continue; }
+        const cleaned = line.replace(/[ --]/g, "");
+        try {
+          const wrapped = wrapText(cleaned, 95);
+          for (const seg of wrapped) {
+            if (y < 40) { y = 750; page.drawText("", { x: 0, y: 0 }); }
+            page.drawText(seg, { x: 50, y: y, size: 10, font: helvetica });
+            y -= 14;
+          }
+        } catch {}
+      }
+      const bytes = await pdf.save();
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(String(doc.title || "contract"))}.pdf"`);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.send(Buffer.from(bytes));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+    app.post("/api/contract-documents", async (req, res) => {
     try {
       const validated = insertContractDocumentSchema.parse(req.body);
       const document = await storage.createContractDocument(validated);
@@ -8089,7 +9201,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/contract-documents/:id", async (req, res) => {
     try {
       const partial = insertContractDocumentSchema.partial().parse(req.body);
@@ -8099,7 +9210,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/contract-documents/:id", async (req, res) => {
     try {
       await storage.deleteContractDocument(parseInt(req.params.id));
@@ -8108,12 +9218,11 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/contract-documents/:id/envelopes", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "esign"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "esign"))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
       const id = parseInt(req.params.id);
       const rows = await storage.getContractEnvelopesByDocument(id);
       res.json(rows.map((e: any) => ({ ...e, tokenHash: undefined })));
@@ -8121,27 +9230,23 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/contract-documents/:id/envelopes", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "esign"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "esign"))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
       const id = parseInt(req.params.id);
       const doc = await storage.getContractDocumentById(id);
       if (!doc) return res.status(404).json({ message: "Document not found" });
-
       const schema = z.object({
         signerName: z.string().trim().min(1).max(255),
         signerEmail: z.string().trim().email().max(255),
         expiresInDays: z.number().int().min(1).max(120).optional(),
       });
       const payload = schema.parse(req.body || {});
-
       const token = crypto.randomBytes(24).toString("hex");
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
       const expiresAt = new Date(Date.now() + (payload.expiresInDays ?? 30) * 24 * 60 * 60 * 1000);
-
       const env = await storage.createContractEnvelope({
         documentId: id,
         status: "sent",
@@ -8152,7 +9257,6 @@ export async function registerRoutes(
         sentAt: new Date(),
         auditJson: JSON.stringify([{ event: "sent", at: new Date().toISOString(), userId: user.id }]),
       } as any);
-
       await storage.updateContractDocument(id, { status: "sent" } as any);
       await storage.createGlobalActivity({
         userId: user.id,
@@ -8160,10 +9264,8 @@ export async function registerRoutes(
         description: `Contract sent for signature: ${doc.title}`,
         metadata: JSON.stringify({ documentId: id, envelopeId: env.id, signerEmail: payload.signerEmail }),
       } as any);
-
       const origin = `${req.protocol}://${req.get("host")}`;
       const signerUrl = `${origin}/sign/${token}`;
-
       let emailSent = false;
       let emailError: string | null = null;
       try {
@@ -8175,7 +9277,6 @@ export async function registerRoutes(
       } catch (e: any) {
         emailError = String(e?.message || e);
       }
-
       try {
         const audit = (() => {
           try {
@@ -8193,18 +9294,16 @@ export async function registerRoutes(
         });
         await storage.updateContractEnvelope(env.id, { auditJson: JSON.stringify(audit) } as any);
       } catch {}
-
       res.status(201).json({ envelopeId: env.id, signerUrl, expiresAt: expiresAt.toISOString(), emailSent, emailError });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/contract-envelopes/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "esign"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "esign"))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
       const id = parseInt(req.params.id);
       const env = await storage.getContractEnvelopeById(id);
       if (!env) return res.status(404).json({ message: "Not found" });
@@ -8213,12 +9312,11 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/contract-envelopes/:id/upload-signed", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "esign"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "esign"))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
       const id = parseInt(req.params.id);
       const schema = z.object({ signedPdfBase64: z.string().trim().min(1) });
       const payload = schema.parse(req.body || {});
@@ -8250,7 +9348,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/sign/envelopes/:token", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
@@ -8259,10 +9356,8 @@ export async function registerRoutes(
       const env = await storage.getContractEnvelopeByTokenHash(tokenHash);
       if (!env) return res.status(404).json({ message: "Not found" });
       if ((env as any).expiresAt && new Date((env as any).expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
-
       const doc = await storage.getContractDocumentById(env.documentId);
       if (!doc) return res.status(404).json({ message: "Not found" });
-
       let mergeData: any = {};
       try {
         mergeData = doc.mergeData ? JSON.parse(String(doc.mergeData)) : {};
@@ -8270,7 +9365,6 @@ export async function registerRoutes(
         mergeData = {};
       }
       const merged = mergeTemplate(String(doc.content || ""), mergeData);
-
       res.json({
         envelope: {
           id: env.id,
@@ -8289,7 +9383,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/sign/envelopes/:token/viewed", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
@@ -8297,7 +9390,6 @@ export async function registerRoutes(
       const env = await storage.getContractEnvelopeByTokenHash(tokenHash);
       if (!env) return res.status(404).json({ message: "Not found" });
       if ((env as any).expiresAt && new Date((env as any).expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
-
       const audit = (() => {
         try {
           const parsed = JSON.parse(String((env as any).auditJson || "[]"));
@@ -8307,7 +9399,6 @@ export async function registerRoutes(
         }
       })();
       audit.push({ event: "viewed", at: new Date().toISOString(), ip: req.ip, ua: req.headers["user-agent"] || "" });
-
       await storage.updateContractEnvelope(env.id, {
         status: env.status === "sent" ? "viewed" : env.status,
         viewedAt: (env as any).viewedAt || new Date(),
@@ -8318,7 +9409,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/sign/envelopes/:token/decline", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
@@ -8327,7 +9417,6 @@ export async function registerRoutes(
       if (!env) return res.status(404).json({ message: "Not found" });
       if ((env as any).expiresAt && new Date((env as any).expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
       if (env.status === "signed") return res.status(400).json({ message: "Already signed" });
-
       const audit = (() => {
         try {
           const parsed = JSON.parse(String((env as any).auditJson || "[]"));
@@ -8337,14 +9426,12 @@ export async function registerRoutes(
         }
       })();
       audit.push({ event: "declined", at: new Date().toISOString(), ip: req.ip, ua: req.headers["user-agent"] || "" });
-
       await storage.updateContractEnvelope(env.id, { status: "declined", declinedAt: new Date(), auditJson: JSON.stringify(audit) } as any);
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/sign/envelopes/:token/sign", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
@@ -8354,7 +9441,6 @@ export async function registerRoutes(
       if ((env as any).expiresAt && new Date((env as any).expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
       if (env.status === "signed") return res.status(400).json({ message: "Already signed" });
       if (env.status === "declined") return res.status(400).json({ message: "Declined" });
-
       const schema = z.object({
         signatureType: z.enum(["typed", "drawn"]),
         signatureText: z.string().trim().max(255).optional().nullable(),
@@ -8363,10 +9449,8 @@ export async function registerRoutes(
       const payload = schema.parse(req.body || {});
       if (payload.signatureType === "typed" && !String(payload.signatureText || "").trim()) return res.status(400).json({ message: "Signature text is required" });
       if (payload.signatureType === "drawn" && !String(payload.signatureImageBase64 || "").trim()) return res.status(400).json({ message: "Signature image is required" });
-
       const doc = await storage.getContractDocumentById(env.documentId);
       if (!doc) return res.status(404).json({ message: "Not found" });
-
       let mergeData: any = {};
       try {
         mergeData = doc.mergeData ? JSON.parse(String(doc.mergeData)) : {};
@@ -8374,7 +9458,6 @@ export async function registerRoutes(
         mergeData = {};
       }
       const merged = mergeTemplate(String(doc.content || ""), mergeData);
-
       const audit = (() => {
         try {
           const parsed = JSON.parse(String((env as any).auditJson || "[]"));
@@ -8384,7 +9467,6 @@ export async function registerRoutes(
         }
       })();
       audit.push({ event: "signed", at: new Date().toISOString(), ip: req.ip, ua: req.headers["user-agent"] || "" });
-
       const auditLines = [
         `Envelope #${env.id}`,
         `Signer: ${String(env.signerName || "")} <${String(env.signerEmail || "")}>`,
@@ -8398,7 +9480,6 @@ export async function registerRoutes(
         signatureImageBase64: payload.signatureImageBase64 || null,
         auditLines,
       });
-
       await storage.updateContractEnvelope(env.id, {
         status: "signed",
         signedAt: new Date(),
@@ -8408,7 +9489,6 @@ export async function registerRoutes(
         signedPdfBase64,
         auditJson: JSON.stringify(audit),
       } as any);
-
       await storage.updateContractDocument(env.documentId, { status: "executed" } as any).catch((e: any) => {
         console.error(JSON.stringify({ ts: new Date().toISOString(), event: "esign", kind: "document_update_failed", documentId: env.documentId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
       });
@@ -8420,7 +9500,6 @@ export async function registerRoutes(
       } as any).catch((e: any) => {
         console.error(JSON.stringify({ ts: new Date().toISOString(), event: "esign", kind: "activity_log_failed", action: "contract_signed", documentId: env.documentId, envelopeId: env.id, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
       });
-
       try {
         await onContractSigned({
           documentId: env.documentId,
@@ -8428,13 +9507,11 @@ export async function registerRoutes(
           propertyId: (doc as any)?.propertyId ?? null,
         });
       } catch {}
-
       res.json({ ok: true });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/sign/envelopes/:token/pdf", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
@@ -8450,7 +9527,163 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
+  app.get("/api/sign/signers/:token", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      if (!token) return res.status(404).json({ message: "Not found" });
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const signer = await storage.getContractSignerByTokenHash(tokenHash);
+      if (!signer) return res.status(404).json({ message: "Not found" });
+      if (signer.expiresAt && new Date(signer.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
+      if (signer.status === "signed") return res.status(400).json({ message: "Already signed" });
+      if (signer.status === "declined") return res.status(400).json({ message: "Declined" });
+      const contract = await storage.getContractById(signer.contractId);
+      if (!contract) return res.status(404).json({ message: "Not found" });
+      let docContent = "";
+      let docTitle = "Contract";
+      if (contract.generatedDocumentId) {
+        const doc = await storage.getContractDocumentById(contract.generatedDocumentId);
+        if (doc) {
+          docTitle = doc.title;
+          let mergeData: any = {};
+          try { mergeData = doc.mergeData ? JSON.parse(String(doc.mergeData)) : {}; } catch { mergeData = {}; }
+          const fallback = contract.mergeDataSnapshot || {};
+          const merged = mergeTemplate(String(doc.content || ""), { ...fallback, ...mergeData });
+          docContent = merged;
+        }
+      }
+      res.json({
+        signer: {
+          id: signer.id,
+          name: signer.name,
+          email: signer.email,
+          role: signer.role,
+          status: signer.status,
+          expiresAt: signer.expiresAt,
+          sentAt: signer.sentAt,
+          viewedAt: signer.viewedAt,
+          signedAt: signer.signedAt,
+        },
+        contract: { id: contract.id, status: contract.status },
+        document: { title: docTitle, content: docContent },
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/sign/signers/:token/viewed", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const signer = await storage.getContractSignerByTokenHash(tokenHash);
+      if (!signer) return res.status(404).json({ message: "Not found" });
+      if (signer.expiresAt && new Date(signer.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
+      const updated = await storage.updateContractSigner(signer.id, {
+        status: signer.status === "sent" ? "viewed" : signer.status,
+        viewedAt: new Date(),
+      } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/sign/signers/:token/decline", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const signer = await storage.getContractSignerByTokenHash(tokenHash);
+      if (!signer) return res.status(404).json({ message: "Not found" });
+      if (signer.expiresAt && new Date(signer.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
+      if (signer.status === "signed") return res.status(400).json({ message: "Already signed" });
+      const updated = await storage.updateContractSigner(signer.id, {
+        status: "declined",
+        declinedAt: new Date(),
+      } as any);
+      await storage.createContractEvent({
+        contractId: signer.contractId,
+        actorType: "contact",
+        actorContactId: signer.contactId || undefined,
+        eventType: "declined",
+        payloadJson: JSON.stringify({ signerId: signer.id }),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+      });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/sign/signers/:token/sign", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const signer = await storage.getContractSignerByTokenHash(tokenHash);
+      if (!signer) return res.status(404).json({ message: "Not found" });
+      if (signer.expiresAt && new Date(signer.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
+      if (signer.status === "signed") return res.status(400).json({ message: "Already signed" });
+      if (signer.status === "declined") return res.status(400).json({ message: "Declined" });
+      const schema = z.object({
+        signatureType: z.enum(["typed", "drawn"]),
+        signatureText: z.string().trim().max(255).optional().nullable(),
+        signatureImageBase64: z.string().trim().optional().nullable(),
+        legalName: z.string().trim().max(255).optional(),
+        consent: z.boolean().optional(),
+      });
+      const payload = schema.parse(req.body || {});
+      if (payload.signatureType === "typed" && !String(payload.signatureText || "").trim()) return res.status(400).json({ message: "Signature text is required" });
+      if (payload.signatureType === "drawn" && !String(payload.signatureImageBase64 || "").trim()) return res.status(400).json({ message: "Signature image is required" });
+      const contract = await storage.getContractById(signer.contractId);
+      if (!contract) return res.status(404).json({ message: "Not found" });
+      let docContent = "";
+      if (contract.generatedDocumentId) {
+        const doc = await storage.getContractDocumentById(contract.generatedDocumentId);
+        if (doc) {
+          let mergeData: any = {};
+          try { mergeData = doc.mergeData ? JSON.parse(String(doc.mergeData)) : {}; } catch { mergeData = {}; }
+          const fallback = contract.mergeDataSnapshot || {};
+          docContent = mergeTemplate(String(doc.content || ""), { ...fallback, ...mergeData });
+        }
+      }
+      const auditLines = [
+        `Contract #${contract.id}`,
+        `Signer: ${signer.name} <${signer.email || ""}>`,
+        `Signed at: ${new Date().toISOString()}`,
+      ];
+      const signedPdfBase64 = await generateSignedPdfBase64({
+        title: `Contract #${contract.id}`,
+        contentText: docContent,
+        signatureType: payload.signatureType,
+        signatureText: payload.signatureText || null,
+        signatureImageBase64: payload.signatureImageBase64 || null,
+        auditLines,
+      });
+      const signatureMetadata = {
+        signatureType: payload.signatureType,
+        legalName: payload.legalName || signer.name,
+        consent: payload.consent || false,
+        signedAt: new Date().toISOString(),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+      };
+      await storage.updateContractSigner(signer.id, {
+        status: "signed",
+        signedAt: new Date(),
+        signatureMetadataJson: JSON.stringify(signatureMetadata),
+      } as any);
+      await storage.createContractEvent({
+        contractId: signer.contractId,
+        actorType: "contact",
+        actorContactId: signer.contactId || undefined,
+        eventType: "signed",
+        payloadJson: JSON.stringify({ signerId: signer.id, signatureType: payload.signatureType }),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+      });
+      res.json({ ok: true, signedPdfBase64 });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
   // DOCUMENT VERSIONS ENDPOINTS
   app.get("/api/documents/:documentId/versions", async (req, res) => {
     try {
@@ -8460,7 +9693,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/documents/:documentId/versions", async (req, res) => {
     try {
       const validated = insertDocumentVersionSchema.parse({
@@ -8473,7 +9705,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   // LOIS ENDPOINTS
   app.get("/api/lois", async (req, res) => {
     try {
@@ -8484,7 +9715,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/lois/:id", async (req, res) => {
     try {
       const loi = await storage.getLoiById(parseInt(req.params.id));
@@ -8494,7 +9724,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/lois", async (req, res) => {
     try {
       const validated = insertLoiSchema.parse(req.body);
@@ -8504,7 +9733,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/lois/:id", async (req, res) => {
     try {
       const partial = insertLoiSchema.partial().parse(req.body);
@@ -8514,7 +9742,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/lois/:id", async (req, res) => {
     try {
       await storage.deleteLoi(parseInt(req.params.id));
@@ -8523,28 +9750,33 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   // USERS ENDPOINTS
   app.get("/api/users", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
       const users = await storage.getUsers(limit, offset);
-      res.json(users);
+      // Hide inactive (archived/deactivated) accounts from pickers; never expose
+      // password hashes or TOTP secrets to API clients.
+      res.json((users || [])
+        .filter((u: any) => u.isActive !== false)
+        .map((u: any) => {
+          const { passwordHash, ...safe } = u;
+          return safe;
+        }));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/users/:id", async (req, res) => {
     try {
       const user = await storage.getUserById(parseInt(req.params.id));
       if (!user) return res.status(404).json({ message: "User not found" });
-      res.json(user);
+      const { passwordHash, ...safe } = user as any;
+      res.json(safe);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/users", async (req, res) => {
     try {
       const validated = insertUserSchema.parse(req.body);
@@ -8554,49 +9786,39 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   // Change password
   app.patch("/api/users/:id/password", async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
-
     const userId = parseInt(req.params.id);
     if (req.session.userId !== userId) {
       return res.status(403).json({ message: "Forbidden" });
     }
-
     try {
       const { currentPassword, newPassword } = req.body;
-
       if (!currentPassword || !newPassword) {
         return res.status(400).json({ message: "Current and new password are required" });
       }
-
       if (newPassword.length < 8) {
         return res.status(400).json({ message: "Password must be at least 8 characters long" });
       }
-
       const user = await storage.getUserById(userId);
       if (!user || !user.passwordHash) {
         return res.status(404).json({ message: "User not found" });
       }
-
       const isValid = await bcrypt.compare(currentPassword, user.passwordHash);
       if (!isValid) {
         return res.status(401).json({ message: "Current password is incorrect" });
       }
-
       const newPasswordHash = await bcrypt.hash(newPassword, 12);
       await storage.updateUser(userId, { passwordHash: newPasswordHash });
-
       res.json({ message: "Password updated successfully" });
     } catch (error) {
       console.error("Error changing password:", error);
       res.status(500).json({ message: "Failed to change password" });
     }
   });
-
   app.patch("/api/users/:id", async (req, res) => {
     try {
       const partial = insertUserSchema.partial().parse(req.body);
@@ -8606,66 +9828,220 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
-  // TWO FACTOR AUTH ENDPOINTS
+  // TWO FACTOR AUTH ENDPOINTS — self-or-admin only, password re-auth for sensitive changes
   app.get("/api/users/:userId/2fa", async (req, res) => {
     try {
-      const auth = await storage.getTwoFactorAuthByUserId(parseInt(req.params.userId));
-      res.json(auth || { isEnabled: false });
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
+      const auth = await storage.getTwoFactorAuthByUserId(targetId);
+      res.json(auth ? { isEnabled: auth.isEnabled, method: auth.method, createdAt: auth.createdAt } : { isEnabled: false });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/users/:userId/2fa", async (req, res) => {
     try {
-      const validated = insertTwoFactorAuthSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
+      if (Number(user.id) !== targetId) return res.status(403).json({ message: "Only the account owner can enable 2FA" });
+      // Enrollment requires the current password.
+      const currentPassword = String(req.body?.password || "");
+      const fresh = await storage.getUserById(targetId);
+      if (!fresh?.passwordHash) return res.status(400).json({ message: "Password authentication is required to enable 2FA" });
+      const okPw = await bcrypt.compare(currentPassword, fresh.passwordHash);
+      if (!okPw) return res.status(401).json({ message: "Current password is incorrect" });
+      const existing = await storage.getTwoFactorAuthByUserId(targetId);
+      if (existing?.isEnabled) return res.status(400).json({ message: "2FA is already enabled" });
+      const secret = speakeasy.generateSecret({ name: `Luxe RM (${req.body?.email || user.email})`, issuer: "Luxe RM", length: 32 });
+      const qrCode = await QRCode.toDataURL(secret.otpauth_url!);
+      const validated = insertTwoFactorAuthSchema.parse({ userId: targetId, secret: secret.base32, isEnabled: false, method: "totp" });
       const auth = await storage.createTwoFactorAuth(validated);
-      res.status(201).json(auth);
+      const teamId = (await getOrInitActiveTeamId(req, user.id)) ?? null;
+      if (teamId) {
+        try { await writeAuditEvent({ teamId, actorUserId: user.id, entityType: "user", entityId: targetId, action: "2fa_enrollment_started", kind: "create", ip: req.ip, userAgent: String(req.headers["user-agent"] || "") }); } catch {}
+      }
+      res.status(201).json({ ...auth, qrCode, otpauthUrl: secret.otpauth_url });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
+  app.post("/api/users/:userId/2fa/verify", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
+      if (!checkTwoFactorRateLimit(`verify:${targetId}:${req.ip || "unknown"}`)) {
+        return res.status(429).json({ message: "Too many attempts. Try again in 15 minutes." });
+      }
+      const { code } = req.body || {};
+      if (!code || String(code).trim().length !== 6) return res.status(400).json({ message: "A 6-digit code is required" });
+      const auth = await storage.getTwoFactorAuthByUserId(targetId);
+      if (!auth) return res.status(404).json({ message: "2FA not set up" });
+      const verified = speakeasy.totp.verify({ secret: auth.secret, encoding: "base32", token: String(code).trim(), window: 2 });
+      if (!verified) return res.status(400).json({ message: "Invalid code" });
+      const updated = await storage.updateTwoFactorAuth(targetId, { isEnabled: true });
+      const teamId = (await getOrInitActiveTeamId(req, user.id)) ?? null;
+      if (teamId) {
+        try { await writeAuditEvent({ teamId, actorUserId: user.id, entityType: "user", entityId: targetId, action: "2fa_enabled", kind: "update", ip: req.ip, userAgent: String(req.headers["user-agent"] || "") }); } catch {}
+      }
+      res.json({ isEnabled: updated.isEnabled });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/auth/login/2fa", async (req, res) => {
+    try {
+      const { tempToken, code } = req.body || {};
+      if (!tempToken || !code) return res.status(400).json({ message: "Missing tempToken or code" });
+      if (!checkTwoFactorRateLimit(`login2fa:${req.ip || "unknown"}`)) {
+        return res.status(429).json({ message: "Too many attempts. Try again in 15 minutes." });
+      }
+      const secret = authJwtSecret();
+      if (!secret) return res.status(500).json({ message: "Auth not configured" });
+      const { jwtVerify } = await import("jose");
+      let payload: any;
+      try {
+        payload = await jwtVerify(tempToken, secret);
+      } catch {
+        return res.status(401).json({ message: "Invalid or expired session" });
+      }
+      const userId = parseInt(payload.sub as string);
+      const user = await storage.getUserById(userId);
+      if (!user) return res.status(401).json({ message: "User not found" });
+      const twoFactor = await storage.getTwoFactorAuthByUserId(userId);
+      if (!twoFactor?.isEnabled) return res.status(400).json({ message: "2FA is not enabled" });
+      const isBackupCode = String(code).trim().length === 10;
+      let verified = false;
+      if (isBackupCode) {
+        const codeHash = crypto.createHash("sha256").update(String(code).trim()).digest("hex");
+        verified = await storage.useBackupCode(userId, codeHash);
+      } else {
+        verified = speakeasy.totp.verify({ secret: twoFactor.secret, encoding: "base32", token: String(code).trim(), window: 2 });
+      }
+      if (!verified) return res.status(401).json({ message: isBackupCode ? "Invalid backup code" : "Invalid 2FA code" });
+      req.session.userId = user.id;
+      req.session.email = user.email;
+      {
+        const at = await getOrInitActiveTeamId(req, user.id);
+        if (at) req.session.activeTeamId = at;
+        else delete req.session.activeTeamId;
+      }
+      const { passwordHash, ...userWithoutPassword } = user;
+      const token = await issueAuthToken({ sub: String(user.id), email: user.email });
+      res.json({ user: userWithoutPassword, token });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   app.patch("/api/users/:userId/2fa", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
       const partial = insertTwoFactorAuthSchema.partial().parse(req.body);
-      const auth = await storage.updateTwoFactorAuth(parseInt(req.params.userId), partial);
+      const { secret: _secret, isEnabled: _isEnabled, ...allowed } = partial as any;
+      if (Object.keys(allowed).length === 0) return res.status(400).json({ message: "Nothing to update" });
+      const auth = await storage.updateTwoFactorAuth(targetId, allowed);
       res.json(auth);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/users/:userId/2fa", async (req, res) => {
     try {
-      await storage.deleteTwoFactorAuth(parseInt(req.params.userId));
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
+      if (Number(user.id) !== targetId) return res.status(403).json({ message: "Only the account owner can disable 2FA" });
+      // Disable flow: require current password AND a valid second factor.
+      const currentPassword = String(req.body?.password || "");
+      const secondFactor = String(req.body?.code || "");
+      const fresh = await storage.getUserById(targetId);
+      if (!fresh?.passwordHash) return res.status(400).json({ message: "Password authentication is required to disable 2FA" });
+      const okPw = await bcrypt.compare(currentPassword, fresh.passwordHash);
+      if (!okPw) return res.status(401).json({ message: "Current password is incorrect" });
+      const auth = await storage.getTwoFactorAuthByUserId(targetId);
+      let secondFactorOk = false;
+      if (auth) {
+        if (String(secondFactor).trim().length === 10) {
+          const codeHash = crypto.createHash("sha256").update(String(secondFactor).trim()).digest("hex");
+          secondFactorOk = await storage.useBackupCode(targetId, codeHash);
+        } else {
+          secondFactorOk = speakeasy.totp.verify({ secret: auth.secret, encoding: "base32", token: String(secondFactor).trim(), window: 2 });
+        }
+      }
+      if (!secondFactorOk) return res.status(401).json({ message: "A valid 2FA code or backup code is required to disable 2FA" });
+      await storage.deleteTwoFactorAuth(targetId);
+      await storage.deleteBackupCodes(targetId);
+      const teamId = (await getOrInitActiveTeamId(req, user.id)) ?? null;
+      if (teamId) {
+        try { await writeAuditEvent({ teamId, actorUserId: user.id, entityType: "user", entityId: targetId, action: "2fa_disabled", kind: "delete", ip: req.ip, userAgent: String(req.headers["user-agent"] || "") }); } catch {}
+      }
       res.json({ message: "2FA disabled" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
-  // BACKUP CODES ENDPOINTS
+  // BACKUP CODES ENDPOINTS — hashed at rest; plain codes returned only at generation time
   app.get("/api/users/:userId/backup-codes", async (req, res) => {
     try {
-      const codes = await storage.getBackupCodesByUserId(parseInt(req.params.userId));
-      res.json(codes);
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
+      const codes = await storage.getBackupCodesByUserId(targetId);
+      const unusedCount = codes.filter((c: any) => !c.isUsed).length;
+      res.json({ count: codes.length, unusedCount, createdAt: codes[0]?.createdAt || null });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/users/:userId/backup-codes", async (req, res) => {
     try {
-      const validated = insertBackupCodeSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
+      const validated = insertBackupCodeSchema.parse({ ...req.body, userId: targetId });
       const code = await storage.createBackupCode(validated);
       res.status(201).json(code);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
+  app.post("/api/users/:userId/backup-codes/generate", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
+      if (Number(user.id) !== targetId) return res.status(403).json({ message: "Only the account owner can generate backup codes" });
+      await storage.deleteBackupCodes(targetId);
+      const codes: string[] = [];
+      const hashedCodes: Array<{ userId: number; code: string; isUsed: boolean }> = [];
+      for (let i = 0; i < 10; i++) {
+        const rawCode = crypto.randomBytes(5).toString("hex").toUpperCase().slice(0, 10);
+        const codeHash = crypto.createHash("sha256").update(rawCode).digest("hex");
+        codes.push(rawCode);
+        hashedCodes.push({ userId: targetId, code: codeHash, isUsed: false });
+      }
+      await db.insert(backupCodes).values(hashedCodes as any);
+      const teamId = (await getOrInitActiveTeamId(req, user.id)) ?? null;
+      if (teamId) {
+        try { await writeAuditEvent({ teamId, actorUserId: user.id, entityType: "user", entityId: targetId, action: "backup_codes_regenerated", kind: "update", ip: req.ip, userAgent: String(req.headers["user-agent"] || "") }); } catch {}
+      }
+      res.status(201).json({ codes });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   const defaultPipelineColumnsByEntityType: Record<string, Array<{ value: string; label: string }>> = {
     lead: [
       { value: "new", label: "New" },
@@ -8685,49 +10061,38 @@ export async function registerRoutes(
       { value: "withdrawn", label: "Withdrawn" },
     ],
   };
-
   app.get("/api/pipeline-config", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
-
       const entityType = String(req.query.entityType || "").trim();
       const defaults = defaultPipelineColumnsByEntityType[entityType];
       if (!defaults) return res.status(400).json({ message: "Invalid entityType" });
-
       const row = await storage.getPipelineConfig(userId, entityType);
       if (!row) return res.json({ entityType, columns: defaults });
-
       let parsed: any = defaults;
       try {
         const json = JSON.parse(row.columns);
         if (Array.isArray(json)) parsed = json;
       } catch {}
-
       res.json({ entityType, columns: parsed });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.put("/api/pipeline-config", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
-
       const entityType = String(req.query.entityType || "").trim();
       const defaults = defaultPipelineColumnsByEntityType[entityType];
       if (!defaults) return res.status(400).json({ message: "Invalid entityType" });
-
       const columns = req.body?.columns;
       if (!Array.isArray(columns) || !columns.length) return res.status(400).json({ message: "Invalid columns" });
-
       const cleaned = columns
         .map((c: any) => ({ value: String(c?.value || "").trim(), label: String(c?.label || "").trim() }))
         .filter((c: any) => c.value && c.label);
-
       if (!cleaned.length) return res.status(400).json({ message: "Invalid columns" });
-
       const updated = await storage.upsertPipelineConfig(userId, entityType, JSON.stringify(cleaned));
       let parsed: any = cleaned;
       try {
@@ -8739,7 +10104,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   // GLOBAL ACTIVITY ENDPOINT
   app.get("/api/activity", async (req, res) => {
     try {
@@ -8752,7 +10116,6 @@ export async function registerRoutes(
       const playgroundSessionIdRaw = req.query.playgroundSessionId ?? req.query.sessionId;
       const playgroundSessionId = playgroundSessionIdRaw ? parseInt(playgroundSessionIdRaw as string) : undefined;
       const logs = await storage.getGlobalActivityLogs(limit);
-
       const parsed = logs.map((log) => {
         let meta: any = null;
         try {
@@ -8760,14 +10123,12 @@ export async function registerRoutes(
         } catch {}
         return { ...log, metadataParsed: meta };
       });
-
       const filtered = parsed.filter((log: any) => {
         if (playgroundSessionId && log.metadataParsed?.playgroundSessionId !== playgroundSessionId) return false;
         if (propertyId && log.metadataParsed?.propertyId !== propertyId) return false;
         if (leadId && log.metadataParsed?.leadId !== leadId) return false;
         return true;
       });
-
       const filteredOrGrouped = !group
         ? filtered
         : (() => {
@@ -8807,7 +10168,6 @@ export async function registerRoutes(
               return rest;
             });
           })();
-
       const userIds = Array.from(
         new Set(
           filteredOrGrouped
@@ -8815,7 +10175,6 @@ export async function registerRoutes(
             .filter((id: any) => typeof id === "number" && Number.isFinite(id) && id !== 0),
         ),
       ) as number[];
-
       const userRows =
         userIds.length > 0
           ? await db
@@ -8829,9 +10188,7 @@ export async function registerRoutes(
               .from(users)
               .where(inArray(users.id, userIds))
           : [];
-
       const usersById = new Map<number, any>(userRows.map((u: any) => [u.id, u]));
-
       const out = filteredOrGrouped.map((log: any) => {
         const user =
           log.userId === 0
@@ -8845,41 +10202,34 @@ export async function registerRoutes(
             : usersById.get(log.userId) || null;
         return { ...log, user };
       });
-
       res.json(out);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/activity", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
-
       const action = String(req.body?.action || "").trim();
       const description = typeof req.body?.description === "string" ? req.body.description : null;
       const metadata = req.body?.metadata && typeof req.body.metadata === "object" ? req.body.metadata : null;
       if (!action) return res.status(400).json({ message: "Missing action" });
-
       const log = await storage.createGlobalActivity({
         userId,
         action,
         description,
         metadata: metadata ? JSON.stringify(metadata) : null,
       } as any);
-
       res.status(201).json(log);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/audit", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
       if (!ctx) return;
-
       const { limit, offset } = parseLimitOffset(req.query);
       const schema = z.object({
         entityType: z.string().trim().min(1).optional(),
@@ -8890,7 +10240,6 @@ export async function registerRoutes(
         to: z.coerce.date().optional(),
       });
       const q = schema.parse(req.query || {});
-
       const whereParts: any[] = [eq(auditEvents.teamId, ctx.teamId)];
       if (q.entityType) whereParts.push(eq(auditEvents.entityType, q.entityType));
       if (typeof q.entityId === "number") whereParts.push(eq(auditEvents.entityId, q.entityId));
@@ -8898,9 +10247,7 @@ export async function registerRoutes(
       if (q.action) whereParts.push(eq(auditEvents.action, q.action));
       if (q.from) whereParts.push(gte(auditEvents.createdAt, q.from));
       if (q.to) whereParts.push(lte(auditEvents.createdAt, q.to));
-
       const whereClause = and(...whereParts);
-
       const rows: any[] = await db
         .select()
         .from(auditEvents)
@@ -8908,10 +10255,8 @@ export async function registerRoutes(
         .orderBy(desc(auditEvents.createdAt), desc(auditEvents.id))
         .limit(limit)
         .offset(offset);
-
       const countRows = await db.select({ count: sql<number>`count(*)::int` }).from(auditEvents).where(whereClause);
       const total = Number((countRows as any)?.[0]?.count || 0);
-
       const actorIds = Array.from(
         new Set(
           rows
@@ -8919,7 +10264,6 @@ export async function registerRoutes(
             .filter((id: any) => typeof id === "number" && Number.isFinite(id)),
         ),
       ) as number[];
-
       const actorRows =
         actorIds.length > 0
           ? await db
@@ -8933,9 +10277,7 @@ export async function registerRoutes(
               .from(users)
               .where(inArray(users.id, actorIds))
           : [];
-
       const actorsById = new Map<number, any>((actorRows as any[]).map((u) => [u.id, u]));
-
       const items = rows.map((r: any) => {
         const parsed: any = { ...r, actor: r.actorUserId ? actorsById.get(r.actorUserId) || null : null };
         for (const key of ["beforeJson", "afterJson", "diffJson"] as const) {
@@ -8948,13 +10290,11 @@ export async function registerRoutes(
         }
         return parsed;
       });
-
       res.json({ items, total });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/teams/my", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -8965,7 +10305,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/teams/active", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -8978,7 +10317,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.put("/api/teams/active", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -8996,7 +10334,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/teams/join", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9030,7 +10367,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/teams", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9041,7 +10377,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/teams/:id", async (req, res) => {
     try {
       const teamId = parseInt(req.params.id);
@@ -9054,7 +10389,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/teams", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9084,7 +10418,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/teams/:id", async (req, res) => {
     try {
       const teamId = parseInt(req.params.id);
@@ -9100,7 +10433,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/teams/:id", async (req, res) => {
     try {
       const teamId = parseInt(req.params.id);
@@ -9112,7 +10444,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/teams/:teamId/members", async (req, res) => {
     try {
       const teamId = parseInt(req.params.teamId);
@@ -9124,7 +10455,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/teams/:teamId/invite", async (req, res) => {
     try {
       const teamId = parseInt(req.params.teamId);
@@ -9159,7 +10489,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/teams/:teamId/members", async (req, res) => {
     try {
       const teamId = parseInt(req.params.teamId);
@@ -9172,7 +10501,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/team-members/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9189,7 +10517,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/team-members/:id", async (req, res) => {
     try {
       const existing = await storage.getTeamMemberById(parseInt(req.params.id));
@@ -9203,7 +10530,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/teams/:teamId/activity", async (req, res) => {
     try {
       const teamId = parseInt(req.params.teamId);
@@ -9216,7 +10542,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/teams/:teamId/activity", async (req, res) => {
     try {
       const teamId = parseInt(req.params.teamId);
@@ -9229,94 +10554,336 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   // NOTIFICATION PREFERENCES ENDPOINTS
   app.get("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
-      const prefs = await storage.getNotificationPreferencesByUserId(parseInt(req.params.userId));
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
+      const prefs = await storage.getNotificationPreferencesByUserId(targetId);
       res.json(prefs || {});
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
-      const validated = insertNotificationPreferenceSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
+      const validated = insertNotificationPreferenceSchema.parse({ ...req.body, userId: targetId });
       const prefs = await storage.createNotificationPreferences(validated);
       res.status(201).json(prefs);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
       const partial = insertNotificationPreferenceSchema.partial().parse(req.body);
-      const prefs = await storage.updateNotificationPreferences(parseInt(req.params.userId), partial);
+      const prefs = await storage.updateNotificationPreferences(targetId, partial);
       res.json(prefs);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   // USER NOTIFICATIONS ENDPOINTS (actual notification messages)
   app.get("/api/users/:userId/notifications", async (req, res) => {
     try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
       const { limit, offset } = parseLimitOffset(req.query);
-      const notifications = await storage.getUserNotifications(parseInt(req.params.userId), limit, offset);
+      const notifications = await storage.getUserNotifications(targetId, limit, offset);
       res.json(notifications);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
+  app.get("/api/users/:userId/notifications/unread-count", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
+      const count = await storage.getUnreadNotificationCount(targetId);
+      res.json({ count });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   app.post("/api/users/:userId/notifications", async (req, res) => {
     try {
-      const validated = insertUserNotificationSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
+      const validated = insertUserNotificationSchema.parse({ ...req.body, userId: targetId });
       const notification = await storage.createUserNotification(validated);
       res.status(201).json(notification);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/notifications/:id/read", async (req, res) => {
     try {
-      const notification = await storage.markNotificationAsRead(parseInt(req.params.id));
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const notificationId = parseInt(req.params.id);
+      const target = await storage.getUserNotificationById(notificationId);
+      if (!target) return res.status(404).json({ message: "Notification not found" });
+      if (Number(target.userId) !== Number(user.id) && !isManagerUser(user)) {
+        return res.status(403).json({ message: "You do not have access" });
+      }
+      const notification = await storage.markNotificationAsRead(notificationId);
       res.json(notification);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/notifications/:id", async (req, res) => {
     try {
-      await storage.deleteUserNotification(parseInt(req.params.id));
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const notificationId = parseInt(req.params.id);
+      const target = await storage.getUserNotificationById(notificationId);
+      if (!target) return res.status(404).json({ message: "Notification not found" });
+      if (Number(target.userId) !== Number(user.id) && !isManagerUser(user)) {
+        return res.status(403).json({ message: "You do not have access" });
+      }
+      await storage.deleteUserNotification(notificationId);
       res.json({ message: "Notification deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.delete("/api/users/:userId/notifications", async (req, res) => {
     try {
-      await storage.deleteAllUserNotifications(parseInt(req.params.userId));
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
+      await storage.deleteAllUserNotifications(targetId);
       res.json({ message: "All notifications deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   app.patch("/api/users/:userId/notifications/read-all", async (req, res) => {
     try {
-      await storage.markAllNotificationsAsRead(parseInt(req.params.userId));
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const targetId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(user, targetId)) return res.status(403).json({ message: "You do not have access" });
+      await storage.markAllNotificationsAsRead(targetId);
       res.json({ message: "All notifications marked as read" });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
   });
-
+  // INTERNAL TEAM MESSAGING (separate from external SMS)
+  app.get("/api/messages/conversations", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const rows = await storage.getInternalMessageConversations(user.id);
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.get("/api/messages", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const withUserId = req.query.withUserId ? parseInt(String(req.query.withUserId), 10) : undefined;
+      const limit = Math.min(parseInt(String(req.query.limit || "100"), 10) || 100, 500);
+      const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
+      const messages = await storage.getInternalMessages(user.id, withUserId, limit, offset);
+      res.json(messages);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.get("/api/messages/unread-count", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const count = await storage.getInternalMessageUnreadCount(user.id);
+      res.json({ count });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/messages/read", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const withUserId = req.body?.withUserId ? parseInt(String(req.body.withUserId), 10) : undefined;
+      await storage.markInternalMessagesRead(user.id, withUserId);
+      res.json({ message: "Marked as read" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/messages", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const body = req.body || {};
+      const recipientUserId = parseInt(body.recipientUserId, 10);
+      if (!Number.isInteger(recipientUserId) || recipientUserId <= 0) {
+        return res.status(400).json({ message: "A valid recipient is required" });
+      }
+      if (recipientUserId === user.id) return res.status(400).json({ message: "You cannot message yourself" });
+      const messageBody = String(body.body || "").trim();
+      if (!messageBody) return res.status(400).json({ message: "Message body is required" });
+      if (messageBody.length > 5000) return res.status(400).json({ message: "Message is too long" });
+      const recipient = await storage.getUserById(recipientUserId);
+      if (!recipient) return res.status(404).json({ message: "Recipient not found" });
+      const relatedType = body.relatedType ? String(body.relatedType).slice(0, 50) : null;
+      const relatedId = body.relatedId ? parseInt(String(body.relatedId), 10) : null;
+      const message = await storage.createInternalMessage({
+        senderUserId: user.id,
+        recipientUserId,
+        body: messageBody,
+        relatedType,
+        relatedId,
+        readAt: null,
+      } as any);
+      await notifyUser({
+        userId: recipientUserId,
+        category: "internal_message",
+        title: `New internal message from ${userDisplayName(user)}`,
+        description: messageBody.length > 140 ? `${messageBody.slice(0, 140)}…` : messageBody,
+        relatedType: relatedType || "message",
+        relatedId: relatedId ?? message.id,
+        eventKey: `msg:${message.id}`,
+      });
+      res.status(201).json(message);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  // CALENDAR EVENTS (internal meetings)
+  app.get("/api/calendar-events", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const from = req.query.from ? new Date(String(req.query.from)) : undefined;
+      const to = req.query.to ? new Date(String(req.query.to)) : undefined;
+      const events = await storage.getCalendarEventsForUser(user.id, from, to);
+      res.json(events);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/calendar-events", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const body = req.body || {};
+      const title = String(body.title || "").trim();
+      if (!title) return res.status(400).json({ message: "Title is required" });
+      const startsAt = new Date(body.startsAt);
+      if (Number.isNaN(startsAt.getTime())) return res.status(400).json({ message: "A valid start time is required" });
+      const endsAt = body.endsAt ? new Date(body.endsAt) : null;
+      if (endsAt && Number.isNaN(endsAt.getTime())) return res.status(400).json({ message: "Invalid end time" });
+      if (endsAt && endsAt.getTime() <= startsAt.getTime()) return res.status(400).json({ message: "End time must be after start time" });
+      const inviteeUserIds = Array.isArray(body.inviteeUserIds)
+        ? body.inviteeUserIds.map((id: any) => parseInt(String(id), 10)).filter((id: number) => Number.isInteger(id) && id > 0)
+        : [];
+      const event = await storage.createCalendarEvent({
+        title,
+        description: body.description ? String(body.description).slice(0, 5000) : null,
+        startsAt,
+        endsAt,
+        meetingLink: body.meetingLink ? String(body.meetingLink).slice(0, 500) : null,
+        location: body.location ? String(body.location).slice(0, 255) : null,
+        createdBy: user.id,
+        relatedType: body.relatedType ? String(body.relatedType).slice(0, 50) : null,
+        relatedId: body.relatedId ? parseInt(String(body.relatedId), 10) : null,
+        inviteeUserIds,
+      } as any);
+      const invitees = [...new Set([...inviteeUserIds])].filter((id) => id !== user.id);
+      for (const inviteeId of invitees) {
+        await notifyUser({
+          userId: inviteeId,
+          category: "meeting_invite",
+          title: "Meeting invitation",
+          description: `${userDisplayName(user)} invited you to "${title}"${endsAt ? ` at ${endsAt.toISOString()}` : ""}.`,
+          relatedType: "calendar",
+          relatedId: event.id,
+          eventKey: `meeting:${event.id}:invitee:${inviteeId}`,
+        });
+      }
+      res.status(201).json(event);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.patch("/api/calendar-events/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const eventId = parseInt(req.params.id, 10);
+      const event = await storage.getCalendarEventById(eventId);
+      if (!event) return res.status(404).json({ message: "Event not found" });
+      if (Number(event.createdBy) !== Number(user.id) && !isManagerUser(user)) {
+        return res.status(403).json({ message: "You do not have access to edit this event" });
+      }
+      const body = req.body || {};
+      const patch: any = {};
+      if (body.title !== undefined) patch.title = String(body.title).trim() || undefined;
+      if (body.description !== undefined) patch.description = String(body.description).slice(0, 5000);
+      if (body.startsAt !== undefined) {
+        const s = new Date(body.startsAt);
+        if (Number.isNaN(s.getTime())) return res.status(400).json({ message: "Invalid start time" });
+        patch.startsAt = s;
+      }
+      if (body.endsAt !== undefined) {
+        const e = new Date(body.endsAt);
+        if (Number.isNaN(e.getTime())) return res.status(400).json({ message: "Invalid end time" });
+        patch.endsAt = e;
+      }
+      if (patch.startsAt && patch.endsAt && patch.endsAt.getTime() <= patch.startsAt.getTime()) {
+        return res.status(400).json({ message: "End time must be after start time" });
+      }
+      if (body.meetingLink !== undefined) patch.meetingLink = body.meetingLink ? String(body.meetingLink).slice(0, 500) : null;
+      if (body.inviteeUserIds !== undefined) {
+        patch.inviteeUserIds = Array.isArray(body.inviteeUserIds)
+          ? body.inviteeUserIds.map((id: any) => parseInt(String(id), 10)).filter((id: number) => Number.isInteger(id) && id > 0)
+          : [];
+      }
+      const updated = await storage.updateCalendarEvent(eventId, patch);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.delete("/api/calendar-events/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const eventId = parseInt(req.params.id, 10);
+      const event = await storage.getCalendarEventById(eventId);
+      if (!event) return res.status(404).json({ message: "Event not found" });
+      if (Number(event.createdBy) !== Number(user.id) && !isManagerUser(user)) {
+        return res.status(403).json({ message: "You do not have access to delete this event" });
+      }
+      await storage.deleteCalendarEvent(eventId);
+      res.json({ message: "Event deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   function canViewTask(user: any, task: any) {
     if (isManagerUser(user)) return true;
     if (task?.isPrivate) {
@@ -9324,18 +10891,15 @@ export async function registerRoutes(
     }
     return true;
   }
-
   function canMutateTask(user: any, task: any) {
     if (isManagerUser(user)) return true;
     return Number(task?.createdBy) === Number(user?.id) || Number(task?.assignedToUserId) === Number(user?.id);
   }
-
   // TASKS ENDPOINTS
   app.get("/api/tasks", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const schema = z.object({
         assignedToUserId: z.coerce.number().int().positive().optional(),
         createdByUserId: z.coerce.number().int().positive().optional(),
@@ -9353,9 +10917,7 @@ export async function registerRoutes(
         limit: z.coerce.number().int().min(1).max(200).optional(),
         offset: z.coerce.number().int().min(0).optional(),
       });
-
       const q = schema.parse(req.query || {});
-
       if (typeof q.assignedToUserId === "number") {
         const ok = await requireAssigneeInActiveTeam(req, res, user, q.assignedToUserId);
         if (!ok) return;
@@ -9382,21 +10944,16 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/tasks", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const createSchema = insertTaskSchema.omit({ createdBy: true } as any);
       const validated: any = createSchema.parse(req.body || {});
-
       const assignedToUserId =
         typeof validated.assignedToUserId === "number" ? validated.assignedToUserId : user.id;
-
       const ok = await requireAssigneeInActiveTeam(req, res, user, assignedToUserId);
       if (!ok) return;
-
       const task = await createTask({
         ...validated,
         assignedToUserId,
@@ -9407,21 +10964,17 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/tasks/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const id = parseInt(req.params.id);
       const task = await storage.getTaskById(id);
       if (!task) return res.status(404).json({ message: "Task not found" });
       if (!canViewTask(user, task)) return res.status(404).json({ message: "Task not found" });
       if (!canMutateTask(user, task)) return res.status(403).json({ message: "Forbidden" });
-
       const patchSchema = insertTaskSchema.partial().omit({ createdBy: true } as any);
       const patch: any = patchSchema.parse(req.body || {});
-
       if (typeof patch.assignedToUserId === "number") {
         const ok = await requireAssigneeInActiveTeam(req, res, user, patch.assignedToUserId);
         if (!ok) return;
@@ -9432,18 +10985,15 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/tasks/:id/complete", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const id = parseInt(req.params.id);
       const task = await storage.getTaskById(id);
       if (!task) return res.status(404).json({ message: "Task not found" });
       if (!canViewTask(user, task)) return res.status(404).json({ message: "Task not found" });
       if (!canMutateTask(user, task)) return res.status(403).json({ message: "Forbidden" });
-
       const out = await completeTaskWithRecurrence({ taskId: id, completedAt: new Date() });
       if (!out) return res.status(404).json({ message: "Task not found" });
       res.json(out);
@@ -9451,25 +11001,21 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/tasks/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const id = parseInt(req.params.id);
       const task = await storage.getTaskById(id);
       if (!task) return res.status(404).json({ message: "Task not found" });
       if (!canViewTask(user, task)) return res.status(404).json({ message: "Task not found" });
       if (!canMutateTask(user, task)) return res.status(403).json({ message: "Forbidden" });
-
       await storage.deleteTask(id);
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
   async function listEntityTasks(req: any, res: any, entity: { type: string; id: number }) {
     const user = await requireAuth(req, res);
     if (!user) return null;
@@ -9487,7 +11033,6 @@ export async function registerRoutes(
     );
     return out;
   }
-
   async function createEntityTask(req: any, res: any, entity: { type: string; id: number }) {
     const user = await requireAuth(req, res);
     if (!user) return null;
@@ -9503,7 +11048,6 @@ export async function registerRoutes(
     });
     return task;
   }
-
   app.get("/api/leads/:id/tasks", async (req, res) => {
     try {
       const out = await listEntityTasks(req, res, { type: "lead", id: parseInt(req.params.id) });
@@ -9513,7 +11057,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/leads/:id/tasks", async (req, res) => {
     try {
       const task = await createEntityTask(req, res, { type: "lead", id: parseInt(req.params.id) });
@@ -9523,7 +11066,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/opportunities/:id/tasks", async (req, res) => {
     try {
       const out = await listEntityTasks(req, res, { type: "opportunity", id: parseInt(req.params.id) });
@@ -9533,7 +11075,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/opportunities/:id/tasks", async (req, res) => {
     try {
       const task = await createEntityTask(req, res, { type: "opportunity", id: parseInt(req.params.id) });
@@ -9543,7 +11084,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/buyers/:id/tasks", async (req, res) => {
     try {
       const out = await listEntityTasks(req, res, { type: "buyer", id: parseInt(req.params.id) });
@@ -9553,7 +11093,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/buyers/:id/tasks", async (req, res) => {
     try {
       const task = await createEntityTask(req, res, { type: "buyer", id: parseInt(req.params.id) });
@@ -9563,7 +11102,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/campaigns/:id/tasks", async (req, res) => {
     try {
       const out = await listEntityTasks(req, res, { type: "campaign", id: parseInt(req.params.id) });
@@ -9573,7 +11111,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/campaigns/:id/tasks", async (req, res) => {
     try {
       const task = await createEntityTask(req, res, { type: "campaign", id: parseInt(req.params.id) });
@@ -9583,7 +11120,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/ai/config", async (_req, res) => {
     const required = [
       "TELNYX_API_KEY",
@@ -9596,12 +11132,10 @@ export async function registerRoutes(
     const ready = missing.length === 0;
     res.json({ ready, missing });
   });
-
   app.get("/api/ai/ping", async (_req, res) => {
     const ok = Boolean(process.env.TELNYX_API_KEY && process.env.TELNYX_CONNECTION_ID && process.env.TELNYX_MESSAGING_PROFILE_ID);
     res.json({ ok });
   });
-
   // USER GOALS ENDPOINTS
   app.get("/api/users/:userId/goals", async (req, res) => {
     try {
@@ -9611,7 +11145,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/goals/:id", async (req, res) => {
     try {
       const goal = await storage.getUserGoalById(parseInt(req.params.id));
@@ -9621,7 +11154,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/users/:userId/goals", async (req, res) => {
     try {
       const validated = insertUserGoalSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
@@ -9631,7 +11163,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/goals/:id", async (req, res) => {
     try {
       const partial = insertUserGoalSchema.partial().parse(req.body);
@@ -9641,7 +11172,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/goals/:id", async (req, res) => {
     try {
       await storage.deleteUserGoal(parseInt(req.params.id));
@@ -9650,7 +11180,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   // OFFERS ENDPOINTS
   app.get("/api/offers", async (req, res) => {
     try {
@@ -9672,7 +11201,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/offers/:id", async (req, res) => {
     try {
       const offer = await storage.getOfferById(parseInt(req.params.id));
@@ -9682,7 +11210,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/offers", async (req, res) => {
     try {
       const validated = insertOfferSchema.parse(req.body);
@@ -9692,7 +11219,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/offers/:id", async (req, res) => {
     try {
       const partial = insertOfferSchema.partial().parse(req.body);
@@ -9702,7 +11228,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/offers/:id", async (req, res) => {
     try {
       await storage.deleteOffer(parseInt(req.params.id));
@@ -9711,7 +11236,151 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
+// BUYER OFFERS ENDPOINTS (deal-execution offer management)
+  const BUYER_OFFER_STATUSES = ["draft", "received", "countered", "accepted", "rejected", "withdrawn", "expired"];
+  app.get("/api/opportunities/:id/offers", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const offers = await storage.getBuyerOffersByOpportunity(opportunityId);
+      res.json(offers);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/opportunities/:id/offers", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const body = req.body || {};
+      const amount = Number(body.amount);
+      if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ message: "A valid offer amount is required" });
+      const buyerInquiryId = body.buyerInquiryId ? parseInt(body.buyerInquiryId, 10) : null;
+      const buyerContactId = body.buyerContactId ? parseInt(body.buyerContactId, 10) : null;
+      const offer = await storage.createBuyerOffer({
+        opportunityId,
+        buyerInquiryId,
+        buyerContactId,
+        amount: String(amount),
+        earnestMoney: body.earnestMoney !== undefined && body.earnestMoney !== "" ? String(Number(body.earnestMoney)) : null,
+        financingType: body.financingType ? String(body.financingType).slice(0, 50) : null,
+        closeBy: body.closeBy ? new Date(body.closeBy) : null,
+        terms: body.terms ? String(body.terms) : null,
+        assignmentTerms: body.assignmentTerms ? String(body.assignmentTerms) : null,
+        notes: body.notes ? String(body.notes) : null,
+        status: "received",
+        version: 1,
+        parentOfferId: null,
+        superseded: false,
+        createdBy: user.id,
+      } as any);
+      await logOpportunityEvent(opportunityId, "offer_created", "Offer Created", `Offer of $${amount.toLocaleString()} received${buyerInquiryId ? " from buyer inquiry" : ""}.`, user.id, "user", { offerId: offer.id, amount: String(amount) });
+      await notifyOpportunityOwner({
+        propertyId: opportunityId,
+        category: "offer_received",
+        title: "New offer received",
+        description: `Offer of $${amount.toLocaleString()} received for ${(property as any)?.address || `opportunity #${opportunityId}`}.`,
+        eventKey: `offer:${offer.id}:received`,
+        actorUserId: user.id,
+      });
+      res.status(201).json(offer);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+app.post("/api/buyer-offers/:id/counter", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const offerId = parseInt(req.params.id, 10);
+      const existing = await storage.getBuyerOfferById(offerId);
+      if (!existing) return res.status(404).json({ message: "Offer not found" });
+      const body = req.body || {};
+      const amount = Number(body.amount);
+      if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ message: "A valid counter amount is required" });
+      // Preserve history: mark prior version superseded, never overwrite its terms.
+      await storage.updateBuyerOffer(offerId, { superseded: true, status: "countered" });
+      const counter = await storage.createBuyerOffer({
+        opportunityId: existing.opportunityId,
+        buyerInquiryId: existing.buyerInquiryId,
+        buyerContactId: existing.buyerContactId,
+        amount: String(amount),
+        earnestMoney: body.earnestMoney !== undefined && body.earnestMoney !== "" ? String(Number(body.earnestMoney)) : existing.earnestMoney,
+        financingType: body.financingType ? String(body.financingType).slice(0, 50) : existing.financingType,
+        closeBy: body.closeBy ? new Date(body.closeBy) : existing.closeBy,
+        terms: body.terms ? String(body.terms) : existing.terms,
+        assignmentTerms: body.assignmentTerms ? String(body.assignmentTerms) : existing.assignmentTerms,
+        notes: body.notes ? String(body.notes) : null,
+        status: "received",
+        version: (existing.version || 1) + 1,
+        parentOfferId: existing.id,
+        superseded: false,
+        createdBy: user.id,
+      } as any);
+      await logOpportunityEvent(existing.opportunityId, "offer_countered", "Offer Countered", `Counter-offer of $${amount.toLocaleString()} sent (v${counter.version}).`, user.id, "user", { offerId: counter.id, parentOfferId: existing.id, amount: String(amount) });
+      res.status(201).json(counter);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.patch("/api/buyer-offers/:id/status", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const offerId = parseInt(req.params.id, 10);
+      const offer = await storage.getBuyerOfferById(offerId);
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
+      const newStatus = String(req.body?.status || "").trim();
+      if (!BUYER_OFFER_STATUSES.includes(newStatus)) return res.status(400).json({ message: "Invalid offer status" });
+      if (offer.status === newStatus) return res.json(offer);
+      if (offer.superseded) return res.status(400).json({ message: "This offer version was superseded by a counter-offer" });
+      const updated = await storage.updateBuyerOffer(offerId, { status: newStatus });
+      await logOpportunityEvent(offer.opportunityId, "offer_status_changed", `Offer ${newStatus.replace("_", " ")}`, `Offer #${offer.id} ($${Number(offer.amount).toLocaleString()}) marked ${newStatus}.`, user.id, "user", { offerId: offer.id, status: newStatus });
+      if (newStatus === "accepted") {
+        const property = await storage.getPropertyById(offer.opportunityId);
+        const currentStage = String((property as any)?.stage || "lead");
+        const reservedIdx = OPPORTUNITY_STAGES.indexOf("reserved");
+        const currentIdx = OPPORTUNITY_STAGES.indexOf(currentStage as OpportunityStage);
+        if (currentIdx >= 0 && currentIdx < reservedIdx) {
+          await storage.updateProperty(offer.opportunityId, { stage: "reserved", stageChangedAt: new Date(), lastActivityAt: new Date() });
+          await logOpportunityEvent(offer.opportunityId, "stage_changed", "Stage changed to Reserved", "Opportunity moved to Reserved after offer accepted.", user.id, "user", { oldStage: currentStage, newStage: "reserved" });
+        }
+        // Pause published listings after acceptance.
+        try {
+          const listings = await storage.getPublicListingsByOpportunity(offer.opportunityId);
+          for (const l of listings) {
+            if (l.status === "published") await storage.updatePublicListing(l.id, { status: "paused" });
+          }
+        } catch {}
+        const day = 24 * 60 * 60 * 1000;
+        const closingDefs = [
+          { title: "[Closing] Confirm buyer commitment / EMD", type: "closing", priority: "high", dueAt: new Date(Date.now() + 2 * day) },
+          { title: "[Closing] Coordinate title & closing", type: "closing", priority: "high", dueAt: new Date(Date.now() + 7 * day) },
+        ];
+        for (const d of closingDefs) {
+          await ensureOpportunityTask(offer.opportunityId, user.id, d);
+        }
+        // Notify the opportunity owner (preference-aware, deduped by event key).
+        await notifyOpportunityOwner({
+          propertyId: offer.opportunityId,
+          category: "offer_accepted",
+          title: "Offer accepted",
+          description: `Offer #${offer.id} ($${Number(offer.amount).toLocaleString()}) was accepted. Closing tasks created and listing paused.`,
+          eventKey: `offer:${offer.id}:accepted`,
+          actorUserId: user.id,
+        });
+      }
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
   app.get("/api/work-categories", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9723,7 +11392,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/work-categories", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9736,7 +11404,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/work-categories/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9750,7 +11417,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/work-categories/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9763,7 +11429,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/timeclock/current", async (req, res) => {
     try {
       if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
@@ -9784,7 +11449,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/timeclock/auto-start", async (req, res) => {
     try {
       if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
@@ -9794,15 +11458,12 @@ export async function registerRoutes(
       }
       const clockInAt = new Date(clientNow);
       if (Number.isNaN(clockInAt.getTime())) return res.status(400).json({ message: "Invalid clientNow" });
-
       const open = await storage.getOpenTimeClockSession(req.session.userId);
       if (open) return res.json(open);
-
       const user = await storage.getUserById(req.session.userId);
       const employee = user?.firstName || user?.lastName
         ? `${user?.firstName || ""} ${user?.lastName || ""}`.trim()
         : user?.email || "Employee";
-
       try {
         const created = await storage.createTimeClockSession({
           userId: req.session.userId,
@@ -9822,7 +11483,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/timeclock/auto-stop", async (req, res) => {
     try {
       if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
@@ -9832,7 +11492,6 @@ export async function registerRoutes(
       }
       const clockOutAt = new Date(clientNow);
       if (Number.isNaN(clockOutAt.getTime())) return res.status(400).json({ message: "Invalid clientNow" });
-
       const result = await storage.closeOpenTimeClockSessionAndCreateEntry(req.session.userId, { clockOutAt, tzOffsetMinutes });
       if (!result) return res.json({ stopped: false });
       res.json({ stopped: true, entry: result.entry });
@@ -9840,7 +11499,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.patch("/api/timeclock/current", async (req, res) => {
     try {
       if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
@@ -9853,18 +11511,15 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/timesheet", async (req, res) => {
     try {
       if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
       const sessionUser = await storage.getUserById(req.session.userId);
       const manager = isManagerUser(sessionUser);
-
       const from = typeof req.query.from === "string" ? req.query.from : undefined;
       const to = typeof req.query.to === "string" ? req.query.to : undefined;
       const userId = typeof req.query.userId === "string" ? parseInt(req.query.userId) : undefined;
       const { limit, offset } = parseLimitOffset(req.query);
-
       const effectiveUserId = manager ? userId : req.session.userId;
       const entries = await storage.getTimesheetEntriesFiltered({ userId: effectiveUserId, from, to, limit, offset });
       res.json(entries);
@@ -9872,7 +11527,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   // TIMESHEET ENTRIES ENDPOINTS
   app.get("/api/users/:userId/timesheet", async (req, res) => {
     try {
@@ -9883,7 +11537,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/timesheet/:id", async (req, res) => {
     try {
       const entry = await storage.getTimesheetEntryById(parseInt(req.params.id));
@@ -9893,7 +11546,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/users/:userId/timesheet", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9901,12 +11553,10 @@ export async function registerRoutes(
       const targetUserId = parseInt(req.params.userId);
       if (!Number.isFinite(targetUserId)) return res.status(400).json({ message: "Invalid userId" });
       if (!isManagerUser(user) && user.id !== targetUserId) return res.status(403).json({ message: "Forbidden" });
-
       const raw = { ...(req.body || {}), userId: targetUserId };
       const validated: any = insertTimesheetEntrySchema.parse(raw);
       const computed = computeManualTimeEntry({ date: validated.date, startTime: validated.startTime, endTime: validated.endTime });
       if (!computed.ok) return res.status(400).json({ message: computed.error });
-
       const entry = await storage.createTimesheetEntry({
         ...validated,
         hours: computed.hours.toFixed(2) as any,
@@ -9922,7 +11572,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/timesheet/:id", async (req, res) => {
     try {
       const partial = insertTimesheetEntrySchema.partial().parse(req.body);
@@ -9932,7 +11581,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/timesheet/:id", async (req, res) => {
     try {
       await storage.deleteTimesheetEntry(parseInt(req.params.id));
@@ -9941,7 +11589,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/timesheet/:id/submit", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9957,7 +11604,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/timesheet/:id/approve", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9971,7 +11617,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/timesheet/:id/dispute", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9986,7 +11631,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/timesheet/:id/mark-paid", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10000,7 +11644,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/approvals/timesheet", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10018,7 +11661,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/payroll/summary", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10034,7 +11676,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/worker-profiles", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10049,7 +11690,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.put("/api/worker-profiles/:userId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10064,7 +11704,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.get("/api/category-rate-overrides", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10078,7 +11717,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.put("/api/category-rate-overrides/:userId/:categoryId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10094,7 +11732,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/category-rate-overrides/:userId/:categoryId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10109,7 +11746,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/commissions/events", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10126,7 +11762,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/commissions/participants", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10141,7 +11776,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/commissions/participants", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10154,7 +11788,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/commissions/participants/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10166,7 +11799,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/commissions/ledger", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10182,7 +11814,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/commissions/ledger/:id/approve", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10196,7 +11827,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/commissions/ledger/:id/dispute", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10211,7 +11841,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.post("/api/commissions/ledger/:id/mark-paid", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10225,7 +11854,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   // BUYERS ENDPOINTS
   app.get("/api/buyers", async (req, res) => {
     try {
@@ -10238,7 +11866,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/buyers/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10250,7 +11877,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/buyers", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10262,7 +11888,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/buyers/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10277,7 +11902,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/buyers/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10288,7 +11912,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   // BUYER COMMUNICATIONS ENDPOINTS
   app.get("/api/buyers/:buyerId/communications", async (req, res) => {
     try {
@@ -10299,7 +11922,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/buyers/:buyerId/communications", async (req, res) => {
     try {
       const validated = insertBuyerCommunicationSchema.parse({
@@ -10312,7 +11934,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/buyer-communications/:id", async (req, res) => {
     try {
       await storage.deleteBuyerCommunication(parseInt(req.params.id));
@@ -10321,7 +11942,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   // DEAL ASSIGNMENTS ENDPOINTS
   app.get("/api/deal-assignments", async (req, res) => {
     try {
@@ -10332,7 +11952,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/deal-assignments/:id", async (req, res) => {
     try {
       const assignment = await storage.getDealAssignmentById(parseInt(req.params.id));
@@ -10342,7 +11961,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/properties/:propertyId/assignments", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
@@ -10352,7 +11970,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/buyers/:buyerId/assignments", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
@@ -10362,7 +11979,6 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.post("/api/deal-assignments", async (req, res) => {
     try {
       const validated = insertDealAssignmentSchema.parse(req.body);
@@ -10375,7 +11991,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.patch("/api/deal-assignments/:id", async (req, res) => {
     try {
       const partial = insertDealAssignmentSchema.partial().parse(req.body);
@@ -10388,7 +12003,6 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-
   app.delete("/api/deal-assignments/:id", async (req, res) => {
     try {
       await storage.deleteDealAssignment(parseInt(req.params.id));
@@ -10397,38 +12011,31 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-
   app.get("/api/reports/source", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-
       const fromRaw = typeof req.query.from === "string" ? req.query.from : "";
       const toRaw = typeof req.query.to === "string" ? req.query.to : "";
-
       const from = fromRaw ? new Date(fromRaw) : null;
       const to = toRaw ? new Date(toRaw) : null;
       const fromOk = from && Number.isFinite(from.getTime()) ? from : null;
       const toOk = to && Number.isFinite(to.getTime()) ? to : null;
-
       const leadWhere = sql`WHERE ${
         fromOk ? sql`created_at >= ${fromOk}` : sql`TRUE`
       } AND ${
         toOk ? sql`created_at < ${toOk}` : sql`TRUE`
       }`;
-
       const oppWhere = sql`WHERE ${
         fromOk ? sql`p.created_at >= ${fromOk}` : sql`TRUE`
       } AND ${
         toOk ? sql`p.created_at < ${toOk}` : sql`TRUE`
       }`;
-
       const dealWhere = sql`WHERE ${
         fromOk ? sql`da.created_at >= ${fromOk}` : sql`TRUE`
       } AND ${
         toOk ? sql`da.created_at < ${toOk}` : sql`TRUE`
       }`;
-
       const leadsRows: any = await db.execute(sql`
         SELECT
           COALESCE(NULLIF(TRIM(source), ''), 'Unknown') AS source,
@@ -10437,7 +12044,6 @@ export async function registerRoutes(
         ${leadWhere}
         GROUP BY 1
       `);
-
       const oppRows: any = await db.execute(sql`
         SELECT
           COALESCE(NULLIF(TRIM(COALESCE(p.lead_source, l.source)), ''), 'Unknown') AS source,
@@ -10447,7 +12053,6 @@ export async function registerRoutes(
         ${oppWhere}
         GROUP BY 1
       `);
-
       const dealRows: any = await db.execute(sql`
         SELECT
           COALESCE(NULLIF(TRIM(COALESCE(p.lead_source, l.source)), ''), 'Unknown') AS source,
@@ -10459,7 +12064,6 @@ export async function registerRoutes(
         ${dealWhere}
         GROUP BY 1
       `);
-
       const merged = new Map<string, any>();
       for (const r of (leadsRows as any).rows || []) {
         merged.set(String(r.source), { source: String(r.source), leads: r.leads || 0, opportunities: 0, deals: 0, revenue: 0 });
@@ -10477,17 +12081,227 @@ export async function registerRoutes(
         cur.revenue = typeof r.revenue === "string" || typeof r.revenue === "number" ? Number(r.revenue) : 0;
         merged.set(key, cur);
       }
-
       const sources = Array.from(merged.values()).sort((a, b) => (b.revenue || 0) - (a.revenue || 0) || (b.deals || 0) - (a.deals || 0) || (b.leads || 0) - (a.leads || 0));
-
       res.json({ from: fromRaw || null, to: toRaw || null, sources });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
-
+  // ===== PUBLIC LISTING ROUTES (no auth required) =====
+  app.get("/api/public/listings/:token", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      if (!token) return res.status(404).json({ message: "Not found" });
+      const listing = await storage.getPublicListingByToken(token);
+      if (!listing) return res.status(404).json({ message: "Not found" });
+      if (listing.status !== "published") return res.status(404).json({ message: "Not found" });
+      if (listing.expiresAt && new Date(listing.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Listing expired" });
+      if (listing.passwordHash && String(req.query.pw || "").trim() !== "") {
+        return res.json({ requiresPassword: true, listing: { id: listing.id, title: listing.title, description: listing.description } });
+      }
+      const property = await storage.getPropertyById(listing.opportunityId);
+      if (!property) return res.status(404).json({ message: "Not found" });
+      await storage.incrementListingViews(listing.id);
+      // Privacy: only include fields the agent explicitly chose to expose.
+      // Address/lat-long are gated behind exposeAddress; financials and the
+      // internal summary behind exposeFinancials. Seller data, notes, user IDs,
+      // and hidden documents are never included.
+      const showAddress = Boolean(listing.exposeAddress);
+      const showFinancials = Boolean(listing.exposeFinancials);
+      res.json({
+        listing: {
+          id: listing.id,
+          title: listing.title || `${property.address}, ${property.city}, ${property.state} ${property.zipCode}`,
+          description: listing.description,
+          slug: listing.slug,
+          visibility: listing.visibility,
+          viewCount: listing.viewCount,
+          publishedAt: listing.publishedAt,
+          exposeAddress: listing.exposeAddress,
+          exposeComps: listing.exposeComps,
+          exposeFinancials: listing.exposeFinancials,
+          exposeDocs: listing.exposeDocs,
+          contactName: listing.contactName,
+          contactEmail: listing.contactEmail,
+          contactPhone: listing.contactPhone,
+        },
+        property: {
+          ...(showAddress
+            ? {
+                address: property.address,
+                city: property.city,
+                state: property.state,
+                zipCode: property.zipCode,
+                latitude: property.latitude,
+                longitude: property.longitude,
+              }
+            : { city: property.city, state: property.state }),
+          beds: property.beds,
+          baths: property.baths,
+          sqft: property.sqft,
+          yearBuilt: property.yearBuilt,
+          propertyType: property.propertyType,
+          lotSize: property.lotSize,
+          occupancy: property.occupancy,
+          images: resolvePropertyImages((property as any).images || []),
+          ...(showFinancials
+            ? {
+                price: property.price,
+                arv: property.arv,
+                repairCost: property.repairCost,
+                askingPrice: (property as any).askingPrice,
+                targetDispositionPrice: (property as any).targetDispositionPrice,
+                internalSummary: (property as any).internalSummary,
+              }
+            : {}),
+        },
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/listings/:token/inquiries", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      if (!token) return res.status(404).json({ message: "Not found" });
+      const listing = await storage.getPublicListingByToken(token);
+      if (!listing) return res.status(404).json({ message: "Not found" });
+      if (listing.status !== "published") return res.status(404).json({ message: "Not found" });
+      if (listing.passwordHash) {
+        const providedPw = String(req.body?._password || "").trim();
+        if (providedPw !== listing.passwordHash) {
+          return res.status(401).json({ message: "Password required" });
+        }
+      }
+      if (listing.expiresAt && new Date(listing.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Listing expired" });
+      const clientIp = String(req.ip || req.socket?.remoteAddress || req.headers["x-forwarded-for"] || "").split(",")[0]
+      if (!checkInquiryRateLimit(clientIp)) {
+        return res.status(429).json({ message: "Too many inquiries. Please try again later." });
+      }
+      const body = req.body || {};
+      const name = String(body.name || "").trim().slice(0, 255);
+      const email = String(body.email || "").trim().slice(0, 255);
+      const phone = String(body.phone || "").trim().slice(0, 20);
+      const company = String(body.company || "").trim().slice(0, 255);
+      const buyerType = String(body.buyerType || "").trim().slice(0, 50);
+      const message = String(body.message || "").trim().slice(0, 5000);
+      const offerAmount = body.offerAmount ? Number(body.offerAmount) : null;
+      const pofUrl = body.proofOfFundsUrl ? String(body.proofOfFundsUrl).trim().slice(0, 500) : null;
+      if (!name || name.length < 2) return res.status(400).json({ message: "Name is required (min 2 characters)" });
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Invalid email" });
+      const inquiry = await storage.createBuyerInquiry({
+        listingId: listing.id,
+        opportunityId: listing.opportunityId,
+        name,
+        email: email || null,
+        phone: phone || null,
+        company: company || null,
+        buyerType: buyerType || null,
+        message: message || null,
+        offerAmount: offerAmount !== null && !Number.isNaN(offerAmount) ? String(offerAmount) : null,
+        proofOfFundsUrl: pofUrl,
+        status: "new",
+        ip: req.ip || null,
+        userAgent: String(req.headers["user-agent"] || ""),
+      } as any);
+      await storage.updateProperty(listing.opportunityId, { lastActivityAt: new Date() });
+      await logOpportunityEvent(listing.opportunityId, "inquiry_received", "New buyer inquiry received", `${inquiry.name} submitted an inquiry${offerAmount ? ` with offer $${Number(offerAmount).toLocaleString()}` : ""}`, undefined, "buyer", { inquiryId: inquiry.id, offerAmount: offerAmount ? String(offerAmount) : null });
+      try {
+        const property = await storage.getPropertyById(listing.opportunityId);
+        const ownerId = (property as any)?.assignedTo;
+        if (ownerId) {
+          await storage.createUserNotification({
+            userId: ownerId,
+            type: "opportunity_inquiry",
+            title: "New buyer inquiry on your listing",
+            message: `${inquiry.name} submitted an inquiry for ${property?.address || "your property"}.`,
+            linkUrl: `/opportunities/${listing.opportunityId}/inquiry/${inquiry.id}`,
+            metadata: JSON.stringify({ inquiryId: inquiry.id, listingId: listing.id, opportunityId: listing.opportunityId }),
+          } as any);
+        }
+      } catch {}
+      try {
+        const property = await storage.getPropertyById(listing.opportunityId);
+        const ownerId = (property as any)?.assignedTo;
+        if (ownerId) {
+          await createTask({
+            relatedEntityType: "opportunity",
+            relatedEntityId: listing.opportunityId,
+            assignedToUserId: Number(ownerId),
+            title: `Follow up: Buyer inquiry from ${inquiry.name}`,
+            description: `New inquiry on public listing. Offer: $${offerAmount ? Number(offerAmount).toLocaleString() : "N/A"}`,
+            type: "followup",
+            priority: "high",
+            dueAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+            createdBy: Number(ownerId),
+          } as any);
+        }
+      } catch {}
+      res.status(201).json({ inquiryId: inquiry.id, message: "Inquiry submitted successfully" });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.post("/api/listings/:token/offer", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      if (!token) return res.status(404).json({ message: "Not found" });
+      const listing = await storage.getPublicListingByToken(token);
+      if (!listing) return res.status(404).json({ message: "Not found" });
+      if (listing.status !== "published") return res.status(404).json({ message: "Not found" });
+      const body = req.body || {};
+      const name = String(body.name || "").trim().slice(0, 255);
+      const email = String(body.email || "").trim().slice(0, 255);
+      const phone = String(body.phone || "").trim().slice(0, 20);
+      const offerAmount = body.offerAmount ? Number(body.offerAmount) : null;
+      const terms = String(body.terms || "").trim().slice(0, 500);
+      const closingDateTarget = body.closingDateTarget ? new Date(body.closingDateTarget) : null;
+      const pofUrl = body.proofOfFundsUrl ? String(body.proofOfFundsUrl).trim().slice(0, 500) : null;
+      if (!name || name.length < 2) return res.status(400).json({ message: "Name is required" });
+      if (!offerAmount || Number.isNaN(offerAmount)) return res.status(400).json({ message: "Valid offer amount is required" });
+      const inquiry = await storage.createBuyerInquiry({
+        listingId: listing.id,
+        opportunityId: listing.opportunityId,
+        name,
+        email: email || null,
+        phone: phone || null,
+        buyerType: "individual",
+        message: terms || null,
+        offerAmount: String(offerAmount),
+        proofOfFundsUrl: pofUrl,
+        status: "new",
+        ip: req.ip || null,
+        userAgent: String(req.headers["user-agent"] || ""),
+      } as any);
+      try {
+        const property = await storage.getPropertyById(listing.opportunityId);
+        const ownerId = (property as any)?.assignedTo;
+        if (ownerId) {
+          await storage.createUserNotification?.({
+            userId: ownerId,
+            type: "buyer_offer",
+            title: "New offer received!",
+            message: `${inquiry.name} submitted an offer of $${Number(offerAmount).toLocaleString()}`,
+            linkUrl: `/opportunities/${listing.opportunityId}/inquiry/${inquiry.id}`,
+            metadata: JSON.stringify({ inquiryId: inquiry.id, offerAmount: String(offerAmount), listingId: listing.id }),
+          } as any);
+        }
+      } catch {}
+      res.status(201).json({ inquiryId: inquiry.id, message: "Offer submitted successfully" });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  // Public listing view route (serves the React app with token in context)
+  app.get("/api/public/listings/:token/view", async (req, res) => {
+    const token = String(req.params.token || "").trim();
+    if (!token) return res.status(404).json({ message: "Not found" });
+    const listing = await storage.getPublicListingByToken(token);
+    if (!listing) return res.status(404).json({ message: "Not found" });
+    if (listing.status !== "published") return res.status(404).json({ message: "Not found" });
+    res.json({ listingId: listing.id, slug: listing.slug });
+  });
   if (mode === "serverless") return null;
-
   const httpServer = createServer(app);
   initTelephonyWs(httpServer);
   return httpServer;

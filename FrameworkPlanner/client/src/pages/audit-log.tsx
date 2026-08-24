@@ -2,12 +2,14 @@ import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { RefreshCw, ScrollText } from "lucide-react";
 import { useMemo, useState } from "react";
+import { QueryError } from "@/components/ui/query-state";
 
 type AuditEvent = {
   id: number;
@@ -34,7 +36,7 @@ const entityOptions = [
   { value: "opportunity", label: "Opportunity" },
 ];
 
-export default function AuditLogPage() {
+export function AuditLogContent() {
   const { user } = useAuth();
 
   const [entityType, setEntityType] = useState("all");
@@ -53,7 +55,7 @@ export default function AuditLogPage() {
 
   const key = useMemo(() => `/api/audit?${params.toString()}`, [params]);
 
-  const { data, isLoading, isFetching, refetch } = useQuery<AuditResponse>({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery<AuditResponse>({
     queryKey: [key],
     enabled: !!user,
   });
@@ -61,7 +63,7 @@ export default function AuditLogPage() {
   const items = data?.items || [];
 
   return (
-    <Layout>
+    <>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -92,6 +94,14 @@ export default function AuditLogPage() {
           </div>
           <div className="text-sm text-muted-foreground">{isLoading ? "Loading…" : `${items.length} / ${data?.total ?? 0}`}</div>
         </div>
+
+        {isError && (
+          <Card className="border-destructive/40">
+            <CardContent className="p-0">
+              <QueryError message="Couldn't load the audit log." onRetry={() => refetch()} />
+            </CardContent>
+          </Card>
+        )}
 
         <Table>
           <TableHeader>
@@ -158,6 +168,14 @@ export default function AuditLogPage() {
           </DialogContent>
         </Dialog>
       </div>
+    </>
+  );
+}
+
+export default function AuditLogPage() {
+  return (
+    <Layout>
+      <AuditLogContent />
     </Layout>
   );
 }

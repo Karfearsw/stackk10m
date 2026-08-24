@@ -1,7 +1,17 @@
-function requireEnv(name: string) {
+import crypto from "node:crypto";
+
+function readEnv(name: string): string {
   const v = process.env[name];
-  if (!v || !String(v).trim()) throw new Error(`${name} is not configured`);
-  return String(v).trim();
+  return v && String(v).trim() ? String(v).trim() : "";
+}
+
+export class TelnyxConfigError extends Error {
+  missingEnv: string[];
+  constructor(missing: string[]) {
+    super(`Telnyx is not configured: missing ${missing.join(", ")}`);
+    this.name = "TelnyxConfigError";
+    this.missingEnv = missing;
+  }
 }
 
 export type TelnyxDialInput = {
@@ -37,11 +47,24 @@ export class TelnyxClient {
   private readonly baseUrl = "https://api.telnyx.com/v2";
 
   constructor(opts: TelnyxClientOptions = {}) {
-    this.apiKey = opts.apiKey || requireEnv("TELNYX_API_KEY");
-    this.connectionId = opts.connectionId || requireEnv("TELNYX_CONNECTION_ID");
-    this.messagingProfileId = opts.messagingProfileId || requireEnv("TELNYX_MESSAGING_PROFILE_ID");
-    this.defaultFrom = opts.defaultFrom || process.env.TELNYX_DEFAULT_FROM_NUMBER || "";
-    if (!this.defaultFrom) throw new Error("TELNYX_DEFAULT_FROM_NUMBER is not configured");
+    this.apiKey = opts.apiKey || readEnv("TELNYX_API_KEY");
+    this.connectionId = opts.connectionId || readEnv("TELNYX_CONNECTION_ID");
+    this.messagingProfileId = opts.messagingProfileId || readEnv("TELNYX_MESSAGING_PROFILE_ID");
+    this.defaultFrom = opts.defaultFrom || readEnv("TELNYX_DEFAULT_FROM_NUMBER");
+  }
+
+  private missingEnv(): string[] {
+    const missing: string[] = [];
+    if (!this.apiKey) missing.push("TELNYX_API_KEY");
+    if (!this.connectionId) missing.push("TELNYX_CONNECTION_ID");
+    if (!this.messagingProfileId) missing.push("TELNYX_MESSAGING_PROFILE_ID");
+    if (!this.defaultFrom) missing.push("TELNYX_DEFAULT_FROM_NUMBER");
+    return missing;
+  }
+
+  private requireReady(): void {
+    const missing = this.missingEnv();
+    if (missing.length) throw new TelnyxConfigError(missing);
   }
 
   private headers() {
@@ -52,6 +75,7 @@ export class TelnyxClient {
   }
 
   async dial(input: TelnyxDialInput): Promise<{ callControlId: string }> {
+    this.requireReady();
     const from = input.from || this.defaultFrom;
     if (!from) throw new Error("Missing from number for outbound call");
 
@@ -91,6 +115,7 @@ export class TelnyxClient {
   }
 
   async hangup(callControlId: string): Promise<void> {
+    this.requireReady();
     const res = await fetch(`${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/hangup`, {
       method: "POST",
       headers: this.headers(),
@@ -112,6 +137,7 @@ export class TelnyxClient {
   }
 
   async sendSms(input: TelnyxSmsInput): Promise<{ messageId: string }> {
+    this.requireReady();
     const from = input.from || this.defaultFrom;
     if (!from) throw new Error("Missing from number for SMS");
 
@@ -147,13 +173,29 @@ export class TelnyxClient {
   }
 
   async healthCheck(): Promise<{
-    status: "reachable" | "unreachable" | "degraded";
-    code: number | null;
+    status: "reachable" | "unreachable" | "degraded" | "unconfigured";
+    code: number | string | null;
     message: string;
+    hint?: string;
+    telnyxErrorCode?: string | null;
     connectionFound: boolean;
     connectionActive: boolean;
     httpStatus: number | null;
+    missingEnv?: string[];
   }> {
+    const missing = this.missingEnv();
+    if (missing.length) {
+      return {
+        status: "unconfigured",
+        code: "MISSING_CONFIG",
+        message: `Telnyx is not configured: missing ${missing.join(", ")}`,
+        connectionFound: false,
+        connectionActive: false,
+        httpStatus: null,
+        missingEnv: missing,
+      };
+    }
+
     let httpStatus: number | null = null;
     let errorMessage: string = "";
     try {
@@ -165,11 +207,34 @@ export class TelnyxClient {
       const data: any = await res.json().catch(() => ({}));
 
       if (res.status === 401 || res.status === 403) {
-        errorMessage = "Invalid Telnyx API key";
+        const telnyxErrCode = data?.errors?.[0]?.code || null;
+        const telnyxErrDetail = data?.errors?.[0]?.detail || null;
+        const telnyxErrTitle = data?.errors?.[0]?.title || null;
+
+        // Classify the specific auth failure from Telnyx error codes
+        let classification = "INVALID_API_KEY";
+        let hint = "Update TELNYX_API_KEY in Settings or .env and restart the server.";
+        if (String(telnyxErrCode) === "10009") {
+          classification = "MALFORMED_KEY";
+          hint = "The API key appears malformed or truncated. Go to Telnyx Portal > Account > API Keys, generate a new V2 key, and replace TELNYX_API_KEY.";
+        } else if (String(telnyxErrCode) === "20002") {
+          classification = "REVOKED_KEY";
+          hint = "This API key has been revoked. Generate a new key in the Telnyx portal.";
+        } else if (String(telnyxErrCode) === "20008") {
+          classification = "INVALID_KEY";
+          hint = "The API key is invalid. Copy it fresh from the Telnyx portal API Keys page.";
+        } else if (res.status === 403) {
+          classification = "PERMISSION_DENIED";
+          hint = "The key is valid but lacks permissions. Check key scope in the Telnyx portal.";
+        }
+
+        errorMessage = telnyxErrDetail || telnyxErrTitle || "Invalid Telnyx API key";
         return {
           status: "unreachable",
-          code: res.status,
+          code: classification,
           message: errorMessage,
+          hint,
+          telnyxErrorCode: telnyxErrCode,
           connectionFound: false,
           connectionActive: false,
           httpStatus,
@@ -180,7 +245,7 @@ export class TelnyxClient {
         errorMessage = "Telnyx rate limit exceeded";
         return {
           status: "degraded",
-          code: res.status,
+          code: "RATE_LIMITED",
           message: errorMessage,
           connectionFound: false,
           connectionActive: false,
@@ -192,7 +257,7 @@ export class TelnyxClient {
         errorMessage = "Telnyx server error";
         return {
           status: "degraded",
-          code: res.status,
+          code: "PROVIDER_ERROR",
           message: errorMessage,
           connectionFound: false,
           connectionActive: false,
@@ -204,7 +269,7 @@ export class TelnyxClient {
         errorMessage = data?.errors?.[0]?.title || data?.message || `Telnyx connections fetch failed (${res.status})`;
         return {
           status: "unreachable",
-          code: res.status,
+          code: "UNREACHABLE",
           message: errorMessage,
           connectionFound: false,
           connectionActive: false,
@@ -216,11 +281,12 @@ export class TelnyxClient {
       const target = connections.find((c) => String(c.id) === String(this.connectionId));
 
       if (!target) {
-        errorMessage = `Connection ${this.connectionId} not found in account`;
+        errorMessage = `TELNYX_CONNECTION_ID (${this.connectionId}) not found among ${connections.length} connection(s) in this account`;
         return {
           status: "unreachable",
-          code: 404,
+          code: "CONNECTION_NOT_FOUND",
           message: errorMessage,
+          hint: "TELNYX_CONNECTION_ID must be a Call Control Application ID (numeric), not a SIP credential. Create or locate the correct app in Telnyx Portal > Voice > Call Control Applications.",
           connectionFound: false,
           connectionActive: false,
           httpStatus,
@@ -230,7 +296,7 @@ export class TelnyxClient {
       const active = isConnectionActive(target);
       return {
         status: active ? "reachable" : "unreachable",
-        code: 200,
+        code: active ? "OK" : "CONNECTION_INACTIVE",
         message: active ? "Connection is active" : `Connection state: ${String(target.state || target.status || "unknown")}`,
         connectionFound: true,
         connectionActive: active,
@@ -242,7 +308,7 @@ export class TelnyxClient {
       errorMessage = isTimeout ? "Telnyx connection timed out" : message;
       return {
         status: isTimeout ? "degraded" : "unreachable",
-        code: null,
+        code: isTimeout ? "TIMEOUT" : "UNREACHABLE",
         message: errorMessage,
         connectionFound: false,
         connectionActive: false,
@@ -268,12 +334,136 @@ export class TelnyxClient {
     };
   }
 
-  verifyWebhookSignature(payload: string, signature: string, toleranceSeconds?: number): boolean {
+  // ── Call Control Actions ──────────────────────────────────────────────
+
+  async mute(callControlId: string, muted: boolean): Promise<void> {
+    this.requireReady();
+    const res = await fetch(
+      `${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/mute`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ muted }),
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    if (!res.ok) {
+      const data: any = await res.json().catch(() => ({}));
+      const title = data?.errors?.[0]?.title || data?.message || `Telnyx mute failed (${res.status})`;
+      const err = new Error(title) as any;
+      err.status = res.status;
+      throw err;
+    }
+  }
+
+  async hold(callControlId: string): Promise<void> {
+    this.requireReady();
+    const res = await fetch(
+      `${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/hold`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    if (!res.ok) {
+      const data: any = await res.json().catch(() => ({}));
+      const title = data?.errors?.[0]?.title || data?.message || `Telnyx hold failed (${res.status})`;
+      const err = new Error(title) as any;
+      err.status = res.status;
+      throw err;
+    }
+  }
+
+  async unhold(callControlId: string): Promise<void> {
+    this.requireReady();
+    const res = await fetch(
+      `${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/unhold`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    if (!res.ok) {
+      const data: any = await res.json().catch(() => ({}));
+      const title = data?.errors?.[0]?.title || data?.message || `Telnyx unhold failed (${res.status})`;
+      const err = new Error(title) as any;
+      err.status = res.status;
+      throw err;
+    }
+  }
+
+  async transfer(callControlId: string, to: string): Promise<void> {
+    this.requireReady();
+    const res = await fetch(
+      `${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/transfer`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ to }),
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    if (!res.ok) {
+      const data: any = await res.json().catch(() => ({}));
+      const title = data?.errors?.[0]?.title || data?.message || `Telnyx transfer failed (${res.status})`;
+      const err = new Error(title) as any;
+      err.status = res.status;
+      throw err;
+    }
+  }
+
+  // ── Webhook Signature Verification ────────────────────────────────────
+  // Telnyx signs webhooks with HMAC-SHA256 using TELNYX_PUBLIC_KEY as the secret.
+  // Header format: t=<timestamp>,v1=<hex_signature>
+
+  verifyWebhookSignature(
+    payload: string,
+    signatureHeader: string,
+    toleranceSeconds?: number,
+  ): boolean {
     const publicKey = process.env.TELNYX_PUBLIC_KEY;
     if (!publicKey) return false;
-    // Webhook verification requires a JWS/JWT library; for now we return true if key exists
-    // and the payload/signature are present. Replace with proper verification in production.
-    return Boolean(publicKey && payload && signature);
+    if (!payload || !signatureHeader) return false;
+
+    try {
+      const tolerance = toleranceSeconds ?? Number(process.env.TELNYX_WEBHOOK_SIGNING_TOLERANCE_SECONDS || "300");
+
+      // Parse header: t=<timestamp>,v1=<hex_signature>,v0=<older_signature>
+      const parts = String(signatureHeader).split(",").map((p) => p.trim());
+      const timestampStr = parts.find((p) => p.startsWith("t="));
+      const v1Sig = parts.find((p) => p.startsWith("v1="));
+
+      if (!timestampStr || !v1Sig) return false;
+
+      const timestamp = parseInt(timestampStr.slice(2), 10);
+      if (Number.isNaN(timestamp)) return false;
+
+      // Check timestamp tolerance
+      const now = Math.floor(Date.now() / 1000);
+      if (Math.abs(now - timestamp) > tolerance) return false;
+
+      // Compute HMAC-SHA256 of `{timestamp}.{payload}` using the public key
+      const signedContent = `${timestamp}.${payload}`;
+      const expectedSig = crypto
+        .createHmac("sha256", publicKey)
+        .update(signedContent)
+        .digest("hex");
+
+      const receivedSig = v1Sig.slice(3); // strip "v1="
+
+      // Constant-time comparison
+      if (expectedSig.length !== receivedSig.length) return false;
+      return crypto.timingSafeEqual(
+        Buffer.from(expectedSig, "hex"),
+        Buffer.from(receivedSig, "hex"),
+      );
+    } catch {
+      return false;
+    }
   }
 }
 

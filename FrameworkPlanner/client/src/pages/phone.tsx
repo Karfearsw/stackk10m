@@ -12,7 +12,10 @@ import { Badge } from "@/components/ui/badge";
 import { Phone, PhoneOff, Plus, Search, Clock, Voicemail, Mic, MicOff, Pause, Play } from "lucide-react";
 import { useSignalWire } from "@/hooks/useSignalWire";
 import { useTelephonyEvents } from "@/hooks/useTelephonyEvents";
+import { TelnyxHealthStatus } from "@/components/telephony/TelnyxHealthStatus";
 import { ContactsManager } from "@/components/contacts/ContactsManager";
+import { apiRequest } from "@/lib/queryClient";
+import { toast } from "sonner";
 
 function formatE164(raw: string) {
   const digits = raw.replace(/[^\d+]/g, "");
@@ -38,7 +41,26 @@ function getTabFromLocation(): TabKey {
 export default function PhoneWorkspace() {
   const queryClient = useQueryClient();
   const [, navigate] = useLocation();
-  const { connected: telephonyWsConnected } = useTelephonyEvents({ enabled: true });
+  const {
+    ready,
+    call: activeCall,
+    error: telnyxError,
+    lastError,
+    callControlId,
+    makeCall,
+    endCall,
+    updateCallState,
+    toggleMute,
+    toggleHold,
+  } = useSignalWire();
+  const { connected: telephonyWsConnected } = useTelephonyEvents({
+    enabled: true,
+    onCallStateChanged: (evt) => {
+      // Only apply provider state changes for the current call.
+      if (evt.callControlId && callControlId && evt.callControlId !== callControlId) return;
+      if (evt.state) updateCallState(evt.state);
+    },
+  });
 
   const [tab, setTab] = useState<TabKey>(() => getTabFromLocation());
   const setTabAndUrl = (next: TabKey) => {
@@ -55,9 +77,8 @@ export default function PhoneWorkspace() {
   const [startTs, setStartTs] = useState<number | null>(null);
   const timerRef = useRef<number>(0);
   const wasConnectedRef = useRef(false);
+  const callFailedRef = useRef(false);
   const lastPatchedStatusRef = useRef<string | null>(null);
-
-  const { ready, call: activeCall, makeCall, endCall, toggleMute, toggleHold } = useSignalWire();
 
   const initialNumber = useMemo(() => {
     if (typeof window === "undefined") return "";
@@ -102,12 +123,7 @@ export default function PhoneWorkspace() {
 
   const patchCallLog = async (id: number, patch: any) => {
     try {
-      const res = await fetch(`/api/telephony/calls/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
-      });
-      if (!res.ok) throw new Error(await res.text());
+      const res = await apiRequest("PATCH", `/api/telephony/calls/${id}`, patch);
       return await res.json();
     } catch {
       return null;
@@ -116,38 +132,32 @@ export default function PhoneWorkspace() {
 
   const createCall = useMutation({
     mutationFn: async ({ direction, number }: { direction: "outbound" | "inbound"; number: string }) => {
-      const res = await fetch(`/api/telephony/calls`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          direction,
-          number: String(number),
-          status: "dialing",
-          startedAt: new Date().toISOString(),
-          metadata: callMetadataRef.current,
-        }),
-      });
-      if (!res.ok) throw new Error(await res.text());
-      const log = await res.json();
-
       if (direction === "outbound") {
-        try {
-          await makeCall(number);
-        } catch (error) {
-          await patchCallLog(log.id, { status: "failed", endedAt: new Date().toISOString() });
-          throw error;
-        }
+        // The dispatch endpoint creates the call log with callControlId + metadata,
+        // so there is exactly one history entry per outbound call.
+        const data = await makeCall(String(number), { metadata: callMetadataRef.current });
+        return { id: data.callLogId, callControlId: data.callControlId };
       }
-
-      return log;
+      const res = await apiRequest("POST", "/api/telephony/calls", {
+        direction,
+        number: String(number),
+        status: "dialing",
+        startedAt: new Date().toISOString(),
+        metadata: callMetadataRef.current,
+      });
+      return await res.json();
     },
     onSuccess: (log) => {
       setCallId(log.id);
       setStatus("dialing");
       setStartTs(Date.now());
       wasConnectedRef.current = false;
+      callFailedRef.current = false;
       lastPatchedStatusRef.current = "dialing";
       queryClient.invalidateQueries({ queryKey: ["/api/telephony/history"] });
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || "Failed to start call");
     },
   });
 
@@ -157,7 +167,7 @@ export default function PhoneWorkspace() {
         await endCall();
       } catch {}
       const durationMs = startTs ? Date.now() - startTs : 0;
-      const nextStatus = succeeded ? (wasConnectedRef.current ? "answered" : "missed") : "failed";
+      const nextStatus = callFailedRef.current ? "failed" : succeeded ? (wasConnectedRef.current ? "answered" : "missed") : "failed";
       lastPatchedStatusRef.current = nextStatus;
       return await patchCallLog(id, { status: nextStatus, endedAt: new Date().toISOString(), durationMs });
     },
@@ -166,7 +176,11 @@ export default function PhoneWorkspace() {
       setCallId(null);
       setStartTs(null);
       wasConnectedRef.current = false;
+      callFailedRef.current = false;
       queryClient.invalidateQueries({ queryKey: ["/api/telephony/history"] });
+    },
+    onError: (e: any) => {
+      toast.error(e?.message || "Failed to end call");
     },
   });
 
@@ -185,6 +199,10 @@ export default function PhoneWorkspace() {
     if (activeCall.state === "ringing") setStatus("ringing");
     if (activeCall.state === "active") setStatus("connected");
     if (activeCall.state === "finished") setStatus("ended");
+    if (activeCall.state === "failed") {
+      callFailedRef.current = true;
+      setStatus("failed");
+    }
   }, [activeCall?.state]);
 
   useEffect(() => {
@@ -212,8 +230,17 @@ export default function PhoneWorkspace() {
       return;
     }
 
+    if (activeCall.state === "failed" && lastPatchedStatusRef.current !== "failed") {
+      callFailedRef.current = true;
+      lastPatchedStatusRef.current = "failed";
+      patchCallLog(callId, { status: "failed", errorMessage: lastError || "Call failed", endedAt: new Date().toISOString(), durationMs }).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["/api/telephony/history"] });
+      });
+      return;
+    }
+
     if (activeCall.state === "finished") {
-      const finalStatus = wasConnectedRef.current ? "answered" : "missed";
+      const finalStatus = callFailedRef.current ? "failed" : wasConnectedRef.current ? "answered" : "missed";
       if (lastPatchedStatusRef.current !== finalStatus) {
         lastPatchedStatusRef.current = finalStatus;
         patchCallLog(callId, { status: finalStatus, endedAt: new Date().toISOString(), durationMs }).then(() => {
@@ -221,7 +248,7 @@ export default function PhoneWorkspace() {
         });
       }
     }
-  }, [activeCall?.state, callId, queryClient, startTs]);
+  }, [activeCall?.state, callId, lastError, queryClient, startTs]);
 
   useEffect(() => {
     if (!callId) return;
@@ -229,7 +256,7 @@ export default function PhoneWorkspace() {
     if (status === "idle" || status === "ended" || status === "failed") return;
 
     const durationMs = startTs ? Date.now() - startTs : 0;
-    const finalStatus = wasConnectedRef.current ? "answered" : "missed";
+    const finalStatus = callFailedRef.current ? "failed" : wasConnectedRef.current ? "answered" : "missed";
     if (lastPatchedStatusRef.current !== finalStatus) {
       lastPatchedStatusRef.current = finalStatus;
       patchCallLog(callId, { status: finalStatus, endedAt: new Date().toISOString(), durationMs }).then(() => {
@@ -238,12 +265,21 @@ export default function PhoneWorkspace() {
     }
   }, [activeCall, callId, queryClient, startTs, status]);
 
+  const { data: telnyxHealth, isLoading: healthLoading, refetch: healthRefetch } = useQuery({
+    queryKey: ["/api/telephony/health"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/telephony/health");
+      return await res.json();
+    },
+    refetchInterval: 30000,
+    retry: 1,
+  });
+
   const [contactQuery, setContactQuery] = useState("");
   const { data: contacts = [], isLoading: contactsLoading } = useQuery({
     queryKey: ["/api/telephony/contacts", contactQuery],
     queryFn: async () => {
-      const res = await fetch(`/api/telephony/contacts?query=${encodeURIComponent(contactQuery)}`);
-      if (!res.ok) throw new Error("Failed to fetch contacts");
+      const res = await apiRequest("GET", `/api/telephony/contacts?query=${encodeURIComponent(contactQuery)}`);
       const json = await res.json();
       return json.items || [];
     },
@@ -252,9 +288,8 @@ export default function PhoneWorkspace() {
   const { data: history = [], isLoading: historyLoading } = useQuery({
     queryKey: ["/api/telephony/history"],
     queryFn: async () => {
-      const res = await fetch(`/api/telephony/history?limit=100`);
-      if (!res.ok) throw new Error("Failed to fetch history");
-      return res.json();
+      const res = await apiRequest("GET", "/api/telephony/history?limit=100");
+      return await res.json();
     },
     refetchInterval: historyInterval as any,
   });
@@ -262,9 +297,8 @@ export default function PhoneWorkspace() {
   const { data: voicemails = [], isLoading: voicemailLoading } = useQuery({
     queryKey: ["/api/telephony/voicemail", "50"],
     queryFn: async () => {
-      const res = await fetch(`/api/telephony/voicemail?limit=50`);
-      if (!res.ok) throw new Error("Failed to fetch voicemail");
-      return res.json();
+      const res = await apiRequest("GET", "/api/telephony/voicemail?limit=50");
+      return await res.json();
     },
     refetchInterval: 30000,
   });
@@ -348,8 +382,12 @@ export default function PhoneWorkspace() {
                           )}
                         </div>
 
-                        <div className="text-sm text-muted-foreground mt-2" aria-live="polite">
-                          Status: {status} {status === "connected" ? `• ${durationLabel}` : ""} • Telnyx: {ready ? "Connected" : "Connecting…"} • Live: {telephonyWsConnected ? "On" : "Off"}
+                        <div className="text-sm text-muted-foreground mt-2 space-y-1" aria-live="polite">
+                          <div>
+                            Status: {status} {status === "connected" ? `• ${durationLabel}` : ""} • Live: {telephonyWsConnected ? "On" : "Off"}
+                            {telnyxError ? <span className="text-destructive"> • {telnyxError}</span> : null}
+                          </div>
+                          <TelnyxHealthStatus health={telnyxHealth?.telnyx} loading={healthLoading} onRetry={() => healthRefetch()} />
                         </div>
                       </div>
                     </CardContent>
@@ -511,9 +549,8 @@ function PhoneAnalyticsPanel() {
     queryFn: async () => {
       const params = new URLSearchParams();
       params.set("rangeDays", "30");
-      const res = await fetch(`/api/telephony/analytics/summary?${params.toString()}`);
-      if (!res.ok) throw new Error(await res.text());
-      return res.json();
+      const res = await apiRequest("GET", `/api/telephony/analytics/summary?${params.toString()}`);
+      return await res.json();
     },
     refetchInterval: 60000,
   });

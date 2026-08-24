@@ -549,12 +549,12 @@ export default function Timesheet() {
                       </div>
                       <div>
                         <Label htmlFor="category">Work Category</Label>
-                        <Select value={formData.categoryId} onValueChange={(v) => setFormData({ ...formData, categoryId: v })}>
+                        <Select value={formData.categoryId || "uncategorized"} onValueChange={(v) => setFormData({ ...formData, categoryId: v === "uncategorized" ? "" : v })}>
                           <SelectTrigger data-testid="select-category">
                             <SelectValue placeholder="Select category" />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">Uncategorized</SelectItem>
+                            <SelectItem value="uncategorized">Uncategorized</SelectItem>
                             {categories.map((c) => (
                               <SelectItem key={c.id} value={String(c.id)}>
                                 {c.name}
@@ -598,12 +598,12 @@ export default function Timesheet() {
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <Label htmlFor="linkedEntityType">Link Type</Label>
-                          <Select value={formData.linkedEntityType} onValueChange={(v) => setFormData({ ...formData, linkedEntityType: v })}>
+                          <Select value={formData.linkedEntityType || "none"} onValueChange={(v) => setFormData({ ...formData, linkedEntityType: v === "none" ? "" : v })}>
                             <SelectTrigger data-testid="select-link-type">
                               <SelectValue placeholder="None" />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="">None</SelectItem>
+                              <SelectItem value="none">None</SelectItem>
                               <SelectItem value="lead">Lead</SelectItem>
                               <SelectItem value="property">Opportunity</SelectItem>
                               <SelectItem value="contract">Contract</SelectItem>

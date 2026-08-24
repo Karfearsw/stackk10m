@@ -892,24 +892,49 @@ export default function Leads() {
     },
   });
 
+  const [convertLead, setConvertLead] = useState<any>(null);
+
   const convertToPropertyMutation = useMutation({
     mutationFn: async (leadId: number) => {
-      const res = await apiRequest("POST", `/api/leads/${leadId}/convert-to-property`, {});
-      return await res.json();
+      const res = await fetch(`/api/leads/${leadId}/convert-to-property`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const err: any = new Error(body?.message || `Conversion failed (${res.status})`);
+        if (res.status === 409 && body?.propertyId) err.propertyId = body.propertyId;
+        throw err;
+      }
+      return body;
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["leads"] });
       queryClient.invalidateQueries({ queryKey: ["properties"] });
       queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
       toast({
-        title: "Property created!",
-        description: `Lead successfully converted to property: ${data.property.address}`,
+        title: "Opportunity created!",
+        description: `Lead converted to opportunity: ${data.property.address}`,
       });
+      setConvertLead(null);
+      const propertyId = data?.property?.id;
+      if (propertyId) setLocation(opportunityUrl(propertyId));
     },
     onError: (error: any) => {
+      setConvertLead(null);
+      // 409 with propertyId means an opportunity already exists for this lead
+      if (error?.propertyId) {
+        toast({
+          title: "Opportunity already exists",
+          description: error.message,
+        });
+        setLocation(opportunityUrl(error.propertyId));
+        return;
+      }
       toast({
         title: "Conversion failed",
-        description: error.message,
+        description: error?.message || String(error),
         variant: "destructive",
       });
     }
@@ -956,11 +981,6 @@ export default function Leads() {
         },
       });
     }
-  };
-
-  const handleConvertToProperty = async (lead: any, e: MouseEvent) => {
-    e.stopPropagation();
-    convertToPropertyMutation.mutate(lead.id);
   };
 
   const getStatusBadgeColor = (status: string) => {
@@ -1395,12 +1415,12 @@ export default function Leads() {
                   </div>
                   <div className="space-y-2">
                     <Label>Contact Presence</Label>
-                    <Select value={filters.contactPresence || ""} onValueChange={(v) => setFilters((prev: any) => ({ ...prev, contactPresence: v }))}>
+                    <Select value={filters.contactPresence || "any"} onValueChange={(v) => setFilters((prev: any) => ({ ...prev, contactPresence: v === "any" ? "" : v }))}>
                       <SelectTrigger>
                         <SelectValue placeholder="Any" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">Any</SelectItem>
+                        <SelectItem value="any">Any</SelectItem>
                         <SelectItem value="phone_only">Phone only</SelectItem>
                         <SelectItem value="email_only">Email only</SelectItem>
                         <SelectItem value="both">Both</SelectItem>
@@ -1431,12 +1451,12 @@ export default function Leads() {
                   </div>
                   <div className="space-y-2">
                     <Label>Has Notes</Label>
-                    <Select value={filters.hasNotes || ""} onValueChange={(v) => setFilters((prev: any) => ({ ...prev, hasNotes: v }))}>
+                    <Select value={filters.hasNotes || "any"} onValueChange={(v) => setFilters((prev: any) => ({ ...prev, hasNotes: v === "any" ? "" : v }))}>
                       <SelectTrigger>
                         <SelectValue placeholder="Any" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">Any</SelectItem>
+                        <SelectItem value="any">Any</SelectItem>
                         <SelectItem value="true">Yes</SelectItem>
                         <SelectItem value="false">No</SelectItem>
                       </SelectContent>
@@ -1959,8 +1979,8 @@ export default function Leads() {
         </TabsList>
 
         <TabsContent value="list" className="mt-4">
-          <div className="rounded-md border bg-card shadow-sm">
-            <Table>
+          <div className="rounded-md border bg-card shadow-sm overflow-x-auto">
+            <Table className="min-w-[800px]">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[44px]">
@@ -1998,8 +2018,8 @@ export default function Leads() {
                         onCheckedChange={(v) => toggleRow(Number(lead.id), !!v)}
                       />
                     </TableCell>
-                    {visibleColumns.address ? <TableCell className="font-medium">{lead.address}, {lead.city}</TableCell> : null}
-                    {visibleColumns.owner ? <TableCell>{lead.ownerName}</TableCell> : null}
+                    {visibleColumns.address ? <TableCell className="font-medium truncate max-w-[200px]" title={String(`${lead.address || ""}, ${lead.city || ""}`)}>{lead.address}, {lead.city}</TableCell> : null}
+                    {visibleColumns.owner ? <TableCell className="truncate max-w-[180px]" title={String(lead.ownerName || "")}>{lead.ownerName}</TableCell> : null}
                     {visibleColumns.status ? (
                       <TableCell>
                         <Badge variant="outline" className={getStatusBadgeColor(lead.status)}>
@@ -2049,19 +2069,20 @@ export default function Leads() {
                             View Opportunity
                           </Button>
                         ) : (
-                          lead.status?.toLowerCase().trim() === "under_contract" && (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="border-primary text-primary hover:bg-primary hover:text-white"
-                              onClick={(e) => handleConvertToProperty(lead, e)}
-                              disabled={convertToPropertyMutation.isPending}
-                              data-testid={`button-convert-lead-${lead.id}`}
-                            >
-                              <Building2 className="mr-1 h-3.5 w-3.5" />
-                              Add to Properties
-                            </Button>
-                          )
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-primary text-primary hover:bg-primary hover:text-white"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConvertLead(lead);
+                            }}
+                            disabled={convertToPropertyMutation.isPending}
+                            data-testid={`button-convert-lead-${lead.id}`}
+                          >
+                            <Building2 className="mr-1 h-3.5 w-3.5" />
+                            Convert to Opportunity
+                          </Button>
                         )}
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -2255,26 +2276,37 @@ export default function Leads() {
                 </div>
               </div>
 
-              <div className="flex gap-2">
-                {selectedLead.linkedPropertyId && (
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  {selectedLead.linkedPropertyId ? (
+                    <Button
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => setLocation(`/opportunities/${selectedLead.linkedPropertyId}`)}
+                    >
+                      View Opportunity
+                    </Button>
+                  ) : (
+                    <Button
+                      className="flex-1 bg-primary hover:bg-primary/90 text-white"
+                      onClick={() => setConvertLead(selectedLead)}
+                      disabled={convertToPropertyMutation.isPending}
+                    >
+                      <Building2 className="mr-2 h-4 w-4" />
+                      Convert to Opportunity
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     className="flex-1"
-                    onClick={() => setLocation(`/opportunities/${selectedLead.linkedPropertyId}`)}
+                    onClick={() => {
+                      setIsLeadSheetOpen(false);
+                      openEditLead(selectedLead);
+                    }}
                   >
-                    View Opportunity
+                    Edit Lead
                   </Button>
-                )}
-                <Button
-                  variant="outline"
-                  className={selectedLead.linkedPropertyId ? "flex-1" : "w-full"}
-                  onClick={() => {
-                    setIsLeadSheetOpen(false);
-                    openEditLead(selectedLead);
-                  }}
-                >
-                  Edit Lead
-                </Button>
+                </div>
               </div>
 
               <Button
@@ -2440,6 +2472,38 @@ export default function Leads() {
               }}
             >
               {addNoteMutation.isPending ? "Saving..." : "Save Note"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(convertLead)} onOpenChange={(o) => !o && setConvertLead(null)}>
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>Convert to Opportunity</DialogTitle>
+            <DialogDescription>
+              {convertLead?.address ? `Create an opportunity from lead: ${convertLead.address}` : "Create an opportunity from this lead."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <p>The opportunity will be created with the following data carried over:</p>
+            <ul className="space-y-1.5 text-muted-foreground">
+              <li>• Property: <span className="font-medium text-foreground">{convertLead?.address}{convertLead?.city ? `, ${convertLead.city}` : ""}{convertLead?.state ? ` ${convertLead.state}` : ""}</span></li>
+              <li>• Owner: <span className="font-medium text-foreground">{convertLead?.ownerName || "—"}</span>{convertLead?.ownerPhone ? ` · ${convertLead.ownerPhone}` : ""}{convertLead?.ownerEmail ? ` · ${convertLead.ownerEmail}` : ""}</li>
+              <li>• Source: <span className="font-medium text-foreground">{convertLead?.source || "—"}</span></li>
+              <li>• Score: <span className="font-medium text-foreground">{convertLead?.relasScore ?? "—"}</span></li>
+              <li>• Notes: <span className="font-medium text-foreground">{convertLead?.notes ? convertLead.notes.slice(0, 120) + (convertLead.notes.length > 120 ? "…" : "") : "—"}</span></li>
+            </ul>
+            <p className="text-xs text-muted-foreground">If an opportunity already exists for this lead, you'll be taken to it instead of creating a duplicate.</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConvertLead(null)} disabled={convertToPropertyMutation.isPending}>Cancel</Button>
+            <Button
+              className="bg-primary hover:bg-primary/90 text-white"
+              disabled={convertToPropertyMutation.isPending}
+              onClick={() => convertLead && convertToPropertyMutation.mutate(convertLead.id)}
+            >
+              {convertToPropertyMutation.isPending ? "Converting..." : "Convert to Opportunity"}
             </Button>
           </DialogFooter>
         </DialogContent>

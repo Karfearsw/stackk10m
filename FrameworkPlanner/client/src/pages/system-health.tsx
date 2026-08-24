@@ -2,7 +2,7 @@ import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Server, Database, Phone, Shield, ActivitySquare, Key } from "lucide-react";
+import { Loader2, Server, Database, Phone, Shield, ActivitySquare, Key, ToggleLeft, ToggleRight } from "lucide-react";
 
 export default function SystemHealthPage() {
   const { data, refetch, isFetching, error } = useQuery<any>({
@@ -118,7 +118,67 @@ export default function SystemHealthPage() {
             </Card>
           )}
 
-          <Card>
+          <Card className="md:col-span-2 lg:col-span-3">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><ActivitySquare className="w-5 h-5" /> Module Status</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {Array.isArray(data.modules) ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {data.modules.map((m: any) => (
+                    <div key={m.key} className="rounded-md border border-border p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-sm">{m.label}</span>
+                        <span
+                          className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
+                            m.state === "healthy"
+                              ? "bg-green-100 text-green-700"
+                              : m.state === "unconfigured"
+                                ? "bg-yellow-100 text-yellow-700"
+                                : "bg-red-100 text-red-700"
+                          }`}
+                        >
+                          {m.state}
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-2">{m.detail}</p>
+                      <p className="text-[10px] text-muted-foreground mt-1">Checked {new Date(m.lastChecked).toLocaleString()}</p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Module matrix unavailable.</p>
+              )}
+            </CardContent>
+          </Card>
+
+      {/* Feature Flags Matrix (Phase 7) */}
+      {Array.isArray(data.features) && data.features.length > 0 && (
+        <Card className="md:col-span-2 lg:col-span-3">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><ToggleRight className="w-5 h-5" /> Feature Flags</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              {data.features.map((f: any) => (
+                <div key={f.key} className="rounded-md border border-border p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-sm">{f.label}</span>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${f.enabled ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}`}>
+                      {f.enabled ? "enabled" : "disabled"}
+                    </span>
+                  </div>
+                  {!f.enabled && f.action && (
+                    <p className="text-xs text-muted-foreground mt-2">{f.action}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2"><Shield className="w-5 h-5" /> Sessions</CardTitle>
             </CardHeader>

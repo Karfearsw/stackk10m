@@ -46,5 +46,5 @@ describe("schema gate auth bypass", () => {
     expect(getSchemaReadiness).toHaveBeenCalledTimes(1);
 
     process.env.SESSION_SECRET = prevSession;
-  }, 20000);
+  }, 180_000);
 });

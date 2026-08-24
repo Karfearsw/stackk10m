@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useEffect, useState } from "react";
+import { QueryError } from "@/components/ui/query-state";
 import { History as HistoryIcon } from "lucide-react";
 
 interface CallLog { id: number; number: string; direction: string; status: string; startedAt?: string; durationMs?: number; }
@@ -13,13 +14,22 @@ export default function History() {
   const [q, setQ] = useState("");
   const [direction, setDirection] = useState<string>("");
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const load = async () => {
-    const params = new URLSearchParams();
-    params.set("limit", "100");
-    if (direction) params.set("direction", direction);
-    const res = await fetch(`/api/telephony/history?${params.toString()}`);
-    const json = await res.json();
-    setItems(json || []);
+    setLoadError(null);
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", "100");
+      if (direction) params.set("direction", direction);
+      const res = await fetch(`/api/telephony/history?${params.toString()}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load call history");
+      const json = await res.json();
+      setItems(Array.isArray(json) ? json : []);
+    } catch (e: any) {
+      setLoadError(String(e?.message || "Failed to load call history"));
+      setItems([]);
+    }
   };
 
   useEffect(() => { load(); }, [direction]);
@@ -43,6 +53,11 @@ export default function History() {
             </select>
             <Button variant="outline" onClick={load}>Refresh</Button>
           </div>
+          {loadError && (
+            <div className="rounded-md border border-destructive/40 mb-3">
+              <QueryError message={loadError} onRetry={load} />
+            </div>
+          )}
           <ScrollArea className="h-72 border rounded-md p-2">
             {filtered.map(h => (
               <div key={h.id} className="flex items-center justify-between py-2">

@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 
-export type SidebarState = "expanded" | "icon" | "hidden";
+export type SidebarState = "expanded" | "icon";
 
 interface SidebarContextType {
   state: SidebarState;
@@ -8,7 +8,6 @@ interface SidebarContextType {
   cycleState: () => void;
   isExpanded: boolean;
   isIconOnly: boolean;
-  isHidden: boolean;
   mobileOpen: boolean;
   setMobileOpen: (open: boolean) => void;
   toggleMobile: () => void;
@@ -24,11 +23,15 @@ function migrateOldState(): SidebarState {
   }
   
   const savedState = localStorage.getItem("sidebar-state");
-  if (savedState && ["expanded", "icon", "hidden"].includes(savedState)) {
+  if (savedState === "hidden") {
+    localStorage.setItem("sidebar-state", "icon");
+    return "icon";
+  }
+  if (savedState && ["expanded", "icon"].includes(savedState)) {
     return savedState as SidebarState;
   }
   
-  return "expanded";
+  return "icon";
 }
 
 export function SidebarProvider({ children }: { children: ReactNode }) {
@@ -59,18 +62,16 @@ export function SidebarProvider({ children }: { children: ReactNode }) {
   const cycleState = () => {
     setStateInternal((prev) => {
       if (prev === "expanded") return "icon";
-      if (prev === "icon") return "hidden";
       return "expanded";
     });
   };
 
   const isExpanded = state === "expanded";
   const isIconOnly = state === "icon";
-  const isHidden = state === "hidden";
   const toggleMobile = () => setMobileOpen((prev) => !prev);
 
   return (
-    <SidebarContext.Provider value={{ state, setState, cycleState, isExpanded, isIconOnly, isHidden, mobileOpen, setMobileOpen, toggleMobile }}>
+    <SidebarContext.Provider value={{ state, setState, cycleState, isExpanded, isIconOnly, mobileOpen, setMobileOpen, toggleMobile }}>
       {children}
     </SidebarContext.Provider>
   );

@@ -1,12 +1,18 @@
 import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
 import { addDays, endOfMonth, endOfWeek, format, isSameMonth, isToday, startOfMonth, startOfWeek } from "date-fns";
-import { CalendarDays, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Loader2, Plus, Video } from "lucide-react";
+import { toast } from "sonner";
 import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { getEntityFilterFromLocation, leadUrl, opportunityUrl } from "@/lib/deepLinks";
@@ -49,6 +55,69 @@ export default function CalendarPage() {
   const [cursor, setCursor] = useState<Date>(new Date());
   const [selectedDay, setSelectedDay] = useState<Date>(new Date());
   const entityFilter = useMemo(() => getEntityFilterFromLocation(), []);
+  const [showMeetingDialog, setShowMeetingDialog] = useState(false);
+  const [meetingForm, setMeetingForm] = useState({
+    title: "",
+    description: "",
+    startsAt: "",
+    endsAt: "",
+    meetingLink: "",
+    invitees: [] as number[],
+  });
+  const queryClient = useQueryClient();
+
+  const { data: meetingEvents = [] } = useQuery<any[]>({
+    queryKey: ["/api/calendar-events"],
+    enabled: !!user,
+  });
+
+  const { data: teamUsers = [] } = useQuery<any[]>({
+    queryKey: ["/api/users"],
+    enabled: !!user,
+  });
+
+  const createMeetingMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/calendar-events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(meetingForm),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to create meeting");
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Meeting scheduled");
+      setShowMeetingDialog(false);
+      setMeetingForm({ title: "", description: "", startsAt: "", endsAt: "", meetingLink: "", invitees: [] });
+      queryClient.invalidateQueries({ queryKey: ["/api/calendar-events"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/users"] });
+    },
+    onError: (error: any) => toast.error(error.message || "Failed to create meeting"),
+  });
+
+  const upcomingMeetings = useMemo(() => {
+    return [...meetingEvents]
+      .filter((e: any) => new Date(e.startsAt).getTime() >= Date.now() - 60 * 60 * 1000)
+      .sort((a: any, b: any) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
+      .slice(0, 8);
+  }, [meetingEvents]);
+
+  const userNameById = (id: number) => {
+    const u = teamUsers.find((x: any) => Number(x.id) === Number(id));
+    if (!u) return `User #${id}`;
+    const name = [u.firstName, u.lastName].filter(Boolean).join(" ");
+    return name || u.email || `User #${id}`;
+  };
+
+  const toggleInvitee = (id: number) => {
+    setMeetingForm((f) => ({
+      ...f,
+      invitees: f.invitees.includes(id) ? f.invitees.filter((x) => x !== id) : [...f.invitees, id],
+    }));
+  };
 
   const range = useMemo(() => {
     if (view === "month") return rangeForMonth(cursor);
@@ -288,7 +357,141 @@ export default function CalendarPage() {
             )}
           </CardContent>
         </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2"><Video className="h-5 w-5 text-primary" /> Meetings</CardTitle>
+              <p className="text-sm text-muted-foreground mt-1">Team meetings with Telnyx Video rooms or manual links.</p>
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={() => setShowMeetingDialog(true)} data-testid="new-meeting">
+                <Plus className="h-4 w-4 mr-2" /> New Meeting
+              </Button>
+              <Button variant="outline" onClick={() => setShowMeetingDialog(true)} data-testid="new-video-meeting">
+                <Video className="h-4 w-4 mr-2" /> Video Room
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {upcomingMeetings.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4">No upcoming meetings. Schedule one with your team.</p>
+            ) : (
+              <div className="space-y-2">
+                {upcomingMeetings.map((e: any) => (
+                  <div key={e.id} className="rounded-md border border-border p-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{e.title}</div>
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {format(new Date(e.startsAt), "PPP p")}
+                        {e.inviteeUserIds?.length ? ` · ${e.inviteeUserIds.map((id: number) => userNameById(id)).join(", ")}` : ""}
+                      </div>
+                      {e.meetingLink ? (
+                        <a href={e.meetingLink} target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline inline-flex items-center gap-1 mt-1">
+                          <Video className="h-3 w-3" /> Join meeting
+                        </a>
+                      ) : null}
+                    </div>
+                    <Badge variant="secondary">Meeting</Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
+
+      <Dialog open={showMeetingDialog} onOpenChange={setShowMeetingDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Schedule a Meeting</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="meeting-title">Title</Label>
+              <Input
+                id="meeting-title"
+                value={meetingForm.title}
+                onChange={(e) => setMeetingForm((f) => ({ ...f, title: e.target.value }))}
+                placeholder="Team sync"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="meeting-desc">Description</Label>
+              <Textarea
+                id="meeting-desc"
+                value={meetingForm.description}
+                onChange={(e) => setMeetingForm((f) => ({ ...f, description: e.target.value }))}
+                placeholder="Agenda…"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="meeting-start">Start</Label>
+                <Input
+                  id="meeting-start"
+                  type="datetime-local"
+                  value={meetingForm.startsAt}
+                  onChange={(e) => setMeetingForm((f) => ({ ...f, startsAt: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="meeting-end">End</Label>
+                <Input
+                  id="meeting-end"
+                  type="datetime-local"
+                  value={meetingForm.endsAt}
+                  onChange={(e) => setMeetingForm((f) => ({ ...f, endsAt: e.target.value }))}
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="meeting-link">Meeting Link (optional)</Label>
+              <Input
+                id="meeting-link"
+                value={meetingForm.meetingLink}
+                onChange={(e) => setMeetingForm((f) => ({ ...f, meetingLink: e.target.value }))}
+                placeholder="https://meet.example.com/…"
+              />
+              <p className="text-xs text-muted-foreground">If no video provider is configured, paste any meeting link.</p>
+            </div>
+            <div className="space-y-2">
+              <Label>Invitees</Label>
+              <div className="flex flex-wrap gap-2">
+                {teamUsers
+                  .filter((u: any) => Number(u.id) !== Number(user?.id))
+                  .map((u: any) => {
+                    const active = meetingForm.invitees.includes(u.id);
+                    return (
+                      <button
+                        key={u.id}
+                        type="button"
+                        onClick={() => toggleInvitee(u.id)}
+                        className={`rounded-full border px-3 py-1 text-sm transition-colors ${
+                          active ? "border-primary bg-primary/10 text-primary" : "hover:bg-muted"
+                        }`}
+                      >
+                        {userNameById(u.id)}
+                      </button>
+                    );
+                  })}
+                {teamUsers.filter((u: any) => Number(u.id) !== Number(user?.id)).length === 0 && (
+                  <p className="text-sm text-muted-foreground">No other team members found.</p>
+                )}
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              onClick={() => createMeetingMutation.mutate()}
+              disabled={!meetingForm.title.trim() || !meetingForm.startsAt || createMeetingMutation.isPending}
+              data-testid="confirm-meeting"
+            >
+              {createMeetingMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Schedule Meeting"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

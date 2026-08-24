@@ -2,6 +2,7 @@ import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useEffect, useState } from "react";
+import { QueryError } from "@/components/ui/query-state";
 import { Voicemail } from "lucide-react";
 
 interface CallLog { id: number; number: string; status: string; metadata?: string; startedAt?: string; }
@@ -9,10 +10,19 @@ interface CallLog { id: number; number: string; status: string; metadata?: strin
 export default function VoicemailPage() {
   const [items, setItems] = useState<CallLog[]>([]);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   const load = async () => {
-    const res = await fetch(`/api/telephony/history?status=voicemail&limit=50`);
-    const json = await res.json();
-    setItems(json || []);
+    setLoadError(null);
+    try {
+      const res = await fetch(`/api/telephony/history?status=voicemail&limit=50`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load voicemail");
+      const json = await res.json();
+      setItems(Array.isArray(json) ? json : []);
+    } catch (e: any) {
+      setLoadError(String(e?.message || "Failed to load voicemail"));
+      setItems([]);
+    }
   };
 
   useEffect(() => { load(); }, []);
@@ -29,6 +39,11 @@ export default function VoicemailPage() {
           <CardDescription>Listen and review messages</CardDescription>
         </CardHeader>
         <CardContent>
+          {loadError && (
+            <div className="rounded-md border border-destructive/40 mb-3">
+              <QueryError message={loadError} onRetry={load} />
+            </div>
+          )}
           <ScrollArea className="h-72 border rounded-md p-2">
             {items.map(v => {
               const audio = parseAudio(v.metadata);

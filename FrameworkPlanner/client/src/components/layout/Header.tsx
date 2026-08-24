@@ -1,5 +1,5 @@
 import React from "react";
-import { Bell, Search, Menu, PanelLeft } from "lucide-react";
+import { Bell, Search, Menu, PanelLeft, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -26,11 +26,22 @@ interface NotificationItem {
   createdAt: string;
 }
 
+function useCurrentDateTime() {
+  const [now, setNow] = React.useState(() => new Date());
+  React.useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+  return now;
+}
+
 export function Header() {
-  const { state, setState, cycleState, isHidden, toggleMobile } = useSidebar();
+  const { state, setState, cycleState, isIconOnly, toggleMobile } = useSidebar();
   const { user, logout } = useAuth();
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
+  const now = useCurrentDateTime();
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
 
   const { data: userData } = useQuery<any>({
     queryKey: [`/api/users/${user?.id}`],
@@ -40,8 +51,7 @@ export function Header() {
   const getNextStateLabel = () => {
     if (typeof window !== "undefined" && !window.matchMedia("(min-width: 1024px)").matches) return "Open menu";
     if (state === "expanded") return "Collapse to icons";
-    if (state === "icon") return "Hide sidebar";
-    return "Show sidebar";
+    return "Expand sidebar";
   };
 
   const getInitials = () => {
@@ -73,6 +83,8 @@ export function Header() {
     setOpen(false);
     setQuery("");
     if (item.path) setLocation(item.path);
+    // Restore focus to search input after selection
+    requestAnimationFrame(() => searchInputRef.current?.focus());
   };
 
   const { data: notifications = [] } = useQuery<NotificationItem[]>({
@@ -110,6 +122,9 @@ export function Header() {
     return date.toLocaleDateString();
   };
 
+  const timeString = now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const dateString = now.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+
   return (
     <header className="sticky top-0 z-30 flex h-16 w-full min-w-0 items-center border-b bg-background px-4 md:px-6 shadow-sm gap-4">
       <TooltipProvider>
@@ -124,16 +139,15 @@ export function Header() {
                   toggleMobile();
                   return;
                 }
-                if (isHidden) setState("expanded");
-                else cycleState();
+                cycleState();
               }}
               className="text-muted-foreground hover:text-foreground shrink-0"
               data-testid="button-hamburger"
             >
-              {isHidden ? (
-                <PanelLeft className="h-5 w-5" />
-              ) : (
+              {isIconOnly ? (
                 <Menu className="h-5 w-5" />
+              ) : (
+                <PanelLeft className="h-5 w-5" />
               )}
             </Button>
           </TooltipTrigger>
@@ -144,24 +158,36 @@ export function Header() {
       </TooltipProvider>
 
       <div className="flex min-w-0 flex-1 items-center gap-4">
+        {/* Date & Time */}
+        <div className="hidden md:flex items-center gap-1.5 text-sm text-muted-foreground shrink-0 select-none">
+          <Clock className="h-4 w-4" />
+          <span className="font-bold text-yellow-400">{timeString}</span>
+          <span className="text-xs">{dateString}</span>
+        </div>
+
+        {/* Search bar — Input is OUTSIDE PopoverTrigger to prevent focus loss */}
         <div className="relative w-full max-w-md min-w-0">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            ref={searchInputRef}
+            type="search"
+            placeholder="Search leads, properties, or contacts..."
+            className="w-full min-w-0 bg-muted/50 pl-9 border-none focus-visible:ring-1"
+            value={query}
+            onChange={(e) => {
+              const v = e.target.value;
+              setQuery(v);
+              setOpen(v.trim().length >= 2);
+            }}
+            onFocus={() => setOpen(query.trim().length >= 2)}
+            data-testid="input-global-search"
+          />
+          {/* Popover anchored to a hidden span — does NOT wrap the Input */}
           <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
-              <Input
-                type="search"
-                placeholder="Search leads, properties, or contacts..."
-                className="w-full min-w-0 bg-muted/50 pl-9 border-none focus-visible:ring-1"
-                value={query}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setQuery(v);
-                  setOpen(v.trim().length >= 2);
-                }}
-                onFocus={() => setOpen(query.trim().length >= 2)}
-              />
+              <span className="absolute inset-0 -z-10" tabIndex={-1} aria-hidden="true" />
             </PopoverTrigger>
-            <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0">
+            <PopoverContent align="start" className="w-[--radix-popover-trigger-width] p-0" onOpenAutoFocus={(e) => e.preventDefault()}>
               <div className="bg-background border rounded-md shadow-lg max-h-80 overflow-auto">
                 <div className="flex items-center justify-between px-3 py-2 text-xs text-muted-foreground">
                   <span>Results</span>
