@@ -7300,6 +7300,18 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ error: error?.message || "Readiness check failed" });
     }
   });
+
+  // ADMIN: Run migrations manually (for post-deploy or retry)
+  app.post("/api/admin/migrate", async (req, res) => {
+    try {
+      const { applyMigrations } = await import("./scripts/apply-migrations.js");
+      await applyMigrations();
+      res.json({ success: true, message: "Migrations applied successfully." });
+    } catch (e: any) {
+      console.error("Admin migrate failed:", e?.message || e);
+      res.status(500).json({ success: false, error: e?.message || "Migration failed" });
+    }
+  });
   // SYSTEM HEALTH (Aggregated diagnostics)
   app.get("/api/system/health", async (_req, res) => {
     try {
