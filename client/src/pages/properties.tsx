@@ -393,6 +393,231 @@ function PropertyForm({
   );
 }
 
+export function Properties() {
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingProperty, setEditingProperty] = useState<Property | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+
+  const { data: properties = [], isLoading } = useQuery<Property[]>({
+    queryKey: ["/api/properties"],
+    queryFn: async () => {
+      const res = await fetch("/api/properties");
+      if (!res.ok) throw new Error("Failed to fetch properties");
+      return res.json();
+    }
+  });
+
+  const createPropertyMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await fetch("/api/properties", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error("Failed to create property");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
+      setIsDialogOpen(false);
+      toast.success("Property added successfully!");
+    },
+    onError: () => {
+      toast.error("Failed to add property");
+    },
+  });
+
+  const updatePropertyMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: any }) => {
+      const res = await fetch(`/api/properties/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error("Failed to update property");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
+      setEditingProperty(null);
+      setIsDialogOpen(false);
+      toast.success("Property updated successfully!");
+    },
+    onError: () => {
+      toast.error("Failed to update property");
+    },
+  });
+
+  const deletePropertyMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/properties/${id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Failed to delete property");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
+      toast.success("Property deleted successfully!");
+    },
+    onError: () => {
+      toast.error("Failed to delete property");
+    },
+  });
+
+  const filteredProperties = properties.filter((property) => {
+    const matchesSearch = searchQuery === "" ||
+      property.address?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      property.city?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      property.zipCode?.includes(searchQuery);
+    
+    const matchesStatus = statusFilter === "all" || property.status === statusFilter;
+    
+    return matchesSearch && matchesStatus;
+  });
+
+  const openEditDialog = (property: Property) => {
+    setEditingProperty(property);
+    setIsDialogOpen(true);
+  };
+
+  const openNewDialog = () => {
+    setEditingProperty(null);
+    setIsDialogOpen(true);
+  };
+
+  const handleFormSubmit = (data: any) => {
+    if (editingProperty) {
+      updatePropertyMutation.mutate({ id: editingProperty.id, data });
+    } else {
+      createPropertyMutation.mutate(data);
+    }
+  };
+
+  return (
+    <Layout>
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Properties</h1>
+            <p className="text-muted-foreground">Browse and manage all properties in your portfolio.</p>
+          </div>
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger asChild>
+              <Button onClick={openNewDialog} data-testid="button-add-property">
+                <Plus className="mr-2 h-4 w-4" /> Add Property
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>{editingProperty ? "Edit Property" : "Add New Property"}</DialogTitle>
+              </DialogHeader>
+              <PropertyForm
+                property={editingProperty || undefined}
+                onClose={() => {
+                  setIsDialogOpen(false);
+                  setEditingProperty(null);
+                }}
+                onSubmit={handleFormSubmit}
+              />
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search properties..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+              data-testid="input-search-properties"
+            />
+          </div>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-40" data-testid="select-filter-properties">
+              <Filter className="mr-2 h-4 w-4" />
+              <SelectValue placeholder="Filter by status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Status</SelectItem>
+              <SelectItem value="active">Active</SelectItem>
+              <SelectItem value="pending">Pending</SelectItem>
+              <SelectItem value="sold">Sold</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {isLoading ? (
+          <div className="text-center py-12">Loading properties...</div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {filteredProperties.map((property) => (
+              <Card key={property.id} className="hover:shadow-lg transition-shadow">
+                <div className="h-48 w-full overflow-hidden rounded-t-lg">
+                  <PropertyImageCarousel images={property.images || []} />
+                </div>
+                <CardContent className="p-4">
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <h3 className="font-semibold text-lg">{property.address}</h3>
+                      <p className="text-sm text-muted-foreground">
+                        {property.city}, {property.state} {property.zipCode}
+                      </p>
+                    </div>
+                    <Badge variant={property.status === "active" ? "default" : "secondary"}>
+                      {property.status}
+                    </Badge>
+                  </div>
+                  <div className="flex items-center gap-4 text-sm text-muted-foreground mb-3">
+                    {property.beds && <span>{property.beds} beds</span>}
+                    {property.baths && <span>{property.baths} baths</span>}
+                    {property.sqft && <span>{property.sqft.toLocaleString()} sqft</span>}
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-lg font-bold text-primary">
+                      {property.price ? `$${Number(property.price).toLocaleString()}` : "N/A"}
+                    </span>
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="icon" onClick={() => openEditDialog(property)}>
+                        <Edit className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => deletePropertyMutation.mutate(property.id)}>
+                        <Trash2 className="h-4 w-4 text-destructive" />
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+
+        {filteredProperties.length === 0 && !isLoading && (
+          <div className="text-center py-12">
+            <Home className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+            <h3 className="text-lg font-semibold mb-2">No properties found</h3>
+            <p className="text-muted-foreground mb-4">
+              {searchQuery || statusFilter !== "all" 
+                ? "Try adjusting your search or filter criteria."
+                : "Get started by adding your first property."}
+            </p>
+            {!searchQuery && statusFilter === "all" && (
+              <Button onClick={openNewDialog} data-testid="button-add-first-property">
+                <Plus className="mr-2 h-4 w-4" /> Add Property
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+    </Layout>
+  );
+}
+
 export default function Opportunities() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
