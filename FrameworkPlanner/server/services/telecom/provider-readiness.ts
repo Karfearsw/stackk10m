@@ -1,5 +1,5 @@
 import { telnyx } from "./telnyx-client.js";
-import { isDocumentVaultConfigured } from "../../media/documentVault.js";
+import { documentStorageMode, documentVaultHealth } from "../../media/documentVault.js";
 import { getAiAssistantConfig } from "./ai-config.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -232,12 +232,14 @@ function checkEmail(): EmailReadiness {
 }
 
 function checkDocumentStorage(): DocumentStorageReadiness {
-  const configured = isDocumentVaultConfigured();
+  // PostgreSQL blob storage is always available; S3 is optional.
+  const mode = documentStorageMode();
   return {
-    configured,
-    blocker: configured
-      ? undefined
-      : "Document storage not configured. Set DOCUMENTS_BUCKET + DOCUMENTS_REGION.",
+    configured: true,
+    blocker:
+      mode === "db"
+        ? "Using PostgreSQL document storage (vault_document_blobs). Set DOCUMENTS_BUCKET + DOCUMENTS_REGION to switch to S3."
+        : undefined,
   };
 }
 

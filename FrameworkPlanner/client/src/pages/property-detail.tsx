@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { DealCalculator } from "@/components/deals/DealCalculator";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
 import { SkipTraceJobPanel } from "@/components/skipTrace/SkipTraceJobPanel";
+import { MediaGallery } from "@/components/media/MediaGallery";
 import { 
   ArrowLeft, 
   MapPin, 
@@ -38,6 +39,7 @@ import {
   Target,
   TrendingUp,
   Eye,
+  ImageIcon,
 } from "lucide-react";
 import { Link, useLocation, useRoute } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -572,6 +574,13 @@ export default function PropertyDetail() {
                   Activity Log
                 </TabsTrigger>
                 <TabsTrigger
+                  value="media"
+                  className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2"
+                >
+                  <ImageIcon className="h-4 w-4 mr-2" />
+                  Media
+                </TabsTrigger>
+                <TabsTrigger
                   value="dealroom"
                   className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2"
                 >
@@ -884,7 +893,14 @@ export default function PropertyDetail() {
                 />
               </TabsContent>
 
-              <TabsContent value="activity">
+              <TabsContent value="media" className="mt-6">
+                <Card>
+                  <CardContent className="pt-6">
+                    <MediaGallery entityType="opportunity" entityId={id} role="property_media" />
+                  </CardContent>
+                </Card>
+              </TabsContent>
+                            <TabsContent value="activity">
                 <Card>
                   <CardContent className="pt-6">
                     <ActivitySection propertyId={property?.id} leadId={lead?.id} />

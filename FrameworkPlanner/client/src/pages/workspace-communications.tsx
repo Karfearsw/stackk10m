@@ -21,6 +21,9 @@ import { useSignalWire } from "@/hooks/useSignalWire";
 import { useTelephonyEvents } from "@/hooks/useTelephonyEvents";
 import { VideoCallDialog } from "@/components/video/VideoCallDialog";
 
+import { SmsAttachmentPicker } from "@/components/media/SmsAttachmentPicker";
+import type { MediaAsset } from "@/lib/media";
+
 function formatE164(raw: string) {
   const digits = raw.replace(/[^\d+]/g, "");
   if (digits.startsWith("+")) return digits;
@@ -89,6 +92,7 @@ export default function CommunicationsWorkspace() {
 
   // SMS
   const [smsBody, setSmsBody] = useState("");
+  const [smsAttachments, setSmsAttachments] = useState<MediaAsset[]>([]);
   const [noteBody, setNoteBody] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDue, setTaskDue] = useState("");
@@ -254,6 +258,7 @@ export default function CommunicationsWorkspace() {
       const res = await apiRequest("POST", "/api/telephony/sms", {
         to: formatE164(to),
         body,
+        mediaIds: smsAttachments.map((a) => a.id),
         metadata: selectedLeadId ? { leadId: selectedLeadId } : { threadPhone: to },
       });
       const json = await res.json();
@@ -261,8 +266,9 @@ export default function CommunicationsWorkspace() {
       return json;
     },
     onSuccess: () => {
-      toast.success("SMS sent");
+      toast.success(smsAttachments.length ? "Message sent" : "SMS sent");
       setSmsBody("");
+      setSmsAttachments([]);
       if (selectedThreadPhone) queryClient.invalidateQueries({ queryKey: ["/api/telephony/sms/threads"] });
       if (selectedLeadId) queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
     },
@@ -598,6 +604,14 @@ export default function CommunicationsWorkspace() {
                       {!selectedThreadPhone && <p className="text-sm text-muted-foreground">Pick an SMS thread from the left, or send to the lead's number below.</p>}
                     </ScrollArea>
                     <div className="mt-3 space-y-2">
+                      <SmsAttachmentPicker
+                        entityType={selectedLeadId ? "lead" : "sms_thread"}
+                        entityId={selectedLeadId ?? 0}
+                        attachments={smsAttachments}
+                        onAdd={(assets) => setSmsAttachments((prev) => [...prev, ...assets])}
+                        onRemove={(id) => setSmsAttachments((prev) => prev.filter((a) => a.id !== id))}
+                        disabled={sendSms.isPending}
+                      />
                       <Textarea value={smsBody} onChange={(e) => setSmsBody(e.target.value)} placeholder="Write a message…" rows={3} />
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-muted-foreground">{smsBody.length} / 160 chars</span>

@@ -25,6 +25,8 @@ export type TelnyxSmsInput = {
   body: string;
   from?: string;
   messagingProfileId?: string;
+  /** Public URLs Telnyx fetches for MMS delivery (media_urls). */
+  mediaUrls?: string[];
 };
 
 export type TelnyxClientOptions = {
@@ -163,9 +165,12 @@ export class TelnyxClient {
     const body: Record<string, unknown> = {
       from,
       to: input.to,
-      body: input.body,
+      text: input.body,
       messaging_profile_id: input.messagingProfileId || this.messagingProfileId,
     };
+    if (input.mediaUrls && input.mediaUrls.length > 0) {
+      body.media_urls = input.mediaUrls;
+    }
 
     const res = await fetch(`${this.baseUrl}/messages`, {
       method: "POST",

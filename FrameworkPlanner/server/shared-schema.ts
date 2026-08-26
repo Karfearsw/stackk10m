@@ -1768,6 +1768,7 @@ export const documents = pgTable("documents", {
 });
 
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, createdAt: true, updatedAt: true } as any);
+
 export type Document = typeof documents.$inferSelect;
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;
 

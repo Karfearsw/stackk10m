@@ -410,6 +410,63 @@ export default async function runApp(
         created_at timestamptz NOT NULL DEFAULT now()
       );
     `);
+        await pool.query(`
+      CREATE TABLE IF NOT EXISTS media_assets (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        team_id integer NOT NULL,
+        uploaded_by_user_id integer NOT NULL,
+        storage_mode text NOT NULL DEFAULT 'db',
+        storage_key text,
+        s3_key text,
+        original_filename text NOT NULL,
+        normalized_filename text,
+        mime_type text NOT NULL,
+        file_size_bytes bigint NOT NULL,
+        sha256 text,
+        width integer,
+        height integer,
+        duration_seconds integer,
+        thumbnail_storage_key text,
+        poster_storage_key text,
+        processing_status text NOT NULL DEFAULT 'uploaded',
+        virus_scan_status text NOT NULL DEFAULT 'not_scanned',
+        delivery_mode text,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        deleted_at timestamptz
+      );
+      CREATE TABLE IF NOT EXISTS media_blobs (
+        media_id bigint PRIMARY KEY REFERENCES media_assets(id) ON DELETE CASCADE,
+        data bytea NOT NULL,
+        thumbnail_data bytea,
+        poster_data bytea,
+        mime_type text,
+        size_bytes bigint,
+        sha256 text,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE TABLE IF NOT EXISTS media_attachments (
+        id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        media_asset_id bigint NOT NULL REFERENCES media_assets(id) ON DELETE CASCADE,
+        entity_type text NOT NULL,
+        entity_id bigint NOT NULL,
+        attachment_role text DEFAULT 'attachment',
+        sort_order integer DEFAULT 0,
+        created_by_user_id integer,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+      ALTER TABLE vault_document_blobs ADD COLUMN IF NOT EXISTS storage_mode text;
+      ALTER TABLE vault_document_blobs ADD COLUMN IF NOT EXISTS replication_status text;
+    `);
+await pool.query(`
+      CREATE TABLE IF NOT EXISTS vault_document_blobs (
+        storage_key text PRIMARY KEY,
+        data bytea NOT NULL,
+        mime_type text,
+        size_bytes bigint,
+        sha256 text,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
     log("[Startup] Verified call-session tables (0056 fallback)", "db");
     log("[Startup] Verified app_settings + crm_sms_messages tables", "db");
   } catch (e) {

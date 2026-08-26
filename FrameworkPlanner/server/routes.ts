@@ -121,85 +121,18 @@ import { sendContractSigningEmail, sendContractReminderEmail } from "./services/
 import { startContractReminderWorker } from "./cron/contract-reminders.js";
 import { getPropertyPhotoSignedUrl, uploadPropertyPhoto, isPropertyPhotoStorageConfigured } from "./media/propertyPhotos.js";
 import Stripe from "stripe";
-import { getDocumentSignedUrl, isDocumentVaultConfigured, makeDocumentStorageKey, sha256Hex, uploadDocumentObject } from "./media/documentVault.js";
+import { getDocumentContent, getDocumentSignedUrl, isDocumentVaultConfigured, makeDocumentStorageKey, sha256Hex, uploadDocumentObject } from "./media/documentVault.js";
+import { registerMediaRoutes } from "./media/media-routes.js";
+import { detectMimeFromMagic, maxMediaUploadBytes, maxImageUploadBytes, maxVideoUploadBytes, probeImageDimensions, validateMediaFile } from "./media/mime-guard.js";
+import { getMediaAssetById, assertMediaTeam, attachMedia, setMediaDeliveryMode } from "./media/mediaVault.js";
+import { planMessageDelivery, linkFallbackText } from "./media/mms-plan.js";
+import { makeMediaShareUrl } from "./media/share-token.js";
 import speakeasy from "speakeasy";
 import QRCode from "qrcode";
 function authJwtSecret() {
   const secret = process.env.AUTH_JWT_SECRET || process.env.SESSION_SECRET;
   if (!secret || !String(secret).trim()) return null;
   return new TextEncoder().encode(String(secret));
-}
-const MAGIC_SIGNATURES: { mime: string; patterns: [number, number[]][] }[] = [
-  {
-    mime: "application/pdf",
-    patterns: [
-      [0, [0x25, 0x50, 0x44, 0x46]],
-    ],
-  },
-  {
-    mime: "image/png",
-    patterns: [
-      [0, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]],
-    ],
-  },
-  {
-    mime: "image/jpeg",
-    patterns: [
-      [0, [0xff, 0xd8, 0xff]],
-    ],
-  },
-  {
-    mime: "image/gif",
-    patterns: [
-      [0, [0x47, 0x49, 0x46, 0x38, 0x37, 0x61]],
-      [0, [0x47, 0x49, 0x46, 0x38, 0x39, 0x61]],
-    ],
-  },
-  {
-    mime: "image/webp",
-    patterns: [
-      [8, [0x57, 0x45, 0x42, 0x50]],
-    ],
-  },
-  {
-    mime: "application/zip",
-    patterns: [
-      [0, [0x50, 0x4b, 0x03, 0x04]],
-      [0, [0x50, 0x4b, 0x05, 0x06]],
-      [0, [0x50, 0x4b, 0x07, 0x08]],
-    ],
-  },
-  {
-    mime: "application/x-rar-compressed",
-    patterns: [
-      [0, [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00]],
-      [0, [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x01, 0x00]],
-    ],
-  },
-  {
-    mime: "text/plain",
-    patterns: [
-      [0, [0xef, 0xbb, 0xbf]],
-      [0, []],
-    ],
-  },
-];
-function detectMimeFromMagic(buf: Buffer): string | null {
-  for (const entry of MAGIC_SIGNATURES) {
-    for (const [offset, bytes] of entry.patterns) {
-      if (offset + bytes.length > buf.length) continue;
-      if (bytes.length === 0) continue;
-      let match = true;
-      for (let i = 0; i < bytes.length; i++) {
-        if (buf[offset + i] !== bytes[i]) {
-          match = false;
-          break;
-        }
-      }
-      if (match) return entry.mime;
-    }
-  }
-  return null;
 }
 function isDbConnectivityError(error: any): boolean {
   const code = error?.code;
@@ -7641,10 +7574,45 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       if (!String(body).trim()) {
         return res.status(400).json({ error: "SMS body cannot be empty", code: "EMPTY_BODY" });
       }
+
+      // ── Media attachments: MMS when carrier-safe, secure-link otherwise ──
+      const rawMediaIds = Array.isArray((req.body as any)?.mediaIds) ? (req.body as any).mediaIds : [];
+      const mediaIds = rawMediaIds
+        .map((x: any) => parseInt(String(x), 10))
+        .filter((n: number) => Number.isInteger(n) && n > 0)
+        .slice(0, 10);
+      let deliveryMode: "mms" | "link_fallback" | null = null;
+      let mediaUrls: string[] = [];
+      let finalBody = String(body);
+      if (mediaIds.length > 0) {
+        const teamId = await getOrInitActiveTeamId(req, user.id);
+        const assets = [];
+        for (const id of mediaIds) {
+          const asset = await getMediaAssetById(id);
+          if (!asset) {
+            return res.status(404).json({ error: `Media #${id} not found`, code: "MEDIA_NOT_FOUND" });
+          }
+          if (teamId && !assertMediaTeam(asset, teamId)) {
+            return res.status(403).json({ error: "Media does not belong to your team", code: "MEDIA_ACCESS_DENIED" });
+          }
+          assets.push(asset);
+        }
+        const plan = planMessageDelivery({
+          assets: assets.map((a) => ({ id: a.id, mimeType: a.mimeType, fileSizeBytes: a.fileSizeBytes })),
+          makeMediaUrl: (id) => makeMediaShareUrl({ mediaId: id, purpose: "mms" }),
+        });
+        deliveryMode = plan.mode;
+        if (plan.mode === "mms") {
+          mediaUrls = plan.mediaUrls;
+        } else {
+          finalBody = linkFallbackText(plan, String(body));
+        }
+      }
+
       let sid: string | null = null;
       let smsStatus = "queued";
       try {
-        const out = await telnyx.sendSms({ to: String(to), body: String(body), from: resolvedFrom });
+        const out = await telnyx.sendSms({ to: String(to), body: finalBody, from: resolvedFrom, mediaUrls });
         sid = out.messageId || null;
         smsStatus = "queued";
       } catch (error: any) {
@@ -7663,21 +7631,46 @@ app.patch("/api/inquiries/:id", async (req, res) => {
         });
       }
       // Persist the outbound message row (conversation thread source of truth).
+      let persistedMsgId: number | null = null;
       try {
         const metaLeadId = (metadata as any)?.leadId ? Number((metadata as any).leadId) : null;
-        await storage.createSmsMessage({
+        const metaObj: Record<string, unknown> =
+          metadata && typeof metadata === "object" ? { ...(metadata as any) } : {};
+        if (mediaIds.length) {
+          metaObj.mediaIds = mediaIds;
+          metaObj.deliveryMode = deliveryMode;
+        }
+        const msg = await storage.createSmsMessage({
           userId: user.id,
           direction: "outbound",
           fromNumber: resolvedFrom,
           toNumber: String(to),
-          body: String(body),
+          body: finalBody,
           status: smsStatus,
           providerMessageId: sid || null,
           leadId: metaLeadId && Number.isFinite(metaLeadId) && metaLeadId > 0 ? metaLeadId : null,
-          metadata: metadata && typeof metadata === "object" ? JSON.stringify(metadata) : null,
+          metadata: JSON.stringify(metaObj),
         } as any);
+        persistedMsgId = msg?.id ?? null;
       } catch (e) {
         console.error("SMS persistence failed (non-blocking):", e);
+      }
+      // Link attachments to the outbound message and record delivery mode.
+      if (persistedMsgId && mediaIds.length > 0) {
+        for (const id of mediaIds) {
+          try {
+            await attachMedia({
+              mediaId: id,
+              entityType: "sms_message",
+              entityId: persistedMsgId,
+              role: "mms_attachment",
+              createdByUserId: user.id,
+            });
+            await setMediaDeliveryMode(id, deliveryMode || "link_fallback");
+          } catch (e) {
+            console.error("SMS media attach failed (non-blocking):", e);
+          }
+        }
       }
       if (metadata && typeof metadata === "object") {
         const leadId = (metadata as any).leadId ? Number((metadata as any).leadId) : null;
@@ -7688,12 +7681,12 @@ app.patch("/api/inquiries/:id", async (req, res) => {
               userId: user.id,
               action: "sms_sent",
               description: `Sent SMS to ${String(to || "")}`,
-              metadata: JSON.stringify({ leadId: leadId || undefined, propertyId: propertyId || undefined, to: String(to || ""), sid, status: smsStatus, body: String(body || "") }),
+              metadata: JSON.stringify({ leadId: leadId || undefined, propertyId: propertyId || undefined, to: String(to || ""), sid, status: smsStatus, body: finalBody, deliveryMode: deliveryMode || undefined }),
             } as any);
           } catch {}
         }
       }
-      res.json({ sid, status: smsStatus });
+      res.json({ sid, status: smsStatus, deliveryMode, mediaUrls: mediaUrls.length ? mediaUrls : undefined });
     } catch (error: any) {
       console.error("SMS route error:", error);
       res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
@@ -9320,8 +9313,19 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
       if (!canViewVaultDocument(ctx, doc)) return res.status(403).json({ message: "Forbidden" });
       const url = await getDocumentSignedUrl({ storageKey: String(doc.storageKey), expiresInSeconds: 60 * 10 });
-      if (!url) return res.status(503).json({ message: "Document vault is not configured" });
-      res.redirect(url);
+      if (url) {
+        res.redirect(url);
+        return;
+      }
+      // DB-backed mode: stream the blob straight from PostgreSQL
+      const content = await getDocumentContent({ storageKey: String(doc.storageKey) });
+      if (!content) return res.status(404).json({ message: "Document content not found" });
+      const safeTitle = String(doc.title || "document").replace(/[^a-zA-Z0-9._ -]+/g, "_");
+      res.setHeader("Content-Type", content.contentType || "application/octet-stream");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeTitle}"`);
+      res.setHeader("Content-Length", String(content.sizeBytes));
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.send(content.body);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -9338,14 +9342,23 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       if (!doc || doc.teamId !== ctx.teamId) return res.status(404).json({ message: "Not found" });
       if (!canViewVaultDocument(ctx, doc)) return res.status(403).json({ message: "Forbidden" });
       const url = await getDocumentSignedUrl({ storageKey: String(doc.storageKey), expiresInSeconds: 60 * 5 });
-      if (!url) return res.status(503).json({ code: "document_vault_not_configured", message: "Document vault is not configured for preview" });
-      const upstream = await fetch(url as string);
-      if (!upstream.ok) return res.status(502).json({ message: "Preview source unavailable" });
-      const buffer = Buffer.from(await upstream.arrayBuffer());
-      res.setHeader("Content-Type", String(doc.mimeType || "application/octet-stream"));
+      if (url) {
+        const upstream = await fetch(url as string);
+        if (!upstream.ok) return res.status(502).json({ message: "Preview source unavailable" });
+        const buffer = Buffer.from(await upstream.arrayBuffer());
+        res.setHeader("Content-Type", String(doc.mimeType || "application/octet-stream"));
+        res.setHeader("Content-Disposition", "inline");
+        res.setHeader("X-Content-Type-Options", "nosniff");
+        res.send(buffer);
+        return;
+      }
+      // DB-backed mode: stream the blob straight from PostgreSQL
+      const content = await getDocumentContent({ storageKey: String(doc.storageKey) });
+      if (!content) return res.status(404).json({ message: "Document content not found" });
+      res.setHeader("Content-Type", content.contentType || String(doc.mimeType || "application/octet-stream"));
       res.setHeader("Content-Disposition", "inline");
       res.setHeader("X-Content-Type-Options", "nosniff");
-      res.send(buffer);
+      res.send(content.body);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -11397,7 +11410,18 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       const limit = Math.min(parseInt(String(req.query.limit || "100"), 10) || 100, 500);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       const messages = await storage.getInternalMessages(user.id, withUserId, limit, offset);
-      res.json(messages);
+      // Hydrate media attachments per message for gallery rendering.
+      let mediaIdsByMessage: Record<number, number[]> = {};
+      try {
+        mediaIdsByMessage = await storage.getMediaIdsForInternalMessages((messages || []).map((m: any) => m.id));
+      } catch (e) {
+        console.error("mediaIds hydration failed (non-blocking):", e);
+      }
+      const enriched = (messages || []).map((m: any) => ({
+        ...m,
+        mediaIds: mediaIdsByMessage[Number(m.id)] || [],
+      }));
+      res.json(enriched);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -11440,6 +11464,14 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       if (!recipient) return res.status(404).json({ message: "Recipient not found" });
       const relatedType = body.relatedType ? String(body.relatedType).slice(0, 50) : null;
       const relatedId = body.relatedId ? parseInt(String(body.relatedId), 10) : null;
+
+      // Media attachments (images/video already uploaded via /api/media/upload).
+      const rawMediaIds = Array.isArray(body.mediaIds) ? body.mediaIds : [];
+      const mediaIds = rawMediaIds
+        .map((x: any) => parseInt(String(x), 10))
+        .filter((n: number) => Number.isInteger(n) && n > 0)
+        .slice(0, 10);
+
       const message = await storage.createInternalMessage({
         senderUserId: user.id,
         recipientUserId,
@@ -11448,6 +11480,28 @@ app.patch("/api/inquiries/:id", async (req, res) => {
         relatedId,
         readAt: null,
       } as any);
+
+      // Link attachments only if the sender's team owns them.
+      if (mediaIds.length > 0) {
+        const teamId = await getOrInitActiveTeamId(req, user.id);
+        for (const id of mediaIds) {
+          const asset = await getMediaAssetById(id);
+          if (!asset) continue;
+          if (teamId && !assertMediaTeam(asset, teamId)) continue;
+          try {
+            await attachMedia({
+              mediaId: id,
+              entityType: "internal_message",
+              entityId: message.id,
+              role: "attachment",
+              createdByUserId: user.id,
+            });
+          } catch (e) {
+            console.error("Internal message media attach failed (non-blocking):", e);
+          }
+        }
+      }
+
       await notifyUser({
         userId: recipientUserId,
         category: "internal_message",
@@ -11457,7 +11511,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
         relatedId: relatedId ?? message.id,
         eventKey: `msg:${message.id}`,
       });
-      res.status(201).json(message);
+      res.status(201).json({ ...message, mediaIds: mediaIds.length ? mediaIds : undefined });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -12991,6 +13045,8 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
     if (listing.status !== "published") return res.status(404).json({ message: "Not found" });
     res.json({ listingId: listing.id, slug: listing.slug });
   });
+  await registerMediaRoutes(app, { requireAuth, requireActiveTeam });
+
   if (mode === "serverless") return null;
   const httpServer = createServer(app);
   initTelephonyWs(httpServer);

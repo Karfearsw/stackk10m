@@ -4,7 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { MessageSquare, Send, Loader2, Users } from "lucide-react";
+import { MessageSquare, Send, Loader2, Users, Paperclip, X } from "lucide-react";
+import { MediaUploader } from "@/components/media/MediaUploader";
+import { formatBytes, isImageAsset, isVideoAsset, mediaPreviewUrl, type MediaAsset } from "@/lib/media";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -13,6 +15,7 @@ import { useMemo, useState } from "react";
 
 interface Message {
   id: number;
+  mediaIds?: number[];
   senderUserId: number;
   recipientUserId: number;
   body: string;
@@ -34,6 +37,7 @@ export default function MessagesPage() {
   const queryClient = useQueryClient();
   const [withUserId, setWithUserId] = useState<number | null>(null);
   const [body, setBody] = useState("");
+  const [pendingMedia, setPendingMedia] = useState<MediaAsset[]>([]);
 
   const { data: conversations = [], isLoading: convLoading, isError: convError, refetch: refetchConvs } = useQuery<Conversation[]>({
     queryKey: ["/api/messages/conversations"],
@@ -61,7 +65,7 @@ export default function MessagesPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ recipientUserId, body }),
+        body: JSON.stringify({ recipientUserId, body, mediaIds: pendingMedia.map((a) => a.id) }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to send message");
@@ -69,6 +73,7 @@ export default function MessagesPage() {
     },
     onSuccess: () => {
       setBody("");
+      setPendingMedia([]);
       queryClient.invalidateQueries({ queryKey: ["/api/messages", withUserId] });
       queryClient.invalidateQueries({ queryKey: ["/api/messages/conversations"] });
       queryClient.invalidateQueries({ queryKey: ["/api/messages/unread-count"] });
@@ -193,6 +198,21 @@ export default function MessagesPage() {
                       return (
                         <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                           <div className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${mine ? "bg-primary text-primary-foreground" : "bg-card border"}`}>
+                            {Array.isArray(m.mediaIds) && m.mediaIds.length > 0 && (
+                              <div className="mb-1.5 flex flex-wrap gap-1.5">
+                                {m.mediaIds.map((mid: number) => (
+                                  <a
+                                    key={mid}
+                                    href={`/api/media/${mid}/download`}
+                                    download
+                                    className="block h-16 w-16 overflow-hidden rounded-md border bg-muted"
+                                    title="Download attachment"
+                                  >
+                                    <img src={mediaPreviewUrl(mid)} alt="attachment" className="h-full w-full object-cover" />
+                                  </a>
+                                ))}
+                              </div>
+                            )}
                             <p>{m.body}</p>
                             <p className={`text-[10px] mt-1 ${mine ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
                               {new Date(m.createdAt).toLocaleString()}
@@ -203,6 +223,34 @@ export default function MessagesPage() {
                     })
                   )}
                 </div>
+                {pendingMedia.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {pendingMedia.map((a) => (
+                      <span key={a.id} className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs" title={a.originalFilename}>
+                        <span className="max-w-[140px] truncate">{a.originalFilename}</span>
+                        <span className="text-muted-foreground">{formatBytes(a.fileSizeBytes)}</span>
+                        <button
+                          type="button"
+                          aria-label={`Remove ${a.originalFilename}`}
+                          onClick={() => setPendingMedia((prev) => prev.filter((x) => x.id !== a.id))}
+                          className="text-muted-foreground hover:text-destructive"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <MediaUploader
+                  entityType="internal_message"
+                  deferAttach
+                  compact
+                  multiple
+                  maxFiles={5}
+                  label="Attach images or video"
+                  onUploaded={(asset) => setPendingMedia((prev) => [...prev, asset])}
+                  onError={(m) => toast.error(m)}
+                />
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();

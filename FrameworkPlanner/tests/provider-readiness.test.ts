@@ -15,7 +15,7 @@ vi.mock('../server/services/telecom/telnyx-client', () => ({
 }));
 
 vi.mock('../server/media/documentVault', () => ({
-  isDocumentVaultConfigured: () => false,
+  documentStorageMode: () => 'db',
 }));
 
 vi.mock('../server/services/telecom/video', () => ({

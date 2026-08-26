@@ -464,6 +464,7 @@ export interface IStorage {
   getInternalMessageUnreadCount(userId: number): Promise<number>;
   markInternalMessagesRead(userId: number, withUserId?: number): Promise<void>;
   getInternalMessageConversations(userId: number): Promise<any[]>;
+  getMediaIdsForInternalMessages(messageIds: number[]): Promise<Record<number, number[]>>;
 
   // Calendar Events
   createCalendarEvent(event: InsertCalendarEvent): Promise<CalendarEvent>;
@@ -2620,6 +2621,23 @@ export class DatabaseStorage implements IStorage {
     `);
     return (rows as any).rows ?? [];
   }
+
+  async getMediaIdsForInternalMessages(messageIds: number[]): Promise<Record<number, number[]>> {
+    const ids = (messageIds || []).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0);
+    if (!ids.length) return {};
+    const result: any = await db.execute(sql`
+      SELECT entity_id AS message_id, array_agg(media_asset_id ORDER BY media_asset_id) AS ids
+      FROM media_attachments
+      WHERE entity_type = 'internal_message' AND entity_id = ANY(${ids})
+      GROUP BY entity_id
+    `);
+    const map: Record<number, number[]> = {};
+    for (const r of (result as any).rows || []) {
+      map[Number(r.message_id)] = (r.ids || []).map(Number);
+    }
+    return map;
+  }
+
 
   async markInternalMessagesRead(userId: number, withUserId?: number): Promise<void> {
     if (withUserId) {
