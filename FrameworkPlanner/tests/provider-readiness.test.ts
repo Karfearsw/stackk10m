@@ -18,6 +18,23 @@ vi.mock('../server/media/documentVault', () => ({
   isDocumentVaultConfigured: () => false,
 }));
 
+vi.mock('../server/services/telecom/video', () => ({
+  telnyxVideo: {
+    healthCheck: async () => {
+      const enabled = (process.env.TELNYX_VIDEO_ENABLED || '').trim().toLowerCase();
+      if (enabled === 'true' || enabled === '1' || enabled === 'yes' || enabled === 'on') {
+        return { configured: true, reachable: true, roomsApiAvailable: true };
+      }
+      return {
+        configured: false,
+        reachable: false,
+        roomsApiAvailable: false,
+        blocker: 'Telnyx Video is not enabled. Confirm Video API access in the Telnyx portal, then set TELNYX_VIDEO_ENABLED=true.',
+      };
+    },
+  },
+}));
+
 import { getProviderReadiness } from '../server/services/telecom/provider-readiness';
 
 describe('Provider Readiness Service', () => {

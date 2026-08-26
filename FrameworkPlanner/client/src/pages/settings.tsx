@@ -18,6 +18,7 @@ import { resolveBannerConfig, type BannerConfig } from "@/components/dashboard/b
 import { useLocation, useSearch } from "wouter";
 import { AutomationsContent } from "@/pages/automations";
 import { AuditLogContent } from "@/pages/audit-log";
+import { CallAuditContent } from "@/components/telecom/CallAuditContent";
 import { apiRequest } from "@/lib/queryClient";
 import { TelnyxOnboardingWizard } from "@/components/telnyx/TelnyxOnboardingWizard";
 
@@ -52,7 +53,7 @@ function SettingsContent() {
   const { user } = useAuth();
 
   useEffect(() => {
-    const allowed = new Set(["account", "security", "notifications", "team", "goals", "pipeline", "appearance", "system", "automation", "audit"]);
+    const allowed = new Set(["account", "security", "notifications", "team", "goals", "pipeline", "appearance", "system", "automation", "audit", "callaudit"]);
     if (tabFromUrl && allowed.has(tabFromUrl) && tabFromUrl !== activeTab) {
       setActiveTab(tabFromUrl);
     }
@@ -672,6 +673,10 @@ function SettingsContent() {
           <TabsTrigger value="audit" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <Clock className="w-4 h-4 mr-2" />
             Audit Logs
+          </TabsTrigger>
+          <TabsTrigger value="callaudit" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <Phone className="w-4 h-4 mr-2" />
+            Call Audit
           </TabsTrigger>
         </TabsList>
 
@@ -1458,6 +1463,10 @@ function SettingsContent() {
 
         <TabsContent value="audit" className="mt-6 space-y-6">
           <AuditLogContent />
+        </TabsContent>
+
+        <TabsContent value="callaudit" className="mt-6 space-y-6">
+          <CallAuditContent />
         </TabsContent>
 
         <TabsContent value="pipeline" className="mt-6 space-y-6">

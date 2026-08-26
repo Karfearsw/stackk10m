@@ -18,6 +18,8 @@ export type JoinTokenResult = {
   token: string;
   roomId: string;
   identity: string;
+  refreshToken?: string;
+  tokenExpiresAt?: string;
 };
 
 export type VideoHealthResult = {
@@ -27,10 +29,19 @@ export type VideoHealthResult = {
   blocker?: string;
 };
 
-// ── Video Service ──────────────────────────────────────────────────────────
+// ── Video Service (Telnyx Rooms API V2) ───────────────────────────────────
+//
+// Current Telnyx Video product uses the REST V2 Rooms API:
+//   POST /v2/rooms                                    create a room
+//   POST /v2/rooms/{room_id}/actions/generate_join_client_token
+//                                                     mint a short-lived join JWT
+//   GET  /v2/rooms/{room_id}                          get a room
+//   DELETE /v2/rooms/{room_id}                        end/delete a room
+//   GET  /v2/rooms                                    list rooms (health probe)
+// See https://developers.telnyx.com/docs/video/get-started
 
 class TelnyxVideoService {
-  private readonly videoBaseUrl = "https://api.telnyx.com/v1/video";
+  private readonly videoBaseUrl = "https://api.telnyx.com/v2";
 
   private headers(): Record<string, string> {
     const apiKey = process.env.TELNYX_API_KEY || "";
@@ -58,16 +69,28 @@ class TelnyxVideoService {
     }
   }
 
+  private errorMessage(data: any, fallback: string): string {
+    return (
+      data?.errors?.[0]?.title ||
+      data?.errors?.[0]?.detail ||
+      data?.error ||
+      data?.message ||
+      fallback
+    );
+  }
+
   async createRoom(input: CreateRoomInput): Promise<CreateRoomResult> {
     this.requireConfigured();
 
     const body: Record<string, unknown> = {
-      name: input.name,
-      type: "group",
+      unique_name: input.name,
     };
     if (input.maxParticipants) {
       body.max_participants = input.maxParticipants;
+    } else {
+      body.max_participants = 10;
     }
+    body.enable_recording = false;
 
     const res = await fetch(`${this.videoBaseUrl}/rooms`, {
       method: "POST",
@@ -78,20 +101,15 @@ class TelnyxVideoService {
 
     const data: any = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const msg =
-        data?.errors?.[0]?.title ||
-        data?.error ||
-        data?.message ||
-        `Telnyx video room creation failed (${res.status})`;
-      throw new Error(msg);
+      throw new Error(this.errorMessage(data, `Telnyx video room creation failed (${res.status})`));
     }
 
     const room = data?.data || data;
     return {
       roomId: String(room?.id || ""),
-      roomSid: String(room?.room_sid || room?.sid || ""),
-      name: String(room?.name || input.name),
-      maxParticipants: Number(room?.max_participants || input.maxParticipants || 2),
+      roomSid: String(room?.id || room?.room_sid || ""),
+      name: String(room?.unique_name || input.name),
+      maxParticipants: Number(room?.max_participants || input.maxParticipants || 10),
     };
   }
 
@@ -102,31 +120,31 @@ class TelnyxVideoService {
     this.requireConfigured();
 
     const body = {
-      room_id: roomId,
-      identity,
+      token_ttl_secs: 600,
+      refresh_token_ttl_secs: 3600,
     };
 
-    const res = await fetch(`${this.videoBaseUrl}/rooms/${encodeURIComponent(roomId)}/tokens`, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(15000),
-    });
+    const res = await fetch(
+      `${this.videoBaseUrl}/rooms/${encodeURIComponent(roomId)}/actions/generate_join_client_token`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000),
+      },
+    );
 
     const data: any = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const msg =
-        data?.errors?.[0]?.title ||
-        data?.error ||
-        data?.message ||
-        `Telnyx join token creation failed (${res.status})`;
-      throw new Error(msg);
+      throw new Error(this.errorMessage(data, `Telnyx join token creation failed (${res.status})`));
     }
 
     return {
       token: String(data?.data?.token || data?.token || ""),
       roomId,
       identity,
+      refreshToken: data?.data?.refresh_token || data?.refresh_token || undefined,
+      tokenExpiresAt: data?.data?.token_expires_at || data?.token_expires_at || undefined,
     };
   }
 
@@ -144,12 +162,7 @@ class TelnyxVideoService {
 
     if (!res.ok) {
       const data: any = await res.json().catch(() => ({}));
-      const msg =
-        data?.errors?.[0]?.title ||
-        data?.error ||
-        data?.message ||
-        `Telnyx room end failed (${res.status})`;
-      throw new Error(msg);
+      throw new Error(this.errorMessage(data, `Telnyx room end failed (${res.status})`));
     }
   }
 
@@ -195,7 +208,7 @@ class TelnyxVideoService {
       };
     }
 
-    // Probe the rooms endpoint to verify reachability
+    // Probe the Rooms API (V2) to verify reachability
     try {
       const res = await fetch(`${this.videoBaseUrl}/rooms`, {
         method: "GET",

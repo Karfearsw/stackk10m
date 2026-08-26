@@ -664,6 +664,9 @@ export interface IStorage {
   // When userId is provided, only that user's outbound logs plus account-wide
   // inbound logs (user_id 0) are returned.
   getCallLogs(limit?: number, offset?: number, status?: string, contactId?: number, userId?: number): Promise<CallLog[]>;
+  getAdminCallLogs(opts?: { limit?: number; offset?: number; userId?: number; status?: string; disposition?: string; fromDate?: Date; toDate?: Date }): Promise<any[]>;
+  listCallSessions(opts?: { limit?: number; offset?: number; userId?: number; mode?: string; status?: string; disposition?: string; fromDate?: Date; toDate?: Date }): Promise<any[]>;
+
   createCallLog(log: InsertCallLog): Promise<CallLog>;
   updateCallLog(id: number, patch: Partial<InsertCallLog & { status?: string; endedAt?: Date; durationMs?: number; errorCode?: string; errorMessage?: string }>): Promise<CallLog>;
   getActiveOutboundCallForUser(userId: number, windowMs?: number): Promise<CallLog | undefined>;
@@ -3307,6 +3310,50 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+  async getAdminCallLogs(opts: any = {}): Promise<any[]> {
+    const conds: any[] = [];
+    if (opts.userId) conds.push(sql`cl.user_id = ${opts.userId}`);
+    if (opts.status) conds.push(sql`cl.status = ${opts.status}`);
+    if (opts.disposition) conds.push(sql`cl.disposition = ${opts.disposition}`);
+    if (opts.fromDate) conds.push(sql`cl.started_at >= ${opts.fromDate}`);
+    if (opts.toDate) conds.push(sql`cl.started_at <= ${opts.toDate}`);
+    const where = conds.length ? sql`WHERE ${sql.join(conds, sql` AND `)}` : sql``;
+    const limit = Math.min(Number(opts.limit) || 100, 500);
+    const offset = Number(opts.offset) || 0;
+    const result: any = await db.execute(sql`
+      SELECT cl.*, u.first_name AS user_first_name, u.last_name AS user_last_name, u.email AS user_email
+      FROM call_logs cl
+      LEFT JOIN users u ON u.id = cl.user_id
+      ${where}
+      ORDER BY cl.started_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `);
+    return ((result as any).rows || []) as any[];
+  }
+
+  async listCallSessions(opts: any = {}): Promise<any[]> {
+    const conds: any[] = [];
+    if (opts.userId) conds.push(sql`(s.initiating_user_id = ${opts.userId} OR s.assigned_agent_user_id = ${opts.userId})`);
+    if (opts.mode) conds.push(sql`s.mode = ${opts.mode}`);
+    if (opts.status) conds.push(sql`s.status = ${opts.status}`);
+    if (opts.disposition) conds.push(sql`s.final_disposition = ${opts.disposition}`);
+    if (opts.fromDate) conds.push(sql`s.created_at >= ${opts.fromDate}`);
+    if (opts.toDate) conds.push(sql`s.created_at <= ${opts.toDate}`);
+    const where = conds.length ? sql`WHERE ${sql.join(conds, sql` AND `)}` : sql``;
+    const limit = Math.min(Number(opts.limit) || 100, 500);
+    const offset = Number(opts.offset) || 0;
+    const result: any = await db.execute(sql`
+      SELECT s.*, u.first_name AS agent_first_name, u.last_name AS agent_last_name, u.email AS agent_email,
+             l.owner_name AS lead_name, l.owner_phone AS lead_phone
+      FROM crm_call_sessions s
+      LEFT JOIN users u ON u.id = COALESCE(s.assigned_agent_user_id, s.initiating_user_id)
+      LEFT JOIN leads l ON l.id = s.lead_id
+      ${where}
+      ORDER BY s.created_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `);
+    return ((result as any).rows || []) as any[];
+  }
   async updateCallLog(id: number, patch: Partial<InsertCallLog & { status?: string; endedAt?: Date; durationMs?: number; errorCode?: string; errorMessage?: string }>): Promise<CallLog> {
     const result = await db.update(callLogs).set(patch as any).where(eq(callLogs.id, id)).returning();
     return result[0];

@@ -23,8 +23,7 @@ describe('Telnyx Video Service', () => {
         json: async () => ({
           data: {
             id: 'room-123',
-            room_sid: 'sid-456',
-            name: 'Test Meeting',
+            unique_name: 'Test Meeting',
             max_participants: 10,
           },
         }),
@@ -33,13 +32,13 @@ describe('Telnyx Video Service', () => {
       const result = await telnyxVideo.createRoom({ name: 'Test Meeting', maxParticipants: 10 });
 
       expect(result.roomId).toBe('room-123');
-      expect(result.roomSid).toBe('sid-456');
+      expect(result.roomSid).toBe('room-123');
       expect(result.name).toBe('Test Meeting');
       expect(result.maxParticipants).toBe(10);
 
       // Verify the fetch call
       expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.telnyx.com/v1/video/rooms',
+        'https://api.telnyx.com/v2/rooms',
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({
@@ -84,6 +83,10 @@ describe('Telnyx Video Service', () => {
       });
 
       const result = await telnyxVideo.getJoinToken('room-123', 'user@example.com');
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://api.telnyx.com/v2/rooms/room-123/actions/generate_join_client_token',
+        expect.objectContaining({ method: 'POST' }),
+      );
 
       expect(result.token).toBe('join-token-abc');
       expect(result.roomId).toBe('room-123');
@@ -108,7 +111,7 @@ describe('Telnyx Video Service', () => {
       await expect(telnyxVideo.endRoom('room-123')).resolves.not.toThrow();
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.telnyx.com/v1/video/rooms/room-123',
+        'https://api.telnyx.com/v2/rooms/room-123',
         expect.objectContaining({ method: 'DELETE' }),
       );
     });

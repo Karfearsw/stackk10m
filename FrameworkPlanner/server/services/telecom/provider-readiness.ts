@@ -192,35 +192,9 @@ function checkSms(): SmsReadiness {
   };
 }
 
-function checkVideo(): VideoReadiness {
-  const configured = parseBoolFlag(process.env.TELNYX_VIDEO_ENABLED);
-  const apiKey = has("TELNYX_API_KEY");
-
-  if (!apiKey) {
-    return {
-      configured: false,
-      reachable: false,
-      roomsApiAvailable: false,
-      blocker: "TELNYX_API_KEY is required for Video rooms.",
-    };
-  }
-
-  if (!configured) {
-    return {
-      configured: false,
-      reachable: false,
-      roomsApiAvailable: false,
-      blocker:
-        "Telnyx Video is not enabled. Confirm Video API access in the Telnyx portal, " +
-        "then set TELNYX_VIDEO_ENABLED=true.",
-    };
-  }
-
-  return {
-    configured: true,
-    reachable: true,
-    roomsApiAvailable: true,
-  };
+async function checkVideo(): Promise<VideoReadiness> {
+  const { telnyxVideo } = await import("./video.js");
+  return telnyxVideo.healthCheck();
 }
 
 function checkEmail(): EmailReadiness {

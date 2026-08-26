@@ -35,6 +35,7 @@ export type TelnyxClientOptions = {
 };
 
 function isConnectionActive(conn: any): boolean {
+  if (conn?.active === true) return true;
   const rawState = String(conn?.state || conn?.status || "").trim().toLowerCase();
   return rawState === "active" || rawState === "online" || rawState === "ready";
 }
@@ -295,7 +296,19 @@ export class TelnyxClient {
         };
       }
 
-      const connections: any[] = Array.isArray(data?.data) ? data.data : [];
+      let connections: any[] = Array.isArray(data?.data) ? data.data : [];
+      // Call Control Applications are listed under their own endpoint, not /connections
+      try {
+        const ccRes = await fetch(`${this.baseUrl}/call_control_applications`, {
+          headers: this.headers(),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (ccRes.ok) {
+          const ccData: any = await ccRes.json().catch(() => ({}));
+          const apps: any[] = Array.isArray(ccData?.data) ? ccData.data : [];
+          connections = [...connections, ...apps];
+        }
+      } catch {}
       const target = connections.find((c) => String(c.id) === String(this.connectionId));
 
       if (!target) {

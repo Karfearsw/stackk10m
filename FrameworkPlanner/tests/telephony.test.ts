@@ -62,6 +62,12 @@ describe('Telephony Routes', () => {
     storage.upsertNumberReputation = async (input: any) => { rep.set(input.e164, { e164: input.e164, label: input.label, reason: input.reason ?? null }); return rep.get(input.e164) as any; };
     storage.deleteNumberReputation = async (_userId: number, e164: string) => { rep.delete(e164); };
     storage.getTelephonyAnalyticsSummary = async () => ({ total: calls.length, answered: calls.filter(c => c.status === "answered").length, missed: calls.filter(c => c.status === "missed").length, failed: calls.filter(c => c.status === "failed").length, talkSeconds: 0 });
+    storage.getAdminCallLogs = async (opts: any = {}) => [{
+      id: 1, user_id: 1, user_first_name: 'Admin', user_last_name: 'User', direction: 'outbound', number: '+15550001111', status: 'answered', disposition: 'connected', started_at: new Date().toISOString(), duration_ms: 45000, note: 'test call'
+    }].filter((c: any) => !opts.status || c.status === opts.status);
+    storage.listCallSessions = async (opts: any = {}) => [{
+      id: 'sess-1', agent_first_name: 'Admin', agent_last_name: 'User', mode: 'human_first', status: 'completed', final_disposition: 'qualified', duration_seconds: 45, ai_qualification_score: 82, created_at: new Date().toISOString()
+    }].filter((c: any) => !opts.status || c.status === opts.status);
     app = express();
     app.use(express.json());
     app.use(session({ secret: 'test', resave: false, saveUninitialized: true }));
@@ -321,6 +327,38 @@ describe('Telephony Routes', () => {
     const res = await request(app).post('/api/telephony/inbound/does-not-exist/accept');
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('INBOUND_NOT_FOUND');
+  });
+
+  it('GET /api/telephony/admin/calls requires admin role', async () => {
+    const res = await request(app).get('/api/telephony/admin/calls');
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('ADMIN_REQUIRED');
+  });
+
+  it('GET /api/v1/telecom/call-sessions requires admin role', async () => {
+    const res = await request(app).get('/api/v1/telecom/call-sessions');
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe('ADMIN_REQUIRED');
+  });
+
+  it('GET /api/telephony/admin/calls returns team calls for admins', async () => {
+    const orig = storage.getUserById;
+    storage.getUserById = async (id: number) => ({ id, email: 'admin@example.com', role: 'admin', isSuperAdmin: true } as any);
+    const res = await request(app).get('/api/telephony/admin/calls?status=answered&userId=1');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body[0]).toHaveProperty('number');
+    storage.getUserById = orig;
+  });
+
+  it('GET /api/v1/telecom/call-sessions returns sessions for admins with filters', async () => {
+    const orig = storage.getUserById;
+    storage.getUserById = async (id: number) => ({ id, email: 'admin@example.com', role: 'admin', isSuperAdmin: true } as any);
+    const res = await request(app).get('/api/v1/telecom/call-sessions?mode=human_first&disposition=qualified');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body[0]).toHaveProperty('mode');
+    storage.getUserById = orig;
   });
 
 });

@@ -8020,7 +8020,55 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
     }
-  });  // ── Inbound Call Accept / Decline ────────────────────────────────────
+  });  // ── Inbound Call Accept / Decline ────────────────────────────────────  // ── Admin Call Audit ─────────────────────────────────────────────────
+  app.get("/api/telephony/admin/calls", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(user.isSuperAdmin || String(user.role || "").trim().toLowerCase() === "admin")) {
+        return res.status(403).json({ error: "Admins only", code: "ADMIN_REQUIRED" });
+      }
+      const q = req.query as any;
+      const items = await storage.getAdminCallLogs({
+        limit: q.limit ? parseInt(q.limit) : 100,
+        offset: q.offset ? parseInt(q.offset) : 0,
+        userId: q.userId ? parseInt(q.userId) : undefined,
+        status: q.status || undefined,
+        disposition: q.disposition || undefined,
+        fromDate: q.from ? new Date(String(q.from)) : undefined,
+        toDate: q.to ? new Date(String(q.to)) : undefined,
+      });
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/v1/telecom/call-sessions", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(user.isSuperAdmin || String(user.role || "").trim().toLowerCase() === "admin")) {
+        return res.status(403).json({ error: "Admins only", code: "ADMIN_REQUIRED" });
+      }
+      const q = req.query as any;
+      const items = await storage.listCallSessions({
+        limit: q.limit ? parseInt(q.limit) : 100,
+        offset: q.offset ? parseInt(q.offset) : 0,
+        userId: q.userId ? parseInt(q.userId) : undefined,
+        mode: q.mode || undefined,
+        status: q.status || undefined,
+        disposition: q.disposition || undefined,
+        fromDate: q.from ? new Date(String(q.from)) : undefined,
+        toDate: q.to ? new Date(String(q.to)) : undefined,
+      });
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+
   app.post("/api/telephony/inbound/:callControlId/accept", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
