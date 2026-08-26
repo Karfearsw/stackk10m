@@ -9,7 +9,7 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Leads from "@/pages/leads";
 import PropertyDetail from "@/pages/property-detail";
-import Opportunities, { Properties } from "@/pages/properties";
+import Properties from "@/pages/properties";
 import Contracts from "@/pages/contracts";
 import ContractGenerator from "@/pages/contract-generator";
 import Analytics from "@/pages/analytics";
@@ -27,7 +27,6 @@ import Contacts from "@/pages/contacts";
 import History from "@/pages/history";
 import VoicemailPage from "@/pages/voicemail";
 import SearchPage from "@/pages/search";
-import Calculator from "@/pages/calculator";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -77,13 +76,11 @@ function Router() {
       <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
       <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />
       <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />
-      <Route path="/opportunities" component={() => <ProtectedRoute component={Opportunities} />} />
       <Route path="/dialer" component={() => <ProtectedRoute component={Dialer} />} />
       <Route path="/contacts" component={() => <ProtectedRoute component={Contacts} />} />
       <Route path="/history" component={() => <ProtectedRoute component={History} />} />
       <Route path="/voicemail" component={() => <ProtectedRoute component={VoicemailPage} />} />
       <Route path="/search" component={() => <ProtectedRoute component={SearchPage} />} />
-      <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
       <Route component={NotFound} />
     </Switch>
   );
