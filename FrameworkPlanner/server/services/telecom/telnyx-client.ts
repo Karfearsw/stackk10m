@@ -114,6 +114,24 @@ export class TelnyxClient {
     return { callControlId: String(callControlId) };
   }
 
+  // Answer an inbound call (POST /v2/calls/{call_control_id}/actions/answer).
+  // Used by the inbound-call accept flow before bridging to an agent.
+  async answer(callControlId: string): Promise<void> {
+    this.requireReady();
+    const res = await fetch(`${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/answer`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({}),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      const data: any = await res.json().catch(() => ({}));
+      const err = new Error(data?.errors?.[0]?.title || data?.message || `Telnyx answer failed (${res.status})`) as any;
+      err.status = res.status;
+      err.code = data?.errors?.[0]?.code || data?.code || null;
+      throw err;
+    }
+  }
   async hangup(callControlId: string): Promise<void> {
     this.requireReady();
     const res = await fetch(`${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/hangup`, {

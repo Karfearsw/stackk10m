@@ -331,3 +331,32 @@ separate Telnyx leg; the CRM only bridges legs after confirmed answers.
   bridge; check the number/connection is outbound-capable for both legs.
 - AI never starts → Settings → System → AI Assistant: paste the Assistant ID
   and enable the toggle; readiness must show Ready.
+
+## Inbound Call Notifications (accept/decline)
+
+When a caller dials your Telnyx number, the CRM matches the caller to a lead
+(by E.164 / normalized digits) and pushes a real-time `inbound_call_ringing`
+event over the existing WebSocket. Every open CRM session shows an incoming-call
+card with the masked number, matched lead name, and Accept/Decline buttons.
+
+- **Accept** → the backend answers the inbound leg, dials the accepting agent's
+  configured phone, and bridges the two legs when the agent answers.
+- **Decline** → recorded on the call log (`declinedBy`) and the card closes for
+  that agent; the call keeps ringing for others.
+- If the inbound call ends unanswered, the card auto-dismisses.
+
+Requires the agent phone to be set (Dialer Workspace → Two-Leg Call card) and
+the Call Control Application webhook to be live.
+
+## Analytics (Communications section)
+
+The Analytics page now includes a **Communications** section (30-day window):
+
+- Call success rate (answered / total) and talk time
+- SMS delivered rate + failures
+- Opt-outs (leads marked do-not-call)
+- Active call sessions + bridge failures
+- AI qualification rate + human handoffs
+
+Data comes from `GET /api/telephony/analytics/summary?rangeDays=30`
+(user-scoped for calls/SMS/sessions; DNC counts are org-wide).

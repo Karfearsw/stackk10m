@@ -160,6 +160,7 @@ export interface IStorage {
     offset?: number;
   }): Promise<{ items: Lead[]; total: number }>;
   getLeadById(id: number): Promise<Lead | undefined>;
+  getLeadByPhone(phone: string): Promise<Lead | undefined>;
   createLead(lead: InsertLead): Promise<Lead>;
   updateLead(id: number, lead: Partial<InsertLead>): Promise<Lead>;
   deleteLead(id: number): Promise<void>;
@@ -1016,6 +1017,28 @@ export class DatabaseStorage implements IStorage {
     return { items, total };
   }
 
+  async getLeadByPhone(phone: string): Promise<Lead | undefined> {
+    const clean = String(phone || "").trim().toLowerCase();
+    if (!clean) return undefined;
+    // Exact E.164 match first, then normalized trailing-10-digit fallback.
+    const exact: any = await db.execute(sql`
+      SELECT * FROM leads
+      WHERE lower(trim(owner_phone)) = ${clean}
+      ORDER BY id DESC LIMIT 1
+    `);
+    if ((exact as any).rows?.[0]) return (exact as any).rows[0] as unknown as Lead;
+    const digits = clean.replace(/\D/g, "");
+    if (digits.length >= 10) {
+      const tail = digits.slice(-10);
+      const like: any = await db.execute(sql`
+        SELECT * FROM leads
+        WHERE translate(owner_phone, ' -()', '') LIKE '%' || ${tail} || '%'
+        ORDER BY id DESC LIMIT 1
+      `);
+      if ((like as any).rows?.[0]) return (like as any).rows[0] as unknown as Lead;
+    }
+    return undefined;
+  }
   async getLeadById(id: number): Promise<Lead | undefined> {
     const result = await db.select().from(leads).where(eq(leads.id, id)).limit(1);
     return result[0];
@@ -4159,7 +4182,14 @@ export class DatabaseStorage implements IStorage {
     return Number((rows as any).rows?.[0]?.c || 0) > 0;
   }
 
-  async getTelephonyAnalyticsSummary(userId: number, startDate: Date): Promise<{ total: number; answered: number; missed: number; failed: number; talkSeconds: number }> {
+  async getTelephonyAnalyticsSummary(userId: number, startDate: Date): Promise<{
+    total: number; answered: number; missed: number; failed: number; talkSeconds: number;
+    callSuccessRate: number | null;
+    sms: { total: number; sent: number; delivered: number; failed: number; deliveredRate: number | null };
+    optOuts: number;
+    activeSessions: number; completedSessions: number; bridgeFailures: number;
+    ai: { total: number; qualified: number; handoffs: number; qualifiedRate: number | null };
+  }> {
     const rows: any = await db.execute(sql`
       SELECT
         COUNT(*)::int AS total,
@@ -4172,16 +4202,90 @@ export class DatabaseStorage implements IStorage {
     `);
     const row = (rows as any).rows?.[0] || {};
     const talkMs = Number(row.talk_ms || 0);
+    const total = Number(row.total || 0);
+    const answered = Number(row.answered || 0);
+
+    let sms = { total: 0, sent: 0, delivered: 0, failed: 0, deliveredRate: null as number | null };
+    let optOuts = 0;
+    let activeSessions = 0;
+    let completedSessions = 0;
+    let bridgeFailures = 0;
+    let ai = { total: 0, qualified: 0, handoffs: 0, qualifiedRate: null as number | null };
+    try {
+      const smsRows: any = await db.execute(sql`
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(*) FILTER (WHERE status IN ('sent', 'delivered', 'queued', 'accepted'))::int AS sent,
+          COUNT(*) FILTER (WHERE status = 'delivered')::int AS delivered,
+          COUNT(*) FILTER (WHERE status IN ('failed', 'undeliverable', 'error'))::int AS failed
+        FROM crm_sms_messages
+        WHERE user_id = ${userId} AND created_at >= ${startDate}
+      `);
+      const sr = (smsRows as any).rows?.[0] || {};
+      const smsTotal = Number(sr.total || 0);
+      sms = {
+        total: smsTotal,
+        sent: Number(sr.sent || 0),
+        delivered: Number(sr.delivered || 0),
+        failed: Number(sr.failed || 0),
+        deliveredRate: smsTotal ? Math.round((Number(sr.delivered || 0) / smsTotal) * 100) : null,
+      };
+
+      const optRows: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS n FROM leads WHERE do_not_call = true AND created_at >= ${startDate}
+      `);
+      optOuts = Number((optRows as any).rows?.[0]?.n || 0);
+
+      const sessRows: any = await db.execute(sql`
+        SELECT
+          COUNT(*) FILTER (WHERE status NOT IN ('completed', 'failed', 'cancelled', 'validation_failed'))::int AS active,
+          COUNT(*) FILTER (WHERE status = 'completed')::int AS completed,
+          COUNT(*) FILTER (WHERE status = 'completed' AND final_disposition = 'bridge_failed')::int AS bridge_failed
+        FROM crm_call_sessions
+        WHERE initiating_user_id = ${userId} AND created_at >= ${startDate}
+      `);
+      const sr2 = (sessRows as any).rows?.[0] || {};
+      activeSessions = Number(sr2.active || 0);
+      completedSessions = Number(sr2.completed || 0);
+      bridgeFailures = Number(sr2.bridge_failed || 0);
+
+      const aiRows: any = await db.execute(sql`
+        SELECT
+          COUNT(q.id)::int AS total,
+          COUNT(q.id) FILTER (WHERE q.request_human = true)::int AS qualified,
+          COUNT(q.id) FILTER (WHERE q.request_human = true AND s.mode = 'ai_screen_handoff')::int AS handoffs
+        FROM crm_ai_call_qualifications q
+        LEFT JOIN crm_call_sessions s ON s.id = q.session_id
+        WHERE s.initiating_user_id = ${userId} AND q.created_at >= ${startDate}
+      `);
+      const ar = (aiRows as any).rows?.[0] || {};
+      const aiTotal = Number(ar.total || 0);
+      ai = {
+        total: aiTotal,
+        qualified: Number(ar.qualified || 0),
+        handoffs: Number(ar.handoffs || 0),
+        qualifiedRate: aiTotal ? Math.round((Number(ar.qualified || 0) / aiTotal) * 100) : null,
+      };
+    } catch (e) {
+      console.error("Telephony analytics extras failed (tables may be missing):", e);
+    }
+
     return {
-      total: Number(row.total || 0),
-      answered: Number(row.answered || 0),
+      total,
+      answered,
       missed: Number(row.missed || 0),
       failed: Number(row.failed || 0),
       talkSeconds: Math.round(talkMs / 1000),
+      callSuccessRate: total ? Math.round((answered / total) * 100) : null,
+      sms,
+      optOuts,
+      activeSessions,
+      completedSessions,
+      bridgeFailures,
+      ai,
     };
   }
 
-  // Opportunity Parties
   async getOpportunityParties(opportunityId: number): Promise<OpportunityParty[]> {
     return db.select().from(opportunityParties).where(eq(opportunityParties.opportunityId, opportunityId)).orderBy(asc(opportunityParties.createdAt));
   }

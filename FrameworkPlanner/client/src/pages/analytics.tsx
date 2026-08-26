@@ -27,6 +27,15 @@ export default function Analytics() {
     },
   });
 
+  const { data: comms } = useQuery<any>({
+    queryKey: ["/api/telephony/analytics/summary"],
+    queryFn: async () => {
+      const res = await fetch("/api/telephony/analytics/summary?rangeDays=30", { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json();
+    },
+  });
+
   const isLoading = leadsLoading || contractsLoading;
 
   // Calculate YTD metrics
@@ -226,6 +235,92 @@ export default function Analytics() {
         </Card>
       </div>
 
+      <h2 className="text-xl font-semibold tracking-tight mb-2">Communications</h2>
+      <div className="grid gap-4 md:grid-cols-4 mb-6">
+        <Card data-testid="metric-call-success">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">Call Success</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold" data-testid="value-call-success">
+              {comms?.callSuccessRate != null ? `${comms.callSuccessRate}%` : "—"}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">{comms?.answered ?? 0} answered / {comms?.total ?? 0} calls</p>
+          </CardContent>
+        </Card>
+        <Card data-testid="metric-sms-delivered">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">SMS Delivered</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold" data-testid="value-sms-delivered">
+              {comms?.sms?.deliveredRate != null ? `${comms.sms.deliveredRate}%` : "—"}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">{comms?.sms?.delivered ?? 0} delivered / {comms?.sms?.total ?? 0} messages</p>
+          </CardContent>
+        </Card>
+        <Card data-testid="metric-optouts">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">Opt-Outs (DNC)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold" data-testid="value-optouts">{comms?.optOuts ?? 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">Leads marked do-not-call</p>
+          </CardContent>
+        </Card>
+        <Card data-testid="metric-active-sessions">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">Active Calls</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold" data-testid="value-active-sessions">{comms?.activeSessions ?? 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">{comms?.bridgeFailures ?? 0} bridge failures</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-4 mb-6">
+        <Card data-testid="metric-ai-qualified">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">AI Qualified</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold" data-testid="value-ai-qualified">
+              {comms?.ai?.qualifiedRate != null ? `${comms.ai.qualifiedRate}%` : "—"}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">{comms?.ai?.qualified ?? 0} of {comms?.ai?.total ?? 0} screened</p>
+          </CardContent>
+        </Card>
+        <Card data-testid="metric-ai-handoffs">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">AI Handoffs</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold" data-testid="value-ai-handoffs">{comms?.ai?.handoffs ?? 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">Bridged to a human</p>
+          </CardContent>
+        </Card>
+        <Card data-testid="metric-talk-time">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">Talk Time</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold" data-testid="value-talk-time">
+              {comms?.talkSeconds ? `${Math.floor(comms.talkSeconds / 60)}m` : "0m"}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Answered calls (30d)</p>
+          </CardContent>
+        </Card>
+        <Card data-testid="metric-sms-failed">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">SMS Failed</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-destructive" data-testid="value-sms-failed">{comms?.sms?.failed ?? 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">Failed or undeliverable</p>
+          </CardContent>
+        </Card>
+      </div>
       <div className="grid gap-6 md:grid-cols-2">
         <Card>
           <CardHeader>

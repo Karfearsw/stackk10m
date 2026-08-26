@@ -22,6 +22,18 @@ async function getWsToken() {
   return res.json() as Promise<{ token: string; expiresAt: string; wsBaseUrl?: string | null }>;
 }
 
+export type InboundCallEvent = {
+  callControlId: string;
+  from?: string | null;
+  maskedFrom?: string | null;
+  leadId?: number | null;
+  leadName?: string | null;
+  leadPhone?: string | null;
+  ts?: number;
+  ended?: boolean;
+  claimedBy?: number | null;
+  declinedBy?: number | null;
+};
 export type TelephonySessionStateEvent = {
   sessionId: number;
   status: string;
@@ -36,11 +48,13 @@ export type TelephonyCallStateEvent = {
   to?: string | null;
 };
 
-export function useTelephonyEvents(opts?: { enabled?: boolean; onCallStateChanged?: (evt: TelephonyCallStateEvent) => void; onSessionStateChanged?: (evt: TelephonySessionStateEvent) => void }) {
+export function useTelephonyEvents(opts?: { enabled?: boolean; onCallStateChanged?: (evt: TelephonyCallStateEvent) => void; onSessionStateChanged?: (evt: TelephonySessionStateEvent) => void; onInboundCall?: (evt: InboundCallEvent) => void }) {
   const enabled = opts?.enabled ?? true;
   const queryClient = useQueryClient();
   const onCallStateChangedRef = useRef(opts?.onCallStateChanged);
   const onSessionStateChangedRef = useRef(opts?.onSessionStateChanged);
+  const onInboundCallRef = useRef(opts?.onInboundCall);
+  onInboundCallRef.current = opts?.onInboundCall;
   onSessionStateChangedRef.current = opts?.onSessionStateChanged;
   onCallStateChangedRef.current = opts?.onCallStateChanged;
   const wsRef = useRef<WebSocket | null>(null);
@@ -84,6 +98,22 @@ export function useTelephonyEvents(opts?: { enabled?: boolean; onCallStateChange
           state: String(payload.state || ""),
           from: payload.from || null,
           to: payload.to || null,
+        });
+        return;
+      }
+      if (t === "inbound_call_ringing" || t === "inbound_call_ended" || t === "inbound_call_claimed" || t === "inbound_call_declined") {
+        const p = evt.payload || {};
+        onInboundCallRef.current?.({
+          callControlId: String(p.callControlId || ""),
+          from: p.from ?? null,
+          maskedFrom: p.maskedFrom ?? null,
+          leadId: p.leadId ?? null,
+          leadName: p.leadName ?? null,
+          leadPhone: p.leadPhone ?? null,
+          ts: p.ts ?? Date.now(),
+          ended: t === "inbound_call_ended" ? true : undefined,
+          claimedBy: t === "inbound_call_claimed" ? Number(p.claimedBy) || null : undefined,
+          declinedBy: t === "inbound_call_declined" ? Number(p.declinedBy) || null : undefined,
         });
         return;
       }

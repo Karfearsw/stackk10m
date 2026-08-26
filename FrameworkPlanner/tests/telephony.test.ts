@@ -9,6 +9,7 @@ vi.mock('../server/services/telecom/telnyx-client', () => ({
     hangup: async () => {},
     sendSms: async () => ({ messageId: 'test-message-id' }),
     transfer: async () => {},
+    answer: async () => {},
     startAiAssistant: async () => {},
     stopAiAssistant: async () => {},
     healthCheck: async () => ({ status: 'reachable', code: 200, message: 'Connection is active', connectionFound: true, connectionActive: true, httpStatus: 200 }),
@@ -45,6 +46,7 @@ describe('Telephony Routes', () => {
     ]);
     storage.getLeadById = async (id: number) => ({ id, ownerName: `Lead ${id}`, ownerPhone: "+15551110000", address: "1 Main St", city: "Orlando", state: "FL", status: "new", doNotCall: id === 2, doNotText: false, nextFollowUpAt: null } as any);
     storage.getActiveOutboundCallForUser = async () => undefined;
+    storage.getAgentPhoneSetting = async () => ({ phoneE164: '+15550002222', defaultCallMode: 'human_first', verified: false } as any);
     storage.getAppSetting = async () => null;
     storage.setAppSetting = async () => {};
     storage.createSmsMessage = async (input: any) => ({ id: 1, ...input } as any);
@@ -287,4 +289,38 @@ describe('Telephony Routes', () => {
     expect(call[0]).toBe(10);
     expect(call[4]).toBe(1);
   });
+  it('POST /api/telephony/inbound/:cc/accept answers + dials agent + claims the call', async () => {
+    await storage.createCallLog({ userId: 1, direction: 'inbound', number: '+15550009999', status: 'ringing', callControlId: 'inbound-cc-1', startedAt: new Date(), metadata: null } as any);
+    const res = await request(app).post('/api/telephony/inbound/inbound-cc-1/accept');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.agentLegCc).toBe('test-call-control-id');
+    const claimed = await storage.getCallLogByCallControlId('inbound-cc-1');
+    expect(claimed?.status).toBe('answered');
+    expect(JSON.parse(claimed?.metadata).claimedBy).toBe(1);
+  });
+
+  it('POST /api/telephony/inbound/:cc/decline records the decline', async () => {
+    await storage.createCallLog({ userId: 1, direction: 'inbound', number: '+15550008888', status: 'ringing', callControlId: 'inbound-cc-2', startedAt: new Date(), metadata: null } as any);
+    const res = await request(app).post('/api/telephony/inbound/inbound-cc-2/decline');
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it('POST /api/telephony/inbound/:cc/accept requires an agent phone', async () => {
+    storage.getAgentPhoneSetting = async () => undefined as any;
+    delete process.env.TELNYX_AGENT_PHONE;
+    await storage.createCallLog({ userId: 1, direction: 'inbound', number: '+15550007777', status: 'ringing', callControlId: 'inbound-cc-3', startedAt: new Date(), metadata: null } as any);
+    const res = await request(app).post('/api/telephony/inbound/inbound-cc-3/accept');
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('AGENT_PHONE_REQUIRED');
+    storage.getAgentPhoneSetting = async () => ({ phoneE164: '+15550002222', defaultCallMode: 'human_first', verified: false } as any);
+  });
+
+  it('POST /api/telephony/inbound/:cc/accept rejects outbound legs', async () => {
+    const res = await request(app).post('/api/telephony/inbound/does-not-exist/accept');
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('INBOUND_NOT_FOUND');
+  });
+
 });

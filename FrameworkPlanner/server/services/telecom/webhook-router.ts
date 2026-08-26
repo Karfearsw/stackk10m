@@ -110,6 +110,30 @@ async function findCallLogByControlId(callControlId: string): Promise<any | null
   }
 }
 
+function maskNumber(n: string): string {
+  const s = String(n || "");
+  if (s.length <= 7) return s;
+  return s.slice(0, s.length - 7) + "•••" + s.slice(-4);
+}
+
+async function findInboundByAgentLeg(agentLegCc: string): Promise<any | null> {
+  try {
+    const result = await pool.query(
+      `SELECT id, call_control_id, metadata FROM call_logs
+       WHERE direction = 'inbound' AND metadata::text LIKE $1
+       ORDER BY id DESC LIMIT 1`,
+      [`%"agentLegCc":"${agentLegCc}"%`],
+    );
+    const row = (result as any).rows?.[0];
+    if (!row) return null;
+    let meta: any = {};
+    try { meta = typeof row.metadata === "string" ? JSON.parse(row.metadata) : row.metadata || {}; } catch { meta = {}; }
+    return { id: Number(row.id), callControlId: String(row.call_control_id || ""), metadata: meta };
+  } catch (e) {
+    console.error("findInboundByAgentLeg failed:", e);
+    return null;
+  }
+}
 // ── Call Events ────────────────────────────────────────────────────────────
 
 async function handleCallEvent(event: any) {
@@ -233,6 +257,49 @@ async function handleCallEvent(event: any) {
     }
   }
 
+  // Inbound: notify agents of the ringing call (matched to a lead when possible)
+  if (direction === "inbound" && internalStatus === "ringing") {
+    try {
+      const lead = from ? await storage.getLeadByPhone(String(from)) : undefined;
+      emitTelephonyEventToAll({
+        type: "inbound_call_ringing",
+        payload: {
+          callControlId,
+          from,
+          maskedFrom: maskNumber(String(from || "")),
+          leadId: lead?.id ?? null,
+          leadName: lead?.ownerName || null,
+          leadPhone: lead?.ownerPhone || null,
+          ts: Date.now(),
+        },
+      } as any);
+    } catch (e) {
+      console.error("Inbound ring notification failed:", e);
+    }
+  }
+  if (direction === "inbound" && (internalStatus === "ended" || internalStatus === "missed" || internalStatus === "failed")) {
+    emitTelephonyEventToAll({ type: "inbound_call_ended", payload: { callControlId, status: internalStatus } } as any);
+  }
+
+  // Inbound accept flow: when the claimed agent's leg answers, bridge to the inbound leg
+  if (internalStatus === "answered" && direction === "outbound") {
+    try {
+      const inbound = await findInboundByAgentLeg(callControlId);
+      if (inbound?.callControlId && inbound.callControlId !== callControlId) {
+        await telnyx.bridge(callControlId, inbound.callControlId, { preventDoubleBridge: true });
+        await pool.query(
+          `UPDATE call_logs SET status = 'answered', metadata = $1 WHERE id = $2`,
+          [JSON.stringify({ ...inbound.metadata, bridged: true, bridgedAt: new Date().toISOString() }), inbound.id],
+        );
+        emitTelephonyEventToAll({
+          type: "call_state_changed",
+          payload: { callControlId: inbound.callControlId, state: "answered", direction: "inbound", bridgedTo: callControlId },
+        } as any);
+      }
+    } catch (e) {
+      console.error("Inbound → agent bridge failed:", e);
+    }
+  }
   // Emit real-time event
   emitTelephonyEventToAll({
     type: "call_state_changed",

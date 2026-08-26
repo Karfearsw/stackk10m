@@ -8020,7 +8020,100 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
     }
+  });  // ── Inbound Call Accept / Decline ────────────────────────────────────
+  app.post("/api/telephony/inbound/:callControlId/accept", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const callControlId = String(req.params.callControlId || "").trim();
+      if (!callControlId) return res.status(400).json({ error: "callControlId required", code: "MISSING_CALL_CONTROL_ID" });
+      const log = await storage.getCallLogByCallControlId(callControlId);
+      if (!log) return res.status(404).json({ error: "Inbound call not found", code: "INBOUND_NOT_FOUND" });
+      if (String(log.direction) !== "inbound") return res.status(400).json({ error: "Not an inbound call", code: "NOT_INBOUND" });
+      if (String(log.status) !== "ringing" && String(log.status) !== "answered") {
+        return res.status(409).json({ error: `Call is ${log.status}`, code: "INBOUND_NOT_RINGING" });
+      }
+      let agentPhone = "";
+      try {
+        const setting = await storage.getAgentPhoneSetting(user.id);
+        agentPhone = String(setting?.phoneE164 || "").trim();
+      } catch {
+        agentPhone = "";
+      }
+      if (!agentPhone) agentPhone = String(process.env.TELNYX_AGENT_PHONE || "").trim();
+      const e164Re = /^\+[1-9]\d{1,14}$/;
+      if (!e164Re.test(agentPhone)) {
+        return res.status(400).json({ error: "Your agent phone must be set (E.164) to accept inbound calls", code: "AGENT_PHONE_REQUIRED" });
+      }
+      try {
+        await telnyx.answer(callControlId);
+      } catch (error: any) {
+        return res.status(error?.status || 502).json({ error: error?.message || "Answer failed", code: error?.code || "ANSWER_ERROR" });
+      }
+      let agentCc = "";
+      try {
+        const dialed = await telnyx.dial({
+          to: agentPhone,
+          from: String(process.env.TELNYX_DEFAULT_FROM_NUMBER || "").trim(),
+          connectionId: String(process.env.TELNYX_CONNECTION_ID || ""),
+        });
+        agentCc = dialed.callControlId;
+      } catch (error: any) {
+        return res.status(error?.status || 502).json({ error: error?.message || "Agent dial failed", code: error?.code || "DIAL_ERROR" });
+      }
+      try {
+        let meta: any = {};
+        try {
+          meta = typeof log.metadata === "string" ? JSON.parse(log.metadata) : log.metadata || {};
+        } catch {
+          meta = {};
+        }
+        await storage.updateCallLog(log.id, {
+          status: "answered",
+          userId: user.id,
+          metadata: JSON.stringify({ ...meta, claimedBy: user.id, claimedAt: new Date().toISOString(), agentLegCc: agentCc }),
+        } as any);
+      } catch (e) {
+        console.error("Inbound claim update failed (non-blocking):", e);
+      }
+      emitTelephonyEventToAll({
+        type: "inbound_call_claimed",
+        payload: { callControlId, claimedBy: user.id, agentLegCc: agentCc },
+      } as any);
+      res.json({ ok: true, callControlId, agentLegCc: agentCc });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
   });
+
+  app.post("/api/telephony/inbound/:callControlId/decline", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const callControlId = String(req.params.callControlId || "").trim();
+      if (!callControlId) return res.status(400).json({ error: "callControlId required", code: "MISSING_CALL_CONTROL_ID" });
+      const log = await storage.getCallLogByCallControlId(callControlId);
+      if (!log) return res.status(404).json({ error: "Inbound call not found", code: "INBOUND_NOT_FOUND" });
+      try {
+        let meta: any = {};
+        try {
+          meta = typeof log.metadata === "string" ? JSON.parse(log.metadata) : log.metadata || {};
+        } catch {
+          meta = {};
+        }
+        const declined = Array.isArray(meta.declinedBy) ? meta.declinedBy : [];
+        await storage.updateCallLog(log.id, { metadata: JSON.stringify({ ...meta, declinedBy: [...declined, user.id] }) } as any);
+      } catch (e) {
+        console.error("Inbound decline update failed (non-blocking):", e);
+      }
+      emitTelephonyEventToAll({ type: "inbound_call_declined", payload: { callControlId, declinedBy: user.id } } as any);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
+
+
   // ── Call Sessions (two-legged click-to-dial + AI screening) ─────────
   app.get("/api/v1/telecom/features", async (req, res) => {
     const user = await requireAuth(req, res);
