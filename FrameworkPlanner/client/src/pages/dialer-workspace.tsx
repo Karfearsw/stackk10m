@@ -7,9 +7,10 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Phone, PhoneOff, Mic, MicOff, Pause, Play } from "lucide-react";
+import { Phone, PhoneOff, Mic, MicOff, Pause, Play, Bot, PhoneForwarded, Loader2 } from "lucide-react";
 import { DialerProvider, useDialer } from "@/contexts/DialerContext";
 import { useSignalWire } from "@/hooks/useSignalWire";
+import { TwoLegCallPanel } from "@/components/telnyx/TwoLegCallPanel";
 import { useTelephonyEvents } from "@/hooks/useTelephonyEvents";
 import { TelnyxHealthStatus } from "@/components/telephony/TelnyxHealthStatus";
 import { EntityActivity } from "@/components/activity/EntityActivity";
@@ -60,6 +61,10 @@ function DialerWorkspaceInner() {
     updateCallState,
     toggleMute,
     toggleHold,
+    transferCall,
+    aiAssistantActive,
+    startAiAssistant,
+    stopAiAssistant,
   } = useSignalWire();
   const { connected: telephonyWsConnected } = useTelephonyEvents({
     enabled: true,
@@ -73,7 +78,7 @@ function DialerWorkspaceInner() {
   const [number, setNumber] = useState("");
   const [status, setStatus] = useState<"idle" | "dialing" | "ringing" | "connected" | "ended" | "failed">("idle");
   const [startTs, setStartTs] = useState<number | null>(null);
-  const timerRef = useRef<number>(0);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const [queueLoading, setQueueLoading] = useState(false);
   const [callId, setCallId] = useState<number | null>(null);
   const wasConnectedRef = useRef(false);
@@ -86,6 +91,12 @@ function DialerWorkspaceInner() {
   const [followUpAt, setFollowUpAt] = useState<string>("");
   const [tagInput, setTagInput] = useState("");
   const [powerMode, setPowerMode] = useState(false);
+  const [autoAiAssistant, setAutoAiAssistant] = useState(false);
+  const [aiAssistantBusy, setAiAssistantBusy] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferNumber, setTransferNumber] = useState("");
+  const [transferBusy, setTransferBusy] = useState(false);
+  const aiAutoStartedRef = useRef(false);
   const [saveLogPending, setSaveLogPending] = useState(false);
   const [logSaved, setLogSaved] = useState(false);
 
@@ -157,9 +168,11 @@ function DialerWorkspaceInner() {
     setCallId(null);
     setStatus("idle");
     setStartTs(null);
+    setElapsedMs(0);
     setLogSaved(false);
     wasConnectedRef.current = false;
     lastPatchedStatusRef.current = null;
+    aiAutoStartedRef.current = false;
   }, [activeItem?.leadId]);
 
   const wrapUpValid = Boolean(disposition) && (disposition !== "call_back" || Boolean(followUpAt));
@@ -276,14 +289,27 @@ function DialerWorkspaceInner() {
   });
 
   useEffect(() => {
-    let handle: any;
-    if (status === "connected" && startTs) {
-      handle = setInterval(() => {
-        timerRef.current = Date.now() - startTs;
-      }, 250);
-    }
-    return () => handle && clearInterval(handle);
+    if (status !== "connected" || !startTs) return;
+    setElapsedMs(Date.now() - startTs);
+    const handle = setInterval(() => setElapsedMs(Date.now() - startTs), 250);
+    return () => clearInterval(handle);
   }, [status, startTs]);
+
+  // Opt-in: auto-start the AI Screener when the call is answered.
+  useEffect(() => {
+    if (!autoAiAssistant) return;
+    if (activeCall?.state !== "active") return;
+    if (aiAssistantActive || aiAssistantBusy || aiAutoStartedRef.current) return;
+    if (!callControlId) return;
+    aiAutoStartedRef.current = true;
+    setAiAssistantBusy(true);
+    startAiAssistant()
+      .catch((e: any) => {
+        console.error("Auto-start AI Screener failed:", e);
+        toast.error(e?.message || "Failed to auto-start AI Screener");
+      })
+      .finally(() => setAiAssistantBusy(false));
+  }, [autoAiAssistant, activeCall?.state, aiAssistantActive, aiAssistantBusy, callControlId, startAiAssistant]);
 
   useEffect(() => {
     if (!activeCall) return;
@@ -397,7 +423,18 @@ function DialerWorkspaceInner() {
               >
                 {queueLoading ? "Loading…" : "Start Session"}
               </Button>
-              <Button variant="outline" onClick={next} disabled={!state.queue.length}>
+              <Button
+                variant="outline"
+                onClick={next}
+                disabled={
+                  !state.queue.length ||
+                  status === "dialing" ||
+                  status === "ringing" ||
+                  status === "connected" ||
+                  (callId && !logSaved) ||
+                  saveLogPending
+                }
+              >
                 Next
               </Button>
             </div>
@@ -508,8 +545,65 @@ function DialerWorkspaceInner() {
                     {activeCall.state === "held" ? <Play className="w-4 h-4 mr-2" /> : <Pause className="w-4 h-4 mr-2" />}
                     {activeCall.state === "held" ? "Resume" : "Hold"}
                   </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => setTransferOpen((v) => !v)}
+                    disabled={transferBusy}
+                  >
+                    <PhoneForwarded className="w-4 h-4 mr-2" />
+                    Transfer
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      if (aiAssistantBusy) return;
+                      setAiAssistantBusy(true);
+                      if (aiAssistantActive) {
+                        stopAiAssistant().finally(() => setAiAssistantBusy(false));
+                      } else {
+                        startAiAssistant()
+                          .catch((e: any) => toast.error(e?.message || "Failed to start AI Screener"))
+                          .finally(() => setAiAssistantBusy(false));
+                      }
+                    }}
+                    disabled={aiAssistantBusy}
+                  >
+                    <Bot className="w-4 h-4 mr-2" />
+                    {aiAssistantActive ? "Stop AI Screener" : "Start AI Screener"}
+                  </Button>
                 </>
               ) : null}
+              {transferOpen && activeCall && (
+                <div className="flex items-center gap-2 w-full">
+                  <Input
+                    value={transferNumber}
+                    onChange={(e) => setTransferNumber(e.target.value)}
+                    placeholder="Destination number (E.164, e.g. +13215550123)"
+                    className="font-mono text-sm"
+                    aria-label="Transfer destination number"
+                  />
+                  <Button
+                    variant="secondary"
+                    disabled={transferBusy || !transferNumber.trim()}
+                    onClick={async () => {
+                      setTransferBusy(true);
+                      try {
+                        await transferCall(transferNumber.trim());
+                        toast.success("Call transferred");
+                        setTransferOpen(false);
+                        setTransferNumber("");
+                      } catch (e: any) {
+                        toast.error(e?.message || "Transfer failed");
+                      } finally {
+                        setTransferBusy(false);
+                      }
+                    }}
+                  >
+                    {transferBusy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PhoneForwarded className="w-4 h-4 mr-1" />}
+                    Confirm
+                  </Button>
+                </div>
+              )}
               <Button variant="outline" onClick={next} disabled={!state.queue.length || (callId && !logSaved) || saveLogPending}>
                 Next Lead
               </Button>
@@ -523,12 +617,23 @@ function DialerWorkspaceInner() {
               <Switch checked={powerMode} onCheckedChange={setPowerMode} />
             </div>
 
+            <div className="flex items-center justify-between rounded-md border border-border p-3">
+              <div className="space-y-1">
+                <div className="text-sm font-medium">AI Screener</div>
+                <div className="text-xs text-muted-foreground">Auto-start High-Intent Lead Screener on answered calls</div>
+              </div>
+              <Switch checked={autoAiAssistant} onCheckedChange={setAutoAiAssistant} />
+            </div>
+
             <div className="text-sm text-muted-foreground">
               Status: {status}
-              {status === "connected" && startTs ? <span> • {Math.floor((timerRef.current || 0) / 1000)}s</span> : null}
+              {status === "connected" && startTs ? <span> • {Math.floor((elapsedMs || 0) / 1000)}s</span> : null}
+              {aiAssistantActive ? <span className="text-primary"> • AI Screener on</span> : null}
             </div>
           </CardContent>
         </Card>
+
+        <TwoLegCallPanel leadId={activeItem?.leadId} />
 
         <Card>
           <CardHeader>

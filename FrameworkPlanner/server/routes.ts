@@ -102,6 +102,8 @@ import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
 import { createIsFeatureEnabled, requireFeature } from "./featureFlags.js";
 import { getProviderReadiness } from "./services/telecom/provider-readiness.js";
+import { getAiAssistantConfig } from "./services/telecom/ai-config.js";
+import * as callSessions from "./services/telecom/call-sessions.js";
 import { writeAuditEvent } from "./services/audit/writeAuditEvent.js";
 import { dispatchAutomationEvent, dryRunAutomation } from "./services/automations/engine.js";
 const require = createRequire(import.meta.url);
@@ -7188,6 +7190,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
         offset ? parseInt(offset) : 0,
         status as string | undefined,
         contactId ? parseInt(contactId as string) : undefined,
+        user.id,
       );
       if (!items.length) return res.json(items);
       const numbers = Array.from(new Set(items.map((i: any) => String(i.number || "").trim()).filter(Boolean)));
@@ -7659,6 +7662,23 @@ app.patch("/api/inquiries/:id", async (req, res) => {
           detail: error?.detail || null,
         });
       }
+      // Persist the outbound message row (conversation thread source of truth).
+      try {
+        const metaLeadId = (metadata as any)?.leadId ? Number((metadata as any).leadId) : null;
+        await storage.createSmsMessage({
+          userId: user.id,
+          direction: "outbound",
+          fromNumber: resolvedFrom,
+          toNumber: String(to),
+          body: String(body),
+          status: smsStatus,
+          providerMessageId: sid || null,
+          leadId: metaLeadId && Number.isFinite(metaLeadId) && metaLeadId > 0 ? metaLeadId : null,
+          metadata: metadata && typeof metadata === "object" ? JSON.stringify(metadata) : null,
+        } as any);
+      } catch (e) {
+        console.error("SMS persistence failed (non-blocking):", e);
+      }
       if (metadata && typeof metadata === "object") {
         const leadId = (metadata as any).leadId ? Number((metadata as any).leadId) : null;
         const propertyId = (metadata as any).propertyId ? Number((metadata as any).propertyId) : null;
@@ -7679,6 +7699,37 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
     }
   });
+
+  // ── SMS Conversation Threads ───────────────────────────────────────────
+  app.get("/api/telephony/sms/threads", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const limit = Math.min(100, parseInt(String(req.query.limit || "50"), 10) || 50);
+      const threads = await storage.getSmsThreads(user.id, limit);
+      return res.json({ threads });
+    } catch (error: any) {
+      console.error("SMS threads error:", error);
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
+
+  app.get("/api/telephony/sms/threads/:phone/messages", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const phone = String(req.params.phone || "").trim();
+      if (!/^\+[1-9]\d{1,14}$/.test(phone)) {
+        return res.status(400).json({ error: "Invalid E.164 phone number", code: "INVALID_PHONE" });
+      }
+      const limit = Math.min(200, parseInt(String(req.query.limit || "100"), 10) || 100);
+      const messages = await storage.getSmsThreadMessages(phone, user.id, limit);
+      return res.json({ messages });
+    } catch (error: any) {
+      console.error("SMS thread messages error:", error);
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
   app.post("/api/telephony/outbound/dispatch", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -7695,6 +7746,59 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       if (!e164Re.test(String(toNumber))) {
         return res.status(400).json({ error: "Invalid E.164 destination number", code: "INVALID_TO" });
       }
+
+      // Resolve the lead this call is about (best-effort DB lookup) so we can
+      // enforce do-not-call at dispatch and persist lead_id on the call log.
+      const metaLeadIdRaw = (metadata as any)?.leadId ? Number((metadata as any).leadId) : null;
+      let effectiveLeadId: number | null =
+        metaLeadIdRaw && Number.isFinite(metaLeadIdRaw) && metaLeadIdRaw > 0 ? metaLeadIdRaw : null;
+      let dncBlocked = false;
+      try {
+        if (effectiveLeadId) {
+          const lead = await storage.getLeadById(effectiveLeadId);
+          if (lead?.doNotCall) dncBlocked = true;
+        } else {
+          const digits = String(toNumber).replace(/\D/g, "");
+          const last10 = digits.slice(-10);
+          if (last10.length >= 7) {
+            const rows: any = await db.execute(sql`
+              SELECT id, do_not_call FROM leads
+              WHERE regexp_replace(COALESCE(owner_phone, ''), '\\D', '', 'g') LIKE ${`%${last10}`}
+              ORDER BY id DESC LIMIT 1
+            `);
+            const row = (rows as any).rows?.[0];
+            if (row?.id) {
+              effectiveLeadId = Number(row.id);
+              if (row.do_not_call) dncBlocked = true;
+            }
+          }
+        }
+      } catch (e) {
+        // Non-blocking: if the DB is unavailable, do not silently block dialing.
+        console.error("Dispatch lead lookup failed (non-blocking):", e);
+      }
+      if (dncBlocked) {
+        return res.status(403).json({
+          error: "This lead is marked Do Not Call and cannot be dialed.",
+          code: "DO_NOT_CALL",
+          leadId: effectiveLeadId,
+        });
+      }
+
+      // Reject a second simultaneous outbound call for the same user.
+      try {
+        const active = await storage.getActiveOutboundCallForUser(user.id);
+        if (active) {
+          return res.status(409).json({
+            error: "An outbound call is already in progress. End it before dialing again.",
+            code: "CALL_ACTIVE",
+            callControlId: (active as any).call_control_id || null,
+          });
+        }
+      } catch (e) {
+        console.error("Active call check failed (non-blocking):", e);
+      }
+
       let callControlId: string | null = null;
       let callLog: any = null;
       try {
@@ -7725,6 +7829,8 @@ app.patch("/api/inquiries/:id", async (req, res) => {
           number: String(toNumber),
           status: "dialing",
           startedAt: new Date(),
+          leadId: effectiveLeadId,
+          callControlId,
           metadata: metadata ? JSON.stringify({ ...metadata, callControlId }) : JSON.stringify({ callControlId }),
         } as any);
       } catch (e) {
@@ -7839,6 +7945,10 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       if (!callControlId) return res.status(400).json({ error: "callControlId required", code: "MISSING_CALL_CONTROL_ID" });
       const to = String(req.body?.to || "").trim();
       if (!to) return res.status(400).json({ error: "Transfer destination required", code: "MISSING_TO" });
+      const e164Re = /^\+[1-9]\d{1,14}$/;
+      if (!e164Re.test(to)) {
+        return res.status(400).json({ error: "Invalid E.164 transfer destination", code: "INVALID_TO" });
+      }
       try {
         await telnyx.transfer(callControlId, to);
       } catch (error: any) {
@@ -7847,11 +7957,181 @@ app.patch("/api/inquiries/:id", async (req, res) => {
         }
         return res.status(error?.status || 502).json({ error: error?.message || "Transfer failed", code: error?.code || "TELNYX_TRANSFER_ERROR" });
       }
+      // Persist the transfer state + activity (best-effort; never fails the request).
+      try {
+        const log = await storage.getCallLogByCallControlId(callControlId);
+        if (log) {
+          await storage.updateCallLog(log.id, { status: "transferring" });
+          await storage.createGlobalActivity({
+            userId: user.id,
+            action: "call_transferred",
+            description: `Transferred call to ${to}`,
+            metadata: JSON.stringify({ callControlId, to, callLogId: log.id, leadId: log.leadId || undefined }),
+          } as any);
+        }
+      } catch (e) {
+        console.error("Transfer call log update failed (non-blocking):", e);
+      }
       res.json({ ok: true, callControlId, transferredTo: to });
     } catch (error: any) {
       res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
     }
   });
+
+  // ── Call Control: AI Assistant ─────────────────────────────────────
+  app.post("/api/telephony/outbound/:callControlId/ai-assistant", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const callControlId = String(req.params.callControlId || "").trim();
+      if (!callControlId) return res.status(400).json({ error: "callControlId required", code: "MISSING_CALL_CONTROL_ID" });
+      const action = String(req.body?.action || "start").trim().toLowerCase();
+      if (action !== "start" && action !== "stop") {
+        return res.status(400).json({ error: "action must be 'start' or 'stop'", code: "INVALID_ACTION" });
+      }
+      const aiConfig = await getAiAssistantConfig();
+      if (!aiConfig.enabled) {
+        return res.status(403).json({ error: "AI assistant is not enabled. Enable it in Settings → System (AI Assistant).", code: "AI_ASSISTANT_DISABLED" });
+      }
+      if (action === "start") {
+        const assistantId = String(req.body?.assistantId || aiConfig.assistantId || "").trim();
+        if (!assistantId) {
+          return res.status(400).json({ error: "assistantId is required (or set TELNYX_AI_ASSISTANT_ID)", code: "MISSING_ASSISTANT_ID" });
+        }
+        try {
+          await telnyx.startAiAssistant(callControlId, assistantId);
+        } catch (error: any) {
+          if (error instanceof TelnyxConfigError) {
+            return res.status(503).json({ error: `Telnyx not configured: ${error.missingEnv.join(", ")}`, code: "TELNYX_NOT_CONFIGURED" });
+          }
+          return res.status(error?.status || 502).json({ error: error?.message || "AI assistant start failed", code: error?.code || "AI_ASSISTANT_START_ERROR" });
+        }
+        return res.json({ ok: true, action, callControlId, assistantId });
+      }
+      try {
+        await telnyx.stopAiAssistant(callControlId);
+      } catch (error: any) {
+        if (error instanceof TelnyxConfigError) {
+          return res.status(503).json({ error: `Telnyx not configured: ${error.missingEnv.join(", ")}`, code: "TELNYX_NOT_CONFIGURED" });
+        }
+        return res.status(error?.status || 502).json({ error: error?.message || "AI assistant stop failed", code: error?.code || "AI_ASSISTANT_STOP_ERROR" });
+      }
+      res.json({ ok: true, action, callControlId });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
+  // ── Call Sessions (two-legged click-to-dial + AI screening) ─────────
+  app.get("/api/v1/telecom/features", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    res.json(await callSessions.getCallFeatures());
+  });
+
+  app.get("/api/v1/telecom/agent-phone", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const setting = await storage.getAgentPhoneSetting(user.id).catch(() => undefined);
+    res.json({ phoneE164: setting?.phoneE164 || null, defaultCallMode: setting?.defaultCallMode || "human_first", verified: !!setting?.verified });
+  });
+
+  app.put("/api/v1/telecom/agent-phone", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const phone = String(req.body?.phoneE164 || "").trim();
+    const e164Re = /^\+[1-9]\d{1,14}$/;
+    if (!e164Re.test(phone)) {
+      return res.status(400).json({ error: "Agent phone must be E.164", code: "INVALID_PHONE" });
+    }
+    const mode = String(req.body?.defaultCallMode || "human_first");
+    if (!["human_first", "ai_screen", "ai_screen_handoff"].includes(mode)) {
+      return res.status(400).json({ error: "Invalid default call mode", code: "INVALID_MODE" });
+    }
+    await storage.setAgentPhoneSetting({ userId: user.id, phoneE164: phone, defaultCallMode: mode, verified: false } as any);
+    res.json({ ok: true, phoneE164: phone, defaultCallMode: mode });
+  });
+
+  app.post("/api/v1/telecom/call-sessions", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const leadId = Number(req.body?.leadId);
+    const mode = String(req.body?.mode || "human_first");
+    const agentUserId = req.body?.agentUserId ? Number(req.body.agentUserId) : user.id;
+    const campaignId = req.body?.campaignId ? Number(req.body.campaignId) : undefined;
+    if (!leadId) return res.status(400).json({ error: "leadId required", code: "MISSING_LEAD_ID" });
+    const result = await callSessions.createCallSession({ leadId, mode: mode as any, userId: user.id, agentUserId, campaignId });
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json({ ok: true, session: result.session });
+  });
+
+  app.get("/api/v1/telecom/call-sessions/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.getSessionDetail(Number(req.params.id), user);
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json(result);
+  });
+
+  app.get("/api/v1/telecom/call-sessions/:id/events", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.getSessionEvents(Number(req.params.id), user);
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json(result);
+  });
+
+  app.post("/api/v1/telecom/call-sessions/:id/cancel", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.cancelOrHangupSession(Number(req.params.id), user.id);
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json(result);
+  });
+
+  app.post("/api/v1/telecom/call-sessions/:id/hangup", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.cancelOrHangupSession(Number(req.params.id), user.id, { hangup: true });
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json(result);
+  });
+
+  app.post("/api/v1/telecom/call-sessions/:id/request-human-handoff", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.requestHumanHandoff(Number(req.params.id), user.id);
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json(result);
+  });
+
+  app.post("/api/v1/telecom/call-sessions/:id/disposition", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.setDisposition(Number(req.params.id), user.id, {
+      disposition: String(req.body?.disposition || ""),
+      note: req.body?.note ? String(req.body.note) : undefined,
+      confidence: req.body?.confidence ? String(req.body.confidence) : undefined,
+    });
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json(result);
+  });
+
+  app.post("/api/v1/telecom/call-sessions/:id/notes", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.addSessionNote(Number(req.params.id), user.id, String(req.body?.note || ""));
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json(result);
+  });
+
+  app.post("/api/v1/telecom/call-sessions/:id/callback", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.scheduleCallback(Number(req.params.id), user.id, { dueAt: String(req.body?.dueAt || ""), note: req.body?.note ? String(req.body.note) : undefined });
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json(result);
+  });
+
 
   // ── Provider Readiness ──────────────────────────────────────────────
   app.get("/api/system/provider-readiness", async (req, res) => {
@@ -7862,6 +8142,63 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       return res.json(readiness);
     } catch (error: any) {
       console.error("Provider readiness check failed:", error);
+      res.status(500).json({ error: error?.message || "Internal error" });
+    }
+  });
+
+  // ── AI Assistant Settings (DB override, admin-editable) ────────────────
+  app.get("/api/settings/telecom/ai-assistant", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const config = await getAiAssistantConfig();
+      return res.json({
+        enabled: config.enabled,
+        assistantId: config.assistantId,
+        assistantIdMasked: config.assistantId
+          ? `${config.assistantId.slice(0, 8)}…${config.assistantId.slice(-4)}`
+          : null,
+        source: config.source,
+        featureSource: config.featureSource,
+      });
+    } catch (error: any) {
+      console.error("AI assistant settings read failed:", error);
+      res.status(500).json({ error: error?.message || "Internal error" });
+    }
+  });
+
+  app.put("/api/settings/telecom/ai-assistant", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(user.isSuperAdmin || String(user.role || "").trim().toLowerCase() === "admin")) {
+        return res.status(403).json({ error: "Only admins can change telecom configuration", code: "ADMIN_REQUIRED" });
+      }
+      const assistantId = typeof req.body?.assistantId === "string" ? String(req.body.assistantId).trim() : "";
+      if (assistantId && !/^[A-Za-z0-9_-]{4,128}$/.test(assistantId)) {
+        return res.status(400).json({ error: "Assistant ID must be 4–128 alphanumeric characters (dashes/underscores allowed)", code: "INVALID_ASSISTANT_ID" });
+      }
+      const enabledRaw = req.body?.enabled;
+      if (typeof enabledRaw !== "boolean") {
+        return res.status(400).json({ error: "enabled must be a boolean", code: "INVALID_ENABLED" });
+      }
+      try {
+        await storage.setAppSetting("TELNYX_AI_ASSISTANT_ID", assistantId || null, user.id);
+        await storage.setAppSetting("FEATURE_AI_ASSISTANT", enabledRaw ? "true" : "false", user.id);
+        await storage.createGlobalActivity({
+          userId: user.id,
+          action: "ai_assistant_config_updated",
+          description: enabledRaw ? "AI Screener enabled" : "AI Screener disabled",
+          metadata: JSON.stringify({ assistantIdSet: Boolean(assistantId) }),
+        } as any);
+      } catch (e: any) {
+        console.error("AI assistant settings save failed:", e);
+        return res.status(500).json({ error: e?.message || "Failed to save AI assistant config", code: "SAVE_FAILED" });
+      }
+      const config = await getAiAssistantConfig();
+      return res.json({ ok: true, enabled: config.enabled, assistantId: config.assistantId, source: config.source, featureSource: config.featureSource });
+    } catch (error: any) {
+      console.error("AI assistant settings write failed:", error);
       res.status(500).json({ error: error?.message || "Internal error" });
     }
   });

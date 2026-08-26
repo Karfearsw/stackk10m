@@ -1,5 +1,6 @@
 import { telnyx } from "./telnyx-client.js";
 import { isDocumentVaultConfigured } from "../../media/documentVault.js";
+import { getAiAssistantConfig } from "./ai-config.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -52,6 +53,17 @@ export type WebhookReadiness = {
   blocker?: string;
 };
 
+export type AiAssistantReadiness = {
+  configured: boolean;
+  featureEnabled: boolean;
+  assistantIdPresent: boolean;
+  assistantIdHint: string | null;
+  /** Where the effective assistant ID / feature flag came from (env or saved settings). */
+  configSource: "env" | "db" | "none";
+  featureSource: "env" | "db";
+  blocker?: string;
+};
+
 export type ProviderReadiness = {
   voice: VoiceReadiness;
   sms: SmsReadiness;
@@ -59,6 +71,7 @@ export type ProviderReadiness = {
   email: EmailReadiness;
   documentStorage: DocumentStorageReadiness;
   webhook: WebhookReadiness;
+  aiAssistant: AiAssistantReadiness;
   featureFlags: Record<string, boolean>;
   overallStatus: ChannelStatus;
   checkedAt: string;
@@ -265,6 +278,34 @@ function checkWebhook(): WebhookReadiness {
   };
 }
 
+async function checkAiAssistant(): Promise<AiAssistantReadiness> {
+  const apiKey = has("TELNYX_API_KEY");
+  const config = await getAiAssistantConfig();
+  const featureEnabled = config.enabled;
+  const assistantId = config.assistantId;
+
+  let blocker: string | undefined;
+  if (!apiKey) {
+    blocker = "TELNYX_API_KEY is required to start AI assistants on calls.";
+  } else if (!featureEnabled) {
+    blocker =
+      "FEATURE_AI_ASSISTANT is off. Enable the AI lead screener in Settings → System (AI Assistant) or set FEATURE_AI_ASSISTANT=true.";
+  } else if (!assistantId) {
+    blocker =
+      "TELNYX_AI_ASSISTANT_ID is missing. Copy the Assistant ID from Telnyx AI Assistants (High-Intent Lead Screener).";
+  }
+
+  return {
+    configured: Boolean(apiKey && featureEnabled),
+    featureEnabled,
+    assistantIdPresent: Boolean(assistantId),
+    assistantIdHint: assistantId ? `${assistantId.slice(0, 8)}…` : null,
+    configSource: config.source,
+    featureSource: config.featureSource,
+    blocker,
+  };
+}
+
 function checkFeatureFlags(): Record<string, boolean> {
   return {
     esign: parseBoolFlag(process.env.FEATURE_ESIGN),
@@ -277,19 +318,21 @@ function checkFeatureFlags(): Record<string, boolean> {
     comps: parseBoolFlag(process.env.FEATURE_COMPS),
     buyer_match: parseBoolFlag(process.env.FEATURE_BUYER_MATCH),
     voice_playground: parseBoolFlag(process.env.FEATURE_VOICE_PLAYGROUND),
+    ai_assistant: parseBoolFlag(process.env.FEATURE_AI_ASSISTANT),
   };
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────
 
 export async function getProviderReadiness(): Promise<ProviderReadiness> {
-  const [voice, sms, video, email, documentStorage, webhook] = await Promise.all([
+  const [voice, sms, video, email, documentStorage, webhook, aiAssistant] = await Promise.all([
     checkVoice(),
     Promise.resolve(checkSms()),
     Promise.resolve(checkVideo()),
     Promise.resolve(checkEmail()),
     Promise.resolve(checkDocumentStorage()),
     Promise.resolve(checkWebhook()),
+    checkAiAssistant(),
   ]);
 
   const featureFlags = checkFeatureFlags();
@@ -306,6 +349,7 @@ export async function getProviderReadiness(): Promise<ProviderReadiness> {
   channelStatuses.push(toStatus(sms));
   channelStatuses.push(toStatus(video));
   channelStatuses.push(toStatus(email));
+  channelStatuses.push(toStatus(aiAssistant));
 
   let overallStatus: ChannelStatus = "healthy";
   if (channelStatuses.includes("unavailable")) overallStatus = "unavailable";
@@ -319,6 +363,7 @@ export async function getProviderReadiness(): Promise<ProviderReadiness> {
     email,
     documentStorage,
     webhook,
+    aiAssistant,
     featureFlags,
     overallStatus,
     checkedAt: new Date().toISOString(),

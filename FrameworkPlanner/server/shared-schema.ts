@@ -1,6 +1,6 @@
 
 import { sql } from "drizzle-orm";
-import { pgTable, serial, text, varchar, integer, decimal, timestamp, boolean, date, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, varchar, integer, decimal, timestamp, boolean, date, jsonb, numeric } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -1599,6 +1599,10 @@ export const callLogs = pgTable("call_logs", {
   errorCode: varchar("error_code", { length: 50 }),
   errorMessage: text("error_message"),
   metadata: text("metadata"),
+  callControlId: varchar("call_control_id", { length: 255 }),
+  aiAssistantId: varchar("ai_assistant_id", { length: 100 }),
+  transcript: text("transcript"),
+  aiQualified: boolean("ai_qualified").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -2058,3 +2062,125 @@ export type InsertVideoMeeting = z.infer<typeof insertVideoMeetingSchema>;
 
 export const insertVideoMeetingParticipantSchema = createInsertSchema(videoMeetingParticipants).omit({ id: true, createdAt: true } as any);
 export type VideoMeetingParticipant = typeof videoMeetingParticipants.$inferSelect;
+
+// APP SETTINGS — DB override layer for env-driven config (e.g. AI assistant ID).
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value"),
+  updatedBy: integer("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type AppSetting = typeof appSettings.$inferSelect;
+
+// SMS MESSAGES — persisted outbound/inbound rows for conversation threads.
+export const smsMessages = pgTable("crm_sms_messages", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id"),
+  leadId: integer("lead_id"),
+  direction: varchar("direction", { length: 10 }).notNull().default("outbound"),
+  fromNumber: varchar("from_number", { length: 20 }),
+  toNumber: varchar("to_number", { length: 20 }),
+  body: text("body"),
+  status: varchar("status", { length: 30 }).notNull().default("queued"),
+  providerMessageId: varchar("provider_message_id", { length: 128 }),
+  metadata: text("metadata"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type SmsMessage = typeof smsMessages.$inferSelect;
+export type InsertSmsMessage = typeof smsMessages.$inferInsert;
+
+// CALL SESSIONS — two-legged click-to-dial + AI screening/handoff
+export const callSessions = pgTable("crm_call_sessions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  leadId: integer("lead_id"),
+  contactId: integer("contact_id"),
+  campaignId: integer("campaign_id"),
+  initiatingUserId: integer("initiating_user_id"),
+  assignedAgentUserId: integer("assigned_agent_user_id"),
+  mode: varchar("mode", { length: 24 }).notNull(),
+  status: varchar("status", { length: 32 }).notNull().default("queued"),
+  agentPhoneE164: varchar("agent_phone_e164", { length: 20 }),
+  leadPhoneE164: varchar("lead_phone_e164", { length: 20 }),
+  agentLegCallControlId: varchar("agent_leg_call_control_id", { length: 255 }),
+  leadLegCallControlId: varchar("lead_leg_call_control_id", { length: 255 }),
+  aiLegCallControlId: varchar("ai_leg_call_control_id", { length: 255 }),
+  bridgeRequestId: varchar("bridge_request_id", { length: 128 }),
+  providerConnectionId: varchar("provider_connection_id", { length: 100 }),
+  providerName: varchar("provider_name", { length: 20 }).notNull().default("telnyx"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  agentAnsweredAt: timestamp("agent_answered_at", { withTimezone: true }),
+  leadAnsweredAt: timestamp("lead_answered_at", { withTimezone: true }),
+  bridgedAt: timestamp("bridged_at", { withTimezone: true }),
+  endedAt: timestamp("ended_at", { withTimezone: true }),
+  durationSeconds: integer("duration_seconds"),
+  finalDisposition: varchar("final_disposition", { length: 50 }),
+  providerHangupCause: varchar("provider_hangup_cause", { length: 100 }),
+  aiSummary: text("ai_summary"),
+  aiQualificationScore: integer("ai_qualification_score"),
+  aiConfidence: numeric("ai_confidence"),
+  idempotencyKey: varchar("idempotency_key", { length: 128 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type CallSession = typeof callSessions.$inferSelect;
+export type InsertCallSession = typeof callSessions.$inferInsert;
+
+export const callSessionEvents = pgTable("crm_call_session_events", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  sessionId: integer("session_id").notNull(),
+  eventType: varchar("event_type", { length: 64 }).notNull(),
+  fromStatus: varchar("from_status", { length: 32 }),
+  toStatus: varchar("to_status", { length: 32 }),
+  metadata: text("metadata"),
+  providerEventId: varchar("provider_event_id", { length: 128 }),
+  actorUserId: integer("actor_user_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type CallSessionEvent = typeof callSessionEvents.$inferSelect;
+export type InsertCallSessionEvent = typeof callSessionEvents.$inferInsert;
+
+export const agentPhoneSettings = pgTable("crm_agent_phone_settings", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull().unique(),
+  phoneE164: varchar("phone_e164", { length: 20 }).notNull(),
+  defaultCallMode: varchar("default_call_mode", { length: 24 }).notNull().default("human_first"),
+  verified: boolean("verified").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type AgentPhoneSetting = typeof agentPhoneSettings.$inferSelect;
+export type InsertAgentPhoneSetting = typeof agentPhoneSettings.$inferInsert;
+
+export const callDispositions = pgTable("crm_call_dispositions", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  sessionId: integer("session_id").notNull().unique(),
+  disposition: varchar("disposition", { length: 50 }).notNull(),
+  confidence: varchar("confidence", { length: 20 }),
+  source: varchar("source", { length: 20 }).notNull().default("agent"),
+  note: text("note"),
+  reviewTaskId: integer("review_task_id"),
+  actorUserId: integer("actor_user_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type CallDisposition = typeof callDispositions.$inferSelect;
+export type InsertCallDisposition = typeof callDispositions.$inferInsert;
+
+export const aiCallQualifications = pgTable("crm_ai_call_qualifications", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  sessionId: integer("session_id").notNull(),
+  intent: varchar("intent", { length: 100 }),
+  location: text("location"),
+  propertyType: varchar("property_type", { length: 100 }),
+  budget: varchar("budget", { length: 100 }),
+  timeline: varchar("timeline", { length: 100 }),
+  financingStatus: varchar("financing_status", { length: 100 }),
+  motivation: varchar("motivation", { length: 100 }),
+  preferredContact: varchar("preferred_contact", { length: 50 }),
+  requestHuman: boolean("request_human").notNull().default(false),
+  doNotCall: boolean("do_not_call").notNull().default(false),
+  confidence: numeric("confidence"),
+  raw: text("raw"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type AiCallQualification = typeof aiCallQualifications.$inferSelect;
+export type InsertAiCallQualification = typeof aiCallQualifications.$inferInsert;

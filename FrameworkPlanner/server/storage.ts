@@ -6,8 +6,11 @@ import {
   buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents,
   companies, companyPeople, companyLinks, documents, documentLinks, vaultDocumentVersions, automations, automationTriggers, automationConditions, automationActions, automationRuns, auditEvents,
   opportunityParties, publicListings, buyerInquiries, opportunityEvents, buyerOffers,
-  internalMessages, calendarEvents,
-  type BuyerOffer, type InsertBuyerOffer
+  internalMessages, calendarEvents, appSettings, smsMessages, callSessions, callSessionEvents, agentPhoneSettings, callDispositions, aiCallQualifications,
+  type BuyerOffer, type InsertBuyerOffer, type SmsMessage, type InsertSmsMessage, type AppSetting,
+  type CallSession, type InsertCallSession, type CallSessionEvent, type InsertCallSessionEvent,
+  type AgentPhoneSetting, type InsertAgentPhoneSetting, type CallDisposition, type InsertCallDisposition,
+  type AiCallQualification, type InsertAiCallQualification
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -657,9 +660,37 @@ export interface IStorage {
   hasXpBlackoutOverlap(input: { experienceId: number; startAt: Date; endAt: Date }): Promise<boolean>;
 
   // Call Logs
-  getCallLogs(limit?: number, offset?: number, status?: string, contactId?: number): Promise<CallLog[]>;
+  // When userId is provided, only that user's outbound logs plus account-wide
+  // inbound logs (user_id 0) are returned.
+  getCallLogs(limit?: number, offset?: number, status?: string, contactId?: number, userId?: number): Promise<CallLog[]>;
   createCallLog(log: InsertCallLog): Promise<CallLog>;
   updateCallLog(id: number, patch: Partial<InsertCallLog & { status?: string; endedAt?: Date; durationMs?: number; errorCode?: string; errorMessage?: string }>): Promise<CallLog>;
+  getActiveOutboundCallForUser(userId: number, windowMs?: number): Promise<CallLog | undefined>;
+  getCallLogByCallControlId(callControlId: string): Promise<CallLog | undefined>;
+
+  // App settings — DB override layer for env-driven config
+  getAppSetting(key: string): Promise<string | null>;
+  setAppSetting(key: string, value: string | null, userId?: number): Promise<void>;
+  getAllAppSettings(): Promise<AppSetting[]>;
+
+  // SMS message threads
+  createSmsMessage(input: InsertSmsMessage): Promise<SmsMessage>;
+  getSmsThreads(userId: number, limit?: number): Promise<Array<SmsMessage & { messageCount: number; lastAt?: string }>>;
+  getSmsThreadMessages(phone: string, userId: number, limit?: number): Promise<SmsMessage[]>;
+
+  // Call sessions — two-legged click-to-dial + AI screening/handoff
+  createCallSession(input: InsertCallSession): Promise<CallSession>;
+  getCallSessionById(id: number): Promise<CallSession | undefined>;
+  getCallSessionByLegCallControlId(callControlId: string): Promise<CallSession | undefined>;
+  updateCallSession(id: number, patch: Partial<InsertCallSession>): Promise<CallSession>;
+  createCallSessionEvent(input: InsertCallSessionEvent): Promise<CallSessionEvent>;
+  getCallSessionEvents(sessionId: number, limit?: number): Promise<CallSessionEvent[]>;
+  getAgentPhoneSetting(userId: number): Promise<AgentPhoneSetting | undefined>;
+  setAgentPhoneSetting(input: InsertAgentPhoneSetting): Promise<AgentPhoneSetting>;
+  createCallDisposition(input: InsertCallDisposition): Promise<CallDisposition>;
+  getCallDispositionBySession(sessionId: number): Promise<CallDisposition | undefined>;
+  createAiCallQualification(input: InsertAiCallQualification): Promise<AiCallQualification>;
+  getAiCallQualificationBySession(sessionId: number): Promise<AiCallQualification | undefined>;
 
   // Opportunity Parties
   getOpportunityParties(opportunityId: number): Promise<OpportunityParty[]>;
@@ -709,6 +740,7 @@ function normalizeGlobalActivityAction(action: string) {
     call_failed: "telephony.call.failed",
     call_inbound: "telephony.call.inbound",
     call_dispositioned: "telephony.call.dispositioned",
+    call_transferred: "telephony.call.transferred",
     followup_scheduled: "telephony.followup.scheduled",
     followup_task_created: "telephony.followup.task_created",
     sms_sent: "telephony.sms.sent",
@@ -735,6 +767,7 @@ function normalizeGlobalActivityAction(action: string) {
     skip_trace_requested: "skip_trace.requested",
     skip_trace_success: "skip_trace.success",
     skip_trace_failed: "skip_trace.failed",
+    ai_assistant_config_updated: "ai_assistant.config_updated",
   };
   return map[a] || a;
 }
@@ -3219,12 +3252,31 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Call Logs
-  async getCallLogs(limit?: number, offset: number = 0, status?: string, contactId?: number): Promise<CallLog[]> {
+  async getCallLogs(limit?: number, offset: number = 0, status?: string, contactId?: number, userId?: number): Promise<CallLog[]> {
     let q: any = db.select().from(callLogs);
     if (status) q = q.where(eq(callLogs.status, status));
     if (contactId) q = q.where(eq(callLogs.contactId, contactId));
+    if (typeof userId === "number") {
+      q = q.where(or(eq(callLogs.userId, userId), eq(callLogs.userId, 0)));
+    }
     if (typeof limit === "number") q = q.limit(limit).offset(offset);
     return q as unknown as Promise<CallLog[]>;
+  }
+
+  async getActiveOutboundCallForUser(userId: number, windowMs: number = 15 * 60 * 1000): Promise<CallLog | undefined> {
+    const since = new Date(Date.now() - windowMs);
+    const rows: any = await db.execute(sql`
+      SELECT * FROM call_logs
+      WHERE user_id = ${userId}
+        AND direction = 'outbound'
+        AND status IN ('dialing','ringing','answered')
+        AND ended_at IS NULL
+        AND started_at >= ${since}
+      ORDER BY id DESC
+      LIMIT 1
+    `);
+    const row = (rows as any).rows?.[0];
+    return row ? (row as unknown as CallLog) : undefined;
   }
 
   async createCallLog(log: InsertCallLog): Promise<CallLog> {
@@ -3234,6 +3286,223 @@ export class DatabaseStorage implements IStorage {
 
   async updateCallLog(id: number, patch: Partial<InsertCallLog & { status?: string; endedAt?: Date; durationMs?: number; errorCode?: string; errorMessage?: string }>): Promise<CallLog> {
     const result = await db.update(callLogs).set(patch as any).where(eq(callLogs.id, id)).returning();
+    return result[0];
+  }
+
+  async getCallLogByCallControlId(callControlId: string): Promise<CallLog | undefined> {
+    if (!callControlId) return undefined;
+    const result = await db.select().from(callLogs).where(eq(callLogs.callControlId, callControlId)).limit(1);
+    return result[0];
+  }
+
+  async getAppSetting(key: string): Promise<string | null> {
+    const result = await db.select().from(appSettings).where(eq(appSettings.key, key)).limit(1);
+    return result[0]?.value ?? null;
+  }
+
+  async setAppSetting(key: string, value: string | null, userId?: number): Promise<void> {
+    if (value === null || value === undefined || String(value).trim() === "") {
+      await db.delete(appSettings).where(eq(appSettings.key, key));
+      return;
+    }
+    await db
+      .insert(appSettings)
+      .values({ key, value: String(value), updatedBy: userId ?? null })
+      .onConflictDoUpdate({
+        target: appSettings.key,
+        set: { value: String(value), updatedBy: userId ?? null, updatedAt: new Date() },
+      });
+  }
+
+  async getAllAppSettings(): Promise<AppSetting[]> {
+    return db.select().from(appSettings) as unknown as Promise<AppSetting[]>;
+  }
+
+  async createSmsMessage(input: InsertSmsMessage): Promise<SmsMessage> {
+    const result = await db.insert(smsMessages).values(input as any).returning();
+    return result[0];
+  }
+
+  async getSmsThreads(userId: number, limit: number = 50): Promise<Array<SmsMessage & { messageCount: number; lastAt?: string }>> {
+    const cap = Math.max(1, Math.min(200, limit));
+    const countsRes: any = await db.execute(sql`
+      SELECT
+        counterpart,
+        COUNT(*)::int AS message_count,
+        MAX(created_at) AS last_at
+      FROM (
+        SELECT
+          CASE WHEN direction = 'outbound' THEN to_number ELSE from_number END AS counterpart,
+          created_at
+        FROM crm_sms_messages
+        WHERE (user_id = ${userId} OR user_id = 0)
+          AND COALESCE(CASE WHEN direction = 'outbound' THEN to_number ELSE from_number END, '') <> ''
+      ) t
+      GROUP BY counterpart
+      ORDER BY last_at DESC
+      LIMIT ${cap}
+    `);
+    const counts = (countsRes as any).rows || [];
+    if (!counts.length) return [];
+    const lastRes: any = await db.execute(sql`
+      SELECT DISTINCT ON (counterpart) counterpart, id, user_id, lead_id, direction, from_number, to_number, body, status, provider_message_id, metadata, created_at
+      FROM (
+        SELECT *,
+          CASE WHEN direction = 'outbound' THEN to_number ELSE from_number END AS counterpart
+        FROM crm_sms_messages
+        WHERE (user_id = ${userId} OR user_id = 0)
+          AND COALESCE(CASE WHEN direction = 'outbound' THEN to_number ELSE from_number END, '') <> ''
+      ) t
+      ORDER BY counterpart, id DESC
+    `);
+    const lastByPhone = new Map<string, any>();
+    for (const row of (lastRes as any).rows || []) lastByPhone.set(String(row.counterpart), row);
+    return counts.map((c: any) => {
+      const last = lastByPhone.get(String(c.counterpart)) || {};
+      return {
+        id: last.id,
+        userId: last.user_id,
+        leadId: last.lead_id,
+        direction: last.direction,
+        fromNumber: last.from_number,
+        toNumber: last.to_number,
+        body: last.body,
+        status: last.status,
+        providerMessageId: last.provider_message_id,
+        metadata: last.metadata,
+        createdAt: last.created_at,
+        messageCount: Number(c.message_count) || 0,
+        lastAt: c.last_at,
+      } as any;
+    });
+  }
+
+  async getSmsThreadMessages(phone: string, userId: number, limit: number = 100): Promise<SmsMessage[]> {
+    const cap = Math.max(1, Math.min(500, limit));
+    const result: any = await db.execute(sql`
+      SELECT * FROM crm_sms_messages
+      WHERE (user_id = ${userId} OR user_id = 0)
+        AND (from_number = ${phone} OR to_number = ${phone})
+      ORDER BY id ASC
+      LIMIT ${cap}
+    `);
+    return (result as any).rows || [];
+  }
+
+  private mapCallSessionRow(row: any): CallSession {
+    return {
+      id: Number(row.id),
+      leadId: row.lead_id ?? null,
+      contactId: row.contact_id ?? null,
+      campaignId: row.campaign_id ?? null,
+      initiatingUserId: row.initiating_user_id ?? null,
+      assignedAgentUserId: row.assigned_agent_user_id ?? null,
+      mode: row.mode,
+      status: row.status,
+      agentPhoneE164: row.agent_phone_e164 ?? null,
+      leadPhoneE164: row.lead_phone_e164 ?? null,
+      agentLegCallControlId: row.agent_leg_call_control_id ?? null,
+      leadLegCallControlId: row.lead_leg_call_control_id ?? null,
+      aiLegCallControlId: row.ai_leg_call_control_id ?? null,
+      bridgeRequestId: row.bridge_request_id ?? null,
+      providerConnectionId: row.provider_connection_id ?? null,
+      providerName: row.provider_name || 'telnyx',
+      startedAt: row.started_at ?? null,
+      agentAnsweredAt: row.agent_answered_at ?? null,
+      leadAnsweredAt: row.lead_answered_at ?? null,
+      bridgedAt: row.bridged_at ?? null,
+      endedAt: row.ended_at ?? null,
+      durationSeconds: row.duration_seconds ?? null,
+      finalDisposition: row.final_disposition ?? null,
+      providerHangupCause: row.provider_hangup_cause ?? null,
+      aiSummary: row.ai_summary ?? null,
+      aiQualificationScore: row.ai_qualification_score ?? null,
+      aiConfidence: row.ai_confidence ?? null,
+      idempotencyKey: row.idempotency_key ?? null,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    } as any;
+  }
+
+  async createCallSession(input: InsertCallSession): Promise<CallSession> {
+    const result = await db.insert(callSessions).values(input as any).returning();
+    return result[0];
+  }
+
+  async getCallSessionById(id: number): Promise<CallSession | undefined> {
+    const result = await db.select().from(callSessions).where(eq(callSessions.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getCallSessionByLegCallControlId(callControlId: string): Promise<CallSession | undefined> {
+    if (!callControlId) return undefined;
+    const result: any = await db.execute(sql`
+      SELECT * FROM crm_call_sessions
+      WHERE agent_leg_call_control_id = ${callControlId} OR lead_leg_call_control_id = ${callControlId}
+      ORDER BY id DESC LIMIT 1
+    `);
+    const row = (result as any).rows?.[0];
+    return row ? this.mapCallSessionRow(row) : undefined;
+  }
+
+  async updateCallSession(id: number, patch: Partial<InsertCallSession>): Promise<CallSession> {
+    const result = await db
+      .update(callSessions)
+      .set({ ...(patch as any), updatedAt: new Date() })
+      .where(eq(callSessions.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async createCallSessionEvent(input: InsertCallSessionEvent): Promise<CallSessionEvent> {
+    const result = await db.insert(callSessionEvents).values(input as any).returning();
+    return result[0];
+  }
+
+  async getCallSessionEvents(sessionId: number, limit: number = 200): Promise<CallSessionEvent[]> {
+    const result = await db
+      .select()
+      .from(callSessionEvents)
+      .where(eq(callSessionEvents.sessionId, sessionId))
+      .orderBy(asc(callSessionEvents.id))
+      .limit(Math.max(1, Math.min(500, limit)));
+    return result as unknown as CallSessionEvent[];
+  }
+
+  async getAgentPhoneSetting(userId: number): Promise<AgentPhoneSetting | undefined> {
+    const result = await db.select().from(agentPhoneSettings).where(eq(agentPhoneSettings.userId, userId)).limit(1);
+    return result[0];
+  }
+
+  async setAgentPhoneSetting(input: InsertAgentPhoneSetting): Promise<AgentPhoneSetting> {
+    const result = await db
+      .insert(agentPhoneSettings)
+      .values({ ...(input as any), updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: agentPhoneSettings.userId,
+        set: { phoneE164: input.phoneE164, defaultCallMode: input.defaultCallMode, verified: input.verified ?? false, updatedAt: new Date() },
+      })
+      .returning();
+    return result[0];
+  }
+
+  async createCallDisposition(input: InsertCallDisposition): Promise<CallDisposition> {
+    const result = await db.insert(callDispositions).values(input as any).returning();
+    return result[0];
+  }
+
+  async getCallDispositionBySession(sessionId: number): Promise<CallDisposition | undefined> {
+    const result = await db.select().from(callDispositions).where(eq(callDispositions.sessionId, sessionId)).limit(1);
+    return result[0];
+  }
+
+  async createAiCallQualification(input: InsertAiCallQualification): Promise<AiCallQualification> {
+    const result = await db.insert(aiCallQualifications).values(input as any).returning();
+    return result[0];
+  }
+
+  async getAiCallQualificationBySession(sessionId: number): Promise<AiCallQualification | undefined> {
+    const result = await db.select().from(aiCallQualifications).where(eq(aiCallQualifications.sessionId, sessionId)).limit(1);
     return result[0];
   }
 

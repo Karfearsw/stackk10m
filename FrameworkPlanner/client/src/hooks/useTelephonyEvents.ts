@@ -22,6 +22,13 @@ async function getWsToken() {
   return res.json() as Promise<{ token: string; expiresAt: string; wsBaseUrl?: string | null }>;
 }
 
+export type TelephonySessionStateEvent = {
+  sessionId: number;
+  status: string;
+  mode?: string | null;
+  finalDisposition?: string | null;
+};
+
 export type TelephonyCallStateEvent = {
   callControlId: string;
   state: string;
@@ -29,10 +36,12 @@ export type TelephonyCallStateEvent = {
   to?: string | null;
 };
 
-export function useTelephonyEvents(opts?: { enabled?: boolean; onCallStateChanged?: (evt: TelephonyCallStateEvent) => void }) {
+export function useTelephonyEvents(opts?: { enabled?: boolean; onCallStateChanged?: (evt: TelephonyCallStateEvent) => void; onSessionStateChanged?: (evt: TelephonySessionStateEvent) => void }) {
   const enabled = opts?.enabled ?? true;
   const queryClient = useQueryClient();
   const onCallStateChangedRef = useRef(opts?.onCallStateChanged);
+  const onSessionStateChangedRef = useRef(opts?.onSessionStateChanged);
+  onSessionStateChangedRef.current = opts?.onSessionStateChanged;
   onCallStateChangedRef.current = opts?.onCallStateChanged;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<number>(0);
@@ -75,6 +84,16 @@ export function useTelephonyEvents(opts?: { enabled?: boolean; onCallStateChange
           state: String(payload.state || ""),
           from: payload.from || null,
           to: payload.to || null,
+        });
+        return;
+      }
+      if (t === "call_session_state_changed") {
+        const p = evt.payload || {};
+        onSessionStateChangedRef.current?.({
+          sessionId: Number(p.sessionId),
+          status: String(p.status || ""),
+          mode: p.mode || null,
+          finalDisposition: p.finalDisposition || null,
         });
         return;
       }

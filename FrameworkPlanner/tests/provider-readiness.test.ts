@@ -162,13 +162,46 @@ describe('Provider Readiness Service', () => {
   });
 
   it('overall status reflects channel states', async () => {
-    // All channels configured
+    // All channels configured, including the AI assistant
     process.env.TELNYX_VIDEO_ENABLED = 'true';
     process.env.RESEND_API_KEY = 'test';
     process.env.RESEND_FROM = 'test@test.com';
+    process.env.FEATURE_AI_ASSISTANT = 'true';
+    process.env.TELNYX_AI_ASSISTANT_ID = 'asst_1234567890abcdef';
     const result = await getProviderReadiness();
 
     expect(result.overallStatus).toBe('healthy');
+  });
+
+  it('ai assistant reports missing ID when feature enabled', async () => {
+    process.env.FEATURE_AI_ASSISTANT = 'true';
+    delete process.env.TELNYX_AI_ASSISTANT_ID;
+    const result = await getProviderReadiness();
+
+    expect(result.aiAssistant.configured).toBe(true);
+    expect(result.aiAssistant.assistantIdPresent).toBe(false);
+    expect(result.aiAssistant.blocker).toContain('TELNYX_AI_ASSISTANT_ID');
+  });
+
+  it('ai assistant is ready when ID present and feature enabled', async () => {
+    process.env.FEATURE_AI_ASSISTANT = 'true';
+    process.env.TELNYX_AI_ASSISTANT_ID = 'asst_1234567890abcdef';
+    const result = await getProviderReadiness();
+
+    expect(result.aiAssistant.configured).toBe(true);
+    expect(result.aiAssistant.assistantIdPresent).toBe(true);
+    expect(result.aiAssistant.assistantIdHint).toBe('asst_123…');
+    expect(result.aiAssistant.blocker).toBeUndefined();
+  });
+
+  it('ai assistant is disabled when feature flag off', async () => {
+    delete process.env.FEATURE_AI_ASSISTANT;
+    process.env.TELNYX_AI_ASSISTANT_ID = 'asst_1234567890abcdef';
+    const result = await getProviderReadiness();
+
+    expect(result.aiAssistant.configured).toBe(false);
+    expect(result.aiAssistant.featureEnabled).toBe(false);
+    expect(result.aiAssistant.blocker).toContain('FEATURE_AI_ASSISTANT');
   });
 
   it('overall status is unconfigured when voice missing', async () => {

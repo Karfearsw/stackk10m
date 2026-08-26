@@ -416,12 +416,47 @@ export class TelnyxClient {
     }
   }
 
+  // Bridge two controlled call legs (two-legged click-to-dial / handoff).
+  // POST /v2/calls/{call_control_id}/actions/bridge — verified against the
+  // Telnyx Call Commands API reference. Telnyx fires call.bridged for both
+  // legs on success.
+  async bridge(
+    callControlId: string,
+    bridgeWithCallControlId: string,
+    opts: { commandId?: string; preventDoubleBridge?: boolean } = {},
+  ): Promise<void> {
+    this.requireReady();
+    const body: Record<string, unknown> = {
+      call_control_id: bridgeWithCallControlId,
+      prevent_double_bridge: opts.preventDoubleBridge ?? true,
+    };
+    if (opts.commandId) body.command_id = opts.commandId;
+    const res = await fetch(
+      `${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/bridge`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+    if (!res.ok) {
+      const data: any = await res.json().catch(() => ({}));
+      const title = data?.errors?.[0]?.title || data?.message || `Telnyx bridge failed (${res.status})`;
+      const err = new Error(title) as any;
+      err.status = res.status;
+      throw err;
+    }
+  }
+
   // ── Webhook Signature Verification ────────────────────────────────────
-  // Telnyx signs webhooks with HMAC-SHA256 using TELNYX_PUBLIC_KEY as the secret.
-  // Header format: t=<timestamp>,v1=<hex_signature>
+  // Telnyx signs webhooks with Ed25519 using TELNYX_PUBLIC_KEY (the account
+  // public key from Mission Control). Header name: Telnyx-Signature-Ed25519,
+  // format: t=<unix_timestamp>,v1=<base64_ed25519_signature>. The signature is
+  // computed over `<timestamp>.<raw_body>`.
 
   verifyWebhookSignature(
-    payload: string,
+    payload: string | Buffer,
     signatureHeader: string,
     toleranceSeconds?: number,
   ): boolean {
@@ -432,7 +467,7 @@ export class TelnyxClient {
     try {
       const tolerance = toleranceSeconds ?? Number(process.env.TELNYX_WEBHOOK_SIGNING_TOLERANCE_SECONDS || "300");
 
-      // Parse header: t=<timestamp>,v1=<hex_signature>,v0=<older_signature>
+      // Parse header: t=<timestamp>,v1=<base64_signature>
       const parts = String(signatureHeader).split(",").map((p) => p.trim());
       const timestampStr = parts.find((p) => p.startsWith("t="));
       const v1Sig = parts.find((p) => p.startsWith("v1="));
@@ -446,23 +481,71 @@ export class TelnyxClient {
       const now = Math.floor(Date.now() / 1000);
       if (Math.abs(now - timestamp) > tolerance) return false;
 
-      // Compute HMAC-SHA256 of `{timestamp}.{payload}` using the public key
-      const signedContent = `${timestamp}.${payload}`;
-      const expectedSig = crypto
-        .createHmac("sha256", publicKey)
-        .update(signedContent)
-        .digest("hex");
+      const signature = Buffer.from(v1Sig.slice(3), "base64");
+      const body = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload));
+      const signedContent = Buffer.concat([Buffer.from(`${timestamp}.`), body]);
 
-      const receivedSig = v1Sig.slice(3); // strip "v1="
-
-      // Constant-time comparison
-      if (expectedSig.length !== receivedSig.length) return false;
-      return crypto.timingSafeEqual(
-        Buffer.from(expectedSig, "hex"),
-        Buffer.from(receivedSig, "hex"),
-      );
+      // TELNYX_PUBLIC_KEY is the base64-encoded DER SPKI key from the portal.
+      try {
+        const key = crypto.createPublicKey({
+          key: Buffer.from(publicKey, "base64"),
+          format: "der",
+          type: "spki",
+        });
+        return crypto.verify(null, signedContent, key, signature);
+      } catch {
+        // Fallback: accept a PEM/raw string key.
+        return crypto.verify(null, signedContent, publicKey, signature);
+      }
     } catch {
       return false;
+    }
+  }
+
+  // ── AI Assistant (Telnyx Inference) ───────────────────────────────────
+  // Starts an AI assistant on an active call. The assistant must exist in the
+  // Telnyx account; transcripts arrive as ai_assistant.* webhook events.
+
+  async startAiAssistant(callControlId: string, assistantId: string): Promise<void> {
+    this.requireReady();
+    const res = await fetch(
+      `${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/ai_assistant_start`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ assistant_id: assistantId }),
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    if (!res.ok) {
+      const data: any = await res.json().catch(() => ({}));
+      const title = data?.errors?.[0]?.title || data?.message || `Telnyx AI assistant start failed (${res.status})`;
+      const detail = data?.errors?.[0]?.detail || data?.details || null;
+      const err = new Error(title) as any;
+      err.status = res.status;
+      err.code = data?.errors?.[0]?.code || data?.code || null;
+      err.detail = detail;
+      throw err;
+    }
+  }
+
+  async stopAiAssistant(callControlId: string): Promise<void> {
+    this.requireReady();
+    const res = await fetch(
+      `${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/ai_assistant_stop`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({}),
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    if (!res.ok) {
+      const data: any = await res.json().catch(() => ({}));
+      const title = data?.errors?.[0]?.title || data?.message || `Telnyx AI assistant stop failed (${res.status})`;
+      const err = new Error(title) as any;
+      err.status = res.status;
+      throw err;
     }
   }
 }

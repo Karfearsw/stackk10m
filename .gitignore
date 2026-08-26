@@ -15,4 +15,6 @@ FrameworkPlanner/node_modules__old_*/
 FrameworkPlanner/-c
 FrameworkPlanner/dispatch.json
 FrameworkPlanner/login.json
-
+.freebuff/
+.playwright-mcp/
+.env.local

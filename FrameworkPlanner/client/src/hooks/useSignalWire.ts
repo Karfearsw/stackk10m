@@ -4,7 +4,7 @@ import { apiRequest } from "@/lib/queryClient";
 export interface SignalWireCall {
   id: string;
   remoteNumber: string;
-  state: "new" | "ringing" | "active" | "held" | "finished" | "failed";
+  state: "new" | "ringing" | "active" | "held" | "transferring" | "finished" | "failed";
   muted: boolean;
 }
 
@@ -30,6 +30,7 @@ export function useSignalWire() {
   const [error, setError] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [call, setCall] = useState<SignalWireCall | null>(null);
+  const [aiAssistantActive, setAiAssistantActive] = useState(false);
   const callRef = useRef<SignalWireCall | null>(null);
   const callControlIdRef = useRef<string | null>(null);
   const ringTimerRef = useRef<number | null>(null);
@@ -68,6 +69,7 @@ export function useSignalWire() {
         if (!callControlId) throw new Error("Missing callControlId from server");
 
         callControlIdRef.current = callControlId;
+        setAiAssistantActive(false);
         setCallBoth((prev) => {
           const next: SignalWireCall = {
             id: callControlId,
@@ -133,42 +135,88 @@ export function useSignalWire() {
         return { ...prev, state: next };
       });
       if (next === "active" || next === "finished" || next === "failed") clearRingTimer();
+      if (next === "finished" || next === "failed") setAiAssistantActive(false);
     },
     [clearRingTimer, setCallBoth],
   );
 
+  // Server-confirmed mute: flip local state only after the provider accepts
+  // the command, so the UI never shows a mute that Telnyx rejected.
   const toggleMute = useCallback(async () => {
     const ccId = callControlIdRef.current;
     if (!ccId) return;
-    setCallBoth((prev) => {
-      if (!prev) return prev;
-      const newMuted = !prev.muted;
-      // Fire-and-forget API call; optimistically update local state
-      apiRequest("POST", `/api/telephony/outbound/${encodeURIComponent(ccId)}/mute`, { muted: newMuted }).catch((e: any) => {
-        console.error("Telnyx mute failed:", e);
-        // Revert on failure
-        setCallBoth((p) => (p ? { ...p, muted: !newMuted } : null));
-      });
-      return { ...prev, muted: newMuted };
-    });
+    const target = !(callRef.current?.muted ?? false);
+    try {
+      await apiRequest("POST", `/api/telephony/outbound/${encodeURIComponent(ccId)}/mute`, { muted: target });
+      setCallBoth((prev) => (prev ? { ...prev, muted: target } : prev));
+    } catch (e: any) {
+      const msg = String(e?.message || e || "Mute failed");
+      console.error("Telnyx mute failed:", msg);
+      setError(msg);
+      setLastError(msg);
+    }
   }, [setCallBoth]);
 
+  // Server-confirmed hold/unhold.
   const toggleHold = useCallback(async () => {
     const ccId = callControlIdRef.current;
-    setCallBoth((prev) => {
-      if (!prev) return prev;
-      const next = prev.state === "held" ? "active" : "held";
-      const action = next === "held" ? "hold" : "unhold";
-      if (ccId) {
-        apiRequest("POST", `/api/telephony/outbound/${encodeURIComponent(ccId)}/hold`, { action }).catch((e: any) => {
-          console.error(`Telnyx ${action} failed:`, e);
-          // Revert on failure
-          setCallBoth((p) => (p ? { ...p, state: prev.state } : null));
-        });
-      }
-      return { ...prev, state: next };
-    });
+    if (!ccId) return;
+    const next = callRef.current?.state === "held" ? "active" : "held";
+    const action = next === "held" ? "hold" : "unhold";
+    try {
+      await apiRequest("POST", `/api/telephony/outbound/${encodeURIComponent(ccId)}/hold`, { action });
+      setCallBoth((prev) => (prev ? { ...prev, state: next } : prev));
+    } catch (e: any) {
+      const msg = String(e?.message || e || "Hold failed");
+      console.error(`Telnyx ${action} failed:`, msg);
+      setError(msg);
+      setLastError(msg);
+    }
   }, [setCallBoth]);
+
+  // Server-confirmed blind transfer to a destination number.
+  const transferCall = useCallback(
+    async (to: string) => {
+      const ccId = callControlIdRef.current;
+      if (!ccId) return;
+      try {
+        await apiRequest("POST", `/api/telephony/outbound/${encodeURIComponent(ccId)}/transfer`, { to });
+        setCallBoth((prev) => (prev ? { ...prev, state: "transferring" } : prev));
+        return true;
+      } catch (e: any) {
+        const msg = String(e?.message || e || "Transfer failed");
+        console.error("Telnyx transfer failed:", msg);
+        setError(msg);
+        setLastError(msg);
+        throw e;
+      }
+    },
+    [setCallBoth],
+  );
+
+  const startAiAssistant = useCallback(async (assistantId?: string) => {
+    const ccId = callControlIdRef.current;
+    if (!ccId) return;
+    const res = await apiRequest("POST", `/api/telephony/outbound/${encodeURIComponent(ccId)}/ai-assistant`, {
+      action: "start",
+      assistantId: assistantId || null,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data?.error || "Failed to start AI assistant");
+    setAiAssistantActive(true);
+    return data;
+  }, []);
+
+  const stopAiAssistant = useCallback(async () => {
+    const ccId = callControlIdRef.current;
+    setAiAssistantActive(false);
+    if (!ccId) return;
+    try {
+      await apiRequest("POST", `/api/telephony/outbound/${encodeURIComponent(ccId)}/ai-assistant`, { action: "stop" });
+    } catch (e: any) {
+      console.error("Telnyx AI assistant stop failed:", e);
+    }
+  }, []);
 
   useEffect(() => {
     return () => clearRingTimer();
@@ -186,5 +234,9 @@ export function useSignalWire() {
     updateCallState,
     toggleMute,
     toggleHold,
+    transferCall,
+    aiAssistantActive,
+    startAiAssistant,
+    stopAiAssistant,
   };
 }

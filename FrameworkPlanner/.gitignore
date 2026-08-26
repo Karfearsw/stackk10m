@@ -9,3 +9,8 @@ vite.config.ts.*
 backups/
 node_modules__old_*/
 FrameworkPlanner/
+.env.local
+.env.*.local
+.freebuff/
+.playwright-mcp/
+*.log.err

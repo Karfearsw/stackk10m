@@ -236,6 +236,37 @@ function SettingsContent() {
     refetchInterval: 60000,
   });
 
+  // Editable AI assistant config (DB override for env vars)
+  const [aiAssistantIdInput, setAiAssistantIdInput] = useState("");
+  const [aiFeatureEnabledInput, setAiFeatureEnabledInput] = useState<boolean | null>(null);
+  const { data: aiSettingsData, refetch: refetchAiSettings } = useQuery<any>({
+    queryKey: ["/api/settings/telecom/ai-assistant"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/settings/telecom/ai-assistant");
+      return await res.json();
+    },
+  });
+  useEffect(() => {
+    if (aiSettingsData) {
+      setAiAssistantIdInput(aiSettingsData.assistantId || "");
+      setAiFeatureEnabledInput(Boolean(aiSettingsData.enabled));
+    }
+  }, [aiSettingsData]);
+  const saveAiAssistantMutation = useMutation({
+    mutationFn: async (data: { assistantId: string; enabled: boolean }) => {
+      const res = await apiRequest("PUT", "/api/settings/telecom/ai-assistant", data);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to save AI assistant config");
+      return json;
+    },
+    onSuccess: () => {
+      toast.success("AI Screener config saved");
+      refetchAiSettings();
+      refetchReadiness();
+    },
+    onError: (e: any) => toast.error(e?.message || "Failed to save AI assistant config"),
+  });
+
   // Update user mutation
   const updateUserMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -2084,6 +2115,60 @@ function SettingsContent() {
                 {providerReadiness?.webhook?.blocker && <p className="text-xs text-amber-600 mt-2">{providerReadiness.webhook.blocker}</p>}
               </CardContent>
             </Card>
+
+            {/* AI Assistant */}
+            <Card className={providerReadiness?.aiAssistant?.blocker ? 'border-yellow-200' : providerReadiness?.aiAssistant?.configured ? 'border-green-200' : ''}>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Bot className="h-4 w-4" /> AI Assistant
+                  <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${
+                    providerReadiness?.aiAssistant?.configured && providerReadiness.aiAssistant.assistantIdPresent ? 'bg-green-100 text-green-700' :
+                    providerReadiness?.aiAssistant?.configured ? 'bg-yellow-100 text-yellow-700' :
+                    'bg-gray-100 text-gray-500'
+                  }`}>{providerReadiness?.aiAssistant?.configured && providerReadiness.aiAssistant.assistantIdPresent ? 'Ready' : providerReadiness?.aiAssistant?.configured ? 'ID missing' : 'Disabled'}</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Enable AI Screener</span>
+                  <Switch
+                    checked={aiFeatureEnabledInput === true}
+                    onCheckedChange={(v) => setAiFeatureEnabledInput(v)}
+                    aria-label="Enable AI Screener"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="ai-assistant-id" className="text-xs text-muted-foreground">Assistant ID</Label>
+                  <Input
+                    id="ai-assistant-id"
+                    value={aiAssistantIdInput}
+                    onChange={(e) => setAiAssistantIdInput(e.target.value)}
+                    placeholder="Paste the Telnyx Assistant ID (High-Intent Lead Screener)"
+                    className="font-mono text-xs"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Saved to app settings — overrides the TELNYX_AI_ASSISTANT_ID / FEATURE_AI_ASSISTANT env vars.
+                    Source: <span className="font-mono">{aiSettingsData?.source || '—'}</span>
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      saveAiAssistantMutation.mutate({
+                        assistantId: aiAssistantIdInput.trim(),
+                        enabled: aiFeatureEnabledInput === true,
+                      })
+                    }
+                    disabled={saveAiAssistantMutation.isPending}
+                  >
+                    {saveAiAssistantMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Save className="w-3 h-3 mr-1" />}
+                    Save
+                  </Button>
+                  {providerReadiness?.aiAssistant?.blocker && <span className="text-xs text-amber-600">{providerReadiness.aiAssistant.blocker}</span>}
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
           {/* Feature Flags */}
@@ -2145,6 +2230,16 @@ function SettingsContent() {
                   <li>For Resend: set RESEND_API_KEY + RESEND_FROM</li>
                   <li>For Telnyx Email: confirm beta access, verify sending domain, set TELNYX_EMAIL_ENABLED=true</li>
                   <li>Publish required DNS records (SPF, DKIM, MX, DMARC)</li>
+                </ol>
+              </div>
+              <div className="rounded-md border p-3 space-y-2">
+                <p className="font-medium">AI Assistant Setup</p>
+                <ol className="list-decimal list-inside space-y-1 text-xs text-muted-foreground">
+                  <li>Create the assistant in Telnyx portal → AI Assistants (e.g. High-Intent Lead Screener)</li>
+                  <li>Copy its Assistant ID into TELNYX_AI_ASSISTANT_ID</li>
+                  <li>Set FEATURE_AI_ASSISTANT=true</li>
+                  <li>Start it from the dialer on an active call, or enable auto-start in Power Dialer</li>
+                  <li>Transcripts arrive via ai_assistant.message_history_updated webhooks</li>
                 </ol>
               </div>
             </div>

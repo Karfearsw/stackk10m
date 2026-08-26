@@ -17,6 +17,7 @@ import {
   Lightbulb,
   UserCheck,
   Phone,
+  PhoneCall,
   Send,
   Voicemail,
   MapPin,
@@ -57,6 +58,7 @@ const menuGroups = [
     items: [
       { name: "Phone", href: "/phone", icon: Phone },
       { name: "Dialer Workspace", href: "/dialer-workspace", icon: Phone },
+      { name: "Communications", href: "/workspace/communications", icon: PhoneCall },
       { name: "Voicemail", href: "/voicemail", icon: Voicemail },
       { name: "Messages", href: "/messages", icon: MessageSquare },
     ],

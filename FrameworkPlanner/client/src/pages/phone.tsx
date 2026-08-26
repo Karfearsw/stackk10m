@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Phone, PhoneOff, Plus, Search, Clock, Voicemail, Mic, MicOff, Pause, Play } from "lucide-react";
+import { Phone, PhoneOff, Plus, Search, Clock, Voicemail, Mic, MicOff, Pause, Play, Bot, PhoneForwarded, Loader2 } from "lucide-react";
 import { useSignalWire } from "@/hooks/useSignalWire";
 import { useTelephonyEvents } from "@/hooks/useTelephonyEvents";
 import { TelnyxHealthStatus } from "@/components/telephony/TelnyxHealthStatus";
@@ -52,6 +52,10 @@ export default function PhoneWorkspace() {
     updateCallState,
     toggleMute,
     toggleHold,
+    transferCall,
+    aiAssistantActive,
+    startAiAssistant,
+    stopAiAssistant,
   } = useSignalWire();
   const { connected: telephonyWsConnected } = useTelephonyEvents({
     enabled: true,
@@ -75,7 +79,11 @@ export default function PhoneWorkspace() {
   const [status, setStatus] = useState<"idle" | "dialing" | "ringing" | "connected" | "ended" | "failed">("idle");
   const [callId, setCallId] = useState<number | null>(null);
   const [startTs, setStartTs] = useState<number | null>(null);
-  const timerRef = useRef<number>(0);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [aiAssistantBusy, setAiAssistantBusy] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferNumber, setTransferNumber] = useState("");
+  const [transferBusy, setTransferBusy] = useState(false);
   const wasConnectedRef = useRef(false);
   const callFailedRef = useRef(false);
   const lastPatchedStatusRef = useRef<string | null>(null);
@@ -175,6 +183,7 @@ export default function PhoneWorkspace() {
       setStatus("ended");
       setCallId(null);
       setStartTs(null);
+      setElapsedMs(0);
       wasConnectedRef.current = false;
       callFailedRef.current = false;
       queryClient.invalidateQueries({ queryKey: ["/api/telephony/history"] });
@@ -185,13 +194,10 @@ export default function PhoneWorkspace() {
   });
 
   useEffect(() => {
-    let handle: any;
-    if (status === "connected" && startTs) {
-      handle = setInterval(() => {
-        timerRef.current = Date.now() - startTs;
-      }, 200);
-    }
-    return () => handle && clearInterval(handle);
+    if (status !== "connected" || !startTs) return;
+    setElapsedMs(Date.now() - startTs);
+    const handle = setInterval(() => setElapsedMs(Date.now() - startTs), 250);
+    return () => clearInterval(handle);
   }, [status, startTs]);
 
   useEffect(() => {
@@ -313,12 +319,11 @@ export default function PhoneWorkspace() {
   };
 
   const durationLabel = useMemo(() => {
-    const ms = timerRef.current;
-    const sec = Math.floor(ms / 1000);
+    const sec = Math.floor((elapsedMs || 0) / 1000);
     const m = Math.floor(sec / 60);
     const s = sec % 60;
     return `${m}:${String(s).padStart(2, "0")}`;
-  }, [status, startTs, activeCall?.state]);
+  }, [elapsedMs]);
 
   return (
     <Layout>
@@ -377,6 +382,65 @@ export default function PhoneWorkspace() {
                               <Button variant="outline" onClick={toggleHold} aria-label="Hold">
                                 {activeCall.state === "held" ? <Play className="w-4 h-4 mr-2" /> : <Pause className="w-4 h-4 mr-2" />}
                                 {activeCall.state === "held" ? "Resume" : "Hold"}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                onClick={() => setTransferOpen((v) => !v)}
+                                disabled={transferBusy}
+                                aria-label="Transfer"
+                              >
+                                <PhoneForwarded className="w-4 h-4 mr-2" />
+                                Transfer
+                              </Button>
+                              {transferOpen && (
+                                <div className="flex items-center gap-2 w-full">
+                                  <Input
+                                    value={transferNumber}
+                                    onChange={(e) => setTransferNumber(e.target.value)}
+                                    placeholder="Destination number (E.164)"
+                                    className="font-mono text-sm"
+                                    aria-label="Transfer destination number"
+                                  />
+                                  <Button
+                                    variant="secondary"
+                                    disabled={transferBusy || !transferNumber.trim()}
+                                    onClick={async () => {
+                                      setTransferBusy(true);
+                                      try {
+                                        await transferCall(transferNumber.trim());
+                                        toast.success("Call transferred");
+                                        setTransferOpen(false);
+                                        setTransferNumber("");
+                                      } catch (e: any) {
+                                        toast.error(e?.message || "Transfer failed");
+                                      } finally {
+                                        setTransferBusy(false);
+                                      }
+                                    }}
+                                  >
+                                    {transferBusy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PhoneForwarded className="w-4 h-4 mr-1" />}
+                                    Confirm
+                                  </Button>
+                                </div>
+                              )}
+                              <Button
+                                variant="outline"
+                                onClick={() => {
+                                  if (aiAssistantBusy) return;
+                                  setAiAssistantBusy(true);
+                                  if (aiAssistantActive) {
+                                    stopAiAssistant().finally(() => setAiAssistantBusy(false));
+                                  } else {
+                                    startAiAssistant()
+                                      .catch((e: any) => toast.error(e?.message || "Failed to start AI Screener"))
+                                      .finally(() => setAiAssistantBusy(false));
+                                  }
+                                }}
+                                disabled={aiAssistantBusy}
+                                aria-label="AI Screener"
+                              >
+                                <Bot className="w-4 h-4 mr-2" />
+                                {aiAssistantActive ? "Stop AI Screener" : "Start AI Screener"}
                               </Button>
                             </>
                           )}

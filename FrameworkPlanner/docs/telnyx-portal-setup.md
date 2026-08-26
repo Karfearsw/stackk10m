@@ -187,6 +187,67 @@ Set these environment variables to `true` to enable optional features:
 | `FEATURE_COMPS` | Property comparisons |
 | `FEATURE_BUYER_MATCH` | Automated buyer matching |
 | `FEATURE_VOICE_PLAYGROUND` | Voice research playground |
+| `FEATURE_AI_ASSISTANT` | AI lead screener on calls |
+
+---
+
+## AI Assistant (High-Intent Lead Screener)
+
+Telnyx Inference AI assistants can be attached to an active Call Control call
+via the `ai_assistant_start` command. The CRM uses this for the **High-Intent
+Lead Screener**: it qualifies intent, budget, location, timeline, and contact
+preferences, and streams transcripts back as `ai_assistant.message_history_updated`
+webhooks.
+
+### Portal steps
+
+1. Go to **AI Assistants** in Mission Control and open **High-Intent Lead Screener**.
+2. Copy its **Assistant ID** (a UUID) from the detail page.
+3. Paste it into **Settings → System → AI Assistant** (editable field, saved to
+   `app_settings` in the database) and toggle **Enable AI Screener** on — no
+   `.env` edit required. Alternatively set `TELNYX_AI_ASSISTANT_ID` to that
+   UUID and `FEATURE_AI_ASSISTANT=true` in the environment.
+4. Make sure the Call Control Application (`TELNYX_CONNECTION_ID`) is the one
+   used for outbound dialing so the assistant can be attached to active calls.
+
+### Configuration precedence
+
+The CRM resolves the AI assistant config from two layers:
+
+1. **`app_settings` (DB)** — values saved from Settings → System. These win.
+2. **Environment** — `TELNYX_AI_ASSISTANT_ID` / `FEATURE_AI_ASSISTANT`.
+
+Admin-only API:
+
+- `GET /api/settings/telecom/ai-assistant` — effective config + source
+- `PUT /api/settings/telecom/ai-assistant` — `{ "assistantId": "…", "enabled": true }`
+
+Both changes are recorded in the activity/audit log.
+
+### How it works in the CRM
+
+- **Manual start**: Dialer / Phone → active call → **Start AI Screener**.
+- **Auto-start**: enable **AI Screener** toggle in the Power Dialer card to
+  start the assistant automatically on answered calls.
+- **Transcripts**: `ai_assistant.message_history_updated` webhooks update the
+  call log transcript and append an `[AI Screener …]` block to the linked
+  lead's notes (deduped by event id).
+- **Qualification**: when the assistant qualifies a lead (intent sell/offer/
+  interested, or a structured `qualified: true`), the lead's motivation is set
+  and a high-priority **AI Screener follow-up** task is created.
+- **Stop**: **Stop AI Screener** on an active call, or when the call ends.
+
+### API
+
+`POST /api/telephony/outbound/:callControlId/ai-assistant`
+
+```json
+{ "action": "start", "assistantId": "<assistant-uuid>" }
+{ "action": "stop" }
+```
+
+Errors: `403 AI_ASSISTANT_DISABLED` (flag off), `400 MISSING_ASSISTANT_ID`,
+`503 TELNYX_NOT_CONFIGURED`.
 
 ---
 
@@ -201,6 +262,7 @@ After configuring all channels, verify in Settings → System:
 - [ ] Document Storage: "Ready" or "Not configured"
 - [ ] Webhook: "Configured"
 - [ ] Feature Flags: All flags showing correct state
+- [ ] AI Assistant: "Ready" when flag + Assistant ID configured
 
 ### Manual QA
 
@@ -208,4 +270,64 @@ After configuring all channels, verify in Settings → System:
 2. **One test SMS**: Leads page → Send SMS → Verify activity log
 3. **One meeting**: Calendar → Video Room → Create → Verify room appears → Join
 4. **One email**: Contract detail → Send → Verify email delivered
-5. **System Health**: Settings → System → All cards render correctly
+5. **One AI screener call**: Dial a lead → Start AI Screener on the active call →
+   speak with the assistant → verify the transcript lands on the call log and
+   lead notes, and a follow-up task appears when qualified
+6. **System Health**: Settings → System → All cards render correctly
+
+## Two-Legged Click-to-Dial + AI Screening (migration 0056)
+
+The two-leg flow is the recommended dialer path. Each telephone party is a
+separate Telnyx leg; the CRM only bridges legs after confirmed answers.
+
+### Required env / settings
+
+| Variable | Purpose |
+|---|---|
+| `ENABLE_TWO_LEG_CLICK_TO_DIAL` | Master flag (default `true`) |
+| `ENABLE_AI_SCREENING` | AI-first calling (default `true`) |
+| `ENABLE_AI_HUMAN_HANDOFF` | AI → human bridge (default `true`) |
+| `TELNYX_AGENT_PHONE` | Optional fallback agent number; per-user setting in the dialer wins |
+| `TELNYX_AI_ASSISTANT_ID` | High-Intent Lead Screener assistant UUID (or set in Settings → System) |
+
+### Agent phone setup
+
+1. Dialer Workspace → **Two-Leg Call** card → **Edit** next to "Your phone".
+2. Enter your mobile number in E.164 form (e.g. `+14155550123`) and save.
+   It is stored in `crm_agent_phone_settings`, masked in the UI, never exposed
+   in full to other users.
+3. Human call and AI + handoff modes require this number; AI screen does not.
+
+### Telnyx portal prerequisites (unchanged)
+
+- Call Control Application with the CRM webhook URL
+  (`https://crm.oceanluxe.org/api/v1/telecom/webhooks/telnyx`).
+- `TELNYX_CONNECTION_ID` = Call Control Application ID, not a SIP credential.
+- Outbound-capable number assigned to the app (`TELNYX_DEFAULT_FROM_NUMBER`).
+- AI assistant: AI Assistants → High-Intent Lead Screener → copy Assistant ID.
+
+### Smoke test
+
+1. **Human-first**: pick a lead with a valid phone → Two-Leg Call → mode
+   **Human call** → Call. Your phone rings. Answer → the lead's phone rings.
+   Lead answers → you hear the bridge. End call → status flips to
+   `completed`, disposition `connected`, timeline gains the events.
+2. **Agent no-answer**: start a human call and let your phone ring out → the
+   lead leg is never dialed; session closes with `agent_unavailable`.
+3. **AI screen**: mode **AI screen** → Call → the AI speaks with the lead and
+   you watch `ai_screening` → a follow-up task appears when qualified.
+4. **AI + handoff**: mode **AI + handoff** → while screening, press
+   **Request human** (or the lead asks for a human) → your phone rings →
+   answer → you are bridged into the live conversation.
+5. **DNC**: disposition `do_not_call` (or the AI hears an opt-out) → the lead
+   is immediately suppressed and future calls/SMS are blocked.
+
+### Troubleshooting
+
+- `AGENT_PHONE_REQUIRED` → set your phone in the Two-Leg Call card.
+- Session stuck on `bridging` → check the webhook endpoint received
+  `call.bridged`; confirm the Call Control Application webhook URL is live.
+- `bridge_failed` disposition → both legs answered but Telnyx rejected the
+  bridge; check the number/connection is outbound-capable for both legs.
+- AI never starts → Settings → System → AI Assistant: paste the Assistant ID
+  and enable the toggle; readiness must show Ready.

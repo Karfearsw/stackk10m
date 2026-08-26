@@ -301,19 +301,119 @@ export default async function runApp(
         direction VARCHAR(20) NOT NULL,
         number VARCHAR(20) NOT NULL,
         contact_id INTEGER,
+        lead_id INTEGER,
         status VARCHAR(50) NOT NULL,
+        disposition VARCHAR(50),
+        note TEXT,
         started_at TIMESTAMP DEFAULT NOW(),
         ended_at TIMESTAMP,
         duration_ms INTEGER,
         error_code VARCHAR(50),
         error_message TEXT,
         metadata TEXT,
+        call_control_id VARCHAR(255),
+        ai_assistant_id VARCHAR(100),
+        transcript TEXT,
+        ai_qualified BOOLEAN NOT NULL DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
     log("[Startup] Verified call_logs table", "db");
   } catch (e) {
     console.error("Failed to ensure call_logs table:", e);
+  }
+
+  // Ensure app_settings + crm_sms_messages exist (DB override layer + SMS threads)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key text PRIMARY KEY,
+        value text,
+        updated_by integer,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS crm_sms_messages (
+        id serial PRIMARY KEY,
+        user_id integer,
+        lead_id integer,
+        direction varchar(10) NOT NULL DEFAULT 'outbound',
+        from_number varchar(20),
+        to_number varchar(20),
+        body text,
+        status varchar(30) NOT NULL DEFAULT 'queued',
+        provider_message_id varchar(128),
+        metadata text,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
+    // Two-legged call sessions (migration 0056 fallback)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS crm_call_sessions (
+        id serial PRIMARY KEY,
+        lead_id integer, contact_id integer, campaign_id integer,
+        initiating_user_id integer, assigned_agent_user_id integer,
+        mode varchar(24) NOT NULL,
+        status varchar(32) NOT NULL DEFAULT 'queued',
+        agent_phone_e164 varchar(20), lead_phone_e164 varchar(20),
+        agent_leg_call_control_id varchar(255), lead_leg_call_control_id varchar(255),
+        ai_leg_call_control_id varchar(255), bridge_request_id varchar(128),
+        provider_connection_id varchar(100), provider_name varchar(20) NOT NULL DEFAULT 'telnyx',
+        started_at timestamptz, agent_answered_at timestamptz, lead_answered_at timestamptz,
+        bridged_at timestamptz, ended_at timestamptz, duration_seconds integer,
+        final_disposition varchar(50), provider_hangup_cause varchar(100),
+        ai_summary text, ai_qualification_score integer, ai_confidence numeric,
+        idempotency_key varchar(128),
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS crm_call_session_events (
+        id serial PRIMARY KEY,
+        session_id integer NOT NULL, event_type varchar(64) NOT NULL,
+        from_status varchar(32), to_status varchar(32),
+        metadata text, provider_event_id varchar(128), actor_user_id integer,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS crm_agent_phone_settings (
+        id serial PRIMARY KEY,
+        user_id integer NOT NULL UNIQUE, phone_e164 varchar(20) NOT NULL,
+        default_call_mode varchar(24) NOT NULL DEFAULT 'human_first',
+        verified boolean NOT NULL DEFAULT false,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS crm_call_dispositions (
+        id serial PRIMARY KEY,
+        session_id integer NOT NULL UNIQUE, disposition varchar(50) NOT NULL,
+        confidence varchar(20), source varchar(20) NOT NULL DEFAULT 'agent',
+        note text, review_task_id integer, actor_user_id integer,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS crm_ai_call_qualifications (
+        id serial PRIMARY KEY,
+        session_id integer NOT NULL,
+        intent varchar(100), location text, property_type varchar(100),
+        budget varchar(100), timeline varchar(100), financing_status varchar(100),
+        motivation varchar(100), preferred_contact varchar(50),
+        request_human boolean NOT NULL DEFAULT false,
+        do_not_call boolean NOT NULL DEFAULT false,
+        confidence numeric, raw text,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
+    log("[Startup] Verified call-session tables (0056 fallback)", "db");
+    log("[Startup] Verified app_settings + crm_sms_messages tables", "db");
+  } catch (e) {
+    console.error("Failed to ensure telecom support tables:", e);
   }
 
   const server = await registerRoutes(app, { mode: "server" });

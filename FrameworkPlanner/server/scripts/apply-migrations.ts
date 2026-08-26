@@ -194,9 +194,13 @@ export async function applyMigrations() {
 }
 
 function isMain() {
-  const self = resolve(process.argv[1] || "");
-  const argv = process.argv[1] ? resolve(process.argv[1]) : "";
-  return self === argv;
+  const argv0 = process.argv[1] || "";
+  if (!argv0) return false;
+  // Never auto-run under test runners; this module is imported by tests to
+  // exercise applyMigrations() directly.
+  if (/vitest|jest|mocha|node --test/i.test(argv0)) return false;
+  const resolved = resolve(argv0);
+  return resolved === resolved && /apply-migrations/i.test(argv0);
 }
 
 if (isMain()) {
