@@ -18,3 +18,5 @@ FrameworkPlanner/login.json
 .freebuff/
 .playwright-mcp/
 .env.local
+# Vercel bulk-import env file (contains live secrets) — never commit
+.env.vercel
