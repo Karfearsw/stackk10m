@@ -9,7 +9,8 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Leads from "@/pages/leads";
 import PropertyDetail from "@/pages/property-detail";
-import Properties from "@/pages/properties";
+import Opportunities from "@/pages/properties";
+import Calculator from "@/pages/calculator";
 import Contracts from "@/pages/contracts";
 import ContractGenerator from "@/pages/contract-generator";
 import Analytics from "@/pages/analytics";
@@ -66,7 +67,8 @@ function Router() {
       <Route path="/reset-password" component={() => <ResetPassword />} />
       <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
       <Route path="/leads" component={() => <ProtectedRoute component={Leads} />} />
-      <Route path="/properties" component={() => <ProtectedRoute component={Properties} />} />
+      <Route path="/properties" component={() => <ProtectedRoute component={Opportunities} />} />
+      <Route path="/opportunities" component={() => <ProtectedRoute component={Opportunities} />} />
       <Route path="/property/:id" component={() => <ProtectedRoute component={PropertyDetail} />} />
       <Route path="/contracts" component={() => <ProtectedRoute component={Contracts} />} />
       <Route path="/contract-generator" component={() => <ProtectedRoute component={ContractGenerator} />} />
@@ -75,6 +77,7 @@ function Router() {
       <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />
       <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
       <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />
+      <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
       <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />
       <Route path="/dialer" component={() => <ProtectedRoute component={Dialer} />} />
       <Route path="/contacts" component={() => <ProtectedRoute component={Contacts} />} />
