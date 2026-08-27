@@ -23,7 +23,7 @@ const Campaigns = React.lazy(() => import("@/pages/campaigns"));
 const RvmPage = React.lazy(() => import("@/pages/rvm"));
 const PropertyDetail = React.lazy(() => import("@/pages/property-detail"));
 const Properties = React.lazy(() => import("@/pages/properties").then(m => ({ default: m.Properties })));
-const Opportunities = React.lazy(() => import("@/pages/properties").then(m => ({ default: (m as any).default })));
+const Opportunities = React.lazy(() => import("@/pages/properties").then(m => ({ default: m.default })));
 const Contracts = React.lazy(() => import("@/pages/contracts"));
 const ContractGenerator = React.lazy(() => import("@/pages/contract-generator"));
 const ContractWizard = React.lazy(() => import("@/pages/contract-wizard"));
