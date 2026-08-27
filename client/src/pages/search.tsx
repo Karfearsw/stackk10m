@@ -1,22 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useLocation } from "wouter";
 
-function useQueryParam(name: string) {
+function useQueryParam(name: string, location: string) {
   const [value, setValue] = useState<string>("");
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setValue(params.get(name) || "");
-  }, [name]);
+  }, [name, location]);
   return value;
 }
 
 export default function SearchPage() {
-  const q = useQueryParam("q");
   const [location, setLocation] = useLocation();
+  const q = useQueryParam("q", location);
   const [page, setPage] = useState(0);
   const limit = 50;
   const offset = page * limit;
