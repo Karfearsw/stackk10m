@@ -50,8 +50,6 @@ const primaryNavigation = [
   { name: "Leads Pipeline", href: "/leads", icon: Users },
   { name: "Opportunities", href: "/opportunities", icon: Building2 },
   { name: "Contacts", href: "/contacts", icon: Users },
-  { name: "Search", href: "/search", icon: Search },
-  { name: "Contract Generator", href: "/contract-generator", icon: FileSignature },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
@@ -110,6 +108,8 @@ const menuGroups = [
     name: "Tools",
     icon: Wrench,
     items: [
+      { name: "Search", href: "/search", icon: Search },
+      { name: "Contract Generator", href: "/contract-generator", icon: FileSignature },
       { name: "Calculator", href: "/calculator", icon: Calculator },
       { name: "Timesheet", href: "/timesheet", icon: Clock },
       { name: "Notifications", href: "/notifications", icon: Bell },
