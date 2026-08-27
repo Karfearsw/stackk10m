@@ -54,7 +54,7 @@ interface Buyer {
   totalRevenue: string | null;
   notes: string | null;
   tags: string[] | null;
-  zipCodes: string | null;
+  zipCodes: string[] | null;
   minBeds: number | null;
   maxBeds: number | null;
   lastContactDate: string | null;
