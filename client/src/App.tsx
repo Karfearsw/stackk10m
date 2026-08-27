@@ -9,8 +9,7 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Leads from "@/pages/leads";
 import PropertyDetail from "@/pages/property-detail";
-import Opportunities from "@/pages/properties";
-import Calculator from "@/pages/calculator";
+import Opportunities, { Properties } from "@/pages/properties";
 import Contracts from "@/pages/contracts";
 import ContractGenerator from "@/pages/contract-generator";
 import Analytics from "@/pages/analytics";
@@ -28,6 +27,7 @@ import Contacts from "@/pages/contacts";
 import History from "@/pages/history";
 import VoicemailPage from "@/pages/voicemail";
 import SearchPage from "@/pages/search";
+import Calculator from "@/pages/calculator";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -67,8 +67,7 @@ function Router() {
       <Route path="/reset-password" component={() => <ResetPassword />} />
       <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
       <Route path="/leads" component={() => <ProtectedRoute component={Leads} />} />
-      <Route path="/properties" component={() => <ProtectedRoute component={Opportunities} />} />
-      <Route path="/opportunities" component={() => <ProtectedRoute component={Opportunities} />} />
+      <Route path="/properties" component={() => <ProtectedRoute component={Properties} />} />
       <Route path="/property/:id" component={() => <ProtectedRoute component={PropertyDetail} />} />
       <Route path="/contracts" component={() => <ProtectedRoute component={Contracts} />} />
       <Route path="/contract-generator" component={() => <ProtectedRoute component={ContractGenerator} />} />
@@ -77,13 +76,14 @@ function Router() {
       <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />
       <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
       <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />
-      <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
       <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />
+      <Route path="/opportunities" component={() => <ProtectedRoute component={Opportunities} />} />
       <Route path="/dialer" component={() => <ProtectedRoute component={Dialer} />} />
       <Route path="/contacts" component={() => <ProtectedRoute component={Contacts} />} />
       <Route path="/history" component={() => <ProtectedRoute component={History} />} />
       <Route path="/voicemail" component={() => <ProtectedRoute component={VoicemailPage} />} />
       <Route path="/search" component={() => <ProtectedRoute component={SearchPage} />} />
+      <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
       <Route component={NotFound} />
     </Switch>
   );
