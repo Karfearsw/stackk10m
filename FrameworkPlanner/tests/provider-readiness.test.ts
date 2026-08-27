@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+const { getAppSetting } = vi.hoisted(() => ({ getAppSetting: vi.fn() }));
+vi.mock('../server/storage.js', () => ({
+  storage: { getAppSetting: (...args: any[]) => getAppSetting(...args) },
+}));
+
 // Mock the telnyx client before importing the module under test
 vi.mock('../server/services/telecom/telnyx-client', () => ({
   telnyx: {
@@ -42,6 +47,8 @@ describe('Provider Readiness Service', () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    getAppSetting.mockReset();
+    getAppSetting.mockResolvedValue(null);
     // Set required env vars for a basic test
     process.env.TELNYX_API_KEY = 'test-api-key';
     process.env.TELNYX_CONNECTION_ID = '1234567890';
