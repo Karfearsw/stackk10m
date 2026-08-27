@@ -22,7 +22,8 @@ const Leads = React.lazy(() => import("@/pages/leads"));
 const Campaigns = React.lazy(() => import("@/pages/campaigns"));
 const RvmPage = React.lazy(() => import("@/pages/rvm"));
 const PropertyDetail = React.lazy(() => import("@/pages/property-detail"));
-const Properties = React.lazy(() => import("@/pages/properties"));
+const Properties = React.lazy(() => import("@/pages/properties").then(m => ({ default: m.Properties })));
+const Opportunities = React.lazy(() => import("@/pages/properties").then(m => ({ default: (m as any).default })));
 const Contracts = React.lazy(() => import("@/pages/contracts"));
 const ContractGenerator = React.lazy(() => import("@/pages/contract-generator"));
 const ContractWizard = React.lazy(() => import("@/pages/contract-wizard"));
@@ -134,7 +135,7 @@ function Router() {
       <Route path="/property/:id" component={() => <ProtectedRoute component={PropertyDetail} />} />
       <Route path="/opportunities/:id" component={() => <ProtectedRoute component={PropertyDetail} />} />
       <Route path="/properties" component={() => <ProtectedRoute component={Properties} />} />
-      <Route path="/opportunities" component={() => <ProtectedRoute component={Properties} />} />
+      <Route path="/opportunities" component={() => <ProtectedRoute component={Opportunities} />} />
       <Route path="/contracts" component={() => <ProtectedRoute component={Contracts} />} />
       <Route path="/contract-generator" component={() => <ProtectedRoute component={ContractGenerator} />} />
       <Route path="/contracts/new" component={() => <ProtectedRoute component={ContractWizard} />} />
