@@ -315,8 +315,11 @@ export default function Buyers() {
     phone: "",
     preferredPropertyTypes: [] as string[],
     preferredAreas: "",
+    zipCodes: "",
     minBudget: "",
     maxBudget: "",
+    minBeds: "",
+    maxBeds: "",
     dealsPerMonth: "",
     proofOfFunds: false,
     proofOfFundsNotes: "",
@@ -521,17 +524,17 @@ export default function Buyers() {
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Add New Buyer</DialogTitle>
-            <DialogDescription>Add a cash buyer to your network</DialogDescription>
-          </DialogHeader>
-          <BuyerForm 
-            formData={formData} 
-            setFormData={setFormData} 
-            onSubmit={() => handleSubmit(false)}
-            isPending={createBuyerMutation.isPending || updateBuyerMutation.isPending}
-          />
-        </DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add New Buyer</DialogTitle>
+                <DialogDescription>Add a cash buyer to your network</DialogDescription>
+              </DialogHeader>
+              <BuyerForm 
+                formData={formData} 
+                setFormData={setFormData} 
+                onSubmit={() => handleSubmit(false)}
+                isPending={createBuyerMutation.isPending || updateBuyerMutation.isPending}
+              />
+            </DialogContent>
           </Dialog>
         </div>
       </div>
