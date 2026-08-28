@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
@@ -8,10 +8,11 @@ import { QueryError } from "@/components/ui/query-state";
 
 function useQueryParam(name: string) {
   const [value, setValue] = useState<string>("");
+  const [location, setLocation] = useLocation();
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setValue(params.get(name) || "");
-  }, [name]);
+  }, [name, location]);
   return value;
 }
 
@@ -79,4 +80,3 @@ export default function SearchPage() {
     </Layout>
   );
 }
-

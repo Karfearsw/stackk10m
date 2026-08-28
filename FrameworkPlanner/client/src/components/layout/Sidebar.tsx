@@ -28,6 +28,8 @@ import {
   Zap,
   ScrollText,
   Shield,
+  Search,
+  FileSignature,
   ActivitySquare,
   MoreHorizontal,
   MessageSquare,
@@ -106,6 +108,8 @@ const menuGroups = [
     name: "Tools",
     icon: Wrench,
     items: [
+      { name: "Search", href: "/search", icon: Search },
+      { name: "Contract Generator", href: "/contract-generator", icon: FileSignature },
       { name: "Calculator", href: "/calculator", icon: Calculator },
       { name: "Timesheet", href: "/timesheet", icon: Clock },
       { name: "Notifications", href: "/notifications", icon: Bell },
