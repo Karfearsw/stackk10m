@@ -47,6 +47,9 @@ describe('Provider Readiness Service', () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    // Clear AI assistant env vars to ensure test isolation
+    delete process.env.FEATURE_AI_ASSISTANT;
+    delete process.env.TELNYX_AI_ASSISTANT_ID;
     getAppSetting.mockReset();
     getAppSetting.mockResolvedValue(null);
     // Set required env vars for a basic test
