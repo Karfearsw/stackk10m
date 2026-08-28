@@ -54,11 +54,11 @@ interface Buyer {
   totalRevenue: string | null;
   notes: string | null;
   tags: string[] | null;
-  lastContactDate: string | null;
-  createdAt: string;
   zipCodes: string[] | null;
   minBeds: number | null;
   maxBeds: number | null;
+  lastContactDate: string | null;
+  createdAt: string;
 }
 
 interface BuyerCommunication {
@@ -431,9 +431,9 @@ export default function Buyers() {
       zipCodes: buyer.zipCodes?.join(", ") || "",
       minBudget: buyer.minBudget || "",
       maxBudget: buyer.maxBudget || "",
-      dealsPerMonth: buyer.dealsPerMonth?.toString() || "",
       minBeds: buyer.minBeds?.toString() || "",
       maxBeds: buyer.maxBeds?.toString() || "",
+      dealsPerMonth: buyer.dealsPerMonth?.toString() || "",
       proofOfFunds: buyer.proofOfFunds || false,
       proofOfFundsNotes: buyer.proofOfFundsNotes || "",
       isVip: buyer.isVip || false,

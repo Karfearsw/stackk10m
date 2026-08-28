@@ -17,7 +17,8 @@ import {
   UserCheck,
   Phone,
   Voicemail,
-  History
+  History,
+  Search
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -35,6 +36,8 @@ const navigation = [
   { name: "Voicemail", href: "/voicemail", icon: Voicemail },
   { name: "Buyers", href: "/buyers", icon: UserCheck },
   { name: "Contracts", href: "/contracts", icon: FileText },
+  { name: "Search", href: "/search", icon: Search },
+  { name: "Contract Generator", href: "/contract-generator", icon: FileText },
   { name: "Analytics", href: "/analytics", icon: PieChart },
   { name: "Playground", href: "/playground", icon: Lightbulb },
   { name: "Calculator", href: "/calculator", icon: Calculator },
