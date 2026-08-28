@@ -72,6 +72,17 @@ function DialerWorkspaceInner() {
       if (evt.callControlId && callControlId && evt.callControlId !== callControlId) return;
       if (evt.state) updateCallState(evt.state);
     },
+    onSessionStateChanged: useCallback((evt: any) => {
+      setSession((prev: any) => {
+        if (!prev || Number(evt.sessionId) !== Number(prev.id)) return prev;
+        return { ...prev, status: evt.status, finalDisposition: evt.finalDisposition ?? prev.finalDisposition };
+      });
+      const legacy = sessionStatusToLegacy(evt.status);
+      setStatus(legacy);
+      // start the call timer when the two-leg session actually connects
+      if (evt.status === 'connected') setStartTs((prev) => prev ?? Date.now());
+      if (legacy === 'ended' || legacy === 'failed') setStartTs(null);
+    }, []),
   });
   const queryClient = useQueryClient();
 
@@ -99,12 +110,32 @@ function DialerWorkspaceInner() {
   const aiAutoStartedRef = useRef(false);
   const [saveLogPending, setSaveLogPending] = useState(false);
   const [logSaved, setLogSaved] = useState(false);
+  const [session, setSession] = useState<any>(null);
+  const [sessionBusy, setSessionBusy] = useState(false);
+  const [sessionError, setSessionError] = useState("");
+  const [sessionMuted, setSessionMuted] = useState(false);
+  const [sessionHeld, setSessionHeld] = useState(false);
+  const [sessionAiActive, setSessionAiActive] = useState(false);
 
   const [scriptId, setScriptId] = useState<number | null>(null);
   const [scriptName, setScriptName] = useState("");
   const [scriptContent, setScriptContent] = useState("");
   const [scriptIsDefault, setScriptIsDefault] = useState(false);
   const [scriptSaving, setScriptSaving] = useState(false);
+
+  const SESSION_LABELS: Record<string, string> = {
+    queued: "Preparing call", agent_dialing: "Calling you…", agent_ringing: "Waiting for you to answer…",
+    agent_answered: "You're on — calling lead…", lead_dialing: "Calling lead…", lead_ringing: "Lead ringing…",
+    bridging: "Bridging…", connected: "Connected", completed: "Call ended", failed: "Failed",
+    cancelled: "Cancelled", validation_failed: "Validation failed",
+  };
+  const ACTIVE_SESSION = new Set(["queued", "agent_dialing", "agent_ringing", "agent_answered", "lead_dialing", "lead_ringing", "bridging", "connected"]);
+  const sessionStatusToLegacy = (s: string): "idle" | "dialing" | "ringing" | "connected" | "ended" | "failed" => {
+    if (s === "connected") return "connected";
+    if (s === "failed") return "failed";
+    if (s === "completed" || s === "cancelled" || s === "validation_failed") return "ended";
+    return "dialing";
+  };
 
   const initial = useMemo(() => {
     if (typeof window === "undefined") return { leadId: null as number | null, propertyId: null as number | null, number: "" };
@@ -170,6 +201,11 @@ function DialerWorkspaceInner() {
     setStartTs(null);
     setElapsedMs(0);
     setLogSaved(false);
+    setSession(null);
+    setSessionError("");
+    setSessionMuted(false);
+    setSessionHeld(false);
+    setSessionAiActive(false);
     wasConnectedRef.current = false;
     lastPatchedStatusRef.current = null;
     aiAutoStartedRef.current = false;
@@ -252,10 +288,38 @@ function DialerWorkspaceInner() {
   const formatted = useMemo(() => formatE164(number), [number]);
 
   const startOutboundCall = useCallback(async () => {
-    if (!formatted) return;
     const effectiveLeadId = activeItem?.leadId ?? initial.leadId;
+    if (effectiveLeadId) {
+      // Two-legged click-to-dial: ring the agent's configured phone first, then
+      // dial the lead only after the agent answers, then bridge both legs.
+      // The session state machine is driven by signed Telnyx webhook events.
+      setSessionBusy(true);
+      setSessionError("");
+      try {
+        const res = await apiRequest("POST", "/api/v1/telecom/call-sessions", {
+          leadId: effectiveLeadId,
+          mode: "human_first",
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to start call");
+        setSession(data.session);
+        setStatus(sessionStatusToLegacy(data.session.status));
+        setCallId(null);
+        setStartTs(null);
+      } catch (e: any) {
+        const msg = String(e?.message || e || "Failed to start call");
+        setSessionError(msg);
+        setStatus("failed");
+        setCallId(null);
+        setStartTs(null);
+      } finally {
+        setSessionBusy(false);
+      }
+      return;
+    }
+    if (!formatted) return;
     const data = await makeCall(formatted, {
-      metadata: { leadId: effectiveLeadId || undefined, propertyId: initial.propertyId || undefined },
+      metadata: { propertyId: initial.propertyId || undefined },
     });
     setCallId(data.callLogId);
     setStatus("dialing");
@@ -264,6 +328,79 @@ function DialerWorkspaceInner() {
     callFailedRef.current = false;
     lastPatchedStatusRef.current = "dialing";
   }, [activeItem?.leadId, formatted, initial.leadId, initial.propertyId, lastPatchedStatusRef, makeCall]);
+
+  // Session controls (two-leg). Mute/hold/transfer run against the agent leg;
+  // the AI Screener runs against the lead leg so it talks to the lead.
+  const sessionLeg = session?.agentLegCallControlId || null;
+  const sessionLeadLeg = session?.leadLegCallControlId || null;
+  const sessionActive = Boolean(session && ACTIVE_SESSION.has(session.status));
+
+  const toggleSessionMute = async () => {
+    if (!sessionLeg) return;
+    const target = !sessionMuted;
+    try {
+      await apiRequest("POST", `/api/telephony/outbound/${encodeURIComponent(sessionLeg)}/mute`, { muted: target });
+      setSessionMuted(target);
+    } catch (e: any) {
+      toast.error(String(e?.message || e || "Mute failed"));
+    }
+  };
+
+  const toggleSessionHold = async () => {
+    if (!sessionLeg) return;
+    const action = sessionHeld ? "unhold" : "hold";
+    try {
+      await apiRequest("POST", `/api/telephony/outbound/${encodeURIComponent(sessionLeg)}/hold`, { action });
+      setSessionHeld(!sessionHeld);
+    } catch (e: any) {
+      toast.error(String(e?.message || e || "Hold failed"));
+    }
+  };
+
+  const transferSession = async (to: string) => {
+    if (!sessionLeg) throw new Error("No active call leg");
+    await apiRequest("POST", `/api/telephony/outbound/${encodeURIComponent(sessionLeg)}/transfer`, { to });
+  };
+
+  const toggleSessionAi = async () => {
+    if (!sessionLeadLeg) return;
+    if (sessionAiActive) {
+      try {
+        await apiRequest("POST", `/api/telephony/outbound/${encodeURIComponent(sessionLeadLeg)}/ai-assistant`, { action: "stop" });
+        setSessionAiActive(false);
+      } catch (e: any) {
+        toast.error(String(e?.message || e || "Failed to stop AI Screener"));
+      }
+      return;
+    }
+    try {
+      const res = await apiRequest("POST", `/api/telephony/outbound/${encodeURIComponent(sessionLeadLeg)}/ai-assistant`, { action: "start", assistantId: null });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to start AI Screener");
+      setSessionAiActive(true);
+    } catch (e: any) {
+      toast.error(String(e?.message || e || "Failed to start AI Screener"));
+    }
+  };
+
+  // Poll the active session so the UI stays truthful even if the WS drops.
+  useEffect(() => {
+    if (!session?.id || !ACTIVE_SESSION.has(session.status)) return;
+    const handle = setInterval(async () => {
+      try {
+        const res = await apiRequest("GET", `/api/v1/telecom/call-sessions/${session.id}`);
+        const data = await res.json();
+        if (data?.session) {
+          setSession(data.session);
+          const legacy = sessionStatusToLegacy(data.session.status);
+          setStatus(legacy);
+          if (data.session.status === 'connected') setStartTs((prev) => prev ?? Date.now());
+          if (legacy === 'ended' || legacy === 'failed') setStartTs(null);
+        }
+      } catch { /* transient — next tick retries */ }
+    }, 2000);
+    return () => clearInterval(handle);
+  }, [session?.id, session?.status]);
 
   const sendSms = useMutation({
     mutationFn: async () => {
@@ -489,8 +626,6 @@ function DialerWorkspaceInner() {
             <div className="flex flex-wrap gap-2">
               <Button
                 onClick={async () => {
-                  if (!activeItem?.leadId) return;
-                  if (!formatted) return;
                   try {
                     await startOutboundCall();
                   } catch {
@@ -499,14 +634,28 @@ function DialerWorkspaceInner() {
                     setStartTs(null);
                   }
                 }}
-                disabled={!formatted || status === "dialing" || status === "connected"}
+                disabled={(!formatted && !(activeItem?.leadId ?? initial.leadId)) || status === "dialing" || status === "ringing" || status === "connected" || sessionBusy}
               >
                 <Phone className="w-4 h-4 mr-2" />
-                Call
+                {sessionBusy ? "Starting…" : "Call"}
               </Button>
               <Button
                 variant="destructive"
                 onClick={async () => {
+                  if (session) {
+                    setSessionBusy(true);
+                    try {
+                      const res = await apiRequest("POST", `/api/v1/telecom/call-sessions/${session.id}/hangup`);
+                      const data = await res.json();
+                      setSession(data?.session);
+                      setStatus("ended");
+                    } catch (e: any) {
+                      toast.error(e?.message || "Failed to end call");
+                    } finally {
+                      setSessionBusy(false);
+                    }
+                    return;
+                  }
                   const id = callId;
                   const durationMs = startTs ? Date.now() - startTs : 0;
                   const finalStatus = callFailedRef.current ? "failed" : wasConnectedRef.current ? "answered" : "missed";
@@ -530,20 +679,20 @@ function DialerWorkspaceInner() {
 
                   setStatus("ended");
                 }}
-                disabled={!activeCall}
+                disabled={(!activeCall && !session) || sessionBusy}
               >
                 <PhoneOff className="w-4 h-4 mr-2" />
                 End
               </Button>
-              {activeCall ? (
+              {(activeCall || sessionActive) ? (
                 <>
-                  <Button variant="outline" onClick={toggleMute}>
-                    {activeCall.muted ? <MicOff className="w-4 h-4 mr-2" /> : <Mic className="w-4 h-4 mr-2" />}
-                    {activeCall.muted ? "Unmute" : "Mute"}
+                  <Button variant="outline" onClick={activeCall ? toggleMute : toggleSessionMute}>
+                    {(activeCall ? activeCall.muted : sessionMuted) ? <MicOff className="w-4 h-4 mr-2" /> : <Mic className="w-4 h-4 mr-2" />}
+                    {(activeCall ? activeCall.muted : sessionMuted) ? "Unmute" : "Mute"}
                   </Button>
-                  <Button variant="outline" onClick={toggleHold}>
-                    {activeCall.state === "held" ? <Play className="w-4 h-4 mr-2" /> : <Pause className="w-4 h-4 mr-2" />}
-                    {activeCall.state === "held" ? "Resume" : "Hold"}
+                  <Button variant="outline" onClick={activeCall ? toggleHold : toggleSessionHold}>
+                    {(activeCall ? activeCall.state === "held" : sessionHeld) ? <Play className="w-4 h-4 mr-2" /> : <Pause className="w-4 h-4 mr-2" />}
+                    {(activeCall ? activeCall.state === "held" : sessionHeld) ? "Resume" : "Hold"}
                   </Button>
                   <Button
                     variant="outline"
@@ -558,22 +707,26 @@ function DialerWorkspaceInner() {
                     onClick={() => {
                       if (aiAssistantBusy) return;
                       setAiAssistantBusy(true);
-                      if (aiAssistantActive) {
-                        stopAiAssistant().finally(() => setAiAssistantBusy(false));
+                      if (activeCall) {
+                        if (aiAssistantActive) {
+                          stopAiAssistant().finally(() => setAiAssistantBusy(false));
+                        } else {
+                          startAiAssistant()
+                            .catch((e: any) => toast.error(e?.message || "Failed to start AI Screener"))
+                            .finally(() => setAiAssistantBusy(false));
+                        }
                       } else {
-                        startAiAssistant()
-                          .catch((e: any) => toast.error(e?.message || "Failed to start AI Screener"))
-                          .finally(() => setAiAssistantBusy(false));
+                        toggleSessionAi().finally(() => setAiAssistantBusy(false));
                       }
                     }}
                     disabled={aiAssistantBusy}
                   >
                     <Bot className="w-4 h-4 mr-2" />
-                    {aiAssistantActive ? "Stop AI Screener" : "Start AI Screener"}
+                    {(aiAssistantActive || sessionAiActive) ? "Stop AI Screener" : "Start AI Screener"}
                   </Button>
                 </>
               ) : null}
-              {transferOpen && activeCall && (
+              {transferOpen && (activeCall || sessionActive) && (
                 <div className="flex items-center gap-2 w-full">
                   <Input
                     value={transferNumber}
@@ -588,7 +741,7 @@ function DialerWorkspaceInner() {
                     onClick={async () => {
                       setTransferBusy(true);
                       try {
-                        await transferCall(transferNumber.trim());
+                        await (activeCall ? transferCall(transferNumber.trim()) : transferSession(transferNumber.trim()));
                         toast.success("Call transferred");
                         setTransferOpen(false);
                         setTransferNumber("");
@@ -626,9 +779,10 @@ function DialerWorkspaceInner() {
             </div>
 
             <div className="text-sm text-muted-foreground">
-              Status: {status}
+              Status: {session ? (SESSION_LABELS[session.status] || session.status) : status}
               {status === "connected" && startTs ? <span> • {Math.floor((elapsedMs || 0) / 1000)}s</span> : null}
-              {aiAssistantActive ? <span className="text-primary"> • AI Screener on</span> : null}
+              {(aiAssistantActive || sessionAiActive) ? <span className="text-primary"> • AI Screener on</span> : null}
+              {sessionError ? <span className="block text-xs text-destructive"> • {sessionError}</span> : null}
             </div>
           </CardContent>
         </Card>

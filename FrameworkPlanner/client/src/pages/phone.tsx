@@ -367,7 +367,7 @@ export default function PhoneWorkspace() {
                         </div>
 
                         <div className="flex flex-wrap gap-2 mt-4">
-                          <Button onClick={() => createCall.mutate({ direction: "outbound", number: formatted })} disabled={!formatted || status === "dialing" || status === "connected"} aria-label="Call">
+                          <Button onClick={() => createCall.mutate({ direction: "outbound", number: formatted })} disabled={!formatted || createCall.isPending || status === "dialing" || status === "connected"} aria-label="Call">
                             <Phone className="w-4 h-4 mr-2" /> Call
                           </Button>
                           <Button variant="destructive" onClick={() => callId && endCallMutation.mutate({ id: callId, succeeded: true })} disabled={!callId} aria-label="End Call">

@@ -1399,6 +1399,7 @@ export default function PropertyDetail() {
 
 function OpportunityEditDialog({ property }: { property?: any }) {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [open, setOpen] = React.useState(false);
   const [formData, setFormData] = React.useState({
     status: "",
@@ -1448,18 +1449,8 @@ function OpportunityEditDialog({ property }: { property?: any }) {
     },
   });
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-    Array.from(files).forEach((file) => {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const base64 = event.target?.result as string;
-        setFormData((prev) => ({ ...prev, images: [...prev.images, base64] }));
-      };
-      reader.readAsDataURL(file);
-    });
-  };
+  const photosMutation = useMutation({    mutationFn: async (files: FileList) => {      const fd = new FormData();      Array.from(files).forEach((f) => fd.append('photos', f));      const res = await apiUpload('POST', `/api/opportunities/${property.id}/photos`, fd);      return await res.json();    },    onSuccess: async () => {      await queryClient.invalidateQueries({ queryKey: ['/api/opportunities', property.id] });      setFormData((prev) => ({ ...prev, images: photosMutation.data?.property?.images || prev.images }));      toast({ title: 'Photos uploaded' });    },    onError: (e: any) => toast({ title: e?.message || 'Upload failed', variant: 'destructive' }),  });  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {    const files = e.target.files;    if (!files) return;    photosMutation.mutate(files);    e.currentTarget.value = '';  };
+
 
   const removeImage = (index: number) => {
     setFormData((prev) => ({ ...prev, images: prev.images.filter((_, i) => i !== index) }));
@@ -1503,7 +1494,6 @@ function OpportunityEditDialog({ property }: { property?: any }) {
               occupancy: formData.occupancy || null,
               apn: formData.apn || null,
               notes: formData.notes || null,
-              images: formData.images,
             });
           }}
         >

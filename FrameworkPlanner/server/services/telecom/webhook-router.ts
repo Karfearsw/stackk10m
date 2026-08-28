@@ -30,27 +30,33 @@ export function createTelnyxWebhookRouter() {
       const eventType = String(event?.data?.event_type || event?.event_type || "unknown");
       const eventId = String(event?.data?.id || event?.id || event?.data?.event_id || "");
 
-      // Acknowledge immediately — Telnyx requires fast 2xx responses
-      res.status(200).json({ received: true, eventType });
-
-      // Process asynchronously
-      setImmediate(async () => {
-        try {
-          // Idempotency: each Telnyx event id is processed exactly once.
-          if (!(await claimEvent(eventId, eventType))) return;
-          if (eventType.startsWith("call.")) {
-            await handleCallEvent(event);
-            await handleSessionCallEvent(event);
-          }
-          if (eventType.startsWith("message.")) await handleMessageEvent(event);
-          if (eventType.startsWith("ai_assistant.")) {
-            await handleAiAssistantEvent(event);
-            await handleSessionAiEvent(event);
-          }
-        } catch (err) {
-          console.error("Telnyx webhook background error:", err);
+      // Process inline: on serverless (Vercel) the function is frozen as soon
+      // as the response is sent, so setImmediate/setTimeout background work
+      // never runs. Await the (idempotent) processing before responding so the
+      // call state machine actually advances in production.
+      if (!(await claimEvent(eventId, eventType))) {
+        return res.status(200).json({ received: true, eventType, duplicate: true });
+      }
+      try {
+        if (eventType.startsWith("call.")) {
+          await handleCallEvent(event);
+          await handleSessionCallEvent(event);
+        } else if (eventType.startsWith("message.")) {
+          await handleMessageEvent(event);
+        } else if (eventType.startsWith("ai_assistant.")) {
+          await handleAiAssistantEvent(event);
+          await handleSessionAiEvent(event);
         }
-      });
+      } catch (err) {
+        console.error("Telnyx webhook processing error:", err);
+        // Release the idempotency claim so a Telnyx retry can reprocess.
+        try {
+          if (eventId) {
+            await pool.query(`DELETE FROM processed_webhook_events WHERE event_id = $1`, [eventId]);
+          }
+        } catch { /* ignore */ }
+      }
+      res.status(200).json({ received: true, eventType });
     } catch (error: any) {
       console.error("Telnyx webhook error:", error);
       // Always acknowledge to prevent Telnyx retries

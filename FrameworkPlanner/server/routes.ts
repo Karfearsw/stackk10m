@@ -4675,13 +4675,15 @@ export async function registerRoutes(
         }
         rows = await storage.getLeadSourceOptions(user.id);
       }
-      res.json(rows.map((r: any) => ({
-        id: r.id,
-        value: r.value,
-        label: r.label,
-        isActive: r.isActive,
-        sortOrder: r.sortOrder,
-      })));
+      const seen = new Set<string>();
+      const deduped = [];
+      for (const r of rows) {
+        const v = String(r?.value || '').trim();
+        if (!v || seen.has(v)) continue;
+        seen.add(v);
+        deduped.push({ id: r.id, value: v, label: r.label, isActive: r.isActive, sortOrder: r.sortOrder });
+      }
+      res.json(deduped);
     } catch (error: any) {
       try {
         const readiness = await getSchemaReadiness();
