@@ -54,6 +54,9 @@ interface Buyer {
   totalRevenue: string | null;
   notes: string | null;
   tags: string[] | null;
+  zipCodes: string[] | null;
+  minBeds: number | null;
+  maxBeds: number | null;
   lastContactDate: string | null;
   createdAt: string;
 }
@@ -312,8 +315,11 @@ export default function Buyers() {
     phone: "",
     preferredPropertyTypes: [] as string[],
     preferredAreas: "",
+    zipCodes: "",
     minBudget: "",
     maxBudget: "",
+    minBeds: "",
+    maxBeds: "",
     dealsPerMonth: "",
     proofOfFunds: false,
     proofOfFundsNotes: "",
@@ -400,8 +406,11 @@ export default function Buyers() {
       phone: "",
       preferredPropertyTypes: [],
       preferredAreas: "",
+      zipCodes: "",
       minBudget: "",
       maxBudget: "",
+      minBeds: "",
+      maxBeds: "",
       dealsPerMonth: "",
       proofOfFunds: false,
       proofOfFundsNotes: "",
@@ -419,8 +428,11 @@ export default function Buyers() {
       phone: buyer.phone || "",
       preferredPropertyTypes: buyer.preferredPropertyTypes || [],
       preferredAreas: buyer.preferredAreas?.join(", ") || "",
+      zipCodes: buyer.zipCodes?.join(", ") || "",
       minBudget: buyer.minBudget || "",
       maxBudget: buyer.maxBudget || "",
+      minBeds: buyer.minBeds?.toString() || "",
+      maxBeds: buyer.maxBeds?.toString() || "",
       dealsPerMonth: buyer.dealsPerMonth?.toString() || "",
       proofOfFunds: buyer.proofOfFunds || false,
       proofOfFundsNotes: buyer.proofOfFundsNotes || "",
@@ -440,8 +452,11 @@ export default function Buyers() {
       phone: formData.phone || null,
       preferredPropertyTypes: formData.preferredPropertyTypes.length > 0 ? formData.preferredPropertyTypes : null,
       preferredAreas: formData.preferredAreas ? formData.preferredAreas.split(",").map(s => s.trim()) : null,
+      zipCodes: formData.zipCodes ? formData.zipCodes.split(",").map(s => s.trim()).filter(Boolean) : null,
       minBudget: formData.minBudget || null,
       maxBudget: formData.maxBudget || null,
+      minBeds: formData.minBeds ? parseInt(formData.minBeds) : null,
+      maxBeds: formData.maxBeds ? parseInt(formData.maxBeds) : null,
       dealsPerMonth: formData.dealsPerMonth ? parseInt(formData.dealsPerMonth) : null,
       proofOfFunds: formData.proofOfFunds,
       isVip: formData.isVip,
@@ -509,17 +524,17 @@ export default function Buyers() {
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Add New Buyer</DialogTitle>
-            <DialogDescription>Add a cash buyer to your network</DialogDescription>
-          </DialogHeader>
-          <BuyerForm 
-            formData={formData} 
-            setFormData={setFormData} 
-            onSubmit={() => handleSubmit(false)}
-            isPending={createBuyerMutation.isPending || updateBuyerMutation.isPending}
-          />
-        </DialogContent>
+              <DialogHeader>
+                <DialogTitle>Add New Buyer</DialogTitle>
+                <DialogDescription>Add a cash buyer to your network</DialogDescription>
+              </DialogHeader>
+              <BuyerForm 
+                formData={formData} 
+                setFormData={setFormData} 
+                onSubmit={() => handleSubmit(false)}
+                isPending={createBuyerMutation.isPending || updateBuyerMutation.isPending}
+              />
+            </DialogContent>
           </Dialog>
         </div>
       </div>

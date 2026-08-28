@@ -18,16 +18,33 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function extractErrorMessage(error: any): string {
+  if (!error) return "";
+  if (typeof error.message === "string") return error.message;
+  if (error.message && typeof error.message === "object") {
+    const nested = extractErrorMessage(error.message);
+    if (nested) return nested;
+  }
+  if (typeof error.stack === "string") return error.stack;
+  return String(error);
+}
+
 function isDbConnectivityError(error: any): boolean {
-  if (!error) return false;
-  const code = error?.code;
+  if (!error || typeof error !== "object") return false;
+  // Neon serverless driver emits ErrorEvent objects (type: 'error') without
+  // a proper message when WebSocket connection fails. Treat these as connectivity errors.
+  const ctorName = error.constructor?.name;
+  if (ctorName === "ErrorEvent") return true;
+  if (error.type === "error" && error.message === "") return true;
+  if (error?.error instanceof TypeError) return true;
+  const code = error?.code || error?.error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
   if (code === "53300" || code === "08000" || code === "08003" || code === "08006" || code === "08001") return true;
   if (code === "ENETUNREACH" || code === "EHOSTUNREACH") return true;
   // The Neon serverless driver (WebSocket) surfaces DNS/connect failures as a
   // message with a null code, so also match on the message and cause chain.
-  const message = String(error?.message || "");
+  const message = extractErrorMessage(error);
   if (/network error|non-101|socket hang up|connect econn|getaddrinfo|econnrefused|enotfound|etimedout/i.test(message)) return true;
   const cause = error?.cause;
   if (cause && cause !== error) return isDbConnectivityError(cause);
@@ -119,9 +136,10 @@ async function checkSchemaOnce(): Promise<SchemaReadiness> {
     }
     return { ok: true, checkedAt };
   } catch (e: any) {
-    const code = e?.code ? String(e.code) : null;
+    const actualError = e?.error || e;
+    const code = actualError?.code ? String(actualError.code) : null;
     const isConn = isDbConnectivityError(e);
-    log("error", { kind: "check_failed", message: String(e?.message || e), code, connectivity: isConn });
+    log("error", { kind: "check_failed", message: String(actualError?.message || actualError), code, connectivity: isConn });
     return {
       ok: false,
       checkedAt,

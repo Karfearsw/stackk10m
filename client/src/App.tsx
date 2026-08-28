@@ -9,7 +9,8 @@ import NotFound from "@/pages/not-found";
 import Dashboard from "@/pages/dashboard";
 import Leads from "@/pages/leads";
 import PropertyDetail from "@/pages/property-detail";
-import Properties from "@/pages/properties";
+import Opportunities from "@/pages/properties";
+import { Properties } from "@/pages/properties";
 import Contracts from "@/pages/contracts";
 import ContractGenerator from "@/pages/contract-generator";
 import Analytics from "@/pages/analytics";
@@ -21,6 +22,7 @@ import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
 import Notifications from "@/pages/notifications";
 import Playground from "@/pages/playground";
+import Calculator from "@/pages/calculator";
 import Buyers from "@/pages/buyers";
 import Dialer from "@/pages/dialer";
 import Contacts from "@/pages/contacts";
@@ -67,6 +69,8 @@ function Router() {
       <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
       <Route path="/leads" component={() => <ProtectedRoute component={Leads} />} />
       <Route path="/properties" component={() => <ProtectedRoute component={Properties} />} />
+      <Route path="/opportunities" component={() => <ProtectedRoute component={Opportunities} />} />
+      <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
       <Route path="/property/:id" component={() => <ProtectedRoute component={PropertyDetail} />} />
       <Route path="/contracts" component={() => <ProtectedRoute component={Contracts} />} />
       <Route path="/contract-generator" component={() => <ProtectedRoute component={ContractGenerator} />} />

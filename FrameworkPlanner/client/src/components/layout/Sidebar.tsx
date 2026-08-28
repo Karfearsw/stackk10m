@@ -34,6 +34,7 @@ import {
   Briefcase,
   BarChart3,
   Wrench,
+  Search
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -48,6 +49,7 @@ const primaryNavigation = [
   { name: "Leads Pipeline", href: "/leads", icon: Users },
   { name: "Opportunities", href: "/opportunities", icon: Building2 },
   { name: "Contacts", href: "/contacts", icon: Users },
+  { name: "Search", href: "/search", icon: Search },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
@@ -82,6 +84,7 @@ const menuGroups = [
       { name: "Field Mode", href: "/field", icon: MapPin },
       { name: "Buyers", href: "/buyers", icon: UserCheck },
       { name: "Contracts", href: "/contracts", icon: FileText },
+      { name: "Contract Generator", href: "/contract-generator", icon: FileText },
     ],
   },
   {

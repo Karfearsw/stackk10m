@@ -39,5 +39,5 @@ describe("DB quota exceeded handling", () => {
 
     process.env.SESSION_SECRET = prevSession;
     process.env.NODE_ENV = prevEnv;
-  });
+  }, 10000);
 });

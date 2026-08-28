@@ -134,7 +134,21 @@ function authJwtSecret() {
   if (!secret || !String(secret).trim()) return null;
   return new TextEncoder().encode(String(secret));
 }
+function extractErrorMessage(error: any): string {
+  if (!error) return "";
+  if (typeof error.message === "string") return error.message;
+  if (error.message && typeof error.message === "object") {
+    const nested = extractErrorMessage(error.message);
+    if (nested) return nested;
+  }
+  if (typeof error.stack === "string") return error.stack;
+  return String(error);
+}
+
 function isDbConnectivityError(error: any): boolean {
+  // Neon serverless driver emits ErrorEvent objects (type: 'error') without
+  // a proper message when WebSocket connection fails. Treat these as connectivity errors.
+  if (error.type === "error" && error.message === "") return true;
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
@@ -143,7 +157,7 @@ function isDbConnectivityError(error: any): boolean {
   if (code === "ERR_TLS_CERT_ALTNAME_INVALID" || code === "CERT_HAS_EXPIRED") return true;
   const nested = error?.errors;
   if (Array.isArray(nested)) return nested.some(isDbConnectivityError);
-  const message = String(error?.message || "");
+  const message = extractErrorMessage(error);
   if (message.includes("DATABASE_URL")) return true;
   // Neon serverless driver (WebSocket) surfaces DNS/connect failures as a message with a null code.
   if (/network error|non-101|socket hang up|connect econn|getaddrinfo|econnrefused|enotfound|etimedout/i.test(message)) return true;
