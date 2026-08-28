@@ -703,3 +703,218 @@ export default function Opportunities() {
     </Layout>
   );
 }
+
+export function Properties() {
+  const queryClient = useQueryClient();
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingProperty, setEditingProperty] = useState<Property | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  const { data: properties = [], isLoading } = useQuery<Property[]>({
+    queryKey: ["/api/properties"],
+    queryFn: async () => {
+      const res = await fetch("/api/properties");
+      if (!res.ok) throw new Error("Failed to fetch properties");
+      return res.json();
+    }
+  });
+
+  const createPropertyMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await fetch("/api/properties", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error("Failed to create property");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
+      setIsDialogOpen(false);
+      setEditingProperty(null);
+    }
+  });
+
+  const updatePropertyMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: any }) => {
+      const res = await fetch(`/api/properties/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error("Failed to update property");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
+      setIsDialogOpen(false);
+      setEditingProperty(null);
+    }
+  });
+
+  const deletePropertyMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/properties/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Failed to delete property");
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
+      setEditingProperty(null);
+    }
+  });
+
+  const openNewDialog = () => {
+    setEditingProperty(null);
+    setIsDialogOpen(true);
+  };
+
+  const openEditDialog = (property: Property) => {
+    setEditingProperty(property);
+    setIsDialogOpen(true);
+  };
+
+  const handleSubmit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const data = {
+      address: formData.get("address") as string,
+      city: formData.get("city") as string,
+      state: formData.get("state") as string,
+      zipCode: formData.get("zipCode") as string,
+      beds: formData.get("beds") ? parseInt(formData.get("beds") as string) : null,
+      baths: formData.get("baths") ? parseInt(formData.get("baths") as string) : null,
+      sqft: formData.get("sqft") ? parseInt(formData.get("sqft") as string) : null,
+      price: formData.get("price") as string || null,
+      status: formData.get("status") as string || "active",
+      apn: formData.get("apn") as string || null,
+      yearBuilt: formData.get("yearBuilt") ? parseInt(formData.get("yearBuilt") as string) : null,
+      lotSize: formData.get("lotSize") as string || null,
+      occupancy: formData.get("occupancy") as string || null,
+      arv: formData.get("arv") as string || null,
+      repairCost: formData.get("repairCost") as string || null,
+    };
+
+    if (editingProperty) {
+      updatePropertyMutation.mutate({ id: editingProperty.id, data });
+    } else {
+      createPropertyMutation.mutate(data);
+    }
+  };
+
+  const filteredProperties = properties.filter((prop) =>
+    prop.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    prop.city.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  return (
+    <Layout>
+      <div className="flex flex-col gap-2 mb-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2" data-testid="page-title">
+              <Home className="h-8 w-8 text-primary" />
+              Properties
+            </h1>
+            <p className="text-muted-foreground">Manage your property inventory</p>
+          </div>
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger asChild>
+              <Button data-testid="button-add-property">
+                <Plus className="h-4 w-4 mr-2" /> Add Property
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>{editingProperty ? "Edit Property" : "Add New Property"}</DialogTitle>
+                <DialogDescription>
+                  {editingProperty ? "Update property details" : "Add a new property to your inventory"}
+                </DialogDescription>
+              </DialogHeader>
+              <PropertyForm
+                property={editingProperty}
+                onSubmit={handleSubmit}
+                isSubmitting={createPropertyMutation.isPending || updatePropertyMutation.isPending}
+              />
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {isLoading ? (
+          <p className="text-center text-muted-foreground col-span-full">Loading properties...</p>
+        ) : filteredProperties.length === 0 ? (
+          <div className="text-center py-12 col-span-full">
+            <Home className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+            <h3 className="text-lg font-semibold mb-2">No properties found</h3>
+            <p className="text-muted-foreground mb-4">
+              {searchQuery ? "Try adjusting your search." : "Get started by adding your first property."}
+            </p>
+            {!searchQuery && (
+              <Button onClick={openNewDialog} data-testid="button-add-first-property">
+                <Plus className="mr-2 h-4 w-4" /> Add Property
+              </Button>
+            )}
+          </div>
+        ) : (
+          filteredProperties.map((prop) => (
+            <Card key={prop.id}>
+              <CardContent className="pt-6">
+                <div className="flex items-start justify-between mb-2">
+                  <div>
+                    <h3 className="font-semibold">{prop.address}</h3>
+                    <p className="text-sm text-muted-foreground">{prop.city}, {prop.state} {prop.zipCode}</p>
+                  </div>
+                  <Badge variant={prop.status === "active" ? "default" : "secondary"}>
+                    {prop.status || "active"}
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-sm mb-4">
+                  <div>
+                    <p className="text-muted-foreground">Beds</p>
+                    <p className="font-medium">{prop.beds || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Baths</p>
+                    <p className="font-medium">{prop.baths || "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">SqFt</p>
+                    <p className="font-medium">{prop.sqft ? prop.sqft.toLocaleString() : "—"}</p>
+                  </div>
+                </div>
+                {prop.price && (
+                  <p className="text-sm font-medium mb-3">${parseInt(prop.price).toLocaleString()}</p>
+                )}
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={() => openEditDialog(prop)}
+                    data-testid={`button-edit-property-${prop.id}`}
+                  >
+                    <Edit className="h-4 w-4 mr-1" /> Edit
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => {
+                      if (confirm("Delete this property?")) {
+                        deletePropertyMutation.mutate(prop.id);
+                      }
+                    }}
+                    data-testid={`button-delete-property-${prop.id}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))
+        )}
+      </div>
+    </Layout>
+  );
+}

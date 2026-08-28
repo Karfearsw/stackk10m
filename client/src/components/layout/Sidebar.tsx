@@ -17,27 +17,27 @@ import {
   UserCheck,
   Phone,
   Voicemail,
-  History,
-  Search
+  History
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { useSidebar } from "@/contexts/SidebarContext";
 import { useQuery } from "@tanstack/react-query";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { FileSearch, Wand2 } from "lucide-react";
 
 const navigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Leads Pipeline", href: "/leads", icon: Users },
   { name: "Opportunities", href: "/opportunities", icon: Building2 },
+  { name: "Search", href: "/search", icon: FileSearch },
   { name: "Dialer", href: "/dialer", icon: Phone },
   { name: "Contacts", href: "/contacts", icon: Users },
   { name: "History", href: "/history", icon: History },
   { name: "Voicemail", href: "/voicemail", icon: Voicemail },
   { name: "Buyers", href: "/buyers", icon: UserCheck },
   { name: "Contracts", href: "/contracts", icon: FileText },
-  { name: "Search", href: "/search", icon: Search },
-  { name: "Contract Generator", href: "/contract-generator", icon: FileText },
+  { name: "Contract Generator", href: "/contract-generator", icon: Wand2 },
   { name: "Analytics", href: "/analytics", icon: PieChart },
   { name: "Playground", href: "/playground", icon: Lightbulb },
   { name: "Calculator", href: "/calculator", icon: Calculator },
