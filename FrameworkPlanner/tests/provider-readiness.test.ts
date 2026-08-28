@@ -18,6 +18,17 @@ vi.mock('../server/media/documentVault', () => ({
   documentStorageMode: () => 'db',
 }));
 
+vi.mock('../server/services/telecom/ai-config', () => {
+  const parseBool = (v: string | undefined) =>
+    ['1', 'true', 'yes', 'on'].includes(String(v || '').trim().toLowerCase());
+  const getAiAssistantConfig = async () => {
+    const enabled = parseBool(process.env.FEATURE_AI_ASSISTANT);
+    const assistantId = (process.env.TELNYX_AI_ASSISTANT_ID || '').trim() || null;
+    return { enabled, assistantId, source: assistantId ? 'env' : 'none', featureSource: 'env' };
+  };
+  return { getAiAssistantConfig };
+});
+
 vi.mock('../server/services/telecom/video', () => ({
   telnyxVideo: {
     healthCheck: async () => {

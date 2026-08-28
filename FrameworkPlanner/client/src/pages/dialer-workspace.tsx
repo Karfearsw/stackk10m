@@ -10,6 +10,7 @@ import { Switch } from "@/components/ui/switch";
 import { Phone, PhoneOff, Mic, MicOff, Pause, Play, Bot, PhoneForwarded, Loader2 } from "lucide-react";
 import { DialerProvider, useDialer } from "@/contexts/DialerContext";
 import { useSignalWire } from "@/hooks/useSignalWire";
+import { useCallAudio } from "@/hooks/useCallAudio";
 import { TwoLegCallPanel } from "@/components/telnyx/TwoLegCallPanel";
 import { useTelephonyEvents } from "@/hooks/useTelephonyEvents";
 import { TelnyxHealthStatus } from "@/components/telephony/TelnyxHealthStatus";
@@ -86,6 +87,7 @@ function DialerWorkspaceInner() {
   });
   const queryClient = useQueryClient();
 
+  const { startRingback, stopRingback, playConnectTone } = useCallAudio();
   const [number, setNumber] = useState("");
   const [status, setStatus] = useState<"idle" | "dialing" | "ringing" | "connected" | "ended" | "failed">("idle");
   const [startTs, setStartTs] = useState<number | null>(null);
@@ -279,6 +281,21 @@ function DialerWorkspaceInner() {
       queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
     },
   });
+
+
+  const prevAudioStatus = useRef<string | null>(null);
+  useEffect(() => {
+    if (status === prevAudioStatus.current) return;
+    prevAudioStatus.current = status;
+    if (status === "dialing" || status === "ringing") {
+      startRingback();
+    } else if (status === "connected") {
+      stopRingback();
+      playConnectTone();
+    } else if (status === "ended" || status === "failed" || status === "idle") {
+      stopRingback();
+    }
+  }, [status, startRingback, stopRingback, playConnectTone]);
 
   const patchCallLog = async (id: number, patch: any) => {
     const res = await apiRequest("PATCH", `/api/telephony/calls/${id}`, patch);

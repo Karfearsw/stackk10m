@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Phone, PhoneOff, Plus, Search, Clock, Voicemail, Mic, MicOff, Pause, Play, Bot, PhoneForwarded, Loader2 } from "lucide-react";
 import { useSignalWire } from "@/hooks/useSignalWire";
+import { useCallAudio } from "@/hooks/useCallAudio";
 import { useTelephonyEvents } from "@/hooks/useTelephonyEvents";
 import { TelnyxHealthStatus } from "@/components/telephony/TelnyxHealthStatus";
 import { ContactsManager } from "@/components/contacts/ContactsManager";
@@ -66,6 +67,7 @@ export default function PhoneWorkspace() {
     },
   });
 
+  const { startRingback, stopRingback, playConnectTone } = useCallAudio();
   const [tab, setTab] = useState<TabKey>(() => getTabFromLocation());
   const setTabAndUrl = (next: TabKey) => {
     setTab(next);
@@ -128,6 +130,21 @@ export default function PhoneWorkspace() {
   }, [status]);
 
   const formatted = useMemo(() => formatE164(number), [number]);
+
+
+  const prevAudioStatus = useRef<string | null>(null);
+  useEffect(() => {
+    if (status === prevAudioStatus.current) return;
+    prevAudioStatus.current = status;
+    if (status === "dialing" || status === "ringing") {
+      startRingback();
+    } else if (status === "connected") {
+      stopRingback();
+      playConnectTone();
+    } else if (status === "ended" || status === "failed" || status === "idle") {
+      stopRingback();
+    }
+  }, [status, startRingback, stopRingback, playConnectTone]);
 
   const patchCallLog = async (id: number, patch: any) => {
     try {
