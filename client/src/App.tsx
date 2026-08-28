@@ -27,7 +27,6 @@ import Contacts from "@/pages/contacts";
 import History from "@/pages/history";
 import VoicemailPage from "@/pages/voicemail";
 import SearchPage from "@/pages/search";
-import Opportunities from "@/pages/opportunities";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -67,7 +66,6 @@ function Router() {
       <Route path="/reset-password" component={() => <ResetPassword />} />
       <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
       <Route path="/leads" component={() => <ProtectedRoute component={Leads} />} />
-      <Route path="/opportunities" component={() => <ProtectedRoute component={Opportunities} />} />
       <Route path="/properties" component={() => <ProtectedRoute component={Properties} />} />
       <Route path="/property/:id" component={() => <ProtectedRoute component={PropertyDetail} />} />
       <Route path="/contracts" component={() => <ProtectedRoute component={Contracts} />} />

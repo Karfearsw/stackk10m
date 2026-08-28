@@ -54,9 +54,6 @@ interface Buyer {
   totalRevenue: string | null;
   notes: string | null;
   tags: string[] | null;
-  zipCodes: string[] | null;
-  minBeds: number | null;
-  maxBeds: number | null;
   lastContactDate: string | null;
   createdAt: string;
 }
@@ -318,9 +315,6 @@ export default function Buyers() {
     minBudget: "",
     maxBudget: "",
     dealsPerMonth: "",
-    zipCodes: "",
-    minBeds: "",
-    maxBeds: "",
     proofOfFunds: false,
     proofOfFundsNotes: "",
     isVip: false,
@@ -409,9 +403,6 @@ export default function Buyers() {
       minBudget: "",
       maxBudget: "",
       dealsPerMonth: "",
-      zipCodes: "",
-      minBeds: "",
-      maxBeds: "",
       proofOfFunds: false,
       proofOfFundsNotes: "",
       isVip: false,
@@ -431,9 +422,6 @@ export default function Buyers() {
       minBudget: buyer.minBudget || "",
       maxBudget: buyer.maxBudget || "",
       dealsPerMonth: buyer.dealsPerMonth?.toString() || "",
-      zipCodes: buyer.zipCodes?.join(", ") || "",
-      minBeds: buyer.minBeds?.toString() || "",
-      maxBeds: buyer.maxBeds?.toString() || "",
       proofOfFunds: buyer.proofOfFunds || false,
       proofOfFundsNotes: buyer.proofOfFundsNotes || "",
       isVip: buyer.isVip || false,
@@ -455,9 +443,6 @@ export default function Buyers() {
       minBudget: formData.minBudget || null,
       maxBudget: formData.maxBudget || null,
       dealsPerMonth: formData.dealsPerMonth ? parseInt(formData.dealsPerMonth) : null,
-      zipCodes: formData.zipCodes ? formData.zipCodes.split(",").map(s => s.trim()).filter(Boolean) : null,
-      minBeds: formData.minBeds ? parseInt(formData.minBeds) : null,
-      maxBeds: formData.maxBeds ? parseInt(formData.maxBeds) : null,
       proofOfFunds: formData.proofOfFunds,
       isVip: formData.isVip,
       notes: formData.notes || null,
