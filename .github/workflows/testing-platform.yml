@@ -124,6 +124,9 @@ jobs:
     needs: [unit]
     env:
       BASE_URL: ${{ github.event.inputs.base_url || secrets.STAGING_BASE_URL }}
+    strategy:
+      matrix:
+        node-version: [20.x]
     steps:
       - uses: actions/checkout@v4
       - name: Use Node.js ${{ matrix.node-version }}
