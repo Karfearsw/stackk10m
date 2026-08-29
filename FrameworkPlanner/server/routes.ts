@@ -4695,7 +4695,7 @@ export async function registerRoutes(
         label: r.label,
         isActive: r.isActive,
         sortOrder: r.sortOrder,
-      })));
+      })).filter((r: any, i: number, arr: any[]) => arr.findIndex((x: any) => x.value === r.value) === i));
     } catch (error: any) {
       try {
         const readiness = await getSchemaReadiness();
