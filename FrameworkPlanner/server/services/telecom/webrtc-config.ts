@@ -9,8 +9,11 @@
  *
  * The TELNYX_API_KEY must NEVER reach the browser. This module only reports
  * readiness and returns the WebRTC auth payload to an already-authenticated
- * CRM user, so secrets stay server-side except for the specific SIP cred the
- * SDK is designed to hold.
+ * CRM user, so secrets stay server-side.
+ *
+ * Prefer `TELNYX_WEBRTC_CREDENTIAL_ID`: the server then mints a short-lived
+ * JWT (POST /v2/telephony_credentials/{id}/token, 24h, HS512) per session and
+ * the static SIP password never has to be stored in the browser-facing env.
  */
 
 function readEnv(name: string): string {
@@ -24,7 +27,7 @@ export type WebRtcReadiness = {
   enabled: boolean;
   mode: WebRtcAuthMode;
   defaultFromNumber: string | null;
-  /** True when either a login_token or login/password pair is configured. */
+  /** True when an auth path (static token, credential-id mint, or creds) is configured. */
   authReady: boolean;
   blocker?: string;
 };
@@ -43,16 +46,82 @@ export type WebRtcClientConfig = {
   message?: string;
 };
 
+function isTruthy(val: string): boolean {
+  const s = val.trim().toLowerCase();
+  return s === "1" || s === "true" || s === "yes" || s === "on";
+}
+
+/** Decode the JWT exp claim (seconds) without verifying the signature. */
+function jwtExpirySeconds(token: string): number | null {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const json = JSON.parse(Buffer.from(payload.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"));
+    return typeof json?.exp === "number" ? json.exp : null;
+  } catch {
+    return null;
+  }
+}
+
+// Cache the minted token: mint at most once per ~30 min window per process.
+let cachedToken: { token: string; refreshAt: number } | null = null;
+
+/**
+ * Mint a fresh login_token JWT for the configured telephony credential.
+ * POST /v2/telephony_credentials/{id}/token returns the raw JWT body (201).
+ * Verified against the Telnyx Voice SDK auth docs (JWTs via API).
+ */
+export async function mintWebRtcLoginToken(): Promise<{ token: string; expiresAt?: string }> {
+  const apiKey = readEnv("TELNYX_API_KEY");
+  const credentialId = readEnv("TELNYX_WEBRTC_CREDENTIAL_ID");
+  if (!apiKey || !credentialId) {
+    throw new Error("Missing TELNYX_WEBRTC_CREDENTIAL_ID and/or TELNYX_API_KEY for token minting");
+  }
+  if (cachedToken && Date.now() < cachedToken.refreshAt) {
+    return { token: cachedToken.token };
+  }
+  const res = await fetch(
+    `https://api.telnyx.com/v2/telephony_credentials/${encodeURIComponent(credentialId)}/token`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(15000),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    let detail = "";
+    try { const j = JSON.parse(body); detail = j?.errors?.[0]?.detail || j?.errors?.[0]?.title || ""; } catch {}
+    const err = new Error(detail || `Telnyx token mint failed (${res.status})`) as any;
+    err.status = res.status;
+    throw err;
+  }
+  const token = (await res.text()).trim();
+  if (!token) throw new Error("Telnyx token mint returned an empty JWT");
+  const exp = jwtExpirySeconds(token);
+  const refreshAt = exp ? (exp * 1000) - 30 * 60 * 1000 : Date.now() + 23 * 60 * 60 * 1000;
+  cachedToken = { token, refreshAt };
+  return { token, expiresAt: exp ? new Date(exp * 1000).toISOString() : undefined };
+}
+
 function readAuthMode(): { mode: WebRtcAuthMode; reason?: string } {
   const enabled = readEnv("TELNYX_WEBRTC_ENABLED");
-  const token = readEnv("TELNYX_WEBRTC_LOGIN_TOKEN");
+  const staticToken = readEnv("TELNYX_WEBRTC_LOGIN_TOKEN");
+  const credentialId = readEnv("TELNYX_WEBRTC_CREDENTIAL_ID");
+  const apiKey = readEnv("TELNYX_API_KEY");
   const login = readEnv("TELNYX_WEBRTC_SIP_USER");
   const password = readEnv("TELNYX_WEBRTC_SIP_PASSWORD");
 
   if (!isTruthy(enabled)) {
     return { mode: null, reason: "TELNYX_WEBRTC_ENABLED is off or unset." };
   }
-  if (token) return { mode: "login_token" };
+  if (staticToken) return { mode: "login_token" };
+  if (credentialId) {
+    if (!apiKey) {
+      return { mode: "login_token", reason: "TELNYX_API_KEY is required to mint WebRTC login tokens." };
+    }
+    return { mode: "login_token" };
+  }
   if (login && password) return { mode: "credentials" };
   if (login && !password) {
     return { mode: null, reason: "TELNYX_WEBRTC_SIP_PASSWORD is missing." };
@@ -60,12 +129,10 @@ function readAuthMode(): { mode: WebRtcAuthMode; reason?: string } {
   if (!login && password) {
     return { mode: null, reason: "TELNYX_WEBRTC_SIP_USER is missing." };
   }
-  return { mode: null, reason: "Configure a login_token or SIP credentials for WebRTC." };
-}
-
-function isTruthy(val: string): boolean {
-  const s = val.trim().toLowerCase();
-  return s === "1" || s === "true" || s === "yes" || s === "on";
+  return {
+    mode: null,
+    reason: "Configure TELNYX_WEBRTC_CREDENTIAL_ID (recommended), a login_token, or SIP credentials for WebRTC.",
+  };
 }
 
 export function getWebRtcReadiness(): WebRtcReadiness {
@@ -82,17 +149,18 @@ export function getWebRtcReadiness(): WebRtcReadiness {
 
   if (!enabled) {
     readiness.blocker =
-      reason + " Set TELNYX_WEBRTC_ENABLED=true plus a login token or SIP credentials in Settings → System.";
+      reason + " Set TELNYX_WEBRTC_ENABLED=true plus a credential ID, login token, or SIP credentials in Settings → System.";
   }
   return readiness;
 }
 
 /**
  * Build the exact payload the browser SDK needs. Called only after requireAuth.
- * login_token JWTs are passed through as configured; SIP credentials are the
- * per-connection user/password Telnyx expects.
+ *  - static TELNYX_WEBRTC_LOGIN_TOKEN -> pass through
+ *  - TELNYX_WEBRTC_CREDENTIAL_ID     -> mint a fresh short-lived JWT server-side
+ *  - credentials mode                 -> per-connection user/password
  */
-export function getWebRtcClientConfig(): WebRtcClientConfig {
+export async function getWebRtcClientConfig(): Promise<WebRtcClientConfig> {
   const readiness = getWebRtcReadiness();
   const base: WebRtcClientConfig = {
     enabled: readiness.enabled,
@@ -106,10 +174,25 @@ export function getWebRtcClientConfig(): WebRtcClientConfig {
   }
 
   if (readiness.mode === "login_token") {
-    base.loginToken = readEnv("TELNYX_WEBRTC_LOGIN_TOKEN");
-  } else {
-    base.login = readEnv("TELNYX_WEBRTC_SIP_USER");
-    base.password = readEnv("TELNYX_WEBRTC_SIP_PASSWORD");
+    const staticToken = readEnv("TELNYX_WEBRTC_LOGIN_TOKEN");
+    if (staticToken) {
+      base.loginToken = staticToken;
+      return base;
+    }
+    try {
+      const minted = await mintWebRtcLoginToken();
+      base.loginToken = minted.token;
+    } catch (e: any) {
+      console.error("[webrtc-config] login token mint failed:", e?.message || e);
+      base.message =
+        "Could not mint a WebRTC login token from the Telnyx API: " + String(e?.message || e);
+      base.enabled = false;
+      base.mode = null;
+    }
+    return base;
   }
+
+  base.login = readEnv("TELNYX_WEBRTC_SIP_USER");
+  base.password = readEnv("TELNYX_WEBRTC_SIP_PASSWORD");
   return base;
 }

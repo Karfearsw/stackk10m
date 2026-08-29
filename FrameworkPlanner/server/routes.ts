@@ -7320,7 +7320,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      res.json(getWebRtcClientConfig());
+      res.json(await getWebRtcClientConfig());
     } catch (error: any) {
       res.status(500).json({ enabled: false, error: error?.message || "Failed to load WebRTC config" });
     }
