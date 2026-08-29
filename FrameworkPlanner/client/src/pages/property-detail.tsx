@@ -1675,8 +1675,7 @@ function LinkLeadDialog({ property }: { property?: any }) {
   const { data: searchData, isLoading } = useQuery<any>({
     queryKey: ["/api/search", query],
     queryFn: async () => {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=20`);
-      if (!res.ok) throw new Error("Failed to search");
+      const res = await apiRequest("GET", `/api/search?q=${encodeURIComponent(query)}&limit=20`);
       return res.json();
     },
     enabled: open && query.trim().length >= 2,
@@ -1689,12 +1688,7 @@ function LinkLeadDialog({ property }: { property?: any }) {
 
   const linkLead = useMutation({
     mutationFn: async (leadId: number) => {
-      const res = await fetch(`/api/opportunities/${property.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceLeadId: leadId }),
-      });
-      if (!res.ok) throw new Error("Failed to link lead");
+      const res = await apiRequest("PATCH", `/api/opportunities/${property.id}`, { sourceLeadId: leadId });
       return res.json();
     },
     onSuccess: () => {
