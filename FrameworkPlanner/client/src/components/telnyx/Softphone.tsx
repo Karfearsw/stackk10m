@@ -36,6 +36,8 @@ export function Softphone() {
   const [number, setNumber] = useState("");
   const [timer, setTimer] = useState<number | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [outputs, setOutputs] = useState<{ deviceId: string; label: string }[]>([]);
+  const [speakerId, setSpeakerId] = useState("default");
 
   const formatted = useMemo(() => formatE164(number), [number]);
   const active = rtc.call && (rtc.call.state === "dialing" || rtc.call.state === "ringing" || rtc.call.state === "active" || rtc.call.state === "held");
@@ -73,6 +75,25 @@ export function Softphone() {
     setTimer(null);
     setElapsedMs(0);
   };
+
+  // Enumerate audio OUTPUT devices (speakers) once permission allows labels.
+  useEffect(() => {
+    let cancelled = false;
+    const refresh = async () => {
+      const devs = await rtc.enumerateAudioOutputs();
+      if (!cancelled && devs.length > 0) setOutputs(devs);
+    };
+    refresh();
+    const t = window.setTimeout(refresh, 1500);
+    return () => { cancelled = true; window.clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Apply the selected speaker live to the active call when the device changes.
+  useEffect(() => {
+    if (speakerId && speakerId !== "default") rtc.setAudioOutputDevice(speakerId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [speakerId, rtc.call?.state]);
 
   // Watch the SDK call state: start/stop ringback + connect chime, and stop the
   // local timer when the call ends/fails (even if ended remotely).
@@ -165,6 +186,20 @@ export function Softphone() {
           {/* Status */}
           <div className="space-y-3">
             <div className="rounded-md border p-3 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="softphone-speaker" className="text-xs text-muted-foreground">Speaker / audio out</Label>
+                <select
+                  id="softphone-speaker"
+                  className="h-7 max-w-[55%] rounded-md border bg-background px-1 text-xs"
+                  value={speakerId}
+                  onChange={(e) => setSpeakerId(e.target.value)}
+                >
+                  <option value="default">Default</option>
+                  {outputs.map((d) => (
+                    <option key={d.deviceId} value={d.deviceId}>{d.label || "Speaker"}</option>
+                  ))}
+                </select>
+              </div>
               <div className="flex items-center justify-between">
                 <span className="font-medium">Status: {STATE_LABEL[rtc.call?.state ?? "idle"]}</span>
                 {rtc.call?.state === "active" ? <span className="font-mono">{durationLabel}</span> : null}

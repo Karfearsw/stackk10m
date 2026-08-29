@@ -295,10 +295,38 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
     try { sdkCall.dtmf?.(digits); } catch (e) { console.error("DTMF failed:", e); }
   }, [call?.state]);
 
+
+  /** List available audio OUTPUT devices (speakers). Requires permission to enumerate. */
+  const enumerateAudioOutputs = useCallback(async (): Promise<{ deviceId: string; label: string }[]> => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) return [];
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices
+        .filter((d) => d.kind === "audiooutput")
+        .map((d) => ({ deviceId: d.deviceId, label: d.label || "Speaker" }));
+    } catch (e) {
+      console.error("enumerateDevices (audiooutput) failed:", e);
+      return [];
+    }
+  }, []);
+
+  /**
+   * Route call audio to a chosen speaker/output device. Applied live to the
+   * active SDK call when possible; also passed to the next call as speakerId.
+   */
+  const setAudioOutputDevice = useCallback(async (deviceId: string) => {
+    const sdkCall = callRef.current;
+    if (sdkCall && typeof sdkCall.setAudioOutDevice === "function") {
+      try { await sdkCall.setAudioOutDevice(deviceId); } catch (e) { console.error("setAudioOutDevice failed:", e); }
+    }
+  }, []);
+
   return {
     connState, connError, call, incoming, busy,
     connect, disconnect,
     makeCall, hangup, answerIncoming, rejectIncoming,
     toggleMute, toggleHold, sendDigits,
+    enumerateAudioOutputs, setAudioOutputDevice,
   };
+
 }
