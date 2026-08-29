@@ -51,6 +51,64 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest, apiUpload } from "@/lib/queryClient";
 import { calendarUrl, dialerUrl, leadUrl, playgroundUrl, tasksUrl } from "@/lib/deepLinks";
 
+
+// --- Photo upload helpers: compress images client-side so uploads stay far
+// under Vercel's 4.5MB serverless body limit (fixes 413s) and batch them so
+// 20 photos never blow the limit either. ---
+const MAX_PHOTO_DIM = 1600;
+const MAX_PHOTO_BYTES = 500 * 1024;
+
+async function compressImageFile(file: File): Promise<File> {
+  if (!/^image\//i.test(file.type)) return file;
+  if (file.size <= MAX_PHOTO_BYTES) return file;
+  const bitmap = await createImageBitmap(file).catch(() => null);
+  if (!bitmap) return file;
+  try {
+    const scale = Math.min(1, MAX_PHOTO_DIM / Math.max(bitmap.width, bitmap.height));
+    const w = Math.max(1, Math.round(bitmap.width * scale));
+    const h = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.82));
+    bitmap.close();
+    if (!blob) return file;
+    const base = (file.name || "photo");
+    const name = (base.lastIndexOf(".") > 0 ? base.slice(0, base.lastIndexOf(".")) : base) + ".jpg";
+    return new File([blob], name, { type: "image/jpeg" });
+  } catch {
+    return file;
+  }
+}
+
+async function uploadPhotosInBatches(files: FileList | File[], url: string, batchSize = 5) {
+  const list = Array.from(files);
+  const results: any[] = [];
+  for (let i = 0; i < list.length; i += batchSize) {
+    const batch = list.slice(i, i + batchSize);
+    const fd = new FormData();
+    for (const f of batch) fd.append("photos", await compressImageFile(f));
+    const res = await apiUpload("POST", url, fd);
+    results.push(await res.json());
+  }
+  return results[results.length - 1] ?? {};
+}
+
+function photoUploadErrorTitle(e: any) {
+  const status = Number(e?.status);
+  const msg = String(e?.message || "");
+  if (status === 503 || msg.includes("storage is not configured")) {
+    return "Photo storage isn't configured on the server yet — add PROPERTY_PHOTOS_BUCKET and PROPERTY_PHOTOS_REGION to the environment (Settings → System).";
+  }
+  if (status === 413) return "Upload too large — photos were auto-compressed; please try again with fewer photos.";
+  return msg || "Upload failed";
+}
+
 export default function PropertyDetail() {
   const [, params] = useRoute("/opportunities/:id");
   const [, setLocation] = useLocation();
@@ -253,17 +311,12 @@ export default function PropertyDetail() {
 
   const photoInputRef = React.useRef<HTMLInputElement | null>(null);
   const uploadPhotosMutation = useMutation({
-    mutationFn: async (files: FileList) => {
-      const fd = new FormData();
-      Array.from(files).forEach((f) => fd.append("photos", f));
-      const res = await apiUpload("POST", `/api/opportunities/${id}/photos`, fd);
-      return await res.json();
-    },
+    mutationFn: async (files: FileList) => uploadPhotosInBatches(files, `/api/opportunities/${id}/photos`),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id] });
       toast({ title: "Photos uploaded" });
     },
-    onError: (e: any) => toast({ title: e?.message || "Upload failed", variant: "destructive" }),
+    onError: (e: any) => toast({ title: photoUploadErrorTitle(e), variant: "destructive" }),
   });
 
   const docsKey = React.useMemo(() => (property?.id ? `/api/documents?limit=20&offset=0&entityType=opportunity&entityId=${property.id}` : null), [property?.id]);
@@ -1449,7 +1502,7 @@ function OpportunityEditDialog({ property }: { property?: any }) {
     },
   });
 
-  const photosMutation = useMutation({    mutationFn: async (files: FileList) => {      const fd = new FormData();      Array.from(files).forEach((f) => fd.append('photos', f));      const res = await apiUpload('POST', `/api/opportunities/${property.id}/photos`, fd);      return await res.json();    },    onSuccess: async () => {      await queryClient.invalidateQueries({ queryKey: ['/api/opportunities', property.id] });      setFormData((prev) => ({ ...prev, images: photosMutation.data?.property?.images || prev.images }));      toast({ title: 'Photos uploaded' });    },    onError: (e: any) => toast({ title: e?.message || 'Upload failed', variant: 'destructive' }),  });  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {    const files = e.target.files;    if (!files) return;    photosMutation.mutate(files);    e.currentTarget.value = '';  };
+  const photosMutation = useMutation({    mutationFn: async (files: FileList) => uploadPhotosInBatches(files, `/api/opportunities/${property.id}/photos`),    onSuccess: async () => {      await queryClient.invalidateQueries({ queryKey: ['/api/opportunities', property.id] });      setFormData((prev) => ({ ...prev, images: photosMutation.data?.property?.images || prev.images }));      toast({ title: 'Photos uploaded' });    },    onError: (e: any) => toast({ title: photoUploadErrorTitle(e), variant: 'destructive' }),  });  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {    const files = e.target.files;    if (!files) return;    photosMutation.mutate(files);    e.currentTarget.value = '';  };
 
 
   const removeImage = (index: number) => {

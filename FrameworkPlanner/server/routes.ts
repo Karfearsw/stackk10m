@@ -7116,6 +7116,80 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
+  // Telephony realtime: WS relay token + polling fallback (Vercel-safe)
+  app.post("/api/telephony/ws-token", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const secret = authJwtSecret();
+      if (!secret) {
+        return res.status(503).json({ code: "ws_token_secret_missing", message: "WS token secret is not configured" });
+      }
+      const token = await new SignJWT({})
+        .setProtectedHeader({ alg: "HS256" })
+        .setSubject(String(user.id))
+        .setIssuedAt()
+        .setExpirationTime("5m")
+        .sign(secret);
+      const wsBaseUrl = String(process.env.TELEPHONY_WS_RELAY_URL || "").trim() || null;
+      res.json({ token, expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(), wsBaseUrl });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.get("/api/telephony/events/latest", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const sinceRaw = Number(req.query?.sinceMs) || 0;
+      const since = new Date(sinceRaw > 0 ? sinceRaw : Date.now() - 120_000).toISOString();
+      const events: any[] = [];
+      const callRows: any = await db.execute(sql`
+        SELECT id, user_id as "userId", direction, number, status, contact_id as "contactId", lead_id as "leadId",
+               started_at as "startedAt", ended_at as "endedAt", call_control_id as "callControlId", created_at as "createdAt"
+        FROM call_logs
+        WHERE (created_at >= ${since} OR ended_at >= ${since}
+               OR (direction = 'inbound' AND status IN ('ringing','in_progress','answered')))
+          AND (user_id = ${user.id} OR user_id = 0)
+        ORDER BY GREATEST(COALESCE(ended_at, started_at, created_at), created_at) DESC
+        LIMIT 50
+      `);
+      const rows = (callRows as any)?.rows || [];
+      for (const r of rows) {
+        const createdAtMs = new Date(String(r.createdAt || "")).getTime() || 0;
+        const endedAtMs = new Date(String(r.endedAt || "")).getTime() || 0;
+        const created = createdAtMs >= sinceRaw;
+        const changedEnd = endedAtMs >= sinceRaw;
+        if (created) {
+          events.push({ type: "call_log_created", payload: { id: Number(r.id), callControlId: r.callControlId || null, direction: r.direction, number: r.number, status: r.status, startedAt: r.startedAt ? new Date(r.startedAt).toISOString() : null, userId: Number(r.userId), contactId: r.contactId ? Number(r.contactId) : null, leadId: r.leadId ? Number(r.leadId) : null, ts: createdAtMs } });
+        } else if (changedEnd) {
+          events.push({ type: "call_log_updated", payload: { id: Number(r.id), callControlId: r.callControlId || null, direction: r.direction, number: r.number, status: r.status, endedAt: r.endedAt ? new Date(r.endedAt).toISOString() : null, ts: endedAtMs || Date.now() } });
+        }
+        events.push({ type: "call_state_changed", payload: { callControlId: r.callControlId || String(r.id), state: r.status, from: r.direction === "inbound" ? r.number : null, to: r.direction === "outbound" ? r.number : null, direction: r.direction, ts: Date.now() } });
+        if (String(r.direction || "") === "inbound") {
+          if (r.status === "ringing" || r.status === "in_progress") {
+            events.push({ type: "inbound_call_ringing", payload: { callControlId: r.callControlId || String(r.id), from: r.number || null, maskedFrom: null, leadId: r.leadId ? Number(r.leadId) : null, ts: Date.now() } });
+          } else if (r.status === "ended" || r.status === "failed" || r.status === "missed" || r.status === "no-answer") {
+            events.push({ type: "inbound_call_ended", payload: { callControlId: r.callControlId || String(r.id), status: r.status, ts: Date.now() } });
+          }
+        }
+      }
+      const sessionRows: any = await db.execute(sql`
+        SELECT id, status, mode, final_disposition as "finalDisposition", updated_at as "updatedAt"
+        FROM crm_call_sessions
+        WHERE updated_at >= ${since}
+          AND (initiating_user_id = ${user.id} OR assigned_agent_user_id = ${user.id})
+        ORDER BY updated_at DESC
+        LIMIT 20
+      `);
+      for (const s of (sessionRows as any)?.rows || []) {
+        events.push({ type: "call_session_state_changed", payload: { sessionId: Number(s.id), status: String(s.status || ""), mode: s.mode || null, finalDisposition: s.finalDisposition || null, ts: new Date(String(s.updatedAt || "")).getTime() || Date.now() } });
+      }
+      res.json({ events, pollIntervalMs: 8000 });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   app.get("/api/telephony/history", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9206,7 +9280,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       });
       res.json(out);
     } catch (error: any) {
-      res.status(400).json({ message: error.message });
+      res.status(500).json({ message: error.message });
     }
   });
   function canViewVaultDocument(ctx: { user: any; membership: any }, document: any) {
