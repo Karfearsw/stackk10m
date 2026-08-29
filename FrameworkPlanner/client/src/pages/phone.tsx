@@ -14,6 +14,7 @@ import { useSignalWire } from "@/hooks/useSignalWire";
 import { useCallAudio } from "@/hooks/useCallAudio";
 import { useTelephonyEvents } from "@/hooks/useTelephonyEvents";
 import { TelnyxHealthStatus } from "@/components/telephony/TelnyxHealthStatus";
+import { Softphone } from "@/components/telnyx/Softphone";
 import { ContactsManager } from "@/components/contacts/ContactsManager";
 import { apiRequest } from "@/lib/queryClient";
 import { toast } from "sonner";
@@ -86,6 +87,7 @@ export default function PhoneWorkspace() {
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferNumber, setTransferNumber] = useState("");
   const [transferBusy, setTransferBusy] = useState(false);
+  const [softphoneOpen, setSoftphoneOpen] = useState(false);
   const wasConnectedRef = useRef(false);
   const callFailedRef = useRef(false);
   const lastPatchedStatusRef = useRef<string | null>(null);
@@ -361,6 +363,20 @@ export default function PhoneWorkspace() {
               </TabsList>
 
               <TabsContent value="dial">
+                <div className="mb-3 flex items-center gap-2 flex-wrap">
+                  <Button
+                    size="sm"
+                    variant={softphoneOpen ? "default" : "outline"}
+                    onClick={() => setSoftphoneOpen((v) => !v)}
+                  >
+                    <Phone className="w-4 h-4 mr-2" />
+                    {softphoneOpen ? "Browser Softphone On" : "Browser Softphone"}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">Call from this browser with real WebRTC audio — mute, hold, keypad DTMF. No phone needed.</span>
+                </div>
+                {softphoneOpen ? (
+                  <Softphone />
+                ) : (
                 <div className="grid gap-4 grid-cols-1 md:grid-cols-2 min-w-0">
                   <Card>
                     <CardHeader>
@@ -512,6 +528,7 @@ export default function PhoneWorkspace() {
                     </CardContent>
                   </Card>
                 </div>
+                )}
               </TabsContent>
 
               <TabsContent value="contacts">

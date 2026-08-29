@@ -12,6 +12,7 @@ import { DialerProvider, useDialer } from "@/contexts/DialerContext";
 import { useSignalWire } from "@/hooks/useSignalWire";
 import { useCallAudio } from "@/hooks/useCallAudio";
 import { TwoLegCallPanel } from "@/components/telnyx/TwoLegCallPanel";
+import { Softphone } from "@/components/telnyx/Softphone";
 import { useTelephonyEvents } from "@/hooks/useTelephonyEvents";
 import { TelnyxHealthStatus } from "@/components/telephony/TelnyxHealthStatus";
 import { EntityActivity } from "@/components/activity/EntityActivity";
@@ -118,6 +119,7 @@ function DialerWorkspaceInner() {
   const [sessionMuted, setSessionMuted] = useState(false);
   const [sessionHeld, setSessionHeld] = useState(false);
   const [sessionAiActive, setSessionAiActive] = useState(false);
+  const [softphoneOpen, setSoftphoneOpen] = useState(false);
 
   const [scriptId, setScriptId] = useState<number | null>(null);
   const [scriptName, setScriptName] = useState("");
@@ -539,6 +541,20 @@ function DialerWorkspaceInner() {
 
   return (
     <Layout>
+      <div className="mb-3 flex items-center gap-2 flex-wrap">
+        <Button
+          size="sm"
+          variant={softphoneOpen ? "default" : "outline"}
+          onClick={() => setSoftphoneOpen((v) => !v)}
+        >
+          <Phone className="w-4 h-4 mr-2" />
+          {softphoneOpen ? "Browser Softphone On" : "Browser Softphone"}
+        </Button>
+        <span className="text-xs text-muted-foreground">Click to call real numbers from this browser with WebRTC audio (no phone needed).</span>
+      </div>
+      {softphoneOpen ? (
+        <Softphone />
+      ) : (
       <div className="grid gap-4 min-w-0 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)_420px]">
         <Card>
           <CardHeader>
@@ -1137,6 +1153,7 @@ function DialerWorkspaceInner() {
           </CardContent>
         </Card>
       </div>
+      )}
     </Layout>
   );
 }

@@ -102,6 +102,7 @@ import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
 import { createIsFeatureEnabled, requireFeature } from "./featureFlags.js";
 import { getProviderReadiness } from "./services/telecom/provider-readiness.js";
+import { getWebRtcReadiness, getWebRtcClientConfig } from "./services/telecom/webrtc-config.js";
 import { getAiAssistantConfig } from "./services/telecom/ai-config.js";
 import * as callSessions from "./services/telecom/call-sessions.js";
 import { writeAuditEvent } from "./services/audit/writeAuditEvent.js";
@@ -7306,6 +7307,25 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       });
     }
   });
+  // ── WebRTC Browser Softphone ───────────────────────────────────────────
+  // Readiness (no secrets). Used to decide whether the browser softphone UI is
+  // shown and to surface the exact blocker instead of silently hiding the feature.
+  app.get("/api/telephony/webrtc/health", (req, res) => {
+    res.json(getWebRtcReadiness());
+  });
+
+  // Client config for the @telnyx/webrtc SDK. Auth-gated: only a signed-in CRM
+  // user may retrieve the login payload. The TELNYX_API_KEY never leaves the server.
+  app.get("/api/telephony/webrtc/config", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      res.json(getWebRtcClientConfig());
+    } catch (error: any) {
+      res.status(500).json({ enabled: false, error: error?.message || "Failed to load WebRTC config" });
+    }
+  });
+
   // Telnyx Onboarding Wizard: Live Validation
   app.post("/api/telnyx/validate/api-key", async (req, res) => {
     try {
