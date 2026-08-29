@@ -323,6 +323,23 @@ export default async function runApp(
     console.error("Failed to ensure call_logs table:", e);
   }
 
+  // Ensure property photo blobs table exists (DB-backed photo storage fallback)
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS property_photo_blobs (
+        storage_key TEXT PRIMARY KEY,
+        data BYTEA NOT NULL,
+        mime_type TEXT,
+        size_bytes BIGINT,
+        sha256 TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    log("[Startup] Verified property_photo_blobs table", "db");
+  } catch (e) {
+    console.error("Failed to ensure property_photo_blobs table:", e);
+  }
+
   // Ensure app_settings + crm_sms_messages exist (DB override layer + SMS threads)
   try {
     await pool.query(`

@@ -120,7 +120,7 @@ import { generateSignedPdfBase64 } from "./services/esign/pdf.js";
 import { buildMergeData, applyTemplateToContract, validateContractForSend } from "./services/contracts/contract-service.js";
 import { sendContractSigningEmail, sendContractReminderEmail } from "./services/contracts/email.js";
 import { startContractReminderWorker } from "./cron/contract-reminders.js";
-import { getPropertyPhotoSignedUrl, uploadPropertyPhoto, isPropertyPhotoStorageConfigured } from "./media/propertyPhotos.js";
+import { getPropertyPhotoSignedUrl, getPropertyPhotoContent, uploadPropertyPhoto, isPropertyPhotoStorageConfigured } from "./media/propertyPhotos.js";
 import Stripe from "stripe";
 import { getDocumentContent, getDocumentSignedUrl, isDocumentVaultConfigured, makeDocumentStorageKey, sha256Hex, uploadDocumentObject } from "./media/documentVault.js";
 import { registerMediaRoutes } from "./media/media-routes.js";
@@ -5569,15 +5569,22 @@ export async function registerRoutes(
     }
   });
   app.get("/api/property-photos/:key", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
-    if (!isPropertyPhotoStorageConfigured()) {
-      return res.status(503).json({ code: "photo_storage_not_configured", message: "Photo storage is not configured" });
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const key = decodeURIComponent(String(req.params.key || ""));
+      if (!key) return res.status(400).json({ message: "Missing photo key" });
+      // Prefer S3 (signed redirect). Fall back to the DB blob store (stream).
+      const url = await getPropertyPhotoSignedUrl(key);
+      if (url) return res.redirect(url);
+      const content = await getPropertyPhotoContent(key);
+      if (!content) return res.status(404).json({ message: "Not found" });
+      if (content.contentType) res.setHeader("Content-Type", content.contentType);
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      return res.end(content.body);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
-    const key = decodeURIComponent(String(req.params.key || ""));
-    const url = await getPropertyPhotoSignedUrl(key);
-    if (!url) return res.status(404).json({ message: "Not found" });
-    res.redirect(url);
   });
   app.post("/api/opportunities/:id/photos", upload.array("photos", 20), async (req, res) => {
     try {
@@ -5586,9 +5593,6 @@ export async function registerRoutes(
       const opportunityId = parseInt(req.params.id, 10);
       const property = await storage.getPropertyById(opportunityId);
       if (!property) return res.status(404).json({ message: "Opportunity not found" });
-      if (!isPropertyPhotoStorageConfigured()) {
-        return res.status(503).json({ code: "photo_storage_not_configured", message: "Photo storage is not configured" });
-      }
       const files = Array.isArray((req as any).files) ? ((req as any).files as any[]) : [];
       if (!files.length) return res.status(400).json({ message: "No files uploaded" });
       const existingRaw = Array.isArray((property as any).images) ? (property as any).images.filter(Boolean) : [];
