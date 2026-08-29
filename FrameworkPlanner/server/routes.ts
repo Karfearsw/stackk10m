@@ -5606,7 +5606,7 @@ export async function registerRoutes(
         });
         uploaded.push(`property-photo:${out.storageKey}`);
       }
-      const updated = await storage.updateProperty(opportunityId, { images: [...existingRaw, ...uploaded] } as any);
+      const updated = await storage.updateProperty(opportunityId, { images: [...uploaded, ...existingRaw] } as any);
       res.json({ property: { ...(updated as any), images: resolvePropertyImages((updated as any).images) } });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
