@@ -93,6 +93,40 @@ function PropertyImageCarousel({ images }: { images: string[] }) {
   );
 }
 
+const PHOTO_MAX_DIM = 1280;
+const PHOTO_MAX_BYTES_EST = 200 * 1024; // skip recompressing already-small data URLs
+
+function isImageDataUrl(v: string) {
+  return /^data:image\/(png|jpe?g|webp|gif);base64,/i.test(v);
+}
+
+// Downscale any large base64 data-URL image to a compact JPEG so the PATCH/POST
+// body stays far under Vercel's 4.5MB serverless cap (fixes "413 Content Too Large").
+async function optimizeImageEntry(entry: string): Promise<string> {
+  if (!isImageDataUrl(entry)) return entry; // pass through stored refs untouched
+  const estBytes = Math.ceil((entry.length * 3) / 4);
+  if (estBytes <= PHOTO_MAX_BYTES_EST) return entry;
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error("decode"));
+      i.src = entry;
+    });
+    const scale = Math.min(1, PHOTO_MAX_DIM / Math.max(img.width, img.height));
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return entry;
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, w, h); ctx.drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL("image/jpeg", 0.8);
+  } catch {
+    return entry;
+  }
+}
+
 function PropertyForm({ 
   property, 
   statusOptions,
@@ -175,8 +209,12 @@ function PropertyForm({
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    let images: string[] = formData.images;
+    if (images && images.some(isImageDataUrl)) {
+      images = await Promise.all(images.map((entry) => optimizeImageEntry(entry)));
+    }
     onSubmit({
       address: formData.address,
       city: formData.city,
@@ -195,7 +233,7 @@ function PropertyForm({
       repairCost: formData.repairCost || null,
       assignedTo:
         formData.assignedTo && formData.assignedTo !== "__unassigned__" ? parseInt(formData.assignedTo, 10) : null,
-      images: formData.images,
+      images,
     });
   };
 
