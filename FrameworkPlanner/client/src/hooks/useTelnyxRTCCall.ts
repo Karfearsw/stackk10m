@@ -83,6 +83,7 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
 
   const clientRef = useRef<any>(null);
   const callRef = useRef<any>(null);
+  const defaultFromRef = useRef<string | null>(null);
   const onIncomingRef = useRef(opts?.onIncoming);
   onIncomingRef.current = opts?.onIncoming;
 
@@ -153,6 +154,8 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
       setConnError(config?.message || "WebRTC softphone is not enabled. Configure it in Settings -> System.");
       return;
     }
+    if (config.defaultFromNumber) defaultFromRef.current = String(config.defaultFromNumber).trim();
+
     if (!config.loginToken && (!config.login || !config.password)) {
       setConnState("disabled");
       setConnError("WebRTC credentials are not configured. Set a login_token or SIP credentials in Settings -> System.");
@@ -229,7 +232,11 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
     setBusy(true);
     setIncoming(null);
     try {
-      const sdkCall = client.newCall({ destinationNumber, audio: true });
+      const sdkCall = client.newCall({
+        destinationNumber,
+        audio: true,
+        ...(defaultFromRef.current ? { callerNumber: defaultFromRef.current } : {}),
+      });
       callRef.current = sdkCall;
       const remote = String(destinationNumber || "") || "";
       setCall({ id: String(sdkCall.id || Date.now()), remoteNumber: remote, state: "dialing", muted: sdkCall.isAudioMuted ?? false });
