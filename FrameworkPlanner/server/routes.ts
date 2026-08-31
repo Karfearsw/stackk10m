@@ -120,6 +120,7 @@ import { buildMergeData, applyTemplateToContract, validateContractForSend } from
 import { sendContractSigningEmail, sendContractReminderEmail } from "./services/contracts/email.js";
 import { startContractReminderWorker } from "./cron/contract-reminders.js";
 import { getPropertyPhotoSignedUrl, uploadPropertyPhoto, isPropertyPhotoStorageConfigured } from "./media/propertyPhotos.js";
+import { extractErrorMessage } from "./lib/errors.js";
 import Stripe from "stripe";
 import { getDocumentContent, getDocumentSignedUrl, isDocumentVaultConfigured, makeDocumentStorageKey, sha256Hex, uploadDocumentObject } from "./media/documentVault.js";
 import { registerMediaRoutes } from "./media/media-routes.js";
@@ -134,21 +135,7 @@ function authJwtSecret() {
   if (!secret || !String(secret).trim()) return null;
   return new TextEncoder().encode(String(secret));
 }
-function extractErrorMessage(error: any): string {
-  if (!error) return "";
-  if (typeof error.message === "string") return error.message;
-  if (error.message && typeof error.message === "object") {
-    const nested = extractErrorMessage(error.message);
-    if (nested) return nested;
-  }
-  if (typeof error.stack === "string") return error.stack;
-  return String(error);
-}
-
 function isDbConnectivityError(error: any): boolean {
-  // Neon serverless driver emits ErrorEvent objects (type: 'error') without
-  // a proper message when WebSocket connection fails. Treat these as connectivity errors.
-  if (error.type === "error" && error.message === "") return true;
   const code = error?.code;
   if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ETIMEDOUT") return true;
   if (code === "57P01" || code === "57P02" || code === "57P03") return true;
