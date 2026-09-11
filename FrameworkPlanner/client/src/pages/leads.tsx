@@ -2139,7 +2139,12 @@ export default function Leads() {
                             <DropdownMenuSeparator />
                             <DropdownMenuItem
                               className="text-destructive focus:text-destructive"
-                              onClick={() => deleteMutation.mutate(lead.id)}
+                              onClick={() => {
+                                // Audit M9: never delete a lead without explicit intent.
+                                if (confirm(`Delete lead "${lead.address || lead.id}"? This cannot be undone.`)) {
+                                  deleteMutation.mutate(lead.id);
+                                }
+                              }}
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
                               Delete
