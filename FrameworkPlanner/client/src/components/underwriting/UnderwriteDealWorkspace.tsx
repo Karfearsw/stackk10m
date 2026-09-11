@@ -214,12 +214,21 @@ export function UnderwriteDealWorkspace(props: {
   const [assignedTo, setAssignedTo] = useState<number | null>(null);
   const [assignmentDueAt, setAssignmentDueAt] = useState<string | null>(null);
   const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
+  // M7 fix: hydrate local state from the session ONLY on first load per session id.
+  // Previously this effect depended on the whole `session` object, so every debounced
+  // PATCH response (setQueryData) re-ran it and reset currentUrl/notes/etc. from the
+  // server, clobbering whatever the user had just typed/navigated to.
+  const hydratedSessionIdRef = useRef<number | null>(null);
   const hydratedRef = useRef(false);
   const saveTimerRef = useRef<number | null>(null);
   const dbToastShownRef = useRef(false);
 
   useEffect(() => {
     if (sessionLoading) return;
+
+    const sessionForHydration = session as any;
+    const sessionIdNum = typeof sessionForHydration?.id === "number" ? sessionForHydration.id : null;
+    if (sessionIdNum !== null && hydratedSessionIdRef.current === sessionIdNum) return; // already hydrated this session
 
     if (session && session.id) {
       const nextUrl = String(session?.currentUrl || "").trim() || String(session?.current_url || "").trim() || makeAddressSearchUrl(address);
@@ -244,6 +253,7 @@ export function UnderwriteDealWorkspace(props: {
       setAssignedTo(typeof session?.assignedTo === "number" ? session.assignedTo : null);
       setAssignmentDueAt(session?.assignmentDueAt ? new Date(session.assignmentDueAt as any).toISOString().slice(0, 10) : null);
       setAssignmentStatus(typeof session?.assignmentStatus === "string" && session.assignmentStatus.trim() ? session.assignmentStatus : null);
+      hydratedSessionIdRef.current = sessionIdNum;
       hydratedRef.current = true;
       return;
     }
@@ -273,6 +283,7 @@ export function UnderwriteDealWorkspace(props: {
       setAssignmentStatus(saved.assignmentStatus ?? null);
     }
     hydratedRef.current = true;
+    hydratedSessionIdRef.current = sessionIdNum; // null in local-only mode; effect can re-run harmlessly
   }, [session, sessionLoading, dbUnavailable, address]);
 
   useEffect(() => {
@@ -302,6 +313,7 @@ export function UnderwriteDealWorkspace(props: {
   });
 
   useEffect(() => {
+    // Autosave only after the initial hydration has completed.
     if (!hydratedRef.current) return;
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
 
