@@ -12905,8 +12905,25 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       if (!user) return;
       const validated = insertBuyerSchema.parse({ ...req.body, userId: user.id });
       const buyer = await storage.createBuyer(validated);
+      // Hard invariant (audit C2): a create that does not return the persisted row
+      // is a failure. Never report success without a real database record.
+      if (!buyer || (buyer as any).id == null) {
+        console.error(JSON.stringify({
+          ts: new Date().toISOString(),
+          event: "buyer_create_invariant",
+          detail: "createBuyer resolved without a persisted row",
+          userId: user.id,
+        }));
+        return res.status(500).json({ message: "Buyer could not be created (no record returned). Please retry." });
+      }
       res.status(201).json(buyer);
     } catch (error: any) {
+      console.error(JSON.stringify({
+        ts: new Date().toISOString(),
+        event: "buyer_create_failed",
+        detail: String(error?.message || error),
+        code: error?.code ? String(error.code) : null,
+      }));
       res.status(400).json({ message: error?.message || "Failed to create buyer" });
     }
   });

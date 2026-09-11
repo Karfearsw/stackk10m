@@ -372,11 +372,23 @@ export default function Buyers() {
     mutationFn: async (data: any) => {
       return apiRequest("POST", "/api/buyers", data);
     },
-    onSuccess: () => {
+    // The server only returns 201 when the row is confirmed persisted (audit C2);
+    // any failure throws and lands in onError with a real error message.
+    onSuccess: async (res: any) => {
+      let createdId: number | null = null;
+      try {
+        const json = await res?.json?.();
+        createdId = typeof json?.id === "number" ? json.id : null;
+      } catch {
+        createdId = null;
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/buyers"] });
       setIsAddDialogOpen(false);
       resetForm();
-      toast({ title: "Buyer added successfully" });
+      toast({
+        title: "Buyer added successfully",
+        description: createdId ? `Record #${createdId} saved.` : undefined,
+      });
     },
     onError: (error: any) => {
       toast({ title: "Error adding buyer", description: error.message, variant: "destructive" });
