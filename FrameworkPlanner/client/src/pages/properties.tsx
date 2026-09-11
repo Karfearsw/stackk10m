@@ -268,7 +268,7 @@ function PropertyForm({
       state: formData.state,
       zipCode: formData.zipCode,
       beds: formData.beds ? parseInt(formData.beds) : null,
-      baths: formData.baths ? parseInt(formData.baths) : null,
+      baths: formData.baths ? parseFloat(formData.baths) : null,
       sqft: formData.sqft ? parseInt(formData.sqft) : null,
       price: formData.price || null,
       status: formData.status,
@@ -501,6 +501,8 @@ function PropertyForm({
           <Input
             id="baths"
             type="number"
+            min="0"
+            step="0.5"
             value={formData.baths}
             onChange={(e) => setFormData({ ...formData, baths: e.target.value })}
             data-testid="input-property-baths"

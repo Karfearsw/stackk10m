@@ -74,7 +74,7 @@ const opportunityFields: FieldDef[] = [
   { key: "state", label: "State", required: true, type: "string" },
   { key: "zipCode", label: "Zip Code", required: true, type: "string" },
   { key: "beds", label: "Beds", type: "int" },
-  { key: "baths", label: "Baths", type: "int" },
+  { key: "baths", label: "Baths", type: "decimal" },
   { key: "sqft", label: "Square Feet", type: "int" },
   { key: "price", label: "Price", type: "decimal" },
   { key: "status", label: "Status", type: "string" },

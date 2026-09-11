@@ -114,6 +114,12 @@ async function uploadPhotosInBatches(files: FileList | File[], url: string, batc
   return results[results.length - 1] ?? {};
 }
 
+function bathsFromDb(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "";
+  const n = Number(v);
+  return Number.isFinite(n) ? String(n) : "";
+}
+
 function photoUploadErrorTitle(e: any) {
   const status = Number(e?.status);
   const msg = String(e?.message || "");
@@ -1837,7 +1843,7 @@ function OpportunityEditDialog({ property }: { property?: any }) {
       arv: property?.arv?.toString?.() || "",
       repairCost: property?.repairCost?.toString?.() || "",
       beds: typeof property?.beds === "number" ? String(property.beds) : "",
-      baths: typeof property?.baths === "number" ? String(property.baths) : "",
+      baths: bathsFromDb(property?.baths),
       sqft: typeof property?.sqft === "number" ? String(property.sqft) : "",
       yearBuilt: typeof property?.yearBuilt === "number" ? String(property.yearBuilt) : "",
       lotSize: property?.lotSize || "",
@@ -1899,7 +1905,7 @@ function OpportunityEditDialog({ property }: { property?: any }) {
               arv: formData.arv || null,
               repairCost: formData.repairCost || null,
               beds: formData.beds ? parseInt(formData.beds, 10) : null,
-              baths: formData.baths ? parseInt(formData.baths, 10) : null,
+              baths: formData.baths ? parseFloat(formData.baths) : null,
               sqft: formData.sqft ? parseInt(formData.sqft, 10) : null,
               yearBuilt: formData.yearBuilt ? parseInt(formData.yearBuilt, 10) : null,
               lotSize: formData.lotSize || null,
@@ -1962,7 +1968,7 @@ function OpportunityEditDialog({ property }: { property?: any }) {
             </div>
             <div className="space-y-2">
               <Label>Baths</Label>
-              <Input type="number" value={formData.baths} onChange={(e) => setFormData((p) => ({ ...p, baths: e.target.value }))} />
+              <Input type="number" min="0" step="0.5" value={formData.baths} onChange={(e) => setFormData((p) => ({ ...p, baths: e.target.value }))} />
             </div>
             <div className="space-y-2">
               <Label>SqFt</Label>

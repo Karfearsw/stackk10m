@@ -41,7 +41,7 @@ export const properties = pgTable("properties", {
   state: varchar("state", { length: 2 }).notNull(),
   zipCode: varchar("zip_code", { length: 10 }).notNull(),
   beds: integer("beds"),
-  baths: integer("baths"),
+  baths: decimal("baths", { precision: 4, scale: 1 }),
   sqft: integer("sqft"),
   price: decimal("price", { precision: 12, scale: 2 }),
   status: varchar("status", { length: 50 }).default("active"),
