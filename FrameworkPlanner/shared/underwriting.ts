@@ -566,3 +566,99 @@ export const underwritingTemplateConfigSchema = z.object({
     }),
 });
 export type UnderwritingTemplateConfig = z.infer<typeof underwritingTemplateConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// AGENT COMMISSION MATH
+// Shared between the CommissionCalculator UI and the server so snapshots can
+// be recomputed authoritatively when saved (client results are never trusted).
+// ---------------------------------------------------------------------------
+
+export type CommissionDealType = "standard_sale" | "wholesale_assignment";
+export type CommissionSide = "listing" | "buyer";
+
+export type CommissionMathInput = {
+  dealType: CommissionDealType;
+  salePrice: number;
+  assignmentFee: number;
+  listingCommissionPct: number;
+  buyerAgentPct: number;
+  side: CommissionSide;
+  referralOutPct: number;
+  agentSplitPct: number;
+  annualCap: number;
+  companyDollarYtd: number;
+  transactionFeeFlat: number;
+  taxReservePct: number;
+};
+
+export type CommissionMathResult = {
+  grossCommission: number;
+  referralFee: number;
+  afterReferral: number;
+  companyDollar: number;
+  capPortionToAgent: number;
+  agentNet: number;
+  agentNetBeforeFee: number;
+  afterTax: number;
+  effectiveSplitPct: number;
+  capReached: boolean;
+  capHitThisDeal: boolean;
+};
+
+export function computeCommissionMath(input: CommissionMathInput): CommissionMathResult {
+  const sidePct = input.side === "listing" ? input.listingCommissionPct : input.buyerAgentPct;
+  // For a wholesale/assignment deal the full fee IS the agent's gross
+  // commission — side percentages only apply to standard sale sides.
+  const grossCommission =
+    input.dealType === "wholesale_assignment" ? input.assignmentFee : input.salePrice * (sidePct / 100);
+  const referralFee = grossCommission * (input.referralOutPct / 100);
+  const afterReferral = grossCommission - referralFee;
+  const companyDollarBeforeCap = afterReferral * (1 - input.agentSplitPct / 100);
+  const agentGross = afterReferral - companyDollarBeforeCap;
+
+  // Cap rollover: once company dollar paid YTD reaches the cap, the agent keeps 100%.
+  let cappedCompanyDollar = companyDollarBeforeCap;
+  let capPortionToAgent = 0;
+  if (input.annualCap > 0) {
+    const capRemaining = Math.max(0, input.annualCap - input.companyDollarYtd);
+    cappedCompanyDollar = Math.min(companyDollarBeforeCap, capRemaining);
+    capPortionToAgent = companyDollarBeforeCap - cappedCompanyDollar;
+  }
+  const agentNetBeforeFee = agentGross + capPortionToAgent;
+  const agentNet = agentNetBeforeFee - input.transactionFeeFlat;
+  const afterTax = agentNet * (1 - input.taxReservePct / 100);
+  const commissionBase = input.dealType === "wholesale_assignment" ? input.assignmentFee : input.salePrice;
+  const effectiveSplitPct = commissionBase > 0 ? (agentNet / commissionBase) * 100 : 0;
+
+  return {
+    grossCommission,
+    referralFee,
+    afterReferral,
+    companyDollar: cappedCompanyDollar,
+    capPortionToAgent,
+    agentNet,
+    agentNetBeforeFee,
+    afterTax,
+    effectiveSplitPct,
+    capReached: input.annualCap > 0 && input.companyDollarYtd >= input.annualCap,
+    capHitThisDeal: input.annualCap > 0 && capPortionToAgent > 0,
+  };
+}
+
+// Server-validated shape of a commission snapshot input. Mirrors
+// CommissionMathInput with sane numeric bounds so stored snapshots are honest.
+export const commissionSnapshotInputSchema = z.object({
+  dealType: z.enum(["standard_sale", "wholesale_assignment"]),
+  side: z.enum(["listing", "buyer"]),
+  salePrice: z.number().finite().nonnegative().max(9_999_999_999).default(0),
+  assignmentFee: z.number().finite().nonnegative().max(9_999_999_999).default(0),
+  listingCommissionPct: z.number().finite().nonnegative().max(100).default(0),
+  buyerAgentPct: z.number().finite().nonnegative().max(100).default(0),
+  referralOutPct: z.number().finite().nonnegative().max(100).default(0),
+  agentSplitPct: z.number().finite().nonnegative().max(100).default(100),
+  annualCap: z.number().finite().nonnegative().max(9_999_999_999).default(0),
+  companyDollarYtd: z.number().finite().nonnegative().max(9_999_999_999).default(0),
+  transactionFeeFlat: z.number().finite().nonnegative().max(9_999_999_999).default(0),
+  taxReservePct: z.number().finite().nonnegative().max(100).default(0),
+});
+export type CommissionSnapshotInput = z.infer<typeof commissionSnapshotInputSchema>;

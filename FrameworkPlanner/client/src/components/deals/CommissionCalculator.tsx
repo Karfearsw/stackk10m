@@ -1,67 +1,15 @@
 import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Calculator, Users } from "lucide-react";
-
-/**
- * Agent commission math. Given the deal economics (sale price / assignment fee),
- * commission rates, and the agent's payout structure (split, annual cap,
- * transaction fees), computes gross commission income, company dollar, and the
- * agent's net take-home — including the cap rollover where commission above the
- * annual cap is kept 100% by the agent.
- */
-export function computeCommissionMath(input: {
-  dealType: "standard_sale" | "wholesale_assignment";
-  salePrice: number;
-  assignmentFee: number;
-  listingCommissionPct: number;
-  buyerAgentPct: number;
-  side: "listing" | "buyer";
-  referralOutPct: number;
-  agentSplitPct: number;
-  annualCap: number;
-  companyDollarYtd: number;
-  transactionFeeFlat: number;
-  taxReservePct: number;
-}) {
-  const sidePct = input.side === "listing" ? input.listingCommissionPct : input.buyerAgentPct;
-  const commissionBase = input.dealType === "wholesale_assignment" ? input.assignmentFee : input.salePrice;
-  const grossCommission = commissionBase * (sidePct / 100);
-  const referralFee = grossCommission * (input.referralOutPct / 100);
-  const afterReferral = grossCommission - referralFee;
-  const companyDollarBeforeCap = afterReferral * (1 - input.agentSplitPct / 100);
-  const agentGross = afterReferral - companyDollarBeforeCap;
-
-  // Cap rollover: once company dollar paid YTD reaches the cap, the agent keeps 100%.
-  let cappedCompanyDollar = companyDollarBeforeCap;
-  let capPortionToAgent = 0;
-  if (input.annualCap > 0) {
-    const capRemaining = Math.max(0, input.annualCap - input.companyDollarYtd);
-    cappedCompanyDollar = Math.min(companyDollarBeforeCap, capRemaining);
-    capPortionToAgent = companyDollarBeforeCap - cappedCompanyDollar;
-  }
-  const agentNetBeforeFee = agentGross + capPortionToAgent;
-  const agentNet = agentNetBeforeFee - input.transactionFeeFlat;
-  const afterTax = agentNet * (1 - input.taxReservePct / 100);
-  const effectiveSplitPct = commissionBase > 0 ? (agentNet / commissionBase) * 100 : 0;
-
-  return {
-    grossCommission,
-    referralFee,
-    afterReferral,
-    companyDollar: cappedCompanyDollar,
-    capPortionToAgent,
-    agentNet,
-    agentNetBeforeFee,
-    afterTax,
-    effectiveSplitPct,
-    capReached: input.annualCap > 0 && input.companyDollarYtd >= input.annualCap,
-    capHitThisDeal: input.annualCap > 0 && capPortionToAgent > 0,
-  };
-}
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
+import { computeCommissionMath } from "@shared/underwriting";
+import { Calculator, Loader2, Save, Trash2, Users } from "lucide-react";
 
 function money(n: number, digits = 0) {
   const v = typeof n === "number" && Number.isFinite(n) ? n : 0;
@@ -88,11 +36,20 @@ const DEFAULTS = {
   taxReservePct: "25",
 };
 
-export function CommissionCalculator({ presetSalePrice }: { presetSalePrice?: number | null }) {
+/**
+ * Agent commission math runs on the shared `computeCommissionMath` (see
+ * @shared/underwriting) so the server recomputes the exact same numbers when a
+ * snapshot is saved — the UI never stores its own arithmetic.
+ */
+export function CommissionCalculator({ opportunityId, presetSalePrice }: { opportunityId?: number | null; presetSalePrice?: number | null }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [f, setF] = useState<Record<string, string>>(() => ({
     ...DEFAULTS,
     salePrice: presetSalePrice ? String(Math.round(presetSalePrice)) : "",
   }));
+  const [label, setLabel] = useState("");
+  const [notes, setNotes] = useState("");
 
   const set = (k: string, v: string) => setF((p) => ({ ...p, [k]: v }));
 
@@ -114,6 +71,72 @@ export function CommissionCalculator({ presetSalePrice }: { presetSalePrice?: nu
       }),
     [f],
   );
+
+  const { data: snapshots = [] } = useQuery<any[]>({
+    queryKey: ["/api/opportunities", opportunityId, "commission-snapshots"],
+    enabled: !!opportunityId,
+    queryFn: async () => {
+      const res = await fetch(`/api/opportunities/${opportunityId}/commission-snapshots`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load commission snapshots");
+      return res.json();
+    },
+  });
+
+  const saveSnapshot = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/opportunities/${opportunityId}/commission-snapshots`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          label: label.trim() || null,
+          notes: notes.trim() || null,
+          inputs: {
+            dealType: f.dealType,
+            side: f.side,
+            salePrice: num(f.salePrice),
+            assignmentFee: num(f.assignmentFee),
+            listingCommissionPct: num(f.listingCommissionPct),
+            buyerAgentPct: num(f.buyerAgentPct),
+            referralOutPct: num(f.referralOutPct),
+            agentSplitPct: num(f.agentSplitPct),
+            annualCap: num(f.annualCap),
+            companyDollarYtd: num(f.companyDollarYtd),
+            transactionFeeFlat: num(f.transactionFeeFlat),
+            taxReservePct: num(f.taxReservePct),
+          },
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Failed to save snapshot");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/opportunities", opportunityId, "commission-snapshots"] });
+      setLabel("");
+      setNotes("");
+      toast({ title: "Commission snapshot saved", description: `Projected net ${money(math.agentNet)} on this deal.` });
+    },
+    onError: (e: any) => toast({ title: "Could not save snapshot", description: String(e?.message || e), variant: "destructive" }),
+  });
+
+  const deleteSnapshot = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/opportunities/${opportunityId}/commission-snapshots/${id}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Failed to delete snapshot");
+      }
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/opportunities", opportunityId, "commission-snapshots"] }),
+    onError: (e: any) => toast({ title: "Could not delete snapshot", description: String(e?.message || e), variant: "destructive" }),
+  });
 
   return (
     <div className="grid gap-6 lg:grid-cols-3">
@@ -272,7 +295,7 @@ export function CommissionCalculator({ presetSalePrice }: { presetSalePrice?: nu
               <span>${money(f.dealType === "wholesale_assignment" ? num(f.assignmentFee) : num(f.salePrice))}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Your side commission ({f.side === "listing" ? money(num(f.listingCommissionPct), 1) : money(num(f.buyerAgentPct), 1)}%)</span>
+              <span className="text-muted-foreground">{f.dealType === "wholesale_assignment" ? "Assignment fee (gross)" : `Your side commission (${f.side === "listing" ? money(num(f.listingCommissionPct), 1) : money(num(f.buyerAgentPct), 1)}%)`}</span>
               <span>${money(math.grossCommission)}</span>
             </div>
             {math.referralFee > 0 && (
@@ -309,7 +332,90 @@ export function CommissionCalculator({ presetSalePrice }: { presetSalePrice?: nu
             )}
           </CardContent>
         </Card>
+
+        {opportunityId ? (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Save className="h-4 w-4" />
+                Save This Projection
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-2">
+                <Label htmlFor="cc-snap-label">Label (optional)</Label>
+                <Input id="cc-snap-label" placeholder="e.g. 3% listing, 70/30" value={label} onChange={(e) => setLabel(e.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cc-snap-notes">Notes (optional)</Label>
+                <Textarea id="cc-snap-notes" rows={2} placeholder="Context for this projection…" value={notes} onChange={(e) => setNotes(e.target.value)} />
+              </div>
+              <Button className="w-full" disabled={saveSnapshot.isPending} onClick={() => saveSnapshot.mutate()} data-testid="button-save-commission-snapshot">
+                {saveSnapshot.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                Save snapshot (net ${money(math.agentNet)})
+              </Button>
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
+
+      {opportunityId && snapshots.length > 0 ? (
+        <Card className="lg:col-span-3">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Saved Commission Snapshots</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm" data-testid="commission-snapshots-table">
+                <thead>
+                  <tr className="border-b text-left text-xs text-muted-foreground">
+                    <th className="py-2 pr-4 font-medium">Saved</th>
+                    <th className="py-2 pr-4 font-medium">Scenario</th>
+                    <th className="py-2 pr-4 font-medium">Gross</th>
+                    <th className="py-2 pr-4 font-medium">Company $</th>
+                    <th className="py-2 pr-4 font-medium">Agent net</th>
+                    <th className="py-2 pr-4 font-medium">After tax</th>
+                    <th className="py-2 pr-4 font-medium"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {snapshots.map((s: any) => (
+                    <tr key={s.id} className="border-b last:border-0">
+                      <td className="py-2 pr-4 whitespace-nowrap">{s.createdAt ? new Date(s.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—"}</td>
+                      <td className="py-2 pr-4">
+                        <div className="font-medium">{s.label || (s.dealType === "wholesale_assignment" ? "Wholesale fee" : `${s.side === "listing" ? "Listing" : "Buyer"} side`)}</div>
+                        {s.notes ? <div className="text-xs text-muted-foreground max-w-xs truncate" title={s.notes}>{s.notes}</div> : null}
+                      </td>
+                      <td className="py-2 pr-4">${money(Number(s.grossCommission))}</td>
+                      <td className="py-2 pr-4">
+                        −${money(Number(s.companyDollar))}
+                        {Number(s.capPortionToAgent) > 0 ? <span className="ml-1 text-xs text-green-600">+cap</span> : null}
+                      </td>
+                      <td className="py-2 pr-4 font-semibold">${money(Number(s.agentNet))}</td>
+                      <td className="py-2 pr-4">${money(Number(s.afterTax))}</td>
+                      <td className="py-2 pr-2 text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                          aria-label="Delete snapshot"
+                          onClick={() => deleteSnapshot.mutate(s.id)}
+                          disabled={deleteSnapshot.isPending}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              Snapshots are recomputed server-side when saved, so these projections are exact. Delete is limited to your own snapshots.
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
     </div>
   );
 }

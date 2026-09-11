@@ -418,7 +418,7 @@ export default function PropertyDetail() {
   const calcDrafts: Record<string, Record<string, any>> = (globalThis as any).__faCalcDrafts ??= {};
   const faDraftKey = `opp-${id || 0}`;
   const [calcValues, setCalcValues] = React.useState<DealCalculatorValues | null>(() => calcDrafts[faDraftKey] || null);
-  const calcInitializedRef = React.useRef(false);
+  const lastSeededOppIdRef = React.useRef<number | null>(null);
   const calcDirtyRef = React.useRef(false);
   const faSaveTimerRef = React.useRef<number | null>(null);
 
@@ -436,11 +436,11 @@ export default function PropertyDetail() {
   }), [property?.id]);
 
   React.useEffect(() => {
-    // Seed the calculator values once the opportunity has loaded, preferring an
-    // unsaved session draft (edit-in-flight) over the stored record.
+    // Seed the calculator values per opportunity (re-seeds when navigating to a
+    // different record), preferring an unsaved session draft over the stored record.
     if (!property?.id) return;
-    if (calcInitializedRef.current) return;
-    calcInitializedRef.current = true;
+    if (lastSeededOppIdRef.current === property.id) return;
+    lastSeededOppIdRef.current = property.id;
     setCalcValues(calcDrafts[faDraftKey] ? { ...calcDrafts[faDraftKey] } : { ...faInitialValues });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [property?.id, faDraftKey]);
@@ -1070,7 +1070,7 @@ export default function PropertyDetail() {
                     <CardDescription>What you or an agent walks away with on this deal — splits, caps, referrals, and tax reserve included.</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <CommissionCalculator presetSalePrice={num(property?.price)} />
+                    <CommissionCalculator opportunityId={property?.id ?? null} presetSalePrice={num(property?.price)} />
                   </CardContent>
                 </Card>
                 {calcValues ? (

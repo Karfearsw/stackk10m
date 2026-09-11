@@ -5,13 +5,14 @@ import {
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, workCategories, timesheetEntries, timeClockSessions, workerProfiles, categoryRateOverrides, payPeriods, approvalEvents, commissionEvents, dealParticipants, commissionLedgerEntries, globalActivityLogs,
   buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents,
   companies, companyPeople, companyLinks, documents, documentLinks, vaultDocumentVersions, automations, automationTriggers, automationConditions, automationActions, automationRuns, auditEvents,
-  opportunityParties, publicListings, buyerInquiries, opportunityEvents, buyerOffers, propertyUnits,
+  opportunityParties, publicListings, buyerInquiries, opportunityEvents, buyerOffers, propertyUnits, commissionSnapshots,
   internalMessages, calendarEvents, appSettings, smsMessages, callSessions, callSessionEvents, agentPhoneSettings, callDispositions, aiCallQualifications,
   type BuyerOffer, type InsertBuyerOffer, type SmsMessage, type InsertSmsMessage, type AppSetting,
   type CallSession, type InsertCallSession, type CallSessionEvent, type InsertCallSessionEvent,
   type AgentPhoneSetting, type InsertAgentPhoneSetting, type CallDisposition, type InsertCallDisposition,
   type AiCallQualification, type InsertAiCallQualification,
-  type PropertyUnit, type InsertPropertyUnit
+  type PropertyUnit, type InsertPropertyUnit,
+  type CommissionSnapshot, type InsertCommissionSnapshot
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -721,6 +722,14 @@ export interface IStorage {
   createPropertyUnit(unit: InsertPropertyUnit): Promise<PropertyUnit>;
   updatePropertyUnit(id: number, patch: Partial<InsertPropertyUnit>): Promise<PropertyUnit>;
   deletePropertyUnit(id: number): Promise<void>;
+
+  // Commission snapshots (per-agent payout projections on an opportunity)
+  getCommissionSnapshotsByOpportunity(opportunityId: number): Promise<CommissionSnapshot[]>;
+  getCommissionSnapshotsByUser(opportunityId: number, userId: number): Promise<CommissionSnapshot[]>;
+  getCommissionSnapshotById(id: number): Promise<CommissionSnapshot | undefined>;
+  createCommissionSnapshot(snapshot: InsertCommissionSnapshot): Promise<CommissionSnapshot>;
+  updateCommissionSnapshot(id: number, patch: Partial<InsertCommissionSnapshot>): Promise<CommissionSnapshot>;
+  deleteCommissionSnapshot(id: number): Promise<void>;
 
   // Buyer Inquiries
   getBuyerInquiries(opportunityId: number): Promise<BuyerInquiry[]>;
@@ -4427,6 +4436,33 @@ export class DatabaseStorage implements IStorage {
   }
   async deletePropertyUnit(id: number): Promise<void> {
     await db.delete(propertyUnits).where(eq(propertyUnits.id, id));
+  }
+
+  // Commission snapshots (per-agent payout projections on an opportunity)
+  async getCommissionSnapshotsByOpportunity(opportunityId: number): Promise<CommissionSnapshot[]> {
+    return db.select().from(commissionSnapshots).where(eq(commissionSnapshots.opportunityId, opportunityId)).orderBy(desc(commissionSnapshots.createdAt));
+  }
+  async getCommissionSnapshotsByUser(opportunityId: number, userId: number): Promise<CommissionSnapshot[]> {
+    return db
+      .select()
+      .from(commissionSnapshots)
+      .where(and(eq(commissionSnapshots.opportunityId, opportunityId), eq(commissionSnapshots.userId, userId)))
+      .orderBy(desc(commissionSnapshots.createdAt));
+  }
+  async getCommissionSnapshotById(id: number): Promise<CommissionSnapshot | undefined> {
+    const result = await db.select().from(commissionSnapshots).where(eq(commissionSnapshots.id, id)).limit(1);
+    return result[0];
+  }
+  async createCommissionSnapshot(snapshot: InsertCommissionSnapshot): Promise<CommissionSnapshot> {
+    const result = await db.insert(commissionSnapshots).values(snapshot as any).returning();
+    return result[0];
+  }
+  async updateCommissionSnapshot(id: number, patch: Partial<InsertCommissionSnapshot>): Promise<CommissionSnapshot> {
+    const result = await db.update(commissionSnapshots).set(patch as any).where(eq(commissionSnapshots.id, id)).returning();
+    return result[0];
+  }
+  async deleteCommissionSnapshot(id: number): Promise<void> {
+    await db.delete(commissionSnapshots).where(eq(commissionSnapshots.id, id));
   }
 
   // Buyer Inquiries

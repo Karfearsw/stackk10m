@@ -1502,6 +1502,42 @@ export const insertCommissionLedgerEntrySchema = createInsertSchema(commissionLe
 export type CommissionLedgerEntry = typeof commissionLedgerEntries.$inferSelect;
 export type InsertCommissionLedgerEntry = z.infer<typeof insertCommissionLedgerEntrySchema>;
 
+// COMMISSION SNAPSHOTS — per-agent underwriting of their own payout on an
+// opportunity (side %, referral, split, annual cap rollover, fees, tax
+// reserve). Server recomputes the money columns from inputs via
+// computeCommissionMath so stored projections are authoritative.
+export const commissionSnapshots = pgTable("commission_snapshots", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  opportunityId: integer("opportunity_id").notNull(),
+  userId: integer("user_id").notNull(),
+  label: varchar("label", { length: 120 }),
+  dealType: varchar("deal_type", { length: 40 }).notNull().default("standard_sale"),
+  side: varchar("side", { length: 20 }).notNull().default("listing"),
+  salePrice: decimal("sale_price", { precision: 12, scale: 2 }),
+  assignmentFee: decimal("assignment_fee", { precision: 12, scale: 2 }),
+  listingCommissionPct: decimal("listing_commission_pct", { precision: 6, scale: 2 }),
+  buyerAgentPct: decimal("buyer_agent_pct", { precision: 6, scale: 2 }),
+  referralOutPct: decimal("referral_out_pct", { precision: 6, scale: 2 }),
+  agentSplitPct: decimal("agent_split_pct", { precision: 6, scale: 2 }),
+  annualCap: decimal("annual_cap", { precision: 12, scale: 2 }),
+  companyDollarYtd: decimal("company_dollar_ytd", { precision: 12, scale: 2 }),
+  transactionFeeFlat: decimal("transaction_fee_flat", { precision: 12, scale: 2 }),
+  taxReservePct: decimal("tax_reserve_pct", { precision: 6, scale: 2 }),
+  grossCommission: decimal("gross_commission", { precision: 12, scale: 2 }),
+  referralFee: decimal("referral_fee", { precision: 12, scale: 2 }),
+  companyDollar: decimal("company_dollar", { precision: 12, scale: 2 }),
+  capPortionToAgent: decimal("cap_portion_to_agent", { precision: 12, scale: 2 }),
+  agentNet: decimal("agent_net", { precision: 12, scale: 2 }),
+  afterTax: decimal("after_tax", { precision: 12, scale: 2 }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertCommissionSnapshotSchema = createInsertSchema(commissionSnapshots).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type CommissionSnapshot = typeof commissionSnapshots.$inferSelect;
+export type InsertCommissionSnapshot = z.infer<typeof insertCommissionSnapshotSchema>;
+
 // GLOBAL ACTIVITY LOG TABLE (company-wide activity visible to all team members)
 export const globalActivityLogs = pgTable("global_activity_logs", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),

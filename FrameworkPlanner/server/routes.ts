@@ -90,7 +90,7 @@ import {
   defaultNotificationCategories, insertInternalMessageSchema, insertCalendarEventSchema
 } from "./shared-schema.js";
 import { z } from "zod";
-import { computeArvFromComps, computeDealMath, computeRepairTotal, underwritingSchemaV1, underwritingTemplateConfigSchema } from "../shared/underwriting.js";
+import { computeArvFromComps, computeCommissionMath, computeDealMath, computeRepairTotal, commissionSnapshotInputSchema, underwritingSchemaV1, underwritingTemplateConfigSchema } from "../shared/underwriting.js";
 import { createSkipTraceJob, isHttpError, runProviderSkipTraceForEntity, runSkipTraceJob } from "./services/skipTrace/orchestrator.js";
 import { hydrateSkipTraceResultForApi, mergeSkipTraceResult } from "./services/skipTrace/merge.js";
 import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
@@ -6361,6 +6361,93 @@ export async function registerRoutes(
         "user",
         { unitId },
       );
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // COMMISSION SNAPSHOTS — per-agent payout projections on an opportunity.
+  // Money columns are recomputed server-side from the validated inputs via
+  // computeCommissionMath so stored snapshots are authoritative.
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  app.get("/api/opportunities/:id/commission-snapshots", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const snapshots = await storage.getCommissionSnapshotsByOpportunity(opportunityId);
+      res.json(snapshots);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/opportunities/:id/commission-snapshots", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const input = commissionSnapshotInputSchema.parse(req.body?.inputs ?? {});
+      const math = computeCommissionMath(input);
+      const label = typeof req.body?.label === "string" && req.body.label.trim() ? req.body.label.trim().slice(0, 120) : null;
+      const notes = typeof req.body?.notes === "string" && req.body.notes.trim() ? req.body.notes.trim().slice(0, 2000) : null;
+      const created = await storage.createCommissionSnapshot({
+        opportunityId,
+        userId: user.id,
+        label,
+        dealType: input.dealType,
+        side: input.side,
+        salePrice: round2(input.salePrice).toString(),
+        assignmentFee: round2(input.assignmentFee).toString(),
+        listingCommissionPct: round2(input.listingCommissionPct).toString(),
+        buyerAgentPct: round2(input.buyerAgentPct).toString(),
+        referralOutPct: round2(input.referralOutPct).toString(),
+        agentSplitPct: round2(input.agentSplitPct).toString(),
+        annualCap: round2(input.annualCap).toString(),
+        companyDollarYtd: round2(input.companyDollarYtd).toString(),
+        transactionFeeFlat: round2(input.transactionFeeFlat).toString(),
+        taxReservePct: round2(input.taxReservePct).toString(),
+        grossCommission: round2(math.grossCommission).toString(),
+        referralFee: round2(math.referralFee).toString(),
+        companyDollar: round2(math.companyDollar).toString(),
+        capPortionToAgent: round2(math.capPortionToAgent).toString(),
+        agentNet: round2(math.agentNet).toString(),
+        afterTax: round2(math.afterTax).toString(),
+        notes,
+      } as any);
+      await logOpportunityEvent(
+        opportunityId,
+        "commission_snapshot_saved",
+        `Commission snapshot saved: net $${Math.round(math.agentNet).toLocaleString("en-US")}`,
+        `Projected agent net $${Math.round(math.agentNet).toLocaleString("en-US")} (${input.side === "listing" ? "listing" : "buyer"} side, ${input.agentSplitPct}% split).`,
+        user.id,
+        "user",
+        { snapshotId: created.id, agentNet: round2(math.agentNet), afterTax: round2(math.afterTax) },
+      );
+      res.status(201).json(created);
+    } catch (error: any) {
+      if (error?.name === "ZodError") return res.status(400).json({ message: "Invalid commission snapshot input", issues: error.issues });
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.delete("/api/opportunities/:id/commission-snapshots/:snapshotId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const snapshotId = parseInt(req.params.snapshotId, 10);
+      const existing = await storage.getCommissionSnapshotById(snapshotId);
+      if (!existing || existing.opportunityId !== opportunityId) {
+        return res.status(404).json({ message: "Snapshot not found" });
+      }
+      if (existing.userId !== user.id) {
+        return res.status(403).json({ message: "You can only delete your own commission snapshots" });
+      }
+      await storage.deleteCommissionSnapshot(snapshotId);
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -12820,7 +12907,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       const buyer = await storage.createBuyer(validated);
       res.status(201).json(buyer);
     } catch (error: any) {
-      res.status(400).json({ message: error.message });
+      res.status(400).json({ message: error?.message || "Failed to create buyer" });
     }
   });
   app.patch("/api/buyers/:id", async (req, res) => {
