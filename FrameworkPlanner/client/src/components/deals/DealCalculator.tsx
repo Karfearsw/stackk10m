@@ -12,6 +12,7 @@ import { Link } from "wouter";
 import { TrendingUp } from "lucide-react";
 import {
   computeDealMath,
+  computeIncomeDealMath,
   computeScenarioTriplet,
   computeUnderwritingOutputs,
   underwritingTemplateConfigSchema,
@@ -21,10 +22,16 @@ import {
   type UnderwritingSaleCosts,
   type UnderwritingSnapshot,
 } from "@shared/underwriting";
+import { Building2, Users } from "lucide-react";
 
 export type DealCalculatorValues = {
   strategy?: UnderwritingSnapshot["strategy"] | null;
   templateId?: string | null;
+  valuationMode?: "flip" | "income" | null;
+  noiAnnual?: number | null;
+  capRatePct?: number | null;
+  unitCount?: number | null;
+  askingPrice?: number | null;
   arv?: number | null;
   arvLow?: number | null;
   arvHigh?: number | null;
@@ -93,11 +100,17 @@ export function DealCalculator({
   showActions = true,
   linked,
   onSave,
+  value,
+  onChange,
 }: {
   initialValues?: DealCalculatorValues;
   showActions?: boolean;
   linked?: { opportunity?: { id: number; href: string }; playground?: { id: number; href: string } };
   onSave?: (values: DealCalculatorValues) => void;
+  /** When provided, the calculator becomes fully controlled and persists state across parent remounts (fixes lost input on tab switches). */
+  value?: DealCalculatorValues;
+  /** Required alongside `value`; called on every field edit. */
+  onChange?: (values: DealCalculatorValues) => void;
 }) {
   const { data: templates = [] } = useQuery<any[]>({
     queryKey: ["/api/underwriting/templates"],
@@ -108,12 +121,17 @@ export function DealCalculator({
     },
   });
 
-  const [values, setValues] = useState<DealCalculatorValues>(() => {
+  const [internalValues, setValues] = useState<DealCalculatorValues>(() => {
     const monthsHeld = safeNumber((initialValues as any)?.monthsHeld) || 4;
     const legacyHolding = safeNumber((initialValues as any)?.holdingCosts);
     return {
       strategy: initialValues?.strategy || "wholesale",
       templateId: initialValues?.templateId || null,
+      valuationMode: initialValues?.valuationMode || "flip",
+      noiAnnual: safeNumber((initialValues as any)?.noiAnnual ?? (initialValues as any)?.noi),
+      capRatePct: safeNumber(initialValues?.capRatePct),
+      unitCount: safeNumber((initialValues as any)?.unitCount ?? (initialValues as any)?.doors),
+      askingPrice: safeNumber((initialValues as any)?.askingPrice ?? (initialValues as any)?.price),
       arv: safeNumber(initialValues?.arv),
       arvLow: safeNumber(initialValues?.arvLow) || null,
       arvHigh: safeNumber(initialValues?.arvHigh) || null,
@@ -160,7 +178,18 @@ export function DealCalculator({
     };
   });
 
-  const set = <K extends keyof DealCalculatorValues>(key: K, value: DealCalculatorValues[K]) => setValues((v) => ({ ...v, [key]: value }));
+  // Controlled mode: when `value` is provided it wins over internal state so the
+  // parent can persist edits (e.g. via autosave) across tab unmounts. All reads
+  // below use `values`, which aliases the controlled prop in that mode.
+  const values = value ?? internalValues;
+
+  const set = <K extends keyof DealCalculatorValues>(key: K, v: DealCalculatorValues[K]) => {
+    if (value && onChange) {
+      onChange({ ...value, [key]: v });
+    } else {
+      setValues((prev) => ({ ...prev, [key]: v }));
+    }
+  };
   const n = <K extends keyof DealCalculatorValues>(key: K) => safeNumber(values[key]);
 
   const templateConfig = useMemo(() => {
@@ -289,6 +318,19 @@ export function DealCalculator({
     });
   }, [arv, assumptions, costs, financing, holdCosts, repairs, rental, saleCosts, strategy, templateConfig.targetDiscountPct, values.arvHigh, values.arvLow, values.offerTarget]);
 
+  const incomeMode = (values.valuationMode || "flip") === "income";
+
+  const incomeMath = useMemo(
+    () =>
+      computeIncomeDealMath({
+        noiAnnual: n("noiAnnual"),
+        capRatePct: n("capRatePct"),
+        unitCount: n("unitCount"),
+        askingPrice: n("askingPrice"),
+      }),
+    [values.noiAnnual, values.capRatePct, values.unitCount, values.askingPrice],
+  );
+
   const warnings = useMemo(() => {
     const out = outputs;
     const list: { key: string; label: string }[] = [];
@@ -305,9 +347,14 @@ export function DealCalculator({
   }, [arv, dealMath.mao, outputs, repairs, strategy]);
 
   const handleReset = () => {
-    setValues({
+    const resetState: DealCalculatorValues = {
       strategy: "wholesale",
       templateId: null,
+      valuationMode: "flip",
+      noiAnnual: 0,
+      capRatePct: 0,
+      unitCount: 0,
+      askingPrice: 0,
       arv: 0,
       arvLow: null,
       arvHigh: null,
@@ -345,13 +392,23 @@ export function DealCalculator({
       managementPct: 10,
       maintenancePct: 8,
       capexPct: 5,
-    });
+    };
+    if (value && onChange) {
+      onChange(resetState);
+    } else {
+      setValues(resetState);
+    }
   };
 
   const handleSave = () => {
     onSave?.({
       ...values,
       strategy,
+      valuationMode: incomeMode ? "income" : "flip",
+      noiAnnual: n("noiAnnual"),
+      capRatePct: n("capRatePct"),
+      unitCount: n("unitCount"),
+      askingPrice: n("askingPrice"),
       arv,
       repairs,
       offerTarget: values.offerTarget && values.offerTarget > 0 ? n("offerTarget") : null,
@@ -404,24 +461,48 @@ export function DealCalculator({
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Criteria template</Label>
-                <Select value={values.templateId || "default"} onValueChange={(v) => set("templateId", v === "default" ? null : v)}>
+                <Label>Valuation method</Label>
+                <Select value={values.valuationMode || "flip"} onValueChange={(v) => set("valuationMode", v as any)}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Default criteria" />
+                    <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="default">Default</SelectItem>
-                    {templates.map((t) => (
-                      <SelectItem key={String(t.id)} value={String(t.id)}>
-                        {String(t.name || `Template ${t.id}`)}
-                      </SelectItem>
-                    ))}
+                    <SelectItem value="flip">Flip (ARV − repairs)</SelectItem>
+                    <SelectItem value="income">Income (NOI ÷ cap rate)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            {incomeMode ? (
+              <div className="space-y-4 rounded-lg border p-4">
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="dc-noi">NOI (annual)</Label>
+                    <div className="relative">
+                      <span className="absolute left-3 top-2.5 text-muted-foreground">$</span>
+                      <Input id="dc-noi" type="number" placeholder="84000" value={values.noiAnnual || ""} onChange={(e) => set("noiAnnual", safeNumber(e.target.value))} className="pl-7" />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="dc-cap">Cap rate (%)</Label>
+                    <Input id="dc-cap" type="number" step="0.01" placeholder="6.5" value={values.capRatePct || ""} onChange={(e) => set("capRatePct", safeNumber(e.target.value))} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="dc-doors">Units / Doors</Label>
+                    <Input id="dc-doors" type="number" min="0" value={values.unitCount || ""} onChange={(e) => set("unitCount", safeNumber(e.target.value))} />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="dc-ask">Asking price (optional)</Label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-2.5 text-muted-foreground">$</span>
+                    <Input id="dc-ask" type="number" placeholder="1200000" value={values.askingPrice || ""} onChange={(e) => set("askingPrice", safeNumber(e.target.value))} className="pl-7" />
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="dc-arv">After Repair Value (ARV)</Label>
                 <div className="relative">
@@ -451,6 +532,7 @@ export function DealCalculator({
                 </div>
               </div>
             </div>
+            )}
 
             <div className="grid grid-cols-3 gap-4">
               <div className="space-y-2">
@@ -806,6 +888,69 @@ export function DealCalculator({
       </div>
 
       <div className="space-y-4">
+        {incomeMode && (
+          <Card className="border-accent/50 bg-accent/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Building2 className="h-5 w-5 text-accent" />
+                Income Valuation
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <div className="text-xs text-muted-foreground">Estimated value (NOI ÷ cap rate)</div>
+                <div className="text-3xl font-bold">${money(incomeMath.valuation)}</div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-xs text-muted-foreground">NOI (annual)</div>
+                  <div className="font-medium">${money(n("noiAnnual"))}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Cap rate</div>
+                  <div className="font-medium">{n("capRatePct") ? `${money(n("capRatePct"), 2)}%` : "—"}</div>
+                </div>
+                {n("unitCount") > 0 && (
+                  <>
+                    <div>
+                      <div className="text-xs text-muted-foreground">NOI / door</div>
+                      <div className="font-medium">${money(incomeMath.noiPerDoor)}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-muted-foreground">Value / door</div>
+                      <div className="font-medium">${money(incomeMath.valuePerDoor)}</div>
+                    </div>
+                  </>
+                )}
+                {incomeMath.capAtPricePct != null && (
+                  <div>
+                    <div className="text-xs text-muted-foreground">Cap at asking price</div>
+                    <div className="font-medium">{money(incomeMath.capAtPricePct, 2)}%</div>
+                  </div>
+                )}
+                {incomeMath.priceVsValuePct != null && (
+                  <div>
+                    <div className="text-xs text-muted-foreground">Price vs value</div>
+                    <div className={`font-medium ${incomeMath.priceVsValuePct <= 0 ? "text-green-600" : "text-destructive"}`}>
+                      {incomeMath.priceVsValuePct > 0 ? "+" : ""}
+                      {money(incomeMath.priceVsValuePct, 1)}%
+                    </div>
+                  </div>
+                )}
+              </div>
+              {incomeMath.valuation > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {n("askingPrice") > 0
+                    ? n("askingPrice") <= incomeMath.valuation
+                      ? "Asking price is at or below the income-based value — worth a closer look."
+                      : "Asking price is above the income-based value — negotiate or verify the cap rate."
+                    : "Enter an asking price to compare against the income valuation."}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        )}
+
         <Card className="border-primary/50 bg-primary/5">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-lg">

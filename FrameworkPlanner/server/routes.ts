@@ -83,6 +83,7 @@ import {
   users,
   insertOpportunityPartySchema,
   insertPublicListingSchema,
+  insertPropertyUnitSchema,
   insertBuyerInquirySchema,
   insertOpportunityEventSchema,
   opportunityParties, publicListings, buyerInquiries, opportunityEvents,
@@ -6276,6 +6277,96 @@ export async function registerRoutes(
     }
   });
   // PUBLIC LISTINGS (CRM-facing)
+  // PROPERTY UNITS — per-unit rent roll for multi-unit / commercial opportunities
+  const COMMERCIAL_UNIT_STATUSES = ["vacant", "occupied", "notice", "renovation", "down"];
+  app.get("/api/opportunities/:id/units", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const units = await storage.getPropertyUnitsByOpportunity(opportunityId);
+      res.json(units);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  app.post("/api/opportunities/:id/units", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const validated = insertPropertyUnitSchema.parse(req.body || {}) as any;
+      if (validated.unitStatus && !COMMERCIAL_UNIT_STATUSES.includes(validated.unitStatus)) {
+        return res.status(400).json({ message: `Invalid unit status. Allowed: ${COMMERCIAL_UNIT_STATUSES.join(", ")}` });
+      }
+      if (!String(validated.unitLabel || "").trim()) {
+        return res.status(400).json({ message: "Unit label is required" });
+      }
+      const unit = await storage.createPropertyUnit({ ...validated, opportunityId } as any);
+      await logOpportunityEvent(
+        opportunityId,
+        "unit_added",
+        `Unit ${unit.unitLabel} added`,
+        `Added unit ${unit.unitLabel}${unit.rent ? ` at $${Number(unit.rent).toLocaleString()}/mo` : ""} to the rent roll.`,
+        user.id,
+        "user",
+        { unitId: unit.id },
+      );
+      res.status(201).json(unit);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.patch("/api/opportunities/:id/units/:unitId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const unitId = parseInt(req.params.unitId, 10);
+      const existing = await storage.getPropertyUnitById(unitId);
+      if (!existing || existing.opportunityId !== opportunityId) {
+        return res.status(404).json({ message: "Unit not found" });
+      }
+      const validated = insertPropertyUnitSchema.partial().parse(req.body || {}) as any;
+      if (validated.unitStatus && !COMMERCIAL_UNIT_STATUSES.includes(validated.unitStatus)) {
+        return res.status(400).json({ message: `Invalid unit status. Allowed: ${COMMERCIAL_UNIT_STATUSES.join(", ")}` });
+      }
+      const unit = await storage.updatePropertyUnit(unitId, validated as any);
+      res.json(unit);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  app.delete("/api/opportunities/:id/units/:unitId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const unitId = parseInt(req.params.unitId, 10);
+      const existing = await storage.getPropertyUnitById(unitId);
+      if (!existing || existing.opportunityId !== opportunityId) {
+        return res.status(404).json({ message: "Unit not found" });
+      }
+      await storage.deletePropertyUnit(unitId);
+      await logOpportunityEvent(
+        opportunityId,
+        "unit_removed",
+        `Unit ${existing.unitLabel} removed`,
+        `Removed unit ${existing.unitLabel} from the rent roll.`,
+        user.id,
+        "user",
+        { unitId },
+      );
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get("/api/opportunities/:id/listings", async (req, res) => {
     try {
       const user = await requireAuth(req, res);

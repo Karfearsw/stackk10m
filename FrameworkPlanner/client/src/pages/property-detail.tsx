@@ -11,7 +11,8 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { DealCalculator } from "@/components/deals/DealCalculator";
+import { DealCalculator, type DealCalculatorValues } from "@/components/deals/DealCalculator";
+import { CommissionCalculator } from "@/components/deals/CommissionCalculator";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
 import { SkipTraceJobPanel } from "@/components/skipTrace/SkipTraceJobPanel";
 import { MediaGallery } from "@/components/media/MediaGallery";
@@ -42,6 +43,20 @@ import {
   ImageIcon,
 } from "lucide-react";
 import { Link, useLocation, useRoute } from "wouter";
+
+const MULTI_UNIT_TYPES = new Set(["duplex", "multi_family", "mobile_home_park", "commercial_retail", "commercial_office", "industrial", "mixed_use"]);
+const DEAL_TYPE_LABELS: Record<string, string> = {
+  single_family: "Single Family",
+  condo: "Condo / Townhome",
+  duplex: "Duplex / Triplex / Quad",
+  multi_family: "Multifamily (5+ units)",
+  mobile_home_park: "Mobile Home Park",
+  land: "Land",
+  commercial_retail: "Commercial — Retail",
+  commercial_office: "Commercial — Office",
+  industrial: "Industrial / Warehouse",
+  mixed_use: "Mixed Use",
+};
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import propertyImage from "@assets/generated_images/modern_suburban_house_exterior_for_real_estate_placeholder.png";
 import interiorImage from "@assets/generated_images/interior_of_a_modern_living_room_for_real_estate_placeholder.png";
@@ -213,6 +228,19 @@ export default function PropertyDetail() {
     },
   });
 
+  const { data: units = [] } = useQuery<any[]>({
+    queryKey: ["/api/opportunities", id, "units"],
+    enabled: !!id,
+    queryFn: async () => {
+      const res = await fetch(`/api/opportunities/${id}/units`, { credentials: "include" });
+      if (!res.ok) {
+        if (res.status === 404) return [];
+        throw new Error("Failed to load units");
+      }
+      return res.json();
+    },
+  });
+
   const recomputeMatchesMutation = useMutation({
     mutationFn: async () => {
       const res = await fetch(`/api/opportunities/${id}/buyer-matches/recompute`, { method: "POST", credentials: "include" });
@@ -353,6 +381,169 @@ export default function PropertyDetail() {
   });
   const [noteDialogOpen, setNoteDialogOpen] = React.useState(false);
   const [noteText, setNoteText] = React.useState("");
+
+  const isCommercialDeal = MULTI_UNIT_TYPES.has(property?.propertyType || "");
+  const [unitDialogOpen, setUnitDialogOpen] = React.useState(false);
+  const [editingUnit, setEditingUnit] = React.useState<any | null>(null);
+  const unitEmptyForm = { unitLabel: "", beds: "", baths: "", sqft: "", rent: "", unitStatus: "vacant", leaseStart: "", leaseEnd: "", notes: "" };
+  const [unitForm, setUnitForm] = React.useState<any>(unitEmptyForm);
+
+  const unitsDerived = React.useMemo(() => {
+    const totalUnits = units.length;
+    const occupied = units.filter((u: any) => u.unitStatus === "occupied").length;
+    const totalRent = units.reduce((s: number, u: any) => s + (parseFloat(u.rent) || 0), 0);
+    const totalSqft = units.reduce((s: number, u: any) => s + (parseInt(u.sqft) || 0), 0);
+    const avgRent = totalUnits ? totalRent / totalUnits : 0;
+    // Gross potential rent minus a 5% vacancy/credit-loss allowance = estimated NOI when none is entered manually.
+    const estimatedNoi = Math.round(totalRent * 12 * 0.95);
+    return { totalUnits, occupied, vacant: totalUnits - occupied, totalRent, totalSqft, avgRent, annualRent: totalRent * 12, estimatedNoi };
+  }, [units]);
+  const manualNoi = property?.noi != null && Number(property.noi) !== 0;
+  const displayNoi = manualNoi ? Number(property.noi) : unitsDerived.estimatedNoi;
+  const noiIsEstimated = !manualNoi && unitsDerived.estimatedNoi > 0;
+
+  // --- Financial Analysis persistence (audit C1 fix) ---
+  // The DealCalculator previously held its inputs in local state inside the
+  // "financials" tab, so switching tabs unmounted it and discarded every typed
+  // value (ARV, assignment fee, repairs, ...). Lift the state to the page:
+  //  1. edits are autosaved (debounced) to the opportunity via PATCH,
+  //  2. until the PATCH lands, edits are kept in a session buffer so
+  //     re-mounting the tab immediately restores the unsaved draft.
+  const calcDrafts: Record<string, Record<string, any>> = (globalThis as any).__faCalcDrafts ??= {};
+  const faDraftKey = `opp-${id || 0}`;
+  const [calcValues, setCalcValues] = React.useState<DealCalculatorValues | null>(() => calcDrafts[faDraftKey] || null);
+  const calcInitializedRef = React.useRef(false);
+  const calcDirtyRef = React.useRef(false);
+  const faSaveTimerRef = React.useRef<number | null>(null);
+
+  const faInitialValues: DealCalculatorValues = React.useMemo(() => ({
+    arv: num(property?.arv),
+    offerTarget: num(property?.price),
+    repairs: num(property?.repairCost),
+    rentPerMonth: num(property?.rentPerMonth),
+    valuationMode: isCommercialDeal ? "income" : "flip",
+    noiAnnual: displayNoi || null,
+    capRatePct: property?.capRate ? num(property.capRate) : null,
+    unitCount: property?.unitCount ?? (unitsDerived.totalUnits || null),
+    askingPrice: num(property?.price) || null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [property?.id]);
+
+  React.useEffect(() => {
+    // Seed the calculator values once the opportunity has loaded, preferring an
+    // unsaved session draft (edit-in-flight) over the stored record.
+    if (!property?.id) return;
+    if (calcInitializedRef.current) return;
+    calcInitializedRef.current = true;
+    setCalcValues(calcDrafts[faDraftKey] ? { ...calcDrafts[faDraftKey] } : { ...faInitialValues });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [property?.id, faDraftKey]);
+
+  const persistFinancialAnalysis = React.useCallback((vals: DealCalculatorValues) => {
+    if (!property?.id) return;
+    const numOrNull = (v: unknown) => {
+      const n2 = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : NaN;
+      return Number.isFinite(n2) && n2 !== 0 ? String(n2) : null;
+    };
+    const patch: Record<string, string | null> = {
+      arv: numOrNull(vals.arv),
+      repairCost: numOrNull(vals.repairs),
+      price: numOrNull(vals.offerTarget ?? vals.askingPrice),
+    };
+    if (vals.strategy === "rental") patch.rentPerMonth = numOrNull(vals.rentPerMonth);
+    fetch(`/api/opportunities/${property.id}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const json = await res.json().catch(() => ({}));
+          throw new Error(json?.message || `Save failed (${res.status})`);
+        }
+        // Autosave landed: drop the session draft buffer for this record.
+        delete calcDrafts[faDraftKey];
+        calcDirtyRef.current = false;
+        queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id] });
+      })
+      .catch((e: any) => {
+        console.error("Financial Analysis autosave failed:", e?.message || e);
+        toast({ title: "Autosave failed — values kept in this session", description: e?.message || "Retrying on next edit", variant: "destructive" });
+      });
+  }, [property?.id, id, queryClient, toast, calcDrafts, faDraftKey]);
+
+  const handleCalcChange = React.useCallback((next: DealCalculatorValues) => {
+    setCalcValues(next);
+    calcDirtyRef.current = true;
+    calcDrafts[faDraftKey] = next; // survives tab unmounts until the autosave lands
+    if (faSaveTimerRef.current) window.clearTimeout(faSaveTimerRef.current);
+    faSaveTimerRef.current = window.setTimeout(() => persistFinancialAnalysis(next), 900);
+  }, [calcDrafts, faDraftKey, persistFinancialAnalysis]);
+
+  React.useEffect(() => {
+    return () => {
+      if (faSaveTimerRef.current) window.clearTimeout(faSaveTimerRef.current);
+    };
+  }, []);
+
+  const openUnitDialog = (unit: any | null) => {
+    if (unit) {
+      setEditingUnit(unit);
+      setUnitForm({
+        unitLabel: unit.unitLabel || "",
+        beds: unit.beds != null ? String(unit.beds) : "",
+        baths: unit.baths != null ? String(unit.baths) : "",
+        sqft: unit.sqft != null ? String(unit.sqft) : "",
+        rent: unit.rent != null ? String(unit.rent) : "",
+        unitStatus: unit.unitStatus || "vacant",
+        leaseStart: unit.leaseStart || "",
+        leaseEnd: unit.leaseEnd || "",
+        notes: unit.notes || "",
+      });
+    } else {
+      setEditingUnit(null);
+      setUnitForm({ ...unitEmptyForm });
+    }
+    setUnitDialogOpen(true);
+  };
+
+  const saveUnitMutation = useMutation({
+    mutationFn: async () => {
+      const payload: any = {
+        unitLabel: unitForm.unitLabel.trim(),
+        unitStatus: unitForm.unitStatus,
+        notes: unitForm.notes.trim() || null,
+      };
+      for (const k of ["beds", "sqft"] as const) payload[k] = unitForm[k] === "" ? null : parseInt(unitForm[k], 10);
+      for (const k of ["baths", "rent"] as const) payload[k] = unitForm[k] === "" ? null : parseFloat(unitForm[k]);
+      payload.leaseStart = unitForm.leaseStart || null;
+      payload.leaseEnd = unitForm.leaseEnd || null;
+      if (!payload.unitLabel) throw new Error("Unit label is required");
+      const res = editingUnit
+        ? await apiRequest("PATCH", `/api/opportunities/${property.id}/units/${editingUnit.id}`, payload)
+        : await apiRequest("POST", `/api/opportunities/${property.id}/units`, payload);
+      return await res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "units"] });
+      setUnitDialogOpen(false);
+      toast({ title: editingUnit ? "Unit updated" : "Unit added" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to save unit", variant: "destructive" }),
+  });
+
+  const deleteUnitMutation = useMutation({
+    mutationFn: async (unitId: number) => {
+      const res = await apiRequest("DELETE", `/api/opportunities/${property.id}/units/${unitId}`);
+      return await res.json();
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "units"] });
+      toast({ title: "Unit removed" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to remove unit", variant: "destructive" }),
+  });
 
   const linkCompanyMutation = useMutation({
     mutationFn: async () => {
@@ -699,11 +890,40 @@ export default function PropertyDetail() {
                     </div>
                     <div className="space-y-1">
                       <p className="text-xs text-muted-foreground">Zoning</p>
-                      <p className="font-medium text-lg">—</p>
+                      <p className="font-medium text-lg">{property?.zoning || "—"}</p>
                     </div>
                     <div className="space-y-1">
                       <p className="text-xs text-muted-foreground">APN</p>
                       <p className="font-medium text-lg">{property?.apn ?? "—"}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">Deal Type</p>
+                      <p className="font-medium text-lg">{property?.propertyType ? DEAL_TYPE_LABELS[property.propertyType] || property.propertyType.replace(/_/g, " ") : "—"}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">Units (Doors)</p>
+                      <p className="font-medium text-lg">{property?.unitCount ?? "—"}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">
+                        NOI (Annual)
+                        {noiIsEstimated && <span className="ml-1 text-[10px] uppercase tracking-wide text-muted-foreground/80">· est. from rent roll</span>}
+                      </p>
+                      <p className="font-medium text-lg">
+                        {displayNoi ? `$${displayNoi.toLocaleString(undefined, { maximumFractionDigits: 0 })}` : "—"}
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">Cap Rate</p>
+                      <p className="font-medium text-lg">{property?.capRate ? `${Number(property.capRate).toFixed(2)}%` : "—"}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">Tenancy</p>
+                      <p className="font-medium text-lg">{property?.tenancy ? property.tenancy.replace(/_/g, " ") : "—"}</p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs text-muted-foreground">Parking Spaces</p>
+                      <p className="font-medium text-lg">{property?.parkingSpaces ?? "—"}</p>
                     </div>
                   </CardContent>
                 </Card>
@@ -774,16 +994,92 @@ export default function PropertyDetail() {
                 </Card>
               </TabsContent>
               
-              <TabsContent value="financials" className="mt-6">
-                <DealCalculator
-                  initialValues={{
-                    arv: num(property?.arv),
-                    offerTarget: num(property?.price),
-                    repairs: num(property?.repairCost),
-                    rentPerMonth: num(property?.rentPerMonth),
-                  }}
-                  showActions={false}
-                />
+              {isCommercialDeal && (
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                    <div>
+                      <CardTitle className="text-lg">Unit Roster / Rent Roll</CardTitle>
+                      <CardDescription>
+                        {units.length === 0
+                          ? "Add units to track per-unit beds, rent, and lease dates."
+                          : `${unitsDerived.occupied} of ${unitsDerived.totalUnits} occupied · ${unitsDerived.vacant} vacant · $${unitsDerived.totalRent.toLocaleString(undefined, { maximumFractionDigits: 0 })}/mo total · avg $${Math.round(unitsDerived.avgRent).toLocaleString()}/mo · ~$${unitsDerived.annualRent.toLocaleString(undefined, { maximumFractionDigits: 0 })} annual${noiIsEstimated ? ` · est. NOI $${unitsDerived.estimatedNoi.toLocaleString()} (5% vacancy)` : ""}`}
+                      </CardDescription>
+                    </div>
+                    <Button variant="outline" size="sm" onClick={() => openUnitDialog(null)}>
+                      <Plus className="h-4 w-4 mr-1" /> Add Unit
+                    </Button>
+                  </CardHeader>
+                  <CardContent>
+                    {units.length === 0 ? (
+                      <p className="text-sm text-muted-foreground py-6 text-center">
+                        No units yet. Add each unit (e.g. "Unit 1A") with beds, rent, and lease dates to build the rent roll.
+                      </p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b text-left text-muted-foreground">
+                              <th className="py-2 pr-4 font-medium">Unit</th>
+                              <th className="py-2 pr-4 font-medium">Beds/Baths</th>
+                              <th className="py-2 pr-4 font-medium">Sqft</th>
+                              <th className="py-2 pr-4 font-medium">Rent</th>
+                              <th className="py-2 pr-4 font-medium">Status</th>
+                              <th className="py-2 pr-4 font-medium">Lease Ends</th>
+                              <th className="py-2 pr-4 font-medium">Notes</th>
+                              <th className="py-2 font-medium text-right">Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {units.map((u: any) => (
+                              <tr key={u.id} className="border-b last:border-0">
+                                <td className="py-2 pr-4 font-medium">{u.unitLabel}</td>
+                                <td className="py-2 pr-4">{u.beds ?? "—"}/{u.baths ?? "—"}</td>
+                                <td className="py-2 pr-4">{u.sqft ? u.sqft.toLocaleString() : "—"}</td>
+                                <td className="py-2 pr-4">{u.rent ? `$${Number(u.rent).toLocaleString()}` : "—"}</td>
+                                <td className="py-2 pr-4">
+                                  <Badge variant={u.unitStatus === "occupied" ? "default" : u.unitStatus === "vacant" ? "secondary" : "outline"} className="text-xs">
+                                    {u.unitStatus}
+                                  </Badge>
+                                </td>
+                                <td className="py-2 pr-4">{u.leaseEnd ? new Date(u.leaseEnd).toLocaleDateString() : "—"}</td>
+                                <td className="py-2 pr-4 max-w-[200px] truncate" title={u.notes || ""}>{u.notes || "—"}</td>
+                                <td className="py-2 text-right whitespace-nowrap">
+                                  <Button variant="ghost" size="sm" onClick={() => openUnitDialog(u)}>Edit</Button>
+                                  <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => deleteUnitMutation.mutate(u.id)}>Delete</Button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
+              <TabsContent value="financials" className="mt-6 space-y-6">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Agent Commission</CardTitle>
+                    <CardDescription>What you or an agent walks away with on this deal — splits, caps, referrals, and tax reserve included.</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <CommissionCalculator presetSalePrice={num(property?.price)} />
+                  </CardContent>
+                </Card>
+                {calcValues ? (
+                  <DealCalculator
+                    initialValues={faInitialValues}
+                    value={calcValues}
+                    onChange={handleCalcChange}
+                    showActions={false}
+                  />
+                ) : (
+                  <DealCalculator
+                    initialValues={faInitialValues}
+                    showActions={false}
+                  />
+                )}
               </TabsContent>
 
               <TabsContent value="dealroom" className="mt-6">
@@ -1180,6 +1476,69 @@ export default function PropertyDetail() {
         </div>
       )}
 
+
+      {/* Unit Add/Edit Dialog */}
+      <Dialog open={unitDialogOpen} onOpenChange={setUnitDialogOpen}>
+        <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{editingUnit ? `Edit ${editingUnit.unitLabel}` : "Add Unit"}</DialogTitle>
+            <DialogDescription>Track beds, rent, and lease dates per unit for the rent roll.</DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="unitLabel">Unit Label *</Label>
+              <Input id="unitLabel" placeholder="e.g. Unit 1A" value={unitForm.unitLabel} onChange={(e) => setUnitForm({ ...unitForm, unitLabel: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="unitStatus">Status</Label>
+              <Select value={unitForm.unitStatus} onValueChange={(v) => setUnitForm({ ...unitForm, unitStatus: v })}>
+                <SelectTrigger id="unitStatus"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="vacant">Vacant</SelectItem>
+                  <SelectItem value="occupied">Occupied</SelectItem>
+                  <SelectItem value="notice">Notice Given</SelectItem>
+                  <SelectItem value="renovation">Renovation</SelectItem>
+                  <SelectItem value="down">Down / Unrentable</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="unitBeds">Beds</Label>
+              <Input id="unitBeds" type="number" min="0" value={unitForm.beds} onChange={(e) => setUnitForm({ ...unitForm, beds: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="unitBaths">Baths</Label>
+            <Input id="unitBaths" type="number" min="0" step="0.5" value={unitForm.baths} onChange={(e) => setUnitForm({ ...unitForm, baths: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="unitSqft">Sqft</Label>
+              <Input id="unitSqft" type="number" min="0" value={unitForm.sqft} onChange={(e) => setUnitForm({ ...unitForm, sqft: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="unitRent">Monthly Rent ($)</Label>
+              <Input id="unitRent" type="number" min="0" value={unitForm.rent} onChange={(e) => setUnitForm({ ...unitForm, rent: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="unitLeaseStart">Lease Start</Label>
+              <Input id="unitLeaseStart" type="date" value={unitForm.leaseStart} onChange={(e) => setUnitForm({ ...unitForm, leaseStart: e.target.value })} />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="unitLeaseEnd">Lease End</Label>
+              <Input id="unitLeaseEnd" type="date" value={unitForm.leaseEnd} onChange={(e) => setUnitForm({ ...unitForm, leaseEnd: e.target.value })} />
+            </div>
+            <div className="space-y-2 col-span-2">
+              <Label htmlFor="unitNotes">Notes</Label>
+              <Textarea id="unitNotes" rows={2} value={unitForm.notes} onChange={(e) => setUnitForm({ ...unitForm, notes: e.target.value })} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setUnitDialogOpen(false)}>Cancel</Button>
+            <Button onClick={() => saveUnitMutation.mutate()} disabled={saveUnitMutation.isPending}>
+              {saveUnitMutation.isPending ? "Saving…" : editingUnit ? "Save Changes" : "Add Unit"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Stage Change Dialog */}
       <Dialog open={stageDialogOpen} onOpenChange={setStageDialogOpen}>

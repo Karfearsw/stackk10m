@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Plus, Filter, Search, Home, Upload, X, ChevronLeft, ChevronRight, Trash2, Edit, ImageIcon } from "lucide-react";
+import { Plus, Filter, Search, Home, Upload, X, ChevronLeft, ChevronRight, Trash2, Edit, ImageIcon, Building2 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -39,6 +39,38 @@ interface Property {
   arv?: string;
   repairCost?: string;
   assignedTo?: number;
+  propertyType?: string | null;
+  unitCount?: number | null;
+  noi?: string | null;
+  capRate?: string | null;
+  zoning?: string | null;
+  parkingSpaces?: number | null;
+  tenancy?: string | null;
+}
+
+const DEAL_TYPES = [
+  { value: "single_family", label: "Single Family" },
+  { value: "condo", label: "Condo / Townhome" },
+  { value: "duplex", label: "Duplex / Triplex / Quad" },
+  { value: "multi_family", label: "Multifamily (5+ units)" },
+  { value: "mobile_home_park", label: "Mobile Home Park" },
+  { value: "land", label: "Land" },
+  { value: "commercial_retail", label: "Commercial — Retail" },
+  { value: "commercial_office", label: "Commercial — Office" },
+  { value: "industrial", label: "Industrial / Warehouse" },
+  { value: "mixed_use", label: "Mixed Use" },
+];
+const MULTI_UNIT_TYPES = new Set(["duplex", "multi_family", "mobile_home_park", "commercial_retail", "commercial_office", "industrial", "mixed_use"]);
+const TENANCY_OPTIONS = [
+  { value: "single_tenant", label: "Single Tenant" },
+  { value: "multi_tenant", label: "Multi Tenant" },
+  { value: "owner_occupied_commercial", label: "Owner Occupied (Commercial)" },
+  { value: "vacant", label: "Vacant" },
+];
+
+function dealTypeLabel(t?: string | null) {
+  if (!t) return "";
+  return DEAL_TYPES.find((d) => d.value === t)?.label || t.replace(/_/g, " ");
 }
 
 function PropertyImageCarousel({ images }: { images: string[] }) {
@@ -154,6 +186,13 @@ function PropertyForm({
     yearBuilt: property?.yearBuilt?.toString() || "",
     lotSize: property?.lotSize || "",
     occupancy: property?.occupancy || "unknown",
+    propertyType: property?.propertyType || "",
+    unitCount: property?.unitCount?.toString() || "",
+    noi: property?.noi?.toString() || "",
+    capRate: property?.capRate?.toString() || "",
+    zoning: property?.zoning || "",
+    parkingSpaces: property?.parkingSpaces?.toString() || "",
+    tenancy: property?.tenancy || "",
     arv: property?.arv?.toString() || "",
     repairCost: property?.repairCost?.toString() || "",
     assignedTo: property?.assignedTo ? String(property.assignedTo) : "",
@@ -162,6 +201,14 @@ function PropertyForm({
   const [addressSearch, setAddressSearch] = useState("");
   const [addressSuggestions, setAddressSuggestions] = useState<any[]>([]);
   const [addressSuggestOpen, setAddressSuggestOpen] = useState(false);
+
+  const isCommercialDeal = MULTI_UNIT_TYPES.has(formData.propertyType);
+  const impliedValue = useMemo(() => {
+    const noi = parseFloat(formData.noi);
+    const cap = parseFloat(formData.capRate);
+    if (!Number.isFinite(noi) || !Number.isFinite(cap) || cap <= 0) return null;
+    return (noi / (cap / 100)).toFixed(0);
+  }, [formData.noi, formData.capRate]);
 
   useEffect(() => {
     const t = setTimeout(async () => {
@@ -229,6 +276,13 @@ function PropertyForm({
       yearBuilt: formData.yearBuilt ? parseInt(formData.yearBuilt) : null,
       lotSize: formData.lotSize || null,
       occupancy: formData.occupancy || null,
+      propertyType: formData.propertyType || null,
+      unitCount: formData.unitCount ? parseInt(formData.unitCount, 10) : null,
+      noi: formData.noi || null,
+      capRate: formData.capRate || null,
+      zoning: formData.zoning || null,
+      parkingSpaces: formData.parkingSpaces ? parseInt(formData.parkingSpaces, 10) : null,
+      tenancy: formData.tenancy || null,
       arv: formData.arv || null,
       repairCost: formData.repairCost || null,
       assignedTo:
@@ -511,7 +565,113 @@ function PropertyForm({
             </SelectContent>
           </Select>
         </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="propertyType">Deal Type</Label>
+          <Select value={formData.propertyType} onValueChange={(value) => setFormData({ ...formData, propertyType: value })}>
+            <SelectTrigger data-testid="select-property-deal-type">
+              <SelectValue placeholder="Select deal type" />
+            </SelectTrigger>
+            <SelectContent>
+              {DEAL_TYPES.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {isCommercialDeal && (
+          <div className="space-y-2">
+            <Label htmlFor="unitCount">Units / Doors</Label>
+            <Input
+              id="unitCount"
+              type="number"
+              min={0}
+              value={formData.unitCount}
+              onChange={(e) => setFormData({ ...formData, unitCount: e.target.value })}
+              placeholder="e.g., 12"
+              data-testid="input-property-units"
+            />
+          </div>
+        )}
       </div>
+
+      {isCommercialDeal && (
+        <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
+          <h3 className="font-semibold text-sm flex items-center gap-2">
+            <Building2 className="h-4 w-4" />
+            Commercial / Income Details
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="noi">Net Operating Income ($/yr)</Label>
+              <Input
+                id="noi"
+                type="number"
+                value={formData.noi}
+                onChange={(e) => setFormData({ ...formData, noi: e.target.value })}
+                data-testid="input-property-noi"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="capRate">Cap Rate (%)</Label>
+              <Input
+                id="capRate"
+                type="number"
+                step="0.01"
+                value={formData.capRate}
+                onChange={(e) => setFormData({ ...formData, capRate: e.target.value })}
+                placeholder="e.g., 6.5"
+                data-testid="input-property-cap-rate"
+              />
+              {impliedValue && (
+                <p className="text-xs text-muted-foreground">
+                  Implied value at {formData.capRate}% cap: ${Number(impliedValue).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="zoning">Zoning</Label>
+              <Input
+                id="zoning"
+                value={formData.zoning}
+                onChange={(e) => setFormData({ ...formData, zoning: e.target.value })}
+                placeholder="e.g., R-3, C-2"
+                data-testid="input-property-zoning"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="parkingSpaces">Parking Spaces</Label>
+              <Input
+                id="parkingSpaces"
+                type="number"
+                min={0}
+                value={formData.parkingSpaces}
+                onChange={(e) => setFormData({ ...formData, parkingSpaces: e.target.value })}
+                data-testid="input-property-parking"
+              />
+            </div>
+            <div className="space-y-2 col-span-2">
+              <Label htmlFor="tenancy">Tenancy</Label>
+              <Select value={formData.tenancy} onValueChange={(value) => setFormData({ ...formData, tenancy: value })}>
+                <SelectTrigger data-testid="select-property-tenancy">
+                  <SelectValue placeholder="Select tenancy" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Not set</SelectItem>
+                  {TENANCY_OPTIONS.map((opt) => (
+                    <SelectItem key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="flex justify-end gap-2 pt-4 border-t">
         <Button type="button" variant="outline" onClick={onClose} data-testid="button-cancel-property">
@@ -534,6 +694,7 @@ export default function Opportunities() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [statusInFilter, setStatusInFilter] = useState<string[]>([]);
+  const [dealTypeFilter, setDealTypeFilter] = useState("all");
   const [noteOpportunity, setNoteOpportunity] = useState<Property | null>(null);
   const [noteText, setNoteText] = useState("");
   const [isNoteDialogOpen, setIsNoteDialogOpen] = useState(false);
@@ -719,7 +880,8 @@ export default function Opportunities() {
     const matchesStatus = statusInFilter.length
       ? statusInFilter.includes(String(prop.status || "active"))
       : (statusFilter === "all" || prop.status === statusFilter);
-    return matchesSearch && matchesStatus;
+    const matchesType = dealTypeFilter === "all" || (prop.propertyType || "") === dealTypeFilter;
+    return matchesSearch && matchesStatus && matchesType;
   });
 
   const getStatusColor = (status: string) => {
@@ -781,6 +943,20 @@ export default function Opportunities() {
               ))}
             </SelectContent>
           </Select>
+          <Select value={dealTypeFilter} onValueChange={setDealTypeFilter}>
+            <SelectTrigger className="w-full sm:w-[170px]" data-testid="select-filter-deal-type">
+              <Building2 className="mr-2 h-4 w-4" />
+              <SelectValue placeholder="Deal Type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Deal Types</SelectItem>
+              {DEAL_TYPES.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value}>
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           {statusInFilter.length ? (
             <div className="flex items-center gap-2 text-xs">
               <Badge variant="outline">Filtered: {statusInFilter.join(", ")}</Badge>
@@ -837,10 +1013,15 @@ export default function Opportunities() {
               <Card key={prop.id} className="overflow-hidden hover:shadow-lg transition-shadow group" data-testid={`card-opportunity-${prop.id}`}>
                 <div className="relative h-40 bg-muted overflow-hidden">
                   <PropertyImageCarousel images={prop.images || []} />
-                  <div className="absolute top-2 right-2">
+                  <div className="absolute top-2 right-2 flex flex-col items-end gap-1">
                     <Badge className={getStatusColor(prop.status || "active")}>
                       {(prop.status || "active").replace("_", " ")}
                     </Badge>
+                    {prop.propertyType && (
+                      <Badge variant="secondary" className="bg-black/60 text-white border-none text-[11px]">
+                        {dealTypeLabel(prop.propertyType)}
+                      </Badge>
+                    )}
                   </div>
                   <div className="absolute top-2 left-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Button
@@ -894,6 +1075,28 @@ export default function Opportunities() {
                       </div>
                     )}
                   </div>
+                  {(prop.unitCount || prop.capRate || prop.noi) && (
+                    <div className="flex gap-4 text-sm">
+                      {prop.unitCount ? (
+                        <div>
+                          <p className="text-muted-foreground">Doors</p>
+                          <p className="font-medium">{prop.unitCount}</p>
+                        </div>
+                      ) : null}
+                      {prop.noi ? (
+                        <div>
+                          <p className="text-muted-foreground">NOI</p>
+                          <p className="font-medium">${parseInt(prop.noi).toLocaleString()}</p>
+                        </div>
+                      ) : null}
+                      {prop.capRate ? (
+                        <div>
+                          <p className="text-muted-foreground">Cap</p>
+                          <p className="font-medium text-green-600">{prop.capRate}%</p>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
                   <div className="grid grid-cols-3 gap-2 text-sm">
                     <div>
                       <p className="text-muted-foreground">Beds</p>

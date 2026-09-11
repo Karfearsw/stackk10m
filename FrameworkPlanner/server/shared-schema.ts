@@ -181,6 +181,13 @@ export const properties = pgTable("properties", {
   images: text("images").array(),
   arv: decimal("arv", { precision: 12, scale: 2 }),
   repairCost: decimal("repair_cost", { precision: 12, scale: 2 }),
+  // Multi-unit / commercial deal support
+  unitCount: integer("unit_count"),
+  noi: decimal("noi", { precision: 12, scale: 2 }),
+  capRate: decimal("cap_rate", { precision: 6, scale: 2 }),
+  zoning: varchar("zoning", { length: 50 }),
+  parkingSpaces: integer("parking_spaces"),
+  tenancy: varchar("tenancy", { length: 50 }),
   assignedTo: integer("assigned_to"),
   sourceLeadId: integer("source_lead_id"),
   leadSource: varchar("lead_source", { length: 100 }),
@@ -268,6 +275,29 @@ export type InsertCrmExportFile = Omit<typeof crmExportFiles.$inferInsert, "id" 
 export const insertPropertySchema = createInsertSchema(properties).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type Property = typeof properties.$inferSelect;
 export type InsertProperty = z.infer<typeof insertPropertySchema>;
+
+// PROPERTY UNITS TABLE — per-unit roster for multi-unit / commercial deals
+// (apartments, duplexes, mobile home parks, mixed-use suites). Roll-ups (total
+// doors, gross rent) are computed from these rows on the opportunity detail page.
+export const propertyUnits = pgTable("property_units", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  opportunityId: integer("opportunity_id").notNull(),
+  unitLabel: varchar("unit_label", { length: 50 }).notNull(),
+  beds: integer("beds"),
+  baths: decimal("baths", { precision: 4, scale: 1 }),
+  sqft: integer("sqft"),
+  rent: decimal("rent", { precision: 10, scale: 2 }),
+  unitStatus: varchar("unit_status", { length: 50 }).default("vacant").notNull(),
+  leaseStart: date("lease_start"),
+  leaseEnd: date("lease_end"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPropertyUnitSchema = createInsertSchema(propertyUnits).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type PropertyUnit = typeof propertyUnits.$inferSelect;
+export type InsertPropertyUnit = z.infer<typeof insertPropertyUnitSchema>;
 
 export const skipTraceResults = pgTable("skip_trace_results", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),

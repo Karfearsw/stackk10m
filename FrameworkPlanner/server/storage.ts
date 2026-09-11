@@ -5,12 +5,13 @@ import {
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, workCategories, timesheetEntries, timeClockSessions, workerProfiles, categoryRateOverrides, payPeriods, approvalEvents, commissionEvents, dealParticipants, commissionLedgerEntries, globalActivityLogs,
   buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents,
   companies, companyPeople, companyLinks, documents, documentLinks, vaultDocumentVersions, automations, automationTriggers, automationConditions, automationActions, automationRuns, auditEvents,
-  opportunityParties, publicListings, buyerInquiries, opportunityEvents, buyerOffers,
+  opportunityParties, publicListings, buyerInquiries, opportunityEvents, buyerOffers, propertyUnits,
   internalMessages, calendarEvents, appSettings, smsMessages, callSessions, callSessionEvents, agentPhoneSettings, callDispositions, aiCallQualifications,
   type BuyerOffer, type InsertBuyerOffer, type SmsMessage, type InsertSmsMessage, type AppSetting,
   type CallSession, type InsertCallSession, type CallSessionEvent, type InsertCallSessionEvent,
   type AgentPhoneSetting, type InsertAgentPhoneSetting, type CallDisposition, type InsertCallDisposition,
-  type AiCallQualification, type InsertAiCallQualification
+  type AiCallQualification, type InsertAiCallQualification,
+  type PropertyUnit, type InsertPropertyUnit
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -713,6 +714,13 @@ export interface IStorage {
   updatePublicListing(id: number, patch: Partial<InsertPublicListing>): Promise<PublicListing>;
   incrementListingViews(id: number): Promise<void>;
   deletePublicListing(id: number): Promise<void>;
+
+  // Property Units (multi-unit / commercial rent roll)
+  getPropertyUnitsByOpportunity(opportunityId: number): Promise<PropertyUnit[]>;
+  getPropertyUnitById(id: number): Promise<PropertyUnit | undefined>;
+  createPropertyUnit(unit: InsertPropertyUnit): Promise<PropertyUnit>;
+  updatePropertyUnit(id: number, patch: Partial<InsertPropertyUnit>): Promise<PropertyUnit>;
+  deletePropertyUnit(id: number): Promise<void>;
 
   // Buyer Inquiries
   getBuyerInquiries(opportunityId: number): Promise<BuyerInquiry[]>;
@@ -4399,6 +4407,26 @@ export class DatabaseStorage implements IStorage {
   }
   async deletePublicListing(id: number): Promise<void> {
     await db.delete(publicListings).where(eq(publicListings.id, id));
+  }
+
+  // Property Units (multi-unit / commercial rent roll)
+  async getPropertyUnitsByOpportunity(opportunityId: number): Promise<PropertyUnit[]> {
+    return db.select().from(propertyUnits).where(eq(propertyUnits.opportunityId, opportunityId)).orderBy(asc(propertyUnits.id));
+  }
+  async getPropertyUnitById(id: number): Promise<PropertyUnit | undefined> {
+    const result = await db.select().from(propertyUnits).where(eq(propertyUnits.id, id)).limit(1);
+    return result[0];
+  }
+  async createPropertyUnit(unit: InsertPropertyUnit): Promise<PropertyUnit> {
+    const result = await db.insert(propertyUnits).values(unit as any).returning();
+    return result[0];
+  }
+  async updatePropertyUnit(id: number, patch: Partial<InsertPropertyUnit>): Promise<PropertyUnit> {
+    const result = await db.update(propertyUnits).set(patch as any).where(eq(propertyUnits.id, id)).returning();
+    return result[0];
+  }
+  async deletePropertyUnit(id: number): Promise<void> {
+    await db.delete(propertyUnits).where(eq(propertyUnits.id, id));
   }
 
   // Buyer Inquiries

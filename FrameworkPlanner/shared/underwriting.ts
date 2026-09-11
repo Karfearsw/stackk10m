@@ -432,6 +432,37 @@ export function computeSaleCostsTotal(arv: number, saleCosts: UnderwritingSaleCo
   return arv * pct + saleCosts.miscFlat;
 }
 
+/** Income-approach valuation for multi-family / commercial deals. */
+export function computeIncomeDealMath(input: {
+  noiAnnual: number;
+  capRatePct: number;
+  unitCount?: number | null;
+  askingPrice?: number | null;
+}): {
+  valuation: number;
+  valuePerDoor: number;
+  pricePerDoor: number | null;
+  priceVsValuePct: number | null;
+  capAtPricePct: number | null;
+  noiPerDoor: number;
+  pricePerUnitNoi: number | null;
+} {
+  const noi = Math.max(0, input.noiAnnual || 0);
+  const cap = Math.max(0, input.capRatePct || 0);
+  const valuation = cap > 0 ? (noi / (cap / 100)) : 0;
+  const doors = input.unitCount && input.unitCount > 0 ? input.unitCount : 0;
+  const asking = input.askingPrice && input.askingPrice > 0 ? input.askingPrice : null;
+  return {
+    valuation: Math.round(valuation),
+    valuePerDoor: doors > 0 ? Math.round(valuation / doors) : 0,
+    pricePerDoor: doors > 0 && asking ? Math.round(asking / doors) : null,
+    priceVsValuePct: valuation > 0 && asking ? ((asking - valuation) / valuation) * 100 : null,
+    capAtPricePct: asking && asking > 0 ? (noi / asking) * 100 : null,
+    noiPerDoor: doors > 0 ? Math.round(noi / doors) : 0,
+    pricePerUnitNoi: noi > 0 && asking ? asking / noi : null,
+  };
+}
+
 function amortizingMonthlyPaymentFactor(annualRatePct: number, termMonths: number): number {
   const n = Math.max(1, Math.round(termMonths));
   const r = annualRatePct > 0 ? (annualRatePct / 100) / 12 : 0;
