@@ -272,7 +272,23 @@ export const insertCrmExportFileSchema = createInsertSchema(crmExportFiles).omit
 export type CrmExportFile = typeof crmExportFiles.$inferSelect;
 export type InsertCrmExportFile = Omit<typeof crmExportFiles.$inferInsert, "id" | "createdAt" | "updatedAt">;
 
-export const insertPropertySchema = createInsertSchema(properties).omit({ id: true, createdAt: true, updatedAt: true } as any);
+// drizzle-zod maps pg `numeric` columns to z.string() (the driver returns
+// numerics as strings), but our API clients send numbers for these fields
+// (e.g. parseFloat("1.5") for a half bath). Accept either and normalize to a
+// decimal string so drizzle's numeric mapper gets the shape it expects.
+const decimalFromStringOrNumber = z
+  .union([z.number(), z.string()])
+  .transform((v) => {
+    if (typeof v === "number") return String(v);
+    const s = v.trim();
+    return s === "" ? null : s;
+  })
+  .refine((v) => v === null || Number.isFinite(Number(v)), { message: "Must be a number" });
+
+export const insertPropertySchema = createInsertSchema(properties, {
+  baths: () => decimalFromStringOrNumber,
+})
+  .omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type Property = typeof properties.$inferSelect;
 export type InsertProperty = z.infer<typeof insertPropertySchema>;
 
@@ -295,7 +311,10 @@ export const propertyUnits = pgTable("property_units", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertPropertyUnitSchema = createInsertSchema(propertyUnits).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export const insertPropertyUnitSchema = createInsertSchema(propertyUnits, {
+  baths: () => decimalFromStringOrNumber,
+  rent: () => decimalFromStringOrNumber,
+}).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type PropertyUnit = typeof propertyUnits.$inferSelect;
 export type InsertPropertyUnit = z.infer<typeof insertPropertyUnitSchema>;
 

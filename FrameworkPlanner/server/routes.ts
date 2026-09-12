@@ -6299,7 +6299,9 @@ export async function registerRoutes(
       const opportunityId = parseInt(req.params.id, 10);
       const property = await storage.getPropertyById(opportunityId);
       if (!property) return res.status(404).json({ message: "Opportunity not found" });
-      const validated = insertPropertyUnitSchema.parse(req.body || {}) as any;
+      // opportunityId must be present at parse time — the schema requires it
+      // and the UI derives it from the URL, not the body.
+      const validated = insertPropertyUnitSchema.parse({ ...(req.body || {}), opportunityId }) as any;
       if (validated.unitStatus && !COMMERCIAL_UNIT_STATUSES.includes(validated.unitStatus)) {
         return res.status(400).json({ message: `Invalid unit status. Allowed: ${COMMERCIAL_UNIT_STATUSES.join(", ")}` });
       }
