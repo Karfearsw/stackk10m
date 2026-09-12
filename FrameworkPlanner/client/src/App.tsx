@@ -7,7 +7,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { AppErrorBoundary } from "@/components/system/AppErrorBoundary";
-import { Loader2 } from "lucide-react";
+import { LogoLoader } from "@/components/system/LogoLoader";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import Signup from "@/pages/signup";
@@ -67,7 +67,7 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="h-8 w-8 animate-spin" />
+        <LogoLoader size={72} />
       </div>
     );
   }
@@ -77,7 +77,7 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   }
 
   return (
-    <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin" /></div>}>
+    <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
       <Component />
     </Suspense>
   );
@@ -90,7 +90,7 @@ function Router() {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <Loader2 className="h-8 w-8 animate-spin" />
+        <LogoLoader size={72} />
       </div>
     );
   }
@@ -106,14 +106,14 @@ function Router() {
 
       {/* Public Listing Route (no auth required) */}
       <Route path="/l/:token" component={() => (
-        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin" /></div>}>
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
           <PublicListing />
         </Suspense>
       )} />
 
       {/* Public E-Sign Route (no auth, token-authenticated) */}
       <Route path="/sign/:token" component={() => (
-        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><Loader2 className="h-8 w-8 animate-spin" /></div>}>
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
           <SignContractPage />
         </Suspense>
       )} />

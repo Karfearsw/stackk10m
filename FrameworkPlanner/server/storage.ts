@@ -847,6 +847,13 @@ function computeTimeEntryDuration(input: { date: string; startTime: string; endT
   return { ok: true as const, hours, durationMinutes, overnight, status, payableHours, flags };
 }
 
+// Cache for automation event configs. getEnabledAutomationsForEvent() is read
+// on EVERY entity write (automation dispatch) but automations change rarely;
+// without the cache each write pays 2+ extra queries. Cleared by the mutation
+// methods below so edits take effect immediately.
+const automationConfigCache = new Map<string, { at: number; value: any[] }>();
+const AUTOMATION_CONFIG_CACHE_TTL_MS = 30_000;
+
 export class DatabaseStorage implements IStorage {
   // Leads
   async getLeads(limit?: number, offset: number = 0): Promise<Lead[]> {
@@ -1847,16 +1854,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createAutomation(input: InsertAutomation): Promise<Automation> {
+    automationConfigCache.clear();
     const rows = await db.insert(automations).values(input as any).returning();
     return rows[0];
   }
 
   async updateAutomation(id: number, patch: Partial<InsertAutomation>): Promise<Automation> {
+    automationConfigCache.clear();
     const rows = await db.update(automations).set(patch as any).where(eq(automations.id, id)).returning();
     return rows[0];
   }
 
   async deleteAutomation(id: number): Promise<void> {
+    automationConfigCache.clear();
     await db.delete(automations).where(eq(automations.id, id));
   }
 
@@ -1870,6 +1880,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async replaceAutomationTriggers(teamId: number, automationId: number, triggers: Array<{ eventType: string; configJson: string }>): Promise<AutomationTrigger[]> {
+    automationConfigCache.clear();
     await db.delete(automationTriggers).where(eq(automationTriggers.automationId, automationId));
     if (!triggers.length) return [];
     const rows = await db
@@ -1892,6 +1903,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertAutomationCondition(teamId: number, automationId: number, configJson: string): Promise<AutomationCondition> {
+    automationConfigCache.clear();
     const existing = await this.getAutomationCondition(automationId);
     if (existing) {
       const rows = await db
@@ -1922,6 +1934,7 @@ export class DatabaseStorage implements IStorage {
     automationId: number,
     actions: Array<{ actionType: string; configJson: string; sortOrder: number }>,
   ): Promise<AutomationAction[]> {
+    automationConfigCache.clear();
     await db.delete(automationActions).where(eq(automationActions.automationId, automationId));
     if (!actions.length) return [];
     const rows = await db
@@ -1962,6 +1975,12 @@ export class DatabaseStorage implements IStorage {
   async getEnabledAutomationsForEvent(teamId: number, eventType: string): Promise<
     Array<{ automation: Automation; triggers: AutomationTrigger[]; condition: AutomationCondition | null; actions: AutomationAction[] }>
   > {
+    const cacheKey = `${teamId}:${eventType}`;
+    const cached = automationConfigCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < AUTOMATION_CONFIG_CACHE_TTL_MS) {
+      return cached.value as any;
+    }
+
     const rows = await db
       .select({ automation: automations, trigger: automationTriggers })
       .from(automations)
@@ -1984,6 +2003,7 @@ export class DatabaseStorage implements IStorage {
       const actions = await this.getAutomationActions(id);
       out.push({ automation: bundle.automation, triggers: bundle.triggers, condition, actions });
     }
+    automationConfigCache.set(cacheKey, { at: Date.now(), value: out });
     return out;
   }
 
