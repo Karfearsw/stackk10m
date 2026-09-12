@@ -264,6 +264,35 @@ export default function Leads() {
     assignedTo: ""
   });
 
+  // Address autocomplete for the Add Lead dialog. Purely an accelerator: the
+  // Address/City/Zip inputs stay fully manual so brand-new addresses that
+  // aren't in any map dataset yet can still be entered by hand.
+  const [leadAddressSearch, setLeadAddressSearch] = useState("");
+  const [leadAddressSuggestions, setLeadAddressSuggestions] = useState<any[]>([]);
+  const [leadAddressSuggestOpen, setLeadAddressSuggestOpen] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(async () => {
+      const q = leadAddressSearch.trim();
+      if (q.length < 2) {
+        setLeadAddressSuggestions([]);
+        return;
+      }
+      try {
+        const res = await fetch(`/api/address/suggest?q=${encodeURIComponent(q)}`);
+        if (!res.ok) {
+          setLeadAddressSuggestions([]);
+          return;
+        }
+        const json = await res.json();
+        setLeadAddressSuggestions(Array.isArray(json?.suggestions) ? json.suggestions : []);
+      } catch {
+        setLeadAddressSuggestions([]);
+      }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [leadAddressSearch]);
+
   const pageSize = 200;
   const {
     data: leadsPages,
@@ -1742,6 +1771,49 @@ export default function Leads() {
                 <DialogDescription>Enter property details to create a new lead.</DialogDescription>
               </DialogHeader>
               <div className="grid gap-4 py-4">
+                <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="leadAddressSearch" className="text-right">Address Search</Label>
+                  <div className="col-span-3 relative">
+                    <Input
+                      id="leadAddressSearch"
+                      placeholder="Start typing an address… (optional lookup)"
+                      value={leadAddressSearch}
+                      onChange={(e) => {
+                        setLeadAddressSearch(e.target.value);
+                        setLeadAddressSuggestOpen(true);
+                      }}
+                      onFocus={() => setLeadAddressSuggestOpen(true)}
+                      autoComplete="off"
+                      data-testid="input-lead-address-search"
+                    />
+                    {leadAddressSuggestOpen && leadAddressSuggestions.length > 0 && (
+                      <div className="absolute z-50 w-full border rounded-md bg-background max-h-40 overflow-y-auto shadow-md">
+                        {leadAddressSuggestions.map((s: any, idx: number) => (
+                          <button
+                            key={s.placeId || `${s.label}-${idx}`}
+                            type="button"
+                            className="w-full text-left px-3 py-2 hover:bg-accent text-sm"
+                            onClick={() => {
+                              setNewLead((prev) => ({
+                                ...prev,
+                                address: s.address || prev.address,
+                                city: s.city || prev.city,
+                                state: s.state || prev.state,
+                                zipCode: s.zipCode || prev.zipCode,
+                              }));
+                              setLeadAddressSearch("");
+                              setLeadAddressSuggestions([]);
+                              setLeadAddressSuggestOpen(false);
+                            }}
+                            data-testid={`lead-address-suggestion-${idx}`}
+                          >
+                            {s.label || s.address}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="address" className="text-right">Address</Label>
                   <Input id="address" placeholder="123 Main St" className="col-span-3" value={newLead.address} onChange={(e) => setNewLead({...newLead, address: e.target.value})} data-testid="input-lead-address" />

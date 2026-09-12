@@ -1753,6 +1753,8 @@ export async function registerRoutes(
     const note = await storage.createXpBookingNote({ bookingId: id, authorUserId: Number(user.id), body } as any);
     return res.status(201).json({ note });
   });
+  // Small in-memory cache to stay polite with Nominatim's fair-use policy.
+  const nominatimCache = new Map<string, any[]>();
   app.get("/api/address/suggest", async (req, res) => {
     try {
       const qRaw = (req.query.q as string) || "";
@@ -1764,14 +1766,36 @@ export async function registerRoutes(
       const smartyAuthToken = process.env.SMARTY_AUTH_TOKEN || process.env.SMARTY_STREETS_AUTH_TOKEN;
       const canUseMapbox = !!mapboxToken;
       const canUseSmarty = !!(smartyAuthId && smartyAuthToken);
+      const US_STATE_ABBR: Record<string, string> = { alabama: "AL", alaska: "AK", arizona: "AZ", arkansas: "AR", california: "CA", colorado: "CO", connecticut: "CT", delaware: "DE", florida: "FL", georgia: "GA", hawaii: "HI", idaho: "ID", illinois: "IL", indiana: "IN", iowa: "IA", kansas: "KS", kentucky: "KY", louisiana: "LA", maine: "ME", maryland: "MD", massachusetts: "MA", michigan: "MI", minnesota: "MN", mississippi: "MS", missouri: "MO", montana: "MT", nebraska: "NE", nevada: "NV", "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY", "north carolina": "NC", "north dakota": "ND", ohio: "OH", oklahoma: "OK", oregon: "OR", pennsylvania: "PA", "rhode island": "RI", "south carolina": "SC", "south dakota": "SD", tennessee: "TN", texas: "TX", utah: "UT", vermont: "VT", virginia: "VA", washington: "WA", "west virginia": "WV", wisconsin: "WI", wyoming: "WY", "district of columbia": "DC" };
       const provider =
         providerHint === "mapbox" && canUseMapbox ? "mapbox"
         : providerHint === "smarty" && canUseSmarty ? "smarty"
+        : providerHint === "nominatim" ? "nominatim"
         : canUseMapbox ? "mapbox"
         : canUseSmarty ? "smarty"
-        : null;
-      if (!provider) {
-        return res.json({ q: qRaw, provider: null, suggestions: [] });
+        : "nominatim"; // zero-config fallback (OpenStreetMap) when no API keys are set
+      if (provider === "nominatim") {
+        const cached = nominatimCache.get(q.toLowerCase());
+        if (cached) return res.json({ q: qRaw, provider, suggestions: cached });
+        const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=8&countrycodes=us&q=${encodeURIComponent(q)}`;
+        const r = await fetch(url, { headers: { "User-Agent": "LuxeRM/1.0 (address-autocomplete)", "Accept-Language": "en" } });
+        if (!r.ok) return res.status(502).json({ message: "Address provider error" });
+        const json: any = await r.json();
+        const suggestions = (Array.isArray(json) ? json : []).map((f: any) => {
+          const a = f?.address || {};
+          const street = [a.house_number, a.road].filter(Boolean).join(" ");
+          return {
+            label: String(f.display_name || ""),
+            address: String(street || f.display_name || ""),
+            city: String(a.city || a.town || a.village || a.hamlet || a.county || ""),
+            state: String(US_STATE_ABBR[String(a.state || "").toLowerCase()] || a.state || ""),
+            zipCode: String(a.postcode || ""),
+            placeId: `nominatim-${f.place_id ?? ""}`,
+          };
+        });
+        if (nominatimCache.size >= 200) nominatimCache.clear();
+        nominatimCache.set(q.toLowerCase(), suggestions);
+        return res.json({ q: qRaw, provider, suggestions });
       }
       if (provider === "mapbox") {
         const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(q)}.json?autocomplete=true&types=address&country=US&limit=8&access_token=${encodeURIComponent(String(mapboxToken))}`;
