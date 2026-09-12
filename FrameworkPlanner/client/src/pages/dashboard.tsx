@@ -269,6 +269,10 @@ export default function Dashboard() {
 
   const groupedActivityLogs = useMemo((): ActivityLog[] => {
     const windowMs = 15 * 60 * 1000;
+    const userById = new Map<number, TeamMember>();
+    for (const u of allUsers || []) {
+      if (u && typeof u.id === "number") userById.set(u.id, u);
+    }
     const out: Array<ActivityLog & { __groupKey?: string }> = [];
     for (const raw of activityLogs || []) {
       const weight = typeof raw.groupCount === "number" && Number.isFinite(raw.groupCount) && raw.groupCount > 1 ? raw.groupCount : 1;
@@ -282,10 +286,18 @@ export default function Dashboard() {
           continue;
         }
       }
-      out.push({ ...raw, groupCount: weight, __groupKey: key });
+      const actor = raw.userId != null ? userById.get(Number(raw.userId)) : undefined;
+      out.push({
+        ...raw,
+        user: actor
+          ? { id: actor.id, firstName: actor.firstName || "", lastName: actor.lastName || "", email: actor.email || "", profilePicture: actor.profilePicture }
+          : (raw as any).user ?? null,
+        groupCount: weight,
+        __groupKey: key,
+      });
     }
     return out.map(({ __groupKey, ...rest }) => rest);
-  }, [activityLogs]);
+  }, [activityLogs, allUsers]);
 
   const chartData = useMemo(() => {
     if (contracts.length === 0) {
@@ -665,7 +677,7 @@ export default function Dashboard() {
                             <span className="font-medium text-sm">
                               {log.user?.firstName && log.user?.lastName 
                                 ? `${log.user.firstName} ${log.user.lastName}`
-                                : log.user?.email || 'Unknown User'}
+                                : log.user?.email || 'Removed user'}
                             </span>
                             <ActionIcon className={`h-3.5 w-3.5 ${getActionColor(log.action)}`} />
                             {typeof log.groupCount === "number" && log.groupCount > 1 ? (

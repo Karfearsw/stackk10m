@@ -3159,8 +3159,29 @@ export class DatabaseStorage implements IStorage {
 
   // Global Activity Logs
   async getGlobalActivityLogs(limit: number = 50, offset: number = 0): Promise<GlobalActivityLog[]> {
-    const rows = await db.select().from(globalActivityLogs).orderBy(desc(globalActivityLogs.createdAt)).offset(offset).limit(limit);
-    return rows.map((r: any) => ({ ...r, action: normalizeGlobalActivityAction(r.action) })) as any;
+    // Two bounded queries instead of a join: the joined plan timed out on the
+    // cloud database. Actors are fetched by primary key and stitched in JS.
+    const rows = (await db.select().from(globalActivityLogs).orderBy(desc(globalActivityLogs.createdAt)).offset(offset).limit(limit)) as any[];
+    const actorIds = [...new Set(rows.map((r) => Number(r.userId)).filter((n) => Number.isFinite(n) && n > 0))];
+    if (!actorIds.length) {
+      return rows.map((r) => ({ ...r, action: normalizeGlobalActivityAction(r.action), user: null }));
+    }
+    const actors = (await db
+      .select({
+        id: users.id,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        email: users.email,
+        profilePicture: users.profilePicture,
+      })
+      .from(users)
+      .where(inArray(users.id, actorIds))) as any[];
+    const actorById = new Map(actors.map((a) => [Number(a.id), a]));
+    return rows.map((r) => ({
+      ...r,
+      action: normalizeGlobalActivityAction(r.action),
+      user: actorById.get(Number(r.userId)) ?? null,
+    })) as any;
   }
 
   async createGlobalActivity(log: InsertGlobalActivityLog): Promise<GlobalActivityLog> {

@@ -15,9 +15,9 @@ import { apiRequest } from "@/lib/queryClient";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { addDays, endOfDay, format, startOfDay } from "date-fns";
 import { CheckSquare, Loader2, Plus, RefreshCw, UserPlus } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { getEntityFilterFromLocation, leadUrl, opportunityUrl } from "@/lib/deepLinks";
 
 type Task = {
@@ -143,20 +143,16 @@ function taskLink(t: Task) {
 const TAB_VALUES = ["overdue", "today", "next7", "followups", "admin", "completed", "all"] as const;
 type QueueTab = (typeof TAB_VALUES)[number];
 
-function parseTabFromLocation(loc: string): QueueTab {
-  const idx = String(loc || "").indexOf("?");
-  if (idx === -1) return "overdue";
-  const sp = new URLSearchParams(String(loc || "").slice(idx + 1));
-  const raw = String(sp.get("tab") || "").trim().toLowerCase();
+function parseTabFromSearch(search: string): QueueTab {
+  const raw = String(new URLSearchParams(search || "").get("tab") || "").trim().toLowerCase();
   return (TAB_VALUES as readonly string[]).includes(raw) ? (raw as QueueTab) : "overdue";
 }
 
-function setTabInLocation(loc: string, tab: QueueTab) {
-  const [path, qs] = String(loc || "").split("?");
-  const sp = new URLSearchParams(qs || "");
+function setTabInLocation(loc: string, search: string, tab: QueueTab) {
+  const sp = new URLSearchParams(search || "");
   sp.set("tab", tab);
-  const next = sp.toString();
-  return next ? `${path}?${next}` : path;
+  const qs = sp.toString();
+  return qs ? `${loc}?${qs}` : loc;
 }
 
 export default function TasksPage() {
@@ -164,9 +160,20 @@ export default function TasksPage() {
   const qc = useQueryClient();
   const canBulkAssign = isManager(user);
   const [location, setLocation] = useLocation();
-  const entityFilter = useMemo(() => getEntityFilterFromLocation(), [location]);
-
-  const [tab, setTab] = useState<QueueTab>(() => parseTabFromLocation(location));
+  // wouter v3 keeps the query string out of useLocation(); useSearch() provides it.
+  const urlSearch = useSearch();
+  const entityFilter = useMemo(() => getEntityFilterFromLocation(), [location, urlSearch]);
+  // The URL query (?tab=...) is the single source of truth for the active queue tab.
+  // Deep links (e.g. /tasks?tab=all) and tab clicks both update the URL; no write-back
+  // effect, so the URL can never bounce back to a previous tab.
+  const tab = parseTabFromSearch(urlSearch);
+  const setTab = useCallback(
+    (next: QueueTab) => {
+      const desired = setTabInLocation(location, urlSearch, next);
+      if (desired !== location) setLocation(desired);
+    },
+    [location, urlSearch, setLocation],
+  );
   const [assignee, setAssignee] = useState<string>("me");
   const [status, setStatus] = useState<string>("active");
   const [type, setType] = useState<string>("all");
@@ -176,15 +183,7 @@ export default function TasksPage() {
   const [search, setSearch] = useState<string>("");
   const [grouping, setGrouping] = useState<"off" | "followups">("followups");
 
-  useEffect(() => {
-    const next = parseTabFromLocation(location);
-    if (next !== tab) setTab(next);
-  }, [location, tab]);
 
-  useEffect(() => {
-    const desired = setTabInLocation(location, tab);
-    if (desired !== location) setLocation(desired);
-  }, [location, setLocation, tab]);
 
   const params = useMemo(() => {
     const p = new URLSearchParams();
@@ -361,10 +360,12 @@ export default function TasksPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: [listKey] });
       toast.success("Task created");
+      setQuickAddOpen(false);
     },
     onError: (e: any) => toast.error(String(e?.message || e)),
   });
 
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newDue, setNewDue] = useState("");
   const [newPriority, setNewPriority] = useState("medium");
@@ -433,7 +434,7 @@ export default function TasksPage() {
               <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
               Refresh
             </Button>
-            <Dialog>
+            <Dialog open={quickAddOpen} onOpenChange={setQuickAddOpen}>
               <DialogTrigger asChild>
                 <Button>
                   <Plus className="h-4 w-4 mr-2" />
