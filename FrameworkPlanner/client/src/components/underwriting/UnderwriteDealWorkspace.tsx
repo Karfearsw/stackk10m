@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { ResearchHub, type PlaygroundQuickLink, type PlaygroundResearchNote } from "@/components/underwriting/ResearchHub";
+import { SaveCompDialog } from "@/components/underwriting/SaveCompDialog";
 import { UnderwriteDealPanel } from "@/components/underwriting/UnderwriteDealPanel";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { makeAddressSearchUrl, getSafeLocalStorage } from "@/utils/playgroundPersistence";
@@ -214,6 +215,8 @@ export function UnderwriteDealWorkspace(props: {
   const [assignedTo, setAssignedTo] = useState<number | null>(null);
   const [assignmentDueAt, setAssignmentDueAt] = useState<string | null>(null);
   const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
+  // Save-comp dialog state — shared by the header button and the Shift+C hotkey.
+  const [saveCompOpen, setSaveCompOpen] = useState(false);
   // M7 fix: hydrate local state from the session ONLY on first load per session id.
   // Previously this effect depended on the whole `session` object, so every debounced
   // PATCH response (setQueryData) re-ran it and reset currentUrl/notes/etc. from the
@@ -403,9 +406,13 @@ export function UnderwriteDealWorkspace(props: {
     const isEditable = (e.target as HTMLElement)?.isContentEditable;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || isEditable) return;
     const k = e.key.toLowerCase();
-    if (k === "c" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    // M8 fix: Shift+C opens the Save-comp dialog (prefilled from the current URL and
+    // clipboard) instead of instantly saving the subject page as a $0 junk comp. The
+    // deliberate Shift combo avoids accidental saves from stray "c" presses.
+    if (k === "c" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && !e.repeat) {
+      if (saveCompOpen) return;
       e.preventDefault();
-      addComp({ url: currentUrl, address: address || "Comp" });
+      setSaveCompOpen(true);
       return;
     }
     if (k === "1" && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -479,6 +486,7 @@ export function UnderwriteDealWorkspace(props: {
             assignmentStatus={assignmentStatus}
             onAssignmentStatusChange={setAssignmentStatus}
             users={users || []}
+            onOpenSaveComp={() => setSaveCompOpen(true)}
             onSaveComp={(comp) => addComp({ ...comp, url: comp.url || currentUrl })}
           />
         </div>
@@ -582,6 +590,14 @@ export function UnderwriteDealWorkspace(props: {
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
+
+      <SaveCompDialog
+        open={saveCompOpen}
+        onOpenChange={setSaveCompOpen}
+        defaultAddress={address}
+        defaultUrl={currentUrl}
+        onSave={(comp) => addComp({ ...comp, url: comp.url || currentUrl })}
+      />
     </>
   );
 }

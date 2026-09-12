@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Copy, ExternalLink, Loader2, Maximize2, RefreshCw, Search, Trash2 } from "lucide-react";
 import { getProxiedUrl } from "@/lib/proxy-url";
 import { useToast } from "@/hooks/use-toast";
+import { SaveCompDialog } from "@/components/underwriting/SaveCompDialog";
 
 type BrowserStatus = "idle" | "loading" | "loaded" | "maybe_blocked";
 
@@ -48,8 +49,12 @@ function normalizeQuery(q: string) {
   return String(q || "").trim().replace(/\s+/g, " ");
 }
 
+// M5 fix: duckduckgo.com serves a JS app that shows "Unexpected error" when proxied.
+// The /html endpoint is the lightweight no-JS version that renders through the proxy.
 function makeSearchUrl(q: string) {
-  return `https://duckduckgo.com/?q=${encodeURIComponent(q)}`;
+  const query = normalizeQuery(q);
+  if (!query) return "https://html.duckduckgo.com/html/";
+  return `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
 }
 
 function tryNormalizeHttpUrl(input: string) {
@@ -71,12 +76,12 @@ function tryNormalizeHttpUrl(input: string) {
 
 function makeAddressSources(address: string) {
   const addr = String(address || "").trim();
-  const zillow = addr ? `https://duckduckgo.com/?q=${encodeURIComponent(`${addr} site:zillow.com`)}` : "https://www.zillow.com/";
-  const redfin = addr ? `https://duckduckgo.com/?q=${encodeURIComponent(`${addr} site:redfin.com`)}` : "https://www.redfin.com/";
-  const realtor = addr ? `https://duckduckgo.com/?q=${encodeURIComponent(`${addr} site:realtor.com`)}` : "https://www.realtor.com/";
+  const zillow = addr ? `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`${addr} site:zillow.com`)}` : "https://www.zillow.com/";
+  const redfin = addr ? `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`${addr} site:redfin.com`)}` : "https://www.redfin.com/";
+  const realtor = addr ? `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`${addr} site:realtor.com`)}` : "https://www.realtor.com/";
   const tps = addr ? `https://www.truepeoplesearch.com/results?name=${encodeURIComponent(addr)}` : "https://www.truepeoplesearch.com/";
   const maps = addr ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addr)}` : "https://www.google.com/maps";
-  const county = addr ? `https://duckduckgo.com/?q=${encodeURIComponent(`${addr} county property appraiser`)}` : makeSearchUrl("county property appraiser");
+  const county = addr ? `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`${addr} county property appraiser`)}` : makeSearchUrl("county property appraiser");
   return { zillow, redfin, realtor, tps, maps, county };
 }
 
@@ -139,6 +144,7 @@ export function ResearchHub(props: {
   assignmentStatus: string | null;
   onAssignmentStatusChange: (status: string | null) => void;
   users: any[];
+  onOpenSaveComp?: () => void;
   onSaveComp?: (comp: { address?: string; url?: string; soldPrice?: number | null; beds?: number | null; baths?: number | null; sqft?: number | null }) => void;
 }) {
   const { toast } = useToast();
@@ -283,6 +289,20 @@ export function ResearchHub(props: {
     setSelectedNoteId("");
   };
 
+  // M8 fix: the Save comp button opens the workspace-level dialog (also reachable via
+  // Shift+C), replacing the undiscoverable "C" hotkey that saved the subject page as a
+  // $0 junk comp.
+  const [saveCompOpen, setSaveCompOpen] = useState(false);
+  const openSaveCompDialog = () => {
+    if (!props.onSaveComp) return;
+    setTab("browser");
+    if (props.onOpenSaveComp) {
+      props.onOpenSaveComp();
+    } else {
+      setSaveCompOpen(true);
+    }
+  };
+
   const zoningLists = useMemo(() => {
     const florida: ResourceLink[] = [
       { label: "Florida Property Appraiser", url: "https://floridarevenue.com/property/" },
@@ -331,9 +351,15 @@ export function ResearchHub(props: {
             <CardTitle className="text-base">Property Playground</CardTitle>
             <div className="text-xs text-muted-foreground truncate">Research hub for zoning, suppliers, comps, and deal ideas</div>
           </div>
-          <Badge variant={status === "maybe_blocked" ? "destructive" : status === "loaded" ? "default" : "secondary"}>
-            {status === "idle" ? "Ready" : status === "loading" ? "Loading" : status === "loaded" ? "Loaded" : "Blocked?"}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={openSaveCompDialog} disabled={!props.onSaveComp} title="Save the current page as a comp (Shift+C)">
+              Save comp
+              <kbd className="ml-2 rounded border border-primary-foreground/30 px-1 text-[10px] leading-4 opacity-70">⇧C</kbd>
+            </Button>
+            <Badge variant={status === "maybe_blocked" ? "destructive" : status === "loaded" ? "default" : "secondary"}>
+              {status === "idle" ? "Ready" : status === "loading" ? "Loading" : status === "loaded" ? "Loaded" : "Blocked?"}
+            </Badge>
+          </div>
         </div>
       </CardHeader>
 
@@ -926,6 +952,14 @@ export function ResearchHub(props: {
           </div>
         </div>
       </CardContent>
+
+      <SaveCompDialog
+        open={saveCompOpen}
+        onOpenChange={setSaveCompOpen}
+        defaultAddress={address}
+        defaultUrl={srcUrl}
+        onSave={(comp) => props.onSaveComp?.({ ...comp, url: comp.url || srcUrl })}
+      />
     </Card>
   );
 }

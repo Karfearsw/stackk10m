@@ -58,7 +58,7 @@ export const defaultUnderwritingSections: UnderwritingSection[] = [
   { id: "next_steps", title: "Next Steps" },
 ];
 
-const defaultBrowserUrl = "https://duckduckgo.com/";
+const defaultBrowserUrl = "https://html.duckduckgo.com/html/";
 
 export function nowIso() {
   return new Date().toISOString();
@@ -67,7 +67,9 @@ export function nowIso() {
 export function makeAddressSearchUrl(address: string) {
   const q = String(address || "").trim();
   if (!q) return defaultBrowserUrl;
-  return `https://duckduckgo.com/?q=${encodeURIComponent(q)}`;
+  // html.duckduckgo.com is the no-JS endpoint that renders correctly through the
+  // server-side proxy (the main duckduckgo.com app shows "Unexpected error").
+  return `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
 }
 
 export function getDefaultBrowserUrlForContext(ctx?: { address?: string | null }) {

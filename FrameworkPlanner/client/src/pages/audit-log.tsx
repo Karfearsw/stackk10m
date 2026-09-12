@@ -7,8 +7,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCw, ScrollText } from "lucide-react";
-import { useMemo, useState } from "react";
+import { RefreshCw, ScrollText, Timer } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { QueryError } from "@/components/ui/query-state";
 
 type AuditEvent = {
@@ -62,6 +62,18 @@ export function AuditLogContent() {
 
   const items = data?.items || [];
 
+  // M1 fix: if the request stalls (e.g. a slow/unresponsive backend), surface it
+  // after 15s instead of showing "Loading…" forever, and offer a manual retry.
+  const [stalled, setStalled] = useState(false);
+  useEffect(() => {
+    if (!isLoading) {
+      setStalled(false);
+      return;
+    }
+    const t = window.setTimeout(() => setStalled(true), 15_000);
+    return () => window.clearTimeout(t);
+  }, [isLoading, key]);
+
   return (
     <>
       <div className="space-y-6">
@@ -94,6 +106,21 @@ export function AuditLogContent() {
           </div>
           <div className="text-sm text-muted-foreground">{isLoading ? "Loading…" : `${items.length} / ${data?.total ?? 0}`}</div>
         </div>
+
+        {stalled && !isError && (
+          <Card className="border-amber-300 dark:border-amber-700">
+            <CardContent className="p-4 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm text-amber-800 dark:text-amber-400">
+                <Timer className="h-4 w-4" />
+                The audit log is taking unusually long to load. The server may be busy — you can retry.
+              </div>
+              <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
+                <RefreshCw className={isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+                Retry now
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         {isError && (
           <Card className="border-destructive/40">

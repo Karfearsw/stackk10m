@@ -492,5 +492,11 @@ export function AutomationsContent() {
 }
 
 export default function AutomationsPage() {
-  return <AutomationsContent />;
+  // M2 fix: this page previously rendered without the <Layout> wrapper, so the
+  // sidebar never mounted on /automations (and a reload could not restore it).
+  return (
+    <Layout>
+      <AutomationsContent />
+    </Layout>
+  );
 }

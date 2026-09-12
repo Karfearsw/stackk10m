@@ -38,6 +38,11 @@ export default function RvmPage() {
 
   const activeCampaign = useMemo(() => campaigns.find((c: any) => c.id === activeCampaignId) || null, [campaigns, activeCampaignId]);
 
+  // M6 fix: when RVM is not enabled for the account, both queries 404 and the page
+  // rendered two stacked errors ("RVM is not enabled…" + "Couldn't load the audio
+  // library.") above dead forms. Detect it once and render a single clear state.
+  const rvmNotEnabled = isNotEnabledError(campaignsError) || isNotEnabledError(audioError);
+
   useEffect(() => {
     if (!activeCampaignId) return;
     if (!campaigns.length) return;
@@ -134,22 +139,26 @@ export default function RvmPage() {
           <p className="text-muted-foreground">Ringless voicemail blasting with guardrails.</p>
         </div>
 
-        {campaignsError && (
-          <Card className={isNotEnabledError(campaignsError) ? "" : "border-destructive/40"}>
-            <CardContent className={isNotEnabledError(campaignsError) ? "pt-6 text-sm text-muted-foreground" : "p-0"}>
-              {isNotEnabledError(campaignsError) ? (
-                "RVM is not enabled for this account."
-              ) : (
-                <QueryError message="Couldn't load RVM campaigns." onRetry={() => refetchCampaigns()} />
-              )}
+        {campaignsError && !rvmNotEnabled && (
+          <Card className="border-destructive/40">
+            <CardContent className="p-0">
+              <QueryError message="Couldn't load RVM campaigns." onRetry={() => refetchCampaigns()} />
             </CardContent>
           </Card>
         )}
 
-        {audioError && (
+        {audioError && !rvmNotEnabled && (
           <p className="text-sm text-destructive">Couldn't load the audio library.</p>
         )}
 
+        {rvmNotEnabled ? (
+          <Card>
+            <CardContent className="pt-6 text-sm text-muted-foreground">
+              RVM is not enabled for this account. Contact your administrator to enable ringless voicemail.
+            </CardContent>
+          </Card>
+        ) : (
+          <>
         <Card>
           <CardHeader>
             <CardTitle>Audio Library</CardTitle>
@@ -274,6 +283,8 @@ export default function RvmPage() {
             )}
           </CardContent>
         </Card>
+          </>
+        )}
       </div>
     </Layout>
   );

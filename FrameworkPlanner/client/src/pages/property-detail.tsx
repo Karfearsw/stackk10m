@@ -41,6 +41,10 @@ import {
   TrendingUp,
   Eye,
   ImageIcon,
+  Pencil,
+  Trash2,
+  ChevronDown,
+  StickyNote,
 } from "lucide-react";
 import { Link, useLocation, useRoute } from "wouter";
 
@@ -1360,9 +1364,15 @@ export default function PropertyDetail() {
                 <CardTitle className="text-lg">Notes</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="bg-muted/50 p-3 rounded-md text-sm text-muted-foreground italic mb-3">
-                  {(lead?.notes ?? property?.notes) ?? "No notes yet."}
-                </div>
+                <NotesPanel
+                  leadId={lead?.id}
+                  propertyId={property?.id}
+                  leadNotes={lead?.notes}
+                  propertyNotes={property?.notes}
+                  onChanged={() => {
+                    queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id] });
+                  }}
+                />
                 <AddNoteForm leadId={lead?.id} propertyId={property?.id} initialNotes={lead?.notes ?? property?.notes}
                   onAdded={() => {
                     queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id] });
@@ -1812,6 +1822,156 @@ export default function PropertyDetail() {
         </DialogContent>
       </Dialog>
     </Layout>
+  );
+}
+
+// --- M3 fix: notes parsed from `[# timestamp] text` entries, shown fully from BOTH the
+// lead and opportunity records, with expand, edit, and delete controls. Previously the
+// sidebar rendered only `lead?.notes ?? property?.notes` (hiding the other record's
+// notes) as one truncated blob with no way to view or manage entries.
+type NoteEntry = { key: string; source: "lead" | "opportunity"; timestamp: string | null; text: string };
+
+function parseNoteEntries(raw: string | null | undefined, source: NoteEntry["source"]): NoteEntry[] {
+  const blob = String(raw || "");
+  if (!blob.trim()) return [];
+  const lines = blob.split("\n");
+  const entries: NoteEntry[] = [];
+  let current: NoteEntry | null = null;
+  for (const line of lines) {
+    const m = line.match(/^\s*\[#\s*(.+?)\s*\]\s?/);
+    if (m) {
+      if (current) entries.push(current);
+      current = { key: `${source}:${entries.length}`, source, timestamp: m[1], text: line.slice(m[0].length) };
+    } else if (current) {
+      current.text += (current.text ? "\n" : "") + line;
+    } else if (line.trim()) {
+      current = { key: `${source}:${entries.length}`, source, timestamp: null, text: line };
+    }
+  }
+  if (current) entries.push(current);
+  return entries.map((e) => ({ ...e, text: e.text.trim() })).filter((e) => e.text.length > 0);
+}
+
+function NotesPanel(props: {
+  leadId?: number;
+  propertyId?: number;
+  leadNotes?: string | null;
+  propertyNotes?: string | null;
+  onChanged: () => void;
+}) {
+  const { toast } = useToast();
+  const [editingKey, setEditingKey] = React.useState<string | null>(null);
+  const [editText, setEditText] = React.useState("");
+  const [expandedKey, setExpandedKey] = React.useState<string | null>(null);
+  const [pending, setPending] = React.useState(false);
+
+  const entries = [
+    ...parseNoteEntries(props.leadNotes, "lead"),
+    ...parseNoteEntries(props.propertyNotes, "opportunity"),
+  ];
+
+  const rewriteSource = async (source: NoteEntry["source"], nextBlob: string) => {
+    setPending(true);
+    try {
+      const url = source === "lead" && props.leadId ? `/api/leads/${props.leadId}` : `/api/opportunities/${props.propertyId}`;
+      const res = await fetch(url, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ notes: nextBlob }),
+      });
+      if (!res.ok) throw new Error(`Save failed (${res.status})`);
+      toast({ title: "Note updated" });
+      props.onChanged();
+    } catch (e: any) {
+      toast({ title: e?.message || "Failed to update note", variant: "destructive" });
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const startEdit = (entry: NoteEntry) => {
+    setEditingKey(entry.key);
+    setEditText(entry.text);
+  };
+
+  const saveEdit = (entry: NoteEntry) => {
+    const text = editText.trim();
+    if (!text) return;
+    const index = Number(entry.key.split(":")[1]);
+    const sourceRaw = entry.source === "lead" ? props.leadNotes : props.propertyNotes;
+    const sourceEntries = parseNoteEntries(sourceRaw, entry.source);
+    const rewritten = sourceEntries.map((e, i) => {
+      const line = i === index ? text : e.text;
+      return e.timestamp || i === index ? `[# ${e.timestamp}] ${line}` : line;
+    });
+    rewriteSource(entry.source, rewritten.join("\n"));
+    setEditingKey(null);
+  };
+
+  const deleteEntry = (entry: NoteEntry) => {
+    const sourceRaw = entry.source === "lead" ? props.leadNotes : props.propertyNotes;
+    const sourceEntries = parseNoteEntries(sourceRaw, entry.source);
+    const kept = sourceEntries.filter((_, i) => `${entry.source}:${i}` !== entry.key);
+    const lines: string[] = [];
+    for (const e of kept) lines.push(e.timestamp ? `[# ${e.timestamp}] ${e.text}` : e.text);
+    rewriteSource(entry.source, lines.join("\n"));
+  };
+
+  if (!entries.length) {
+    return <div className="text-sm text-muted-foreground mb-3">No notes yet.</div>;
+  }
+
+  return (
+    <div className="space-y-2 mb-3">
+      {entries.map((entry) => {
+        const isExpanded = expandedKey === entry.key;
+        const isLong = entry.text.length > 140 || entry.text.split("\n").length > 3;
+        const isEditing = editingKey === entry.key;
+        return (
+          <div key={entry.key} className="rounded-md border bg-background px-3 py-2">
+            {isEditing ? (
+              <div className="space-y-2">
+                <Textarea value={editText} onChange={(e) => setEditText(e.target.value)} className="min-h-[80px] text-sm" />
+                <div className="flex justify-end gap-2">
+                  <Button size="sm" variant="outline" onClick={() => setEditingKey(null)} disabled={pending}>Cancel</Button>
+                  <Button size="sm" onClick={() => saveEdit(entry)} disabled={pending || !editText.trim()}>Save</Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      {entry.timestamp ? <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />{entry.timestamp}</span> : null}
+                      {entry.source === "lead" ? <Badge variant="secondary" className="h-4 px-1 text-[10px]">Lead</Badge> : <Badge variant="outline" className="h-4 px-1 text-[10px]">Opportunity</Badge>}
+                    </div>
+                    <div className={`mt-1 whitespace-pre-wrap text-sm ${isExpanded ? "" : isLong ? "line-clamp-3" : ""}`}>{entry.text}</div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Edit note" onClick={() => startEdit(entry)}>
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="icon" variant="ghost" className="h-7 w-7" aria-label="Delete note" onClick={() => deleteEntry(entry)} disabled={pending}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+                {isLong ? (
+                  <button
+                    type="button"
+                    className="mt-1 text-xs text-primary hover:underline inline-flex items-center gap-1"
+                    onClick={() => setExpandedKey(isExpanded ? null : entry.key)}
+                  >
+                    {isExpanded ? "Show less" : "Show more"}
+                    <ChevronDown className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                  </button>
+                ) : null}
+              </>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

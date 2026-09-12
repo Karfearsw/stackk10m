@@ -80,7 +80,8 @@ describe("playground persistence", () => {
 
   it("builds a safe address search URL", () => {
     const url = makeAddressSearchUrl("123 Main St #5, Austin TX");
-    expect(url.startsWith("https://duckduckgo.com/")).toBe(true);
+    // M5: searches go through the no-JS html endpoint that renders via the proxy
+    expect(url.startsWith("https://html.duckduckgo.com/html/")).toBe(true);
     expect(url).toContain("q=");
     expect(url).toContain("%23");
   });
@@ -91,6 +92,6 @@ describe("playground persistence", () => {
     expect(withAddress).toContain("q=");
 
     const withoutAddress = getDefaultBrowserUrlForContext();
-    expect(withoutAddress).toBe("https://duckduckgo.com/");
+    expect(withoutAddress).toBe("https://html.duckduckgo.com/html/");
   });
 });

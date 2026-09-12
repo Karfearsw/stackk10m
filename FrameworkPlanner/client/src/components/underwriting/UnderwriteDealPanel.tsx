@@ -416,7 +416,7 @@ export function UnderwriteDealPanel(props: {
                       {!props.underwriting.comps.length ? (
                         <TableRow>
                           <TableCell colSpan={4} className="text-sm text-muted-foreground">
-                            Use the Research scratchpad to save comps (hotkey: C)
+                            Use the "Save comp" button (or press Shift+C) in the Playground to add comps
                           </TableCell>
                         </TableRow>
                       ) : null}
