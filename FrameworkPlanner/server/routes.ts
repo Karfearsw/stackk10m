@@ -101,7 +101,7 @@ import { isEmailNotConfiguredError, sendAuthError } from "./auth/errors.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
 import { getRvmProvider } from "./services/rvm/provider.js";
 import crypto from "node:crypto";
-import { createIsFeatureEnabled, requireFeature } from "./featureFlags.js";
+import { createIsFeatureEnabled, isFeatureBypassUser, requireFeature } from "./featureFlags.js";
 import { getProviderReadiness } from "./services/telecom/provider-readiness.js";
 import { getWebRtcReadiness, getWebRtcClientConfig } from "./services/telecom/webrtc-config.js";
 import { getAiAssistantConfig } from "./services/telecom/ai-config.js";
@@ -3848,7 +3848,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "voice_playground", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const payload = z.object({ transcript: z.string().trim().min(1).max(5000) }).parse(req.body || {});
       const t = payload.transcript.toLowerCase();
       let action: "set_status" | "assign" | "archive" | "unarchive" | "export" | "add_note" | "playground_append_note" | null = null;
@@ -3900,7 +3900,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "voice_playground", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const payload = z
         .object({
           parsed: z.object({ action: z.string().nullable(), params: z.record(z.any()).default({}), transcript: z.string().optional() }),
@@ -3977,7 +3977,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "voice_playground", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const payload = z
         .object({
           parsed: z.object({ action: z.string().nullable(), params: z.record(z.any()).default({}), transcript: z.string().optional() }),
@@ -4174,7 +4174,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "voice_playground"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "voice_playground", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const payload = z.object({ aiActionLogId: z.coerce.number().int().positive() }).parse(req.body || {});
       const undo = await storage.getAiActionUndoByActionId(payload.aiActionLogId);
       if (!undo) return res.status(404).json({ message: "Not found" });
@@ -4521,7 +4521,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      const enabled = await isFeatureEnabled(user.id, "skip_trace");
+      const enabled = await isFeatureEnabled(user.id, "skip_trace", isFeatureBypassUser(user));
       if (!enabled) {
         return res.json({
           enabled: false,
@@ -4549,7 +4549,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "skip_trace", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const body = z
         .object({
           entityType: z.enum(["lead", "opportunity"]),
@@ -4577,7 +4577,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "skip_trace", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const jobId = parseInt(req.params.jobId, 10);
       if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
       const job = await storage.getSkipTraceJobById(jobId);
@@ -4594,7 +4594,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "skip_trace", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const jobId = parseInt(req.params.jobId, 10);
       if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
       const job = await storage.getSkipTraceJobById(jobId);
@@ -4643,7 +4643,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "skip_trace", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const leadId = parseInt(req.params.id);
       const lead = await storage.getLeadById(leadId);
       if (!lead) return res.status(404).json({ message: "Lead not found" });
@@ -4662,7 +4662,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "skip_trace", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const leadId = parseInt(req.params.id);
       const out = await runProviderSkipTraceForEntity({ entityType: "lead", entityId: leadId, requestedByUserId: user.id });
       if ("pending" in out && out.pending) {
@@ -4753,7 +4753,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "campaigns"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const rows = await storage.getCampaigns(user.id);
       res.json(rows);
     } catch (error: any) {
@@ -4764,7 +4764,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "campaigns"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const schema = z.object({ name: z.string().trim().min(1).max(120) });
       const payload = schema.parse(req.body || {});
       const row = await storage.createCampaign({ userId: user.id, name: payload.name, status: "active" } as any);
@@ -4777,7 +4777,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "campaigns"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const id = parseInt(req.params.id);
       const schema = z.object({
         name: z.string().trim().min(1).max(120).optional(),
@@ -4794,7 +4794,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "campaigns"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const id = parseInt(req.params.id);
       await storage.deleteCampaign(id);
       res.json({ message: "Deleted" });
@@ -4806,7 +4806,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "campaigns"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const id = parseInt(req.params.id);
       const rows = await storage.getCampaignSteps(id);
       res.json(rows);
@@ -4818,7 +4818,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "campaigns"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const id = parseInt(req.params.id);
       const schema = z.object({
         steps: z.array(
@@ -4854,7 +4854,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "campaigns"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const id = parseInt(req.params.id);
       const schema = z.object({ leadIds: z.array(z.number().int().positive()).min(1) });
       const payload = schema.parse(req.body || {});
@@ -4874,7 +4874,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "campaigns"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const id = parseInt(req.params.id);
       const stats = await storage.getCampaignStats(id);
       res.json(stats);
@@ -4899,7 +4899,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "rvm"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "rvm", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const rows = await storage.getRvmAudioAssets(user.id);
       res.json(rows.map((r: any) => ({ id: r.id, name: r.name, mimeType: r.mimeType, createdAt: r.createdAt })));
     } catch (error: any) {
@@ -4910,7 +4910,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "rvm"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "rvm", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const schema = z.object({
         name: z.string().trim().min(1).max(120),
         mimeType: z.string().trim().min(1).max(120),
@@ -4927,7 +4927,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "rvm"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "rvm", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const id = parseInt(req.params.id);
       await storage.deleteRvmAudioAsset(id);
       res.json({ message: "Deleted" });
@@ -4939,7 +4939,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "rvm"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "rvm", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const rows = await storage.getRvmCampaigns(user.id);
       res.json(rows);
     } catch (error: any) {
@@ -4950,7 +4950,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "rvm"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "rvm", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const schema = z.object({
         name: z.string().trim().min(1).max(120),
         sendWindowStart: z.string().trim().regex(/^\d{2}:\d{2}$/).optional().nullable(),
@@ -4977,7 +4977,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "rvm"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "rvm", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const id = parseInt(req.params.id);
       const schema = z.object({
         name: z.string().trim().min(1).max(120).optional(),
@@ -4998,7 +4998,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "rvm"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "rvm", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const id = parseInt(req.params.id);
       await storage.deleteRvmCampaign(id);
       res.json({ message: "Deleted" });
@@ -5010,7 +5010,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "rvm"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "rvm", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const id = parseInt(req.params.id);
       const rows = await storage.getRvmCampaignDrops(id, 200);
       res.json(rows);
@@ -5022,7 +5022,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "rvm"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "rvm", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const id = parseInt(req.params.id);
       const schema = z.object({
         leadIds: z.array(z.number().int().positive()).min(1),
@@ -5125,7 +5125,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "field_mode"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "field_mode", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const schema = z.object({
         actions: z.array(
           z.object({
@@ -5167,13 +5167,13 @@ export async function registerRoutes(
           } else if (a.type === "enroll_campaign") {
             const s = z.object({ campaignId: z.number().int().positive(), leadId: z.number().int().positive() });
             const p = s.parse(a.payload || {});
-            if (!(await isFeatureEnabled(user.id, "campaigns"))) throw new Error("Campaigns disabled");
+            if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) throw new Error("Campaigns disabled");
             await storage.enrollCampaignLeads(p.campaignId, [p.leadId]);
             out = { ...out, campaignId: p.campaignId, leadId: p.leadId };
           } else if (a.type === "skip_trace_lead") {
             const s = z.object({ leadId: z.number().int().positive() });
             const p = s.parse(a.payload || {});
-            if (!(await isFeatureEnabled(user.id, "skip_trace"))) throw new Error("Skip trace disabled");
+            if (!(await isFeatureEnabled(user.id, "skip_trace", isFeatureBypassUser(user)))) throw new Error("Skip trace disabled");
             const r = await runProviderSkipTraceForEntity({ entityType: "lead", entityId: p.leadId, requestedByUserId: user.id });
             if ("pending" in r && r.pending) {
               out = { ...out, pending: true, cached: false, skipTraceId: (r.providerResult as any).id };
@@ -5641,7 +5641,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "skip_trace", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const propertyId = parseInt(req.params.id);
       const property = await storage.getPropertyById(propertyId);
       if (!property) return res.status(404).json({ message: "Opportunity not found" });
@@ -5660,7 +5660,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "skip_trace"))) return res.status(404).json({ message: "Not found" });
+      if (!(await isFeatureEnabled(user.id, "skip_trace", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const propertyId = parseInt(req.params.id);
       const ownerNameOverride = req.body?.ownerName ? String(req.body.ownerName).trim() : null;
       const out = await runProviderSkipTraceForEntity({ entityType: "opportunity", entityId: propertyId, requestedByUserId: user.id, ownerNameOverride });
@@ -7836,7 +7836,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
         { key: "telnyx_voice", label: "Telnyx Voice", state: telnyxReady ? "healthy" : telnyxResult.status === "unconfigured" ? "unconfigured" : "unavailable", detail: telnyxResult.message || "Unknown", hint: (telnyxResult as any).hint || null, lastChecked: checkedAt },
         { key: "telnyx_sms", label: "Telnyx SMS", state: telnyxReady && has("TELNYX_MESSAGING_PROFILE_ID") ? "healthy" : !has("TELNYX_MESSAGING_PROFILE_ID") ? "unconfigured" : "unavailable", detail: !has("TELNYX_MESSAGING_PROFILE_ID") ? "TELNYX_MESSAGING_PROFILE_ID missing" : "SMS requires valid Telnyx credentials", lastChecked: checkedAt },
         { key: "telnyx_webhook", label: "Telnyx webhook", state: has("TELNYX_WEBHOOK_URL") ? "healthy" : "unconfigured", detail: has("TELNYX_WEBHOOK_URL") ? "Webhook URL configured" : "TELNYX_WEBHOOK_URL missing — call events / inbound SMS not received", lastChecked: checkedAt },
-        { key: "skip_trace", label: "Skip trace provider", state: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") ? "healthy" : "unconfigured", detail: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") ? "Skip trace provider configured" : "No skip trace provider configured — skip trace is unavailable until configured", lastChecked: checkedAt },
+        { key: "skip_trace", label: "Skip trace provider", state: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") || process.env.SKIP_TRACE_PROVIDER === "free-web" ? "healthy" : "unconfigured", detail: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") ? "Skip trace provider configured" : process.env.SKIP_TRACE_PROVIDER === "free-web" ? "Free public-web research provider active (no API keys required)" : "No skip trace provider configured — set SKIP_TRACE_PROVIDER=free-web for free lookups", lastChecked: checkedAt },,
         { key: "calendar", label: "Calendar / meetings", state: "healthy", detail: "Internal CRM calendar active; external calendar sync requires an opt-in connector", lastChecked: checkedAt },
         { key: "campaigns", label: "Ad / campaign providers", state: has("META_ADS_TOKEN") || has("GOOGLE_ADS_TOKEN") ? "healthy" : "unconfigured", detail: has("META_ADS_TOKEN") || has("GOOGLE_ADS_TOKEN") ? "Ad provider configured" : "No ad network credentials — campaign planning works, live ad delivery is off", lastChecked: checkedAt },
         { key: "automations", label: "Automation engine", state: "healthy", detail: "Automation engine available (trigger/conditions/actions)", lastChecked: checkedAt },
@@ -10229,7 +10229,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "esign"))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
+      if (!(await isFeatureEnabled(user.id, "esign", isFeatureBypassUser(user)))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
       const id = parseInt(req.params.id);
       const rows = await storage.getContractEnvelopesByDocument(id);
       res.json(rows.map((e: any) => ({ ...e, tokenHash: undefined })));
@@ -10241,7 +10241,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "esign"))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
+      if (!(await isFeatureEnabled(user.id, "esign", isFeatureBypassUser(user)))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
       const id = parseInt(req.params.id);
       const doc = await storage.getContractDocumentById(id);
       if (!doc) return res.status(404).json({ message: "Document not found" });
@@ -10310,7 +10310,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "esign"))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
+      if (!(await isFeatureEnabled(user.id, "esign", isFeatureBypassUser(user)))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
       const id = parseInt(req.params.id);
       const env = await storage.getContractEnvelopeById(id);
       if (!env) return res.status(404).json({ message: "Not found" });
@@ -10323,7 +10323,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "esign"))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
+      if (!(await isFeatureEnabled(user.id, "esign", isFeatureBypassUser(user)))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
       const id = parseInt(req.params.id);
       const schema = z.object({ signedPdfBase64: z.string().trim().min(1) });
       const payload = schema.parse(req.body || {});

@@ -20,10 +20,25 @@ export function parseEnvBool(v: unknown): boolean | null {
   return null;
 }
 
+/**
+ * Whether a user bypasses per-user feature restrictions.
+ * Admins and super admins get access to every feature: env flags gate
+ * regular users, while admin/manager/owner roles and isSuperAdmin bypass them.
+ */
+export function isFeatureBypassUser(
+  user: { id?: number; isSuperAdmin?: boolean | null; role?: string | null } | null | undefined,
+): boolean {
+  if (!user) return false;
+  if (user.isSuperAdmin) return true;
+  const role = String(user.role || "").toLowerCase();
+  return role === "admin" || role === "manager" || role === "owner";
+}
+
 export function createIsFeatureEnabled(
   getUserFeatureFlag: (userId: number, flag: string) => Promise<{ enabled?: unknown } | undefined>,
 ) {
-  return async (userId: number, flag: FeatureFlagKey): Promise<boolean> => {
+  return async (userId: number, flag: FeatureFlagKey, bypass = false): Promise<boolean> => {
+    if (bypass) return true;
     const envKey = featureEnvVars[flag];
     const envDecision = parseEnvBool(process.env[envKey]);
     if (envDecision !== null) return envDecision;

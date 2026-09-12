@@ -60,6 +60,26 @@ function safeParseJsonArrayCount(v: unknown): number {
   }
 }
 
+function parseJsonArray(v: unknown): string[] {
+  try {
+    const parsed = JSON.parse(String(v || "[]"));
+    return Array.isArray(parsed) ? parsed.map((x) => String(x)).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function uniqStrings(values: string[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const v of values.map((s) => String(s || "").trim()).filter(Boolean)) {
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
+  }
+  return out;
+}
+
 async function addJobEvent(jobId: number, status: string, message: string | null, metadataJson: Record<string, unknown> = {}) {
   await storage.createSkipTraceJobEvent({
     jobId,
@@ -202,7 +222,10 @@ async function runProviderStep(input: {
 
   if (existing && String((existing as any).status || "") === "success" && (existing as any).completedAt) {
     const completedAtMs = new Date((existing as any).completedAt).getTime();
-    if (Number.isFinite(completedAtMs) && now - completedAtMs < ms90d) {
+    // Never reuse mock-provider rows: mock contacts are synthetic and must
+    // not leak into live lookups.
+    const cacheCompatible = String((existing as any).providerName || "").toLowerCase() !== "mock";
+    if (cacheCompatible && Number.isFinite(completedAtMs) && now - completedAtMs < ms90d) {
       const cached = await storage.createSkipTraceResult({
         jobId: input.job.id,
         leadId: input.entityType === "lead" ? input.entityId : (entity.sourceLead as any)?.id ?? null,
@@ -232,7 +255,8 @@ async function runProviderStep(input: {
 
   if (existing && String((existing as any).status || "") === "pending" && (existing as any).requestedAt) {
     const requestedAtMs = new Date((existing as any).requestedAt).getTime();
-    if (Number.isFinite(requestedAtMs) && now - requestedAtMs < ms5m && (existing as any).jobId) {
+    const pendingCompatible = String((existing as any).providerName || "").toLowerCase() !== "mock";
+    if (pendingCompatible && Number.isFinite(requestedAtMs) && now - requestedAtMs < ms5m && (existing as any).jobId) {
       await addJobEvent(input.job.id, "provider_pending", null, { existingJobId: (existing as any).jobId, skipTraceResultId: (existing as any).id });
       return { providerResult: existing, cached: false, pending: true, lead: entity.lead, sourceLead: entity.sourceLead };
     }
@@ -276,11 +300,26 @@ async function runProviderStep(input: {
 
       const leadToPatch = input.entityType === "lead" ? entity.lead : entity.sourceLead;
       const leadId = (leadToPatch as any)?.id ? Number((leadToPatch as any).id) : null;
-      if (leadId) {
+      // Mock contacts are synthetic — never write them onto real lead records.
+      if (leadId && provider.name !== "mock") {
         const leadPatch: any = {};
         if (!String((leadToPatch as any).ownerPhone || "").trim() && out.phones?.[0]) leadPatch.ownerPhone = out.phones[0];
         if (!String((leadToPatch as any).ownerEmail || "").trim() && out.emails?.[0]) leadPatch.ownerEmail = out.emails[0];
         if (Object.keys(leadPatch).length) await storage.updateLead(leadId, leadPatch);
+      }
+
+      for (const ev of (out as any).evidence || []) {
+        await storage.createSkipTraceEvidence({
+          jobId: input.job.id,
+          entityType: input.entityType,
+          entityId: input.entityId,
+          sourceType: String(ev?.sourceType || "other"),
+          sourceUrl: ev?.sourceUrl ? String(ev.sourceUrl) : null,
+          extractedJson: ev?.extracted ?? {},
+          confidenceJson: ev?.confidence ?? {},
+          notes: ev?.notes ? String(ev.notes) : null,
+          screenshotRef: ev?.screenshotRef ? String(ev.screenshotRef) : null,
+        } as any);
       }
 
       await addJobEvent(input.job.id, "provider_success", null, { skipTraceResultId: updated.id, phones: out.phones?.length || 0, emails: out.emails?.length || 0, costCents: out.costCents });
@@ -299,6 +338,20 @@ async function runProviderStep(input: {
         completedAt: new Date(),
         rawResponseJson: JSON.stringify(out.raw ?? null),
       } as any)) as any;
+      for (const ev of (out as any).evidence || []) {
+        await storage.createSkipTraceEvidence({
+          jobId: input.job.id,
+          entityType: input.entityType,
+          entityId: input.entityId,
+          sourceType: String(ev?.sourceType || "other"),
+          sourceUrl: ev?.sourceUrl ? String(ev.sourceUrl) : null,
+          extractedJson: ev?.extracted ?? {},
+          confidenceJson: ev?.confidence ?? {},
+          notes: ev?.notes ? String(ev.notes) : null,
+          screenshotRef: ev?.screenshotRef ? String(ev.screenshotRef) : null,
+        } as any);
+      }
+
       await addJobEvent(input.job.id, "provider_fail", String((out as any).errorMessage || "failed") || null, { skipTraceResultId: updated.id, costCents: out.costCents });
       await storage.createGlobalActivity({
         userId: input.requestedByUserId,
@@ -415,7 +468,64 @@ export async function runSkipTraceJob(jobId: number, input?: { ownerNameOverride
     }
 
     if (mode === "public_research" || mode === "both") {
-      await runPublicResearchStep({ job: running, entityType, entityId, ownerNameOverride: input?.ownerNameOverride ?? null, runner });
+      const pubOut = await runPublicResearchStep({ job: running, entityType, entityId, ownerNameOverride: input?.ownerNameOverride ?? null, runner });
+
+      // Surface free-research contacts alongside provider contacts: collect the
+      // phones/emails the runner extracted (owner-anchored) and merge them into
+      // the provider result row — or synthesize one for public-only mode.
+      const pubPhones = uniqStrings((pubOut.evidence || []).flatMap((ev) => Array.isArray(ev.extracted?.phones) ? (ev.extracted.phones as unknown[]).map(String) : []));
+      const pubEmails = uniqStrings((pubOut.evidence || []).flatMap((ev) => Array.isArray(ev.extracted?.emails) ? (ev.extracted.emails as unknown[]).map(String) : []));
+      if (pubPhones.length || pubEmails.length) {
+        if (providerResult) {
+          const mergedPhones = uniqStrings([...parseJsonArray((providerResult as any).phonesJson), ...pubPhones]);
+          const mergedEmails = uniqStrings([...parseJsonArray((providerResult as any).emailsJson), ...pubEmails]);
+          let rawNote: Record<string, unknown> = {};
+          try {
+            const prevRaw = JSON.parse(String((providerResult as any).rawResponseJson || "{}"));
+            if (prevRaw && typeof prevRaw === "object") rawNote = prevRaw;
+          } catch {}
+          providerResult = (await storage.updateSkipTraceResult((providerResult as any).id, {
+            phonesJson: JSON.stringify(mergedPhones),
+            emailsJson: JSON.stringify(mergedEmails),
+            rawResponseJson: JSON.stringify({ ...rawNote, publicResearchContacts: { phones: pubPhones, emails: pubEmails, runner: runner.name } }),
+          } as any)) as any;
+        } else {
+          let pubCacheKey = "";
+          try {
+            const ent = await loadEntity({ entityType, entityId });
+            const pi = requireProviderInput({ entityType, ...ent, ownerNameOverride: input?.ownerNameOverride ?? null });
+            pubCacheKey = skipTraceCacheKey(pi);
+          } catch {
+            pubCacheKey = `public_research|${entityType}|${entityId}`;
+          }
+          const created = await storage.createSkipTraceResult({
+            jobId: running.id,
+            leadId: entityType === "lead" ? entityId : (sourceLead as any)?.id ?? null,
+            propertyId: entityType === "opportunity" ? entityId : null,
+            providerName: runner.name,
+            status: "success",
+            phonesJson: JSON.stringify(pubPhones),
+            emailsJson: JSON.stringify(pubEmails),
+            costCents: 0,
+            cacheKey: pubCacheKey,
+            requestedAt: new Date(),
+            completedAt: new Date(),
+            rawResponseJson: JSON.stringify({ provider: runner.name, source: "public_research" }),
+          } as any);
+          providerResult = created as any;
+          await storage.updateSkipTraceJob(running.id, { providerName: runner.name } as any);
+        }
+
+        // Fill empty lead contact fields from public research (same semantics as the provider step)
+        const leadToPatch = entityType === "lead" ? lead : sourceLead;
+        const leadId = (leadToPatch as any)?.id ? Number((leadToPatch as any).id) : null;
+        if (leadId && runner.name !== "mock") {
+          const leadPatch: any = {};
+          if (!String((leadToPatch as any).ownerPhone || "").trim() && pubPhones[0]) leadPatch.ownerPhone = pubPhones[0];
+          if (!String((leadToPatch as any).ownerEmail || "").trim() && pubEmails[0]) leadPatch.ownerEmail = pubEmails[0];
+          if (Object.keys(leadPatch).length) await storage.updateLead(leadId, leadPatch);
+        }
+      }
     }
 
     if (providerPending) {
@@ -457,7 +567,10 @@ export async function runProviderSkipTraceForEntity(input: {
 
   if (existing && String((existing as any).status || "") === "success" && (existing as any).completedAt) {
     const completedAtMs = new Date((existing as any).completedAt).getTime();
-    if (Number.isFinite(completedAtMs) && now - completedAtMs < ms90d) {
+    // Never reuse mock-provider rows: mock contacts are synthetic and must
+    // not leak into live lookups.
+    const cacheCompatible = String((existing as any).providerName || "").toLowerCase() !== "mock";
+    if (cacheCompatible && Number.isFinite(completedAtMs) && now - completedAtMs < ms90d) {
       const job = await createSkipTraceJob({ entityType: input.entityType, entityId: input.entityId, mode: "provider", requestedByUserId: input.requestedByUserId });
       await runSkipTraceJob(job.id, { ownerNameOverride: input.ownerNameOverride ?? null });
       const providerResult = input.entityType === "lead" ? await storage.getLatestSkipTraceForLead(input.entityId) : await storage.getLatestSkipTraceForProperty(input.entityId);
@@ -468,7 +581,8 @@ export async function runProviderSkipTraceForEntity(input: {
 
   if (existing && String((existing as any).status || "") === "pending" && (existing as any).requestedAt) {
     const requestedAtMs = new Date((existing as any).requestedAt).getTime();
-    if (Number.isFinite(requestedAtMs) && now - requestedAtMs < ms5m) {
+    const pendingCompatible = String((existing as any).providerName || "").toLowerCase() !== "mock";
+    if (pendingCompatible && Number.isFinite(requestedAtMs) && now - requestedAtMs < ms5m) {
       return { cached: false, pending: true, providerResult: existing };
     }
   }

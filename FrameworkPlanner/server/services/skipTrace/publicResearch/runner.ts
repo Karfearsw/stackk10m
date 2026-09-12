@@ -1,3 +1,5 @@
+import { FreeWebPublicResearchRunner } from "../freeWeb.js";
+
 export type PublicResearchEntityType = "lead" | "opportunity";
 
 export type PublicResearchEvidenceInput = {
@@ -85,7 +87,12 @@ export class DefaultPublicResearchRunner implements PublicResearchRunner {
   }
 }
 
+/**
+ * Free agentic public-research runner (no API keys, no per-lookup cost).
+ * The DefaultPublicResearchRunner is retained as a disabled-by-default fallback
+ * for deployments that explicitly opt out of network research.
+ */
 export function getPublicResearchRunner(): PublicResearchRunner {
-  return new DefaultPublicResearchRunner();
+  return new FreeWebPublicResearchRunner();
 }
 

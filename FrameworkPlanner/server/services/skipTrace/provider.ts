@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { EnformionGOSkipTraceProvider } from "./enformiongo.js";
+import { FreeWebSkipTraceProvider } from "./freeWeb.js";
 
 export type SkipTraceInput = {
   ownerName: string;
@@ -16,6 +17,7 @@ export type SkipTraceOutput =
       emails: string[];
       costCents: number;
       raw: unknown;
+      evidence?: SkipTraceProviderEvidence[];
     }
   | {
       status: "fail";
@@ -24,12 +26,23 @@ export type SkipTraceOutput =
       costCents: number;
       raw: unknown;
       errorMessage: string;
+      evidence?: SkipTraceProviderEvidence[];
     };
 
 export interface SkipTraceProvider {
   name: string;
   skipTrace(input: SkipTraceInput): Promise<SkipTraceOutput>;
 }
+
+/** Evidence collected during a lookup (sources consulted, extracted facts, confidence). */
+export type SkipTraceProviderEvidence = {
+  sourceType: string;
+  sourceUrl?: string | null;
+  extracted?: Record<string, unknown> | null;
+  confidence?: Record<string, unknown> | null;
+  notes?: string | null;
+  screenshotRef?: string | null;
+};
 
 function parseMissRate(v: unknown): number {
   const n = typeof v === "string" || typeof v === "number" ? Number(v) : NaN;
@@ -91,6 +104,7 @@ export class MockSkipTraceProvider implements SkipTraceProvider {
 
 export function getSkipTraceProvider(): SkipTraceProvider {
   const v = String(process.env.SKIP_TRACE_PROVIDER || "mock").trim().toLowerCase();
+  if (v === "free-web" || v === "free_web" || v === "freeweb" || v === "free" || v === "web") return new FreeWebSkipTraceProvider();
   if (v === "mock") return new MockSkipTraceProvider();
   if (v === "enformiongo" || v === "enformiongo" || v === "enformion") return new EnformionGOSkipTraceProvider();
   return new MockSkipTraceProvider();
