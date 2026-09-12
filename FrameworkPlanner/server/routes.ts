@@ -12882,7 +12882,12 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       const user = await requireAuth(req, res);
       if (!user) return;
       const { limit, offset } = parseLimitOffset(req.query);
-      const buyers = await storage.getBuyers(limit, offset);
+      // A list UI that never paginates must not silently cap: only apply the
+      // server default when the caller explicitly passes ?limit=.
+      const buyers = await storage.getBuyers(
+        req.query?.limit ? parseLimitOffset(req.query).limit : undefined,
+        req.query?.offset ? parseLimitOffset(req.query).offset : 0,
+      );
       res.json(buyers);
     } catch (error: any) {
       res.status(500).json({ message: error.message });

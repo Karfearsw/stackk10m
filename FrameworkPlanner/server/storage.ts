@@ -3234,7 +3234,9 @@ export class DatabaseStorage implements IStorage {
 
   // Buyers
   async getBuyers(limit?: number, offset: number = 0): Promise<Buyer[]> {
-    let q: any = db.select().from(buyers);
+    // Newest first so freshly added buyers are immediately visible in the CRM list.
+    let q: any = db.select().from(buyers).orderBy(desc(buyers.id));
+    // No limit passed = no cap. Callers that page must pass an explicit limit.
     if (typeof limit === "number") q = q.limit(limit).offset(offset);
     return q as unknown as Promise<Buyer[]>;
   }
