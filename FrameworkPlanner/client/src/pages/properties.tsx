@@ -258,37 +258,50 @@ function PropertyForm({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    let images: string[] = formData.images;
-    if (images && images.some(isImageDataUrl)) {
-      images = await Promise.all(images.map((entry) => optimizeImageEntry(entry)));
+    try {
+      // Legacy records can return images as a non-array (e.g. a raw string),
+      // which would throw inside this async handler and silently kill the
+      // submit — the audit's "Update Property does nothing" symptom.
+      const images: string[] = Array.isArray(formData.images)
+        ? formData.images
+        : formData.images
+          ? [String(formData.images)]
+          : [];
+      let optimized = images;
+      if (images.some(isImageDataUrl)) {
+        optimized = await Promise.all(images.map((entry) => optimizeImageEntry(entry)));
+      }
+      onSubmit({
+        address: formData.address,
+        city: formData.city,
+        state: formData.state,
+        zipCode: formData.zipCode,
+        beds: formData.beds ? parseInt(formData.beds) : null,
+        baths: formData.baths ? parseFloat(formData.baths) : null,
+        sqft: formData.sqft ? parseInt(formData.sqft) : null,
+        price: formData.price || null,
+        status: formData.status,
+        apn: formData.apn || null,
+        yearBuilt: formData.yearBuilt ? parseInt(formData.yearBuilt) : null,
+        lotSize: formData.lotSize || null,
+        occupancy: formData.occupancy || null,
+        propertyType: formData.propertyType || null,
+        unitCount: formData.unitCount ? parseInt(formData.unitCount, 10) : null,
+        noi: formData.noi || null,
+        capRate: formData.capRate || null,
+        zoning: formData.zoning || null,
+        parkingSpaces: formData.parkingSpaces ? parseInt(formData.parkingSpaces, 10) : null,
+        tenancy: formData.tenancy || null,
+        arv: formData.arv || null,
+        repairCost: formData.repairCost || null,
+        assignedTo:
+          formData.assignedTo && formData.assignedTo !== "__unassigned__" ? parseInt(formData.assignedTo, 10) : null,
+        images: optimized,
+      });
+    } catch (error: any) {
+      console.error("property_form_submit_failed", { message: error?.message, stack: error?.stack });
+      toast.error(`Could not save: ${error?.message || "unexpected error"}`);
     }
-    onSubmit({
-      address: formData.address,
-      city: formData.city,
-      state: formData.state,
-      zipCode: formData.zipCode,
-      beds: formData.beds ? parseInt(formData.beds) : null,
-      baths: formData.baths ? parseFloat(formData.baths) : null,
-      sqft: formData.sqft ? parseInt(formData.sqft) : null,
-      price: formData.price || null,
-      status: formData.status,
-      apn: formData.apn || null,
-      yearBuilt: formData.yearBuilt ? parseInt(formData.yearBuilt) : null,
-      lotSize: formData.lotSize || null,
-      occupancy: formData.occupancy || null,
-      propertyType: formData.propertyType || null,
-      unitCount: formData.unitCount ? parseInt(formData.unitCount, 10) : null,
-      noi: formData.noi || null,
-      capRate: formData.capRate || null,
-      zoning: formData.zoning || null,
-      parkingSpaces: formData.parkingSpaces ? parseInt(formData.parkingSpaces, 10) : null,
-      tenancy: formData.tenancy || null,
-      arv: formData.arv || null,
-      repairCost: formData.repairCost || null,
-      assignedTo:
-        formData.assignedTo && formData.assignedTo !== "__unassigned__" ? parseInt(formData.assignedTo, 10) : null,
-      images,
-    });
   };
 
   return (
@@ -784,7 +797,13 @@ export default function Opportunities() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error("Failed to create opportunity");
+      if (!res.ok) {
+        let detail = "";
+        try {
+          detail = (await res.json())?.message || "";
+        } catch {}
+        throw new Error(detail || `Failed to create opportunity (${res.status})`);
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -793,8 +812,9 @@ export default function Opportunities() {
       setIsDialogOpen(false);
       toast.success("Opportunity added successfully!");
     },
-    onError: () => {
-      toast.error("Failed to add opportunity");
+    onError: (error: any) => {
+      console.error("opportunity_create_failed", { message: error?.message });
+      toast.error(error?.message || "Failed to create opportunity");
     },
   });
 
@@ -805,7 +825,13 @@ export default function Opportunities() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error("Failed to update opportunity");
+      if (!res.ok) {
+        let detail = "";
+        try {
+          detail = (await res.json())?.message || "";
+        } catch {}
+        throw new Error(detail || `Failed to update opportunity (${res.status})`);
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -815,8 +841,9 @@ export default function Opportunities() {
       setEditingProperty(null);
       toast.success("Opportunity updated successfully!");
     },
-    onError: () => {
-      toast.error("Failed to update opportunity");
+    onError: (error: any) => {
+      console.error("opportunity_update_failed", { message: error?.message });
+      toast.error(error?.message || "Failed to update opportunity");
     },
   });
 
@@ -857,10 +884,15 @@ export default function Opportunities() {
   });
 
   const handleSubmit = (data: any) => {
-    if (editingProperty) {
-      updatePropertyMutation.mutate({ id: editingProperty.id, data });
-    } else {
-      createPropertyMutation.mutate(data);
+    try {
+      if (editingProperty) {
+        updatePropertyMutation.mutate({ id: editingProperty.id, data });
+      } else {
+        createPropertyMutation.mutate(data);
+      }
+    } catch (error: any) {
+      console.error("opportunity_submit_failed", { message: error?.message });
+      toast.error(`Could not save: ${error?.message || "unexpected error"}`);
     }
   };
 
