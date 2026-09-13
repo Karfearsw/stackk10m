@@ -25,7 +25,8 @@ interface ActivityLog {
     firstName: string;
     lastName: string;
     email: string;
-    profilePicture?: string;
+    hasProfilePicture?: boolean;
+    avatarUrl?: string | null;
   } | null;
 }
 
@@ -35,7 +36,8 @@ interface TeamMember {
   lastName: string;
   email: string;
   role: string;
-  profilePicture?: string;
+  hasProfilePicture?: boolean;
+  avatarUrl?: string | null;
   isActive: boolean;
 }
 
@@ -290,7 +292,7 @@ export default function Dashboard() {
       out.push({
         ...raw,
         user: actor
-          ? { id: actor.id, firstName: actor.firstName || "", lastName: actor.lastName || "", email: actor.email || "", profilePicture: actor.profilePicture }
+          ? { id: actor.id, firstName: actor.firstName || "", lastName: actor.lastName || "", email: actor.email || "", hasProfilePicture: !!actor.hasProfilePicture, avatarUrl: actor.avatarUrl }
           : (raw as any).user ?? null,
         groupCount: weight,
         __groupKey: key,
@@ -667,7 +669,9 @@ export default function Dashboard() {
                     return (
                       <div key={log.id} className="flex items-start gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors" data-testid={`activity-${log.id}`}>
                         <Avatar className="h-8 w-8 border">
-                          {log.user?.profilePicture && <AvatarImage src={log.user.profilePicture} />}
+                          {(log.user?.hasProfilePicture || log.user?.avatarUrl) && (
+                            <AvatarImage src={log.user?.avatarUrl || `/api/users/${log.user!.id}/avatar`} />
+                          )}
                           <AvatarFallback className="text-xs bg-primary/10 text-primary">
                             {log.user?.firstName?.[0] || log.user?.email?.[0]?.toUpperCase() || 'U'}
                           </AvatarFallback>
@@ -723,7 +727,9 @@ export default function Dashboard() {
                   {activeTeamMembers.map((member) => (
                     <div key={member.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 transition-colors" data-testid={`member-${member.id}`}>
                       <Avatar className="h-10 w-10 border">
-                        {member.profilePicture && <AvatarImage src={member.profilePicture} />}
+                        {(member.hasProfilePicture || member.avatarUrl) && (
+                          <AvatarImage src={member.avatarUrl || `/api/users/${member.id}/avatar`} />
+                        )}
                         <AvatarFallback className="bg-primary/10 text-primary font-medium">
                           {member.firstName?.[0] || member.email[0].toUpperCase()}
                         </AvatarFallback>

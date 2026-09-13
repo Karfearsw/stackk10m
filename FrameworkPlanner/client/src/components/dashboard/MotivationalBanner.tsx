@@ -30,13 +30,19 @@ export function MotivationalBanner() {
     queryKey: [`/api/users/${user?.id}`],
     enabled: !!user?.id,
   });
+  // Banner payloads (config + custom images) live on a dedicated endpoint
+  // because they can be multi-MB base64 blobs; never shipped via /api/users.
+  const { data: bannerData } = useQuery<any>({
+    queryKey: [`/api/users/${user?.id}/banner`],
+    enabled: !!user?.id,
+  });
 
   const showQuotes = userData?.showBannerQuotes !== false;
   const customQuotes = Array.isArray(userData?.customBannerQuotes) ? userData.customBannerQuotes : [];
 
   const bannerConfig = resolveBannerConfig(
-    userData?.bannerConfig as BannerConfig | undefined,
-    userData?.customBannerImages,
+    (bannerData?.bannerConfig ?? undefined) as BannerConfig | undefined,
+    bannerData?.customBannerImages,
   );
   // Hidden when the user disabled the banner or removed every active image.
   if (!bannerConfig.enabled) return null;

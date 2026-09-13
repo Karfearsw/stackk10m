@@ -152,7 +152,9 @@ export function Sidebar() {
     : 0;
 
   const showLabels = isExpanded;
-  const profileImage = userData?.profilePicture || userData?.avatarUrl;
+  const profileImage = userData?.hasProfilePicture
+    ? `/api/users/${userData.id}/avatar?v=${encodeURIComponent(String(userData.updatedAt || ""))}`
+    : userData?.avatarUrl;
 
   return (
     <TooltipProvider delayDuration={0}>

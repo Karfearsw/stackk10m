@@ -30,6 +30,7 @@ interface Property {
   sqft?: number;
   price?: string;
   status?: string;
+  stage?: string;
   notes?: string | null;
   apn?: string;
   yearBuilt?: number;
@@ -775,20 +776,37 @@ export default function Opportunities() {
     },
   });
 
+  // Disposition audit fix #1: one canonical stage list drives both the Move
+  // Stage dialog and this board. Custom pipeline configs that still carry the
+  // legacy vocabulary (active/pending/withdrawn) fall back to the canonical
+  // stages so every real stage has a home (including a Closed column).
+  const CANONICAL_OPPORTUNITY_STAGES: Array<{ value: string; label: string }> = [
+    { value: "lead", label: "Lead" },
+    { value: "contacted", label: "Contacted" },
+    { value: "negotiating", label: "Negotiating" },
+    { value: "under_contract", label: "Under Contract" },
+    { value: "in_disposition", label: "In Disposition" },
+    { value: "reserved", label: "Reserved" },
+    { value: "sold", label: "Sold" },
+    { value: "closed", label: "Closed" },
+    { value: "dead", label: "Dead" },
+    { value: "voided", label: "Voided" },
+  ];
+  const canonicalStageValues = new Set(CANONICAL_OPPORTUNITY_STAGES.map((s) => s.value));
   const pipelineColumns = useMemo(() => {
     const cols = (opportunityPipelineConfig as any)?.columns;
     if (Array.isArray(cols) && cols.length) {
-      return cols.map((c: any) => ({ value: String(c.value || ""), label: String(c.label || "") })).filter((c: any) => c.value && c.label);
+      const mapped = cols
+        .map((c: any) => ({ value: String(c.value || ""), label: String(c.label || "") }))
+        .filter((c: any) => c.value && c.label);
+      if (mapped.some((c: any) => canonicalStageValues.has(c.value))) return mapped;
     }
-    return [
-      { value: "active", label: "Active" },
-      { value: "negotiation", label: "Negotiation" },
-      { value: "under_contract", label: "Under Contract" },
-      { value: "pending", label: "Pending" },
-      { value: "sold", label: "Sold" },
-      { value: "withdrawn", label: "Withdrawn" },
-    ];
+    return CANONICAL_OPPORTUNITY_STAGES;
   }, [opportunityPipelineConfig]);
+  const statusFilterToStage = (value: string): string | null => {
+    const map: Record<string, string> = { active: "lead", negotiation: "negotiating", pending: "in_disposition", withdrawn: "dead" };
+    return map[value] ?? value;
+  };
 
   const createPropertyMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -849,6 +867,21 @@ export default function Opportunities() {
 
   const quickUpdatePropertyMutation = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: any }) => {
+      // Disposition audit fix #1: the board's stage dropdown must drive the same
+      // validated lifecycle as the Move Stage dialog, not the legacy status field.
+      if (typeof data?.status === "string" && canonicalStageValues.has(data.status)) {
+        const res2 = await fetch(`/api/opportunities/${id}/stage-change`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ stage: data.status }),
+        });
+        if (!res2.ok) {
+          const json = await res2.json().catch(() => ({}));
+          throw new Error((json as any).message || "Failed to update stage");
+        }
+        return res2.json();
+      }
       const res = await fetch(`/api/opportunities/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -861,8 +894,8 @@ export default function Opportunities() {
       queryClient.invalidateQueries({ queryKey: ["/api/opportunities"] });
       toast.success("Opportunity updated");
     },
-    onError: () => {
-      toast.error("Failed to update opportunity");
+    onError: (e: any) => {
+      toast.error(e?.message || "Failed to update opportunity");
     },
   });
 
@@ -911,9 +944,12 @@ export default function Opportunities() {
       prop.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
       prop.city.toLowerCase().includes(searchQuery.toLowerCase()) ||
       prop.state.toLowerCase().includes(searchQuery.toLowerCase());
+    // Match on the canonical stage (falling back to legacy status aliases) so the
+    // filter dropdown and the board speak the same language.
+    const propStage = String(prop.stage || statusFilterToStage(String(prop.status || "")) || "");
     const matchesStatus = statusInFilter.length
-      ? statusInFilter.includes(String(prop.status || "active"))
-      : (statusFilter === "all" || prop.status === statusFilter);
+      ? statusInFilter.some((v: string) => v === propStage || v === prop.status)
+      : (statusFilter === "all" || propStage === statusFilter || prop.status === statusFilter);
     const matchesType = dealTypeFilter === "all" || (prop.propertyType || "") === dealTypeFilter;
     return matchesSearch && matchesStatus && matchesType;
   });
@@ -1202,7 +1238,7 @@ export default function Opportunities() {
             columns={pipelineColumns}
             items={filteredProperties}
             getId={(p: any) => p.id}
-            getStatus={(p: any) => p.status}
+            getStatus={(p: any) => (p.stage ? String(p.stage) : p.status ? statusFilterToStage(String(p.status)) : null)}
             emptyText="No opportunities"
             renderItem={(p: any) => (
               <OpportunityPipelineCard

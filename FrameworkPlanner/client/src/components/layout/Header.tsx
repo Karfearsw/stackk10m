@@ -61,7 +61,9 @@ export function Header() {
     return user?.email?.[0]?.toUpperCase() || "U";
   };
 
-  const profileImage = userData?.profilePicture || userData?.avatarUrl;
+  const profileImage = userData?.hasProfilePicture
+    ? `/api/users/${userData.id}/avatar?v=${encodeURIComponent(String(userData.updatedAt || ""))}`
+    : userData?.avatarUrl;
 
   const [query, setQuery] = React.useState("");
   const [debounced, setDebounced] = React.useState("");

@@ -2318,14 +2318,54 @@ export class DatabaseStorage implements IStorage {
 
   // Users
   async getUsers(limit?: number, offset: number = 0): Promise<User[]> {
-    let q: any = db.select().from(users);
+    // Exclude heavy inline payload columns (multi-MB base64 blobs for some
+    // accounts — they made every /api/users call take 10s+). Avatars are
+    // served by /api/users/:id/avatar and banner payloads by /api/users/:id/banner.
+    const { profilePicture: _pp, customBannerImages: _cbi, bannerConfig: _bc, ...cols } = users as any;
+    let q: any = db
+      .select({
+        ...cols,
+        hasProfilePicture: sql<boolean>`(${users.profilePicture} IS NOT NULL)`,
+        hasCustomBannerImages: sql<boolean>`(${users.customBannerImages} IS NOT NULL)`,
+        hasBannerConfig: sql<boolean>`(${users.bannerConfig} IS NOT NULL)`,
+      })
+      .from(users);
     if (typeof limit === "number") q = q.limit(limit).offset(offset);
     return q as unknown as Promise<User[]>;
   }
 
+  // profile_picture / custom_banner_images / banner_config can hold multi-MB
+  // base64 payloads, so the general-purpose getters never select them. Payloads
+  // load through getUserPrivatePayloadById (see /api/users/:id/avatar).
   async getUserById(id: number): Promise<User | undefined> {
-    const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
-    return result[0];
+    const { profilePicture: _pp, customBannerImages: _cbi, bannerConfig: _bc, ...cols } = users as any;
+    const result = await db
+      .select({
+        ...cols,
+        hasProfilePicture: sql<boolean>`(${users.profilePicture} IS NOT NULL)`,
+        hasCustomBannerImages: sql<boolean>`(${users.customBannerImages} IS NOT NULL)`,
+        hasBannerConfig: sql<boolean>`(${users.bannerConfig} IS NOT NULL)`,
+      })
+      .from(users)
+      .where(eq(users.id, id))
+      .limit(1);
+    return result[0] as User | undefined;
+  }
+
+  // Single-purpose getter for the heavy payload columns. Only the dedicated
+  // payload endpoints (avatar/banner) should call this.
+  async getUserPrivatePayloadById(id: number): Promise<{ profilePicture: string | null; customBannerImages: unknown; bannerConfig: unknown } | undefined> {
+    const result = await db
+      .select({ profilePicture: users.profilePicture, customBannerImages: users.customBannerImages, bannerConfig: users.bannerConfig })
+      .from(users)
+      .where(eq(users.id, id))
+      .limit(1);
+    return result[0] as any;
+  }
+
+  // Kept for compatibility — identical to getUserById (both are payload-free).
+  async getUserByIdWithoutProfilePicture(id: number): Promise<User | undefined> {
+    return this.getUserById(id);
   }
 
   async getUserByEmail(email: string): Promise<User | undefined> {
@@ -2476,10 +2516,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getTeamMembersWithUsers(teamId: number): Promise<any[]> {
+    // Exclude multi-MB payload columns from the joined user rows.
+    const { profilePicture: _pp, customBannerImages: _cbi, bannerConfig: _bc, ...userCols } = users as any;
     const rows = await db
       .select({
         membership: teamMembers,
-        user: users,
+        user: {
+          ...userCols,
+          hasProfilePicture: sql<boolean>`(${users.profilePicture} IS NOT NULL)`,
+          hasCustomBannerImages: sql<boolean>`(${users.customBannerImages} IS NOT NULL)`,
+          hasBannerConfig: sql<boolean>`(${users.bannerConfig} IS NOT NULL)`,
+        },
       })
       .from(teamMembers)
       .innerJoin(users, eq(teamMembers.userId, users.id))

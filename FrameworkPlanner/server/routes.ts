@@ -387,7 +387,8 @@ async function requireAuth(req: any, res: any) {
     res.status(401).json({ message: "Unauthorized" });
     return null;
   }
-  const user = await storage.getUserById(userId);
+  // Skip profile_picture (can be a multi-MB base64 blob) on the hot auth path.
+  const user = await storage.getUserByIdWithoutProfilePicture(userId);
   if (!user) {
     res.status(401).json({ message: "Unauthorized" });
     return null;
@@ -2033,7 +2034,8 @@ export async function registerRoutes(
                   if (at) req.session.activeTeamId = at;
                   else delete req.session.activeTeamId;
                 }
-                const { passwordHash, ...userWithoutPassword } = user;
+                const { passwordHash, profilePicture, profile_picture, ...__rest } = user as any;
+      const userWithoutPassword = { ...__rest, hasProfilePicture: (user as any).hasProfilePicture ?? (!!profilePicture || !!profile_picture) };
                 const token = await issueAuthToken({ sub: String(user.id), email: user.email });
                 void writeAuthAuditLog({
                   action: "admin_bypass",
@@ -2096,7 +2098,8 @@ export async function registerRoutes(
         if (at) req.session.activeTeamId = at;
         else delete req.session.activeTeamId;
       }
-      const { passwordHash, ...userWithoutPassword } = user;
+      const { passwordHash, profilePicture, profile_picture, ...__rest } = user as any;
+      const userWithoutPassword = { ...__rest, hasProfilePicture: (user as any).hasProfilePicture ?? (!!profilePicture || !!profile_picture) };
       const token = await issueAuthToken({ sub: String(user.id), email: user.email });
       res.json({ user: userWithoutPassword, token });
     } catch (error: any) {
@@ -2324,7 +2327,8 @@ export async function registerRoutes(
         userAgent: String(req.headers["user-agent"] || ""),
         metadata: { path: req.path },
       });
-      const { passwordHash, ...userWithoutPassword } = user;
+      const { passwordHash, profilePicture, profile_picture, ...__rest } = user as any;
+      const userWithoutPassword = { ...__rest, hasProfilePicture: (user as any).hasProfilePicture ?? (!!profilePicture || !!profile_picture) };
       return res.json({ user: userWithoutPassword });
     } catch (error: any) {
       void writeAuthAuditLog({
@@ -2415,7 +2419,8 @@ export async function registerRoutes(
         if (at) req.session.activeTeamId = at;
         else delete req.session.activeTeamId;
       }
-      const { passwordHash, ...userWithoutPassword } = user;
+      const { passwordHash, profilePicture, profile_picture, ...__rest } = user as any;
+      const userWithoutPassword = { ...__rest, hasProfilePicture: (user as any).hasProfilePicture ?? (!!profilePicture || !!profile_picture) };
       const token = await issueAuthToken({ sub: String(user.id), email: user.email });
       console.log(`[Auth] Dev bypass granted ip=${req.ip} userId=${user.id} email=${user.email}`);
       void writeAuthAuditLog({
@@ -2552,12 +2557,13 @@ export async function registerRoutes(
       if (!req.session.userId) {
         return res.status(401).json({ message: "Not authenticated", requestId });
       }
-      const user = await storage.getUserById(req.session.userId);
+      const user = await storage.getUserByIdWithoutProfilePicture(req.session.userId);
       if (!user) {
         req.session.destroy(() => {});
         return res.status(401).json({ message: "User not found", requestId });
       }
-      const { passwordHash, ...userWithoutPassword } = user;
+      const { passwordHash, profilePicture, profile_picture, ...__rest } = user as any;
+      const userWithoutPassword = { ...__rest, hasProfilePicture: (user as any).hasProfilePicture ?? (!!profilePicture || !!profile_picture) };
       res.json(userWithoutPassword);
     } catch (error: any) {
       const requestId = (res.locals as any)?.requestId || undefined;
@@ -5996,7 +6002,16 @@ export async function registerRoutes(
         }
       }
       const property = await storage.updateProperty(id, partial);
-      
+
+      // Keep the disposition board honest: an opportunity whose contract was
+      // closed (Close Deal & Record Revenue) should leave the pipeline as sold.
+      // stage-change transitions are still validated separately.
+      if ((partial as any).opportunityStatus === "closed" && property && (property as any).stage !== "sold" && (property as any).stage !== "closed" && (property as any).stage !== "dead" && (property as any).stage !== "voided") {
+        try {
+          await storage.updateProperty(id, { stage: "sold", stageChangedAt: new Date(), lastActivityAt: new Date() } as any);
+        } catch {}
+      }
+
       if (req.session.userId) {
         const onlyNotesChanged = before && typeof (partial as any).notes !== "undefined" && (partial as any).notes !== (before as any).notes && Object.keys(partial as any).length === 1;
         const action = onlyNotesChanged ? "added_note" : "updated_opportunity";
@@ -10225,6 +10240,91 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
+  // Disposition audit fix: "Close Deal & Record Revenue" must do more than flip a
+  // status. This endpoint records the closing on the deal_assignments ledger,
+  // advances the opportunity to sold, and writes an activity entry.
+  app.post("/api/contract-documents/:id/close", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const docId = parseInt(req.params.id, 10);
+      const doc = await storage.getContractDocumentById(docId);
+      if (!doc) return res.status(404).json({ message: "Contract not found" });
+      if (doc.status === "closed") return res.status(400).json({ message: "Contract already closed" });
+
+      const body = req.body || {};
+      const closingData = body.closingData || {};
+      const num = (v: any) => {
+        const n = parseFloat(String(v ?? "").replace(/[$,]/g, ""));
+        return Number.isFinite(n) ? n.toFixed(2) : null;
+      };
+      const assignmentFee = num(closingData.assignmentFee);
+      const closingCosts = num(closingData.closingCosts);
+      const buyerPaid = !!closingData.buyerPaid;
+      const titleReceived = !!closingData.titleReceived;
+      const fundsWired = !!closingData.fundsWired;
+      const docsRecorded = !!closingData.docsRecorded;
+
+      const updated = await storage.updateContractDocument(docId, { status: "closed", updatedAt: new Date() } as any);
+
+      // Write/refresh the per-deal payout ledger row (deal_assignments).
+      const propertyId = doc.propertyId ?? null;
+      if (propertyId) {
+        try {
+          const existing = await storage.getDealAssignmentsByPropertyId(propertyId);
+          const prior = (existing || [])[0];
+          const payoutReceived = buyerPaid && fundsWired && docsRecorded;
+          const payload = {
+            propertyId,
+            assignmentFee,
+            status: "closed",
+            closingDate: new Date(),
+            earnestMoneyReceived: buyerPaid,
+            titleCleared: titleReceived,
+            closingScheduled: fundsWired,
+            documentsComplete: docsRecorded,
+            payoutReceived,
+            payoutAmount: payoutReceived ? assignmentFee : null,
+            notes: [closingCosts ? `Closing costs: $${closingCosts}` : "", closingData.notes || ""].filter(Boolean).join(" — ") || null,
+            updatedAt: new Date(),
+          };
+          if (prior) {
+            await storage.updateDealAssignment(prior.id, payload);
+          } else {
+            await storage.createDealAssignment(payload);
+          }
+        } catch (e: any) {
+          console.error("close: deal_assignments ledger write failed:", e?.message);
+        }
+
+        // Advance the opportunity to sold (projected fee lives in Financial Analysis;
+        // this records the collected fee on the ledger).
+        try {
+          const property = await storage.getPropertyById(propertyId);
+          if (property && !["sold", "closed", "dead", "voided"].includes(String((property as any).stage || ""))) {
+            await storage.updateProperty(propertyId, { stage: "sold", stageChangedAt: new Date(), lastActivityAt: new Date() } as any);
+            await logOpportunityEvent(propertyId, "stage_changed", "Stage changed to Sold", `Contract "${doc.title}" closed; assignment fee ${assignmentFee ? "$" + Number(assignmentFee).toLocaleString() : "not recorded"}.`, user.id, "system", { oldStage: (property as any).stage, newStage: "sold" });
+          }
+        } catch {}
+      }
+
+      try {
+        if (req.session.userId) {
+          await storage.createGlobalActivity({
+            userId: req.session.userId,
+            action: "closed_deal",
+            description: `Closed deal: ${doc.title}${assignmentFee ? ` — fee $${Number(assignmentFee).toLocaleString()}` : ""}`,
+            metadata: JSON.stringify({ contractDocumentId: docId, propertyId, assignmentFee, closingCosts }),
+          });
+        }
+      } catch {}
+
+      res.json({ contract: updated });
+    } catch (error: any) {
+      console.error("POST /api/contract-documents/:id/close failed:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
   app.get("/api/contract-documents/:id/envelopes", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -10761,22 +10861,71 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   app.get("/api/users", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
-      const users = await storage.getUsers(limit, offset);
+      const users = (await storage.getUsers(limit, offset)) as any[];
       // Hide inactive (archived/deactivated) accounts from pickers; never expose
-      // password hashes or TOTP secrets to API clients.
-      res.json((users || [])
-        .filter((u: any) => u.isActive !== false)
-        .map((u: any) => {
-          const { passwordHash, ...safe } = u;
-          return safe;
-        }));
+      // password hashes or TOTP secrets to API clients. profile_picture is a
+      // multi-MB base64 blob — avatars are served by /api/users/:id/avatar.
+      res.json(
+        (users || [])
+          .filter((u: any) => u.isActive !== false)
+          .map((u: any) => {
+            const { passwordHash, profilePicture, profile_picture, ...safe } = u;
+            return { ...safe, hasProfilePicture: !!u.profilePicture || !!u.profile_picture };
+          }),
+      );
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
   });
+  // Serves the raw base64 profile picture as a cacheable image response.
+  app.get("/api/users/:id/avatar", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const payload = await storage.getUserPrivatePayloadById(id);
+      const pic = (payload as any)?.profilePicture || null;
+      if (!pic) return res.status(404).json({ message: "No profile picture" });
+      let body = pic;
+      let contentType = "image/jpeg";
+      const m = /^data:(image\/[a-z0-9.+-]+);base64,(.*)$/is.exec(pic);
+      if (m) {
+        contentType = m[1];
+        body = m[2];
+      }
+      const buf = Buffer.from(String(body).replace(/\s/g, ""), "base64");
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      res.send(buf);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // Serves the user's banner config + custom banner image payloads (kept out
+  // of /api/users responses because they can be multi-MB base64 blobs).
+  app.get("/api/users/:id/banner", async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      const rows = await db
+        .select({ bannerConfig: users.bannerConfig, customBannerImages: users.customBannerImages })
+        .from(users)
+        .where(eq(users.id, id))
+        .limit(1);
+      if (!rows.length) return res.status(404).json({ message: "User not found" });
+      res.setHeader("Cache-Control", "public, max-age=300");
+      return res.json({
+        bannerConfig: rows[0].bannerConfig ?? null,
+        customBannerImages: rows[0].customBannerImages ?? null,
+      });
+    } catch (error: any) {
+      return res.status(500).json({ message: error.message });
+    }
+  });
   app.get("/api/users/:id", async (req, res) => {
     try {
-      const user = await storage.getUserById(parseInt(req.params.id));
+      // Excludes multi-MB payload columns; avatars load via /api/users/:id/avatar
+      // and banner payloads via /api/users/:id/banner.
+      const user = await storage.getUserByIdWithoutProfilePicture(parseInt(req.params.id));
       if (!user) return res.status(404).json({ message: "User not found" });
       const { passwordHash, ...safe } = user as any;
       res.json(safe);
@@ -10828,9 +10977,21 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
   app.patch("/api/users/:id", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const targetId = parseInt(req.params.id);
+      if (!isSameUserOrAdmin(actor, targetId)) return res.status(403).json({ message: "Forbidden" });
       const partial = insertUserSchema.partial().parse(req.body);
-      const user = await storage.updateUser(parseInt(req.params.id), partial);
-      res.json(user);
+      const user = await storage.updateUser(targetId, partial);
+      // updateUser returns the full row (RETURNING *); strip password + multi-MB
+      // payload columns from the response.
+      const { passwordHash, profilePicture, profile_picture, customBannerImages, bannerConfig, ...safe } = user as any;
+      res.json({
+        ...safe,
+        hasProfilePicture: !!profilePicture || !!profile_picture,
+        hasCustomBannerImages: !!customBannerImages,
+        hasBannerConfig: !!bannerConfig,
+      });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -10938,7 +11099,8 @@ app.patch("/api/inquiries/:id", async (req, res) => {
         if (at) req.session.activeTeamId = at;
         else delete req.session.activeTeamId;
       }
-      const { passwordHash, ...userWithoutPassword } = user;
+      const { passwordHash, profilePicture, profile_picture, ...__rest } = user as any;
+      const userWithoutPassword = { ...__rest, hasProfilePicture: (user as any).hasProfilePicture ?? (!!profilePicture || !!profile_picture) };
       const token = await issueAuthToken({ sub: String(user.id), email: user.email });
       res.json({ user: userWithoutPassword, token });
     } catch (error: any) {
@@ -11060,12 +11222,16 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       { value: "lost", label: "Lost" },
     ],
     opportunity: [
-      { value: "active", label: "Active" },
-      { value: "negotiation", label: "Negotiation" },
+      { value: "lead", label: "Lead" },
+      { value: "contacted", label: "Contacted" },
+      { value: "negotiating", label: "Negotiating" },
       { value: "under_contract", label: "Under Contract" },
-      { value: "pending", label: "Pending" },
+      { value: "in_disposition", label: "In Disposition" },
+      { value: "reserved", label: "Reserved" },
       { value: "sold", label: "Sold" },
-      { value: "withdrawn", label: "Withdrawn" },
+      { value: "closed", label: "Closed" },
+      { value: "dead", label: "Dead" },
+      { value: "voided", label: "Voided" },
     ],
   };
   app.get("/api/pipeline-config", async (req, res) => {
@@ -11190,7 +11356,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
                 firstName: users.firstName,
                 lastName: users.lastName,
                 email: users.email,
-                profilePicture: users.profilePicture,
+                hasProfilePicture: sql<boolean>`(${users.profilePicture} IS NOT NULL)`,
               })
               .from(users)
               .where(inArray(users.id, userIds))
@@ -11279,7 +11445,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
                 firstName: users.firstName,
                 lastName: users.lastName,
                 email: users.email,
-                profilePicture: users.profilePicture,
+                hasProfilePicture: sql<boolean>`(${users.profilePicture} IS NOT NULL)`,
               })
               .from(users)
               .where(inArray(users.id, actorIds))
@@ -11456,8 +11622,13 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       const teamId = parseInt(req.params.teamId);
       const ctx = await requireTeamMembership(req, res, { teamId, minRole: "viewer" });
       if (!ctx) return;
-      const members = await storage.getTeamMembersWithUsers(teamId);
-      res.json(members);
+      const members = await storage.getTeamMembersWithUsers(teamId) as any[];
+      // Strip multi-MB base64 profile pictures; avatars come from /api/users/:id/avatar.
+      res.json(members.map((m: any) => {
+        if (!m?.user) return m;
+        const { passwordHash, profilePicture, profile_picture, ...safeUser } = m.user;
+        return { ...m, user: { ...safeUser, hasProfilePicture: !!m.user.profilePicture || !!m.user.profile_picture } };
+      }));
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

@@ -64,9 +64,14 @@ function SettingsContent() {
     queryKey: [`/api/users/${user!.id}`],
   });
 
+  // Banner payloads come from the dedicated endpoint (multi-MB safe).
+  const { data: bannerData } = useQuery<any>({
+    queryKey: [`/api/users/${user!.id}/banner`],
+  });
+
   const bannerConfig = useMemo(
-    () => resolveBannerConfig(userData?.bannerConfig as BannerConfig | undefined, userData?.customBannerImages),
-    [userData?.bannerConfig, userData?.customBannerImages],
+    () => resolveBannerConfig(bannerData?.bannerConfig as BannerConfig | undefined, bannerData?.customBannerImages),
+    [bannerData?.bannerConfig, bannerData?.customBannerImages],
   );
 
   useEffect(() => {
@@ -282,6 +287,7 @@ function SettingsContent() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: [`/api/users/${user!.id}`] });
+      queryClient.invalidateQueries({ queryKey: [`/api/users/${user!.id}/banner`] });
       toast.success('Profile updated successfully');
     },
     onError: () => {
@@ -1611,9 +1617,9 @@ function SettingsContent() {
               <div className="flex items-center gap-6">
                 <div className="relative">
                   <div className="w-24 h-24 rounded-full overflow-hidden bg-muted flex items-center justify-center border-2 border-border">
-                    {userData?.profilePicture ? (
+                    {userData?.hasProfilePicture ? (
                       <img 
-                        src={userData.profilePicture} 
+                        src={`/api/users/${userData.id}/avatar?v=${encodeURIComponent(String(userData.updatedAt || ""))}`} 
                         alt="Profile" 
                         className="w-full h-full object-cover"
                       />
@@ -1649,7 +1655,7 @@ function SettingsContent() {
                         </span>
                       </Button>
                     </label>
-                    {userData?.profilePicture && (
+                    {userData?.hasProfilePicture && (
                       <Button
                         type="button"
                         variant="ghost"

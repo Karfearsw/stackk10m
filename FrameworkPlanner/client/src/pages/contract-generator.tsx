@@ -9,8 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { FileText, Download, Plus, Eye, Save, FileSignature, CheckCircle, Send, Clock, DollarSign, ChevronRight, ArrowRight } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { FileText, Download, Plus, Eye, Save, FileSignature, CheckCircle, Send, Clock, DollarSign, ChevronRight, ArrowRight, Trash2 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
@@ -185,6 +185,12 @@ function ContractCreator({ templates, properties, initialPropertyId, selectedTem
     buyerName: "",
     sellerName: "",
     amount: "",
+    purchasePrice: "",
+    earnestMoney: "",
+    closingDate: "",
+    inspectionDeadline: "",
+    assignmentFee: "",
+    closingCosts: "",
     terms: "",
   });
 
@@ -218,7 +224,7 @@ function ContractCreator({ templates, properties, initialPropertyId, selectedTem
     onSuccess: () => {
       toast({ title: "Contract created successfully" });
       queryClient.invalidateQueries({ queryKey: ['/api/contract-documents'] });
-      setFormData({ title: "", propertyId: "", buyerName: "", sellerName: "", amount: "", terms: "" });
+      setFormData({ title: "", propertyId: "", buyerName: "", sellerName: "", amount: "", purchasePrice: "", earnestMoney: "", closingDate: "", inspectionDeadline: "", assignmentFee: "", closingCosts: "", terms: "" });
     },
     onError: () => {
       toast({ title: "Failed to create contract", variant: "destructive" });
@@ -230,11 +236,39 @@ function ContractCreator({ templates, properties, initialPropertyId, selectedTem
   const getPreviewContent = () => {
     const base = template?.content || formData.terms;
     if (!base) return "No template selected and no terms entered yet.";
-    return String(base)
-      .replace(/{{buyerName}}/g, formData.buyerName || "[Buyer Name]")
-      .replace(/{{sellerName}}/g, formData.sellerName || "[Seller Name]")
-      .replace(/{{amount}}/g, formData.amount ? "$" + Number(formData.amount).toLocaleString() : "[Amount]")
-      .replace(/{{propertyAddress}}/g, formData.propertyId ? "Selected property" : "[Property Address]");
+    const selectedProperty = properties.find((p: any) => String(p.id) === String(formData.propertyId));
+    const fmt = (v: string) => (v && !isNaN(Number(v)) ? "$" + Number(v).toLocaleString() : "");
+    // Disposition audit fix #2: every variable the templates reference must be
+    // fillable from the form. Namespaced vars ({{contract.*}}, {{offer.*}}) fall
+    // back to the plain fields so legacy templates still merge fully.
+    const mergeVars: Record<string, string> = {
+      buyerName: formData.buyerName || "[Buyer Name]",
+      sellerName: formData.sellerName || "[Seller Name]",
+      amount: formData.amount ? "$" + Number(formData.amount).toLocaleString() : "[Amount]",
+      propertyAddress: selectedProperty?.address || "[Property Address]",
+      "contract.purchasePrice": fmt(formData.purchasePrice || formData.amount) || "[Purchase Price]",
+      "contract.earnestMoney": fmt(formData.earnestMoney) || "[Earnest Money]",
+      "contract.closingDate": formData.closingDate || "[Closing Date]",
+      "contract.inspectionDeadline": formData.inspectionDeadline || "[Inspection Deadline]",
+      "contract.assignmentFee": fmt(formData.assignmentFee) || "[Assignment Fee]",
+      "offer.amount": fmt(formData.amount) || "[Offer Amount]",
+      "offer.earnestMoney": fmt(formData.earnestMoney) || "[Earnest Money]",
+      "offer.closingDate": formData.closingDate || "[Closing Date]",
+      "property.address": selectedProperty?.address || "[Property Address]",
+      "seller.name": formData.sellerName || "[Seller Name]",
+      "buyer.name": formData.buyerName || "[Buyer Name]",
+      "date.today": new Date().toISOString().split("T")[0],
+    };
+    return String(base).replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_m, key) => {
+      const v = mergeVars[String(key).trim()];
+      if (v !== undefined) return v;
+      const dot = String(key).indexOf(".");
+      if (dot > 0) {
+        const bare = String(key).slice(dot + 1);
+        if (mergeVars[bare] !== undefined) return mergeVars[bare];
+      }
+      return `[${String(key).trim()}]`;
+    });
   };
 
   const handleExport = async () => {
@@ -363,6 +397,73 @@ function ContractCreator({ templates, properties, initialPropertyId, selectedTem
                 value={formData.amount}
                 onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
                 placeholder="150000"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="purchasePrice">Purchase Price</Label>
+              <Input
+                id="purchasePrice"
+                data-testid="input-purchase-price"
+                type="number"
+                value={formData.purchasePrice}
+                onChange={(e) => setFormData({ ...formData, purchasePrice: e.target.value })}
+                placeholder="150000"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="earnestMoney">Earnest Money ($)</Label>
+              <Input
+                id="earnestMoney"
+                data-testid="input-earnest-money"
+                type="number"
+                value={formData.earnestMoney}
+                onChange={(e) => setFormData({ ...formData, earnestMoney: e.target.value })}
+                placeholder="5000"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="closingDate">Closing Date</Label>
+              <Input
+                id="closingDate"
+                data-testid="input-closing-date"
+                type="date"
+                value={formData.closingDate}
+                onChange={(e) => setFormData({ ...formData, closingDate: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="inspectionDeadline">Inspection Deadline</Label>
+              <Input
+                id="inspectionDeadline"
+                data-testid="input-inspection-deadline"
+                type="date"
+                value={formData.inspectionDeadline}
+                onChange={(e) => setFormData({ ...formData, inspectionDeadline: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="assignmentFee">Assignment Fee ($)</Label>
+              <Input
+                id="assignmentFee"
+                data-testid="input-assignment-fee"
+                type="number"
+                value={formData.assignmentFee}
+                onChange={(e) => setFormData({ ...formData, assignmentFee: e.target.value })}
+                placeholder="15000"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="closingCosts">Estimated Closing Costs ($)</Label>
+              <Input
+                id="closingCosts"
+                data-testid="input-closing-costs"
+                type="number"
+                value={formData.closingCosts}
+                onChange={(e) => setFormData({ ...formData, closingCosts: e.target.value })}
+                placeholder="2500"
               />
             </div>
           </div>
@@ -950,6 +1051,7 @@ function ContractsList({
   const [viewContract, setViewContract] = useState<any>(null);
   const [viewContent, setViewContent] = useState("");
   const [viewLoading, setViewLoading] = useState(false);
+  const [deleteContract, setDeleteContract] = useState<any>(null);
 
   const openView = async (contract: any) => {
     setViewContract(contract);
@@ -977,10 +1079,42 @@ function ContractsList({
       if (!response.ok) throw new Error('Failed to update status');
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (_res: any, vars: { id: number; status: string }) => {
       toast({ title: "Contract status updated" });
       queryClient.invalidateQueries({ queryKey: ['/api/contract-documents'] });
+      // Disposition audit fix: contract pipeline drives the opportunity pipeline.
+      const doc = contracts.find((c: any) => c.id === vars.id);
+      if (doc?.propertyId) {
+        const nextStage = vars.status === 'sent' ? 'under_contract' : vars.status === 'executed' ? 'in_disposition' : null;
+        if (nextStage) {
+          fetch(`/api/opportunities/${doc.propertyId}/stage-change`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ stage: nextStage, notes: `Auto-advanced: contract ${vars.status === 'sent' ? 'sent for signature' : 'executed'} (${doc.title})` }),
+          }).then((r) => {
+            if (r.ok) {
+              queryClient.invalidateQueries({ queryKey: ['/api/opportunities'] });
+              queryClient.invalidateQueries({ queryKey: ['/api/opportunities', doc.propertyId] });
+            }
+          }).catch(() => {});
+        }
+      }
     },
+  });
+
+  const deleteContractMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const response = await fetch(`/api/contract-documents/${id}`, { method: 'DELETE' });
+      if (!response.ok) throw new Error('Failed to delete contract');
+      return response.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Contract deleted" });
+      queryClient.invalidateQueries({ queryKey: ['/api/contract-documents'] });
+      setDeleteContract(null);
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to delete contract", variant: "destructive" }),
   });
 
   const sendEnvelopeMutation = useMutation({
@@ -1005,6 +1139,20 @@ function ContractsList({
         toast({ title: "Sent for signature" });
       }
       queryClient.invalidateQueries({ queryKey: ['/api/contract-documents'] });
+      // Disposition audit fix: sending for signature puts the deal under contract.
+      if (sendContract?.propertyId) {
+        fetch(`/api/opportunities/${sendContract.propertyId}/stage-change`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ stage: 'under_contract', notes: `Auto-advanced: contract sent for signature (${sendContract.title})` }),
+        }).then((r) => {
+          if (r.ok) {
+            queryClient.invalidateQueries({ queryKey: ['/api/opportunities'] });
+            queryClient.invalidateQueries({ queryKey: ['/api/opportunities', sendContract.propertyId] });
+          }
+        }).catch(() => {});
+      }
     },
     onError: (e: any) => toast({ title: e?.message || "Failed to send", variant: "destructive" }),
   });
@@ -1128,7 +1276,11 @@ function ContractsList({
                       <Eye className="w-4 h-4 mr-2" />
                       View
                     </Button>
-                  </div>
+                    {contract.status === 'draft' && (
+                      <Button variant="outline" size="sm" className="text-red-600 hover:text-red-700" data-testid={`button-delete-${contract.id}`} onClick={() => setDeleteContract(contract)}>
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    )}                  </div>
                 </div>
               );
             })}
@@ -1204,6 +1356,23 @@ function ContractsList({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!deleteContract} onOpenChange={(open) => { if (!open) setDeleteContract(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete contract?</DialogTitle>
+            <DialogDescription>
+              "{deleteContract?.title || ""}" will be permanently removed along with its envelopes and signature fields. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteContract(null)}>Cancel</Button>
+            <Button variant="destructive" data-testid="button-confirm-delete-contract" onClick={() => deleteContract && deleteContractMutation.mutate(deleteContract.id)} disabled={deleteContractMutation.isPending}>
+              {deleteContractMutation.isPending ? "Deleting…" : "Delete contract"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -1226,23 +1395,24 @@ function ClosingModule({ contracts, properties }: { contracts: any[], properties
 
   const closeContractMutation = useMutation({
     mutationFn: async ({ contractId, data }: { contractId: number, data: any }) => {
-      const response = await fetch(`/api/contract-documents/${contractId}`, {
-        method: 'PATCH',
+      // Disposition audit fix #4: closing records a real ledger row
+      // (deal_assignments), advances the opportunity, and logs activity.
+      const response = await fetch(`/api/contract-documents/${contractId}/close`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          status: 'closed',
-          mergeData: JSON.stringify({
-            ...JSON.parse(data.mergeData || '{}'),
-            closingData: data.closingData,
-          }),
-        }),
+        body: JSON.stringify({ closingData: data.closingData }),
       });
-      if (!response.ok) throw new Error('Failed to close contract');
+      if (!response.ok) {
+        const json = await response.json().catch(() => ({}));
+        throw new Error((json as any).message || 'Failed to close contract');
+      }
       return response.json();
     },
     onSuccess: () => {
-      toast({ title: "Deal closed successfully!", description: "The contract has been marked as closed." });
+      toast({ title: "Deal closed successfully!", description: "Revenue recorded on the deal ledger; opportunity moved to Sold." });
       queryClient.invalidateQueries({ queryKey: ['/api/contract-documents'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/deal-assignments'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/opportunities'] });
       setSelectedContract(null);
       setClosingData({
         assignmentFee: "",
