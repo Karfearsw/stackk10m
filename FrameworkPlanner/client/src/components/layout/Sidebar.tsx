@@ -6,6 +6,7 @@ import {
   Building2, 
   FileText, 
   FolderOpen,
+  BookOpen,
   Settings, 
   PieChart, 
   LogOut,
@@ -90,6 +91,7 @@ const menuGroups = [
     items: [
       { name: "Companies", href: "/companies", icon: Building2 },
       { name: "Documents", href: "/documents", icon: FolderOpen },
+      { name: "Documentation", href: "/docs", icon: BookOpen },
     ],
   },
   {

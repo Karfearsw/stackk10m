@@ -58,6 +58,7 @@ const XpCheckoutSuccessPage = React.lazy(() => import("@/pages/xp/checkout-succe
 const XpCheckoutCancelPage = React.lazy(() => import("@/pages/xp/checkout-cancel"));
 const CompaniesPage = React.lazy(() => import("@/pages/companies"));
 const DocumentsPage = React.lazy(() => import("@/pages/documents"));
+const DocsPage = React.lazy(() => import("@/pages/docs"));
 const AutomationsPage = React.lazy(() => import("@/pages/automations"));
 const AuditPage = React.lazy(() => import("@/pages/audit"));
 const AuditLogPage = React.lazy(() => import("@/pages/audit-log"));
@@ -165,6 +166,7 @@ function Router() {
       <Route path="/teams" component={() => <ProtectedRoute component={TeamsPage} />} />
       <Route path="/companies" component={() => <ProtectedRoute component={CompaniesPage} />} />
       <Route path="/documents" component={() => <ProtectedRoute component={DocumentsPage} />} />
+      <Route path="/docs" component={() => <ProtectedRoute component={DocsPage} />} />
       <Route path="/automations" component={() => <ProtectedRoute component={AutomationsPage} />} />
       <Route path="/audit" component={() => <ProtectedRoute component={AuditPage} />} />
       <Route path="/audit-log" component={() => <ProtectedRoute component={AuditLogPage} />} />

@@ -5,6 +5,7 @@ import { SignJWT, jwtVerify } from "jose";
 import multer from "multer";
 import { createRequire } from "node:module";
 import { storage } from "./storage.js";
+import { seedDocsForTeam, docsSlugify } from "./docs-seed.js";
 import { computeManualTimeEntry, MAX_TIME_ENTRY_HOURS } from "./lib/time-entry-math.js";
 import { db, pool } from "./db.js";
 import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
@@ -11234,6 +11235,185 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       { value: "voided", label: "Voided" },
     ],
   };
+  // ===================== DOCUMENTATION (playbook / knowledge base) =====================
+  // Read: any authenticated team member. Write: admins only. First GET on a
+  // team seeds the OceanLuxe Sales Playbook once (idempotent, never overwrites).
+
+  async function resolveDocsTeam(req: any, res: any): Promise<{ user: any; teamId: number } | null> {
+    const user = await requireAuth(req, res);
+    if (!user) return null;
+    try {
+      const teamId = await getOrInitActiveTeamId(req, user.id);
+      if (!teamId) {
+        res.status(400).json({ message: "No active team" });
+        return null;
+      }
+      return { user, teamId };
+    } catch (e: any) {
+      res.status(500).json({ message: e?.message || "Failed to resolve team" });
+      return null;
+    }
+  }
+
+  app.get("/api/docs/categories", async (req, res) => {
+    try {
+      const ctx = await resolveDocsTeam(req, res);
+      if (!ctx) return;
+      const first = (await storage.listDocsCategories(ctx.teamId)).length === 0 && (await storage.listDocsPages(ctx.teamId)).length === 0;
+      if (first) await seedDocsForTeam(ctx.teamId);
+      res.json(await storage.listDocsCategories(ctx.teamId));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/docs/categories", async (req, res) => {
+    try {
+      const ctx = await resolveDocsTeam(req, res);
+      if (!ctx) return;
+      if (!isAdminUser(ctx.user)) return res.status(403).json({ message: "Admin access required" });
+      const name = String(req.body?.name || "").trim();
+      if (!name) return res.status(400).json({ message: "Name is required" });
+      const slug = docsSlugify(String(req.body?.slug || name));
+      const category = await storage.createDocsCategory({
+        teamId: ctx.teamId,
+        name,
+        slug,
+        description: req.body?.description ? String(req.body.description) : null,
+        sortOrder: Number.isFinite(req.body?.sortOrder) ? Number(req.body.sortOrder) : 0,
+      });
+      res.status(201).json(category);
+    } catch (error: any) {
+      if (String(error?.message || "").includes("unique")) return res.status(409).json({ message: "A category with that slug already exists" });
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/docs/categories/:id", async (req, res) => {
+    try {
+      const ctx = await resolveDocsTeam(req, res);
+      if (!ctx) return;
+      if (!isAdminUser(ctx.user)) return res.status(403).json({ message: "Admin access required" });
+      const id = parseInt(req.params.id, 10);
+      const patch: any = {};
+      if (req.body?.name) patch.name = String(req.body.name).trim();
+      if (req.body?.description !== undefined) patch.description = req.body?.description ? String(req.body.description) : null;
+      if (Number.isFinite(req.body?.sortOrder)) patch.sortOrder = Number(req.body.sortOrder);
+      const updated = await storage.updateDocsCategory(id, patch);
+      if (!updated) return res.status(404).json({ message: "Category not found" });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/docs/categories/:id", async (req, res) => {
+    try {
+      const ctx = await resolveDocsTeam(req, res);
+      if (!ctx) return;
+      if (!isAdminUser(ctx.user)) return res.status(403).json({ message: "Admin access required" });
+      await storage.deleteDocsCategory(parseInt(req.params.id, 10));
+      res.json({ message: "Category deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // List page metadata (no bodies). q searches title/summary/body.
+  app.get("/api/docs/pages", async (req, res) => {
+    try {
+      const ctx = await resolveDocsTeam(req, res);
+      if (!ctx) return;
+      const categoryId = req.query.categoryId ? parseInt(String(req.query.categoryId), 10) : undefined;
+      const q = typeof req.query.q === "string" ? req.query.q : undefined;
+      const includeUnpublished = isAdminUser(ctx.user);
+      const pages = await storage.listDocsPages(ctx.teamId, { categoryId: Number.isFinite(categoryId as any) ? categoryId : undefined, q, includeUnpublished });
+      res.json(pages);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.post("/api/docs/pages", async (req, res) => {
+    try {
+      const ctx = await resolveDocsTeam(req, res);
+      if (!ctx) return;
+      if (!isAdminUser(ctx.user)) return res.status(403).json({ message: "Admin access required" });
+      const title = String(req.body?.title || "").trim();
+      const body = String(req.body?.body || "");
+      if (!title || !body.trim()) return res.status(400).json({ message: "Title and body are required" });
+      const page = await storage.createDocsPage({
+        teamId: ctx.teamId,
+        categoryId: req.body?.categoryId ? Number(req.body.categoryId) : null,
+        title,
+        slug: docsSlugify(String(req.body?.slug || title)),
+        summary: req.body?.summary ? String(req.body.summary).slice(0, 500) : null,
+        body,
+        tags: Array.isArray(req.body?.tags) ? req.body.tags.map((t: any) => String(t)) : [],
+        sortOrder: Number.isFinite(req.body?.sortOrder) ? Number(req.body.sortOrder) : 0,
+        isPublished: req.body?.isPublished === false ? false : true,
+        createdBy: ctx.user.id,
+        updatedBy: ctx.user.id,
+      });
+      res.status(201).json(page);
+    } catch (error: any) {
+      if (String(error?.message || "").includes("unique")) return res.status(409).json({ message: "A page with that slug already exists" });
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.get("/api/docs/pages/:slug", async (req, res) => {
+    try {
+      const ctx = await resolveDocsTeam(req, res);
+      if (!ctx) return;
+      const page = await storage.getDocsPageBySlug(ctx.teamId, String(req.params.slug || ""));
+      if (!page) return res.status(404).json({ message: "Page not found" });
+      if (!page.isPublished && !isAdminUser(ctx.user)) return res.status(404).json({ message: "Page not found" });
+      res.json(page);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.patch("/api/docs/pages/:id", async (req, res) => {
+    try {
+      const ctx = await resolveDocsTeam(req, res);
+      if (!ctx) return;
+      if (!isAdminUser(ctx.user)) return res.status(403).json({ message: "Admin access required" });
+      const id = parseInt(req.params.id, 10);
+      const existing = await storage.getDocsPageById(id);
+      if (!existing || existing.teamId !== ctx.teamId) return res.status(404).json({ message: "Page not found" });
+      const patch: any = { updatedBy: ctx.user.id };
+      if (req.body?.title) patch.title = String(req.body.title).trim();
+      if (req.body?.slug) patch.slug = docsSlugify(String(req.body.slug));
+      if (req.body?.summary !== undefined) patch.summary = req.body?.summary ? String(req.body.summary).slice(0, 500) : null;
+      if (req.body?.body) patch.body = String(req.body.body);
+      if (req.body?.categoryId !== undefined) patch.categoryId = req.body?.categoryId ? Number(req.body.categoryId) : null;
+      if (Array.isArray(req.body?.tags)) patch.tags = req.body.tags.map((t: any) => String(t));
+      if (Number.isFinite(req.body?.sortOrder)) patch.sortOrder = Number(req.body.sortOrder);
+      if (req.body?.isPublished !== undefined) patch.isPublished = !!req.body.isPublished;
+      const updated = await storage.updateDocsPage(id, patch);
+      res.json(updated);
+    } catch (error: any) {
+      if (String(error?.message || "").includes("unique")) return res.status(409).json({ message: "A page with that slug already exists" });
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  app.delete("/api/docs/pages/:id", async (req, res) => {
+    try {
+      const ctx = await resolveDocsTeam(req, res);
+      if (!ctx) return;
+      if (!isAdminUser(ctx.user)) return res.status(403).json({ message: "Admin access required" });
+      const existing = await storage.getDocsPageById(parseInt(req.params.id, 10));
+      if (!existing || existing.teamId !== ctx.teamId) return res.status(404).json({ message: "Page not found" });
+      await storage.deleteDocsPage(existing.id);
+      res.json({ message: "Page deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.get("/api/pipeline-config", async (req, res) => {
     try {
       const userId = req.session.userId;

@@ -114,7 +114,10 @@ import {
   type OpportunityParty, type InsertOpportunityParty,
   type PublicListing, type InsertPublicListing,
   type BuyerInquiry, type InsertBuyerInquiry,
-  type OpportunityEvent, type InsertOpportunityEvent
+  type OpportunityEvent, type InsertOpportunityEvent,
+  type DocsCategory, type InsertDocsCategory,
+  type DocsPage, type InsertDocsPage,
+  docsCategories, docsPages
 } from "./shared-schema.js";
 import { eq, and, gte, lte, isNull, inArray, or, ne, isNotNull, like } from "drizzle-orm";
 
@@ -741,6 +744,18 @@ export interface IStorage {
   // Opportunity Events
   getOpportunityEvents(opportunityId: number, limit?: number): Promise<OpportunityEvent[]>;
   createOpportunityEvent(event: InsertOpportunityEvent): Promise<OpportunityEvent>;
+
+  // Documentation (playbook / knowledge base)
+  listDocsCategories(teamId: number): Promise<DocsCategory[]>;
+  createDocsCategory(category: InsertDocsCategory): Promise<DocsCategory>;
+  updateDocsCategory(id: number, patch: Partial<InsertDocsCategory>): Promise<DocsCategory>;
+  deleteDocsCategory(id: number): Promise<void>;
+  listDocsPages(teamId: number, opts?: { categoryId?: number; q?: string; includeUnpublished?: boolean }): Promise<Omit<DocsPage, "body">[]>;
+  getDocsPageBySlug(teamId: number, slug: string): Promise<DocsPage | undefined>;
+  getDocsPageById(id: number): Promise<DocsPage | undefined>;
+  createDocsPage(page: InsertDocsPage): Promise<DocsPage>;
+  updateDocsPage(id: number, patch: Partial<InsertDocsPage>): Promise<DocsPage>;
+  deleteDocsPage(id: number): Promise<void>;
 
   // Buyer Offers
   getBuyerOffersByOpportunity(opportunityId: number): Promise<BuyerOffer[]>;
@@ -4616,6 +4631,91 @@ export class DatabaseStorage implements IStorage {
       .from(tasks)
       .where(and(eq(tasks.relatedEntityType, entityType), eq(tasks.relatedEntityId, entityId)))
       .orderBy(desc(tasks.createdAt));
+  }
+
+  // ===================== Documentation (playbook) =====================
+
+  async listDocsCategories(teamId: number): Promise<DocsCategory[]> {
+    return db
+      .select()
+      .from(docsCategories)
+      .where(eq(docsCategories.teamId, teamId))
+      .orderBy(docsCategories.sortOrder, docsCategories.name);
+  }
+
+  async createDocsCategory(category: InsertDocsCategory): Promise<DocsCategory> {
+    const result = await db.insert(docsCategories).values(category as any).returning();
+    return result[0];
+  }
+
+  async updateDocsCategory(id: number, patch: Partial<InsertDocsCategory>): Promise<DocsCategory> {
+    const result = await db
+      .update(docsCategories)
+      .set({ ...patch, updatedAt: new Date() } as any)
+      .where(eq(docsCategories.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteDocsCategory(id: number): Promise<void> {
+    // Pages in a deleted category become uncategorized rather than vanishing.
+    await db.update(docsPages).set({ categoryId: null } as any).where(eq(docsPages.categoryId, id));
+    await db.delete(docsCategories).where(eq(docsCategories.id, id));
+  }
+
+  async listDocsPages(teamId: number, opts?: { categoryId?: number; q?: string; includeUnpublished?: boolean }): Promise<Omit<DocsPage, "body">[]> {
+    const { categoryId, q, includeUnpublished } = opts || {};
+    const cols = { id: docsPages.id, teamId: docsPages.teamId, categoryId: docsPages.categoryId, title: docsPages.title, slug: docsPages.slug, summary: docsPages.summary, tags: docsPages.tags, sortOrder: docsPages.sortOrder, isPublished: docsPages.isPublished, createdBy: docsPages.createdBy, updatedBy: docsPages.updatedBy, createdAt: docsPages.createdAt, updatedAt: docsPages.updatedAt } as const;
+    const conditions: any[] = [eq(docsPages.teamId, teamId)];
+    if (typeof categoryId === "number") conditions.push(eq(docsPages.categoryId, categoryId));
+    if (!includeUnpublished) conditions.push(eq(docsPages.isPublished, true));
+    if (q && String(q).trim()) {
+      const term = `%${String(q).trim().toLowerCase()}%`;
+      conditions.push(
+        or(
+          like(sql`lower(${docsPages.title})`, term),
+          like(sql`lower(coalesce(${docsPages.summary}, ''))`, term),
+          like(sql`lower(${docsPages.body})`, term),
+        ) as any,
+      );
+    }
+    return db
+      .select(cols)
+      .from(docsPages)
+      .where(and(...conditions))
+      .orderBy(docsPages.sortOrder, docsPages.title);
+  }
+
+  async getDocsPageBySlug(teamId: number, slug: string): Promise<DocsPage | undefined> {
+    const result = await db
+      .select()
+      .from(docsPages)
+      .where(and(eq(docsPages.teamId, teamId), eq(docsPages.slug, slug)))
+      .limit(1);
+    return result[0];
+  }
+
+  async getDocsPageById(id: number): Promise<DocsPage | undefined> {
+    const result = await db.select().from(docsPages).where(eq(docsPages.id, id)).limit(1);
+    return result[0];
+  }
+
+  async createDocsPage(page: InsertDocsPage): Promise<DocsPage> {
+    const result = await db.insert(docsPages).values(page as any).returning();
+    return result[0];
+  }
+
+  async updateDocsPage(id: number, patch: Partial<InsertDocsPage>): Promise<DocsPage> {
+    const result = await db
+      .update(docsPages)
+      .set({ ...patch, updatedAt: new Date() } as any)
+      .where(eq(docsPages.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteDocsPage(id: number): Promise<void> {
+    await db.delete(docsPages).where(eq(docsPages.id, id));
   }
 }
 

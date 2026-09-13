@@ -168,7 +168,10 @@ export default function Contracts() {
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" asChild>
-            <a href="/contract-generator"><Plus className="mr-2 h-4 w-4" /> New Contract</a>
+            <a href="/contract-generator">Advanced Generator</a>
+          </Button>
+          <Button size="sm" asChild>
+            <a href="/contracts/new" data-testid="button-new-contract-wizard"><Plus className="mr-2 h-4 w-4" /> New Contract</a>
           </Button>
         </div>
       </div>

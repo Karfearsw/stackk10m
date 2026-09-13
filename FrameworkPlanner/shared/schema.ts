@@ -946,3 +946,39 @@ export const opportunityEvents = pgTable("opportunity_events", {
 export const insertOpportunityEventSchema = createInsertSchema(opportunityEvents).omit({ id: true, createdAt: true } as any);
 export type OpportunityEvent = typeof opportunityEvents.$inferSelect;
 export type InsertOpportunityEvent = z.infer<typeof insertOpportunityEventSchema>;
+
+// DOCUMENTATION (in-app playbook / knowledge base)
+export const docsCategories = pgTable("docs_categories", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  name: varchar("name", { length: 200 }).notNull(),
+  slug: varchar("slug", { length: 200 }).notNull(),
+  description: text("description"),
+  sortOrder: integer("sort_order").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const docsPages = pgTable("docs_pages", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  teamId: integer("team_id").notNull(),
+  categoryId: integer("category_id"),
+  title: varchar("title", { length: 300 }).notNull(),
+  slug: varchar("slug", { length: 300 }).notNull(),
+  summary: varchar("summary", { length: 500 }),
+  body: text("body").notNull(),
+  tags: text("tags").array(),
+  sortOrder: integer("sort_order").default(0),
+  isPublished: boolean("is_published").default(true),
+  createdBy: integer("created_by"),
+  updatedBy: integer("updated_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertDocsCategorySchema = createInsertSchema(docsCategories).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type DocsCategory = typeof docsCategories.$inferSelect;
+export type InsertDocsCategory = z.infer<typeof insertDocsCategorySchema>;
+export const insertDocsPageSchema = createInsertSchema(docsPages).omit({ id: true, createdAt: true } as any);
+export type DocsPage = typeof docsPages.$inferSelect;
+export type InsertDocsPage = z.infer<typeof insertDocsPageSchema>;

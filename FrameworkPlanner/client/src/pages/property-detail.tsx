@@ -698,7 +698,7 @@ export default function PropertyDetail() {
               <Calculator className="mr-2 h-4 w-4" />
               Run Comps
             </Button>
-            <Button variant="outline" onClick={() => property?.id && setLocation(`/contract-generator?propertyId=${property.id}`)} disabled={!property?.id}>
+            <Button variant="outline" onClick={() => property?.id && setLocation(`/contracts/new?opportunityId=${property.id}&propertyId=${property.id}`)} disabled={!property?.id}>
               <FileText className="mr-2 h-4 w-4" />
               Generate Contract
             </Button>
