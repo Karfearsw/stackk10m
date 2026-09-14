@@ -9083,10 +9083,13 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       if (!user) return;
       const contract = await storage.getContractById(parseInt(req.params.id));
       if (!contract) return res.status(404).json({ message: "Contract not found" });
-      if (contract.status !== "signed") {
+      // M51: allow Sent (and partially-signed) contracts to be executed — a
+      // wet-ink / outside-e-sign signing happens in the real world and the
+      // agent must be able to record it without a provider round-trip.
+      if (!["signed", "sent", "viewed", "partially_signed", "ready_to_send"].includes(String(contract.status))) {
         return res.status(400).json({ message: `Cannot execute contract from status: ${contract.status}` });
       }
-      const updated = await storage.updateContract(contract.id, { status: "executed", executedAt: new Date() } as any);
+      const updated = await storage.updateContract(contract.id, { status: "executed", executedAt: new Date(), signedAt: contract.signedAt || new Date() } as any);
       await storage.createContractEvent({
         contractId: contract.id,
         actorType: "user",
@@ -9101,17 +9104,44 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contracts/:id/upload-signed", async (req, res) => {
+  // M51: upload-signed accepts either an existing vault documentId or a real
+  // multipart file (stored in the document vault, linked to the contract).
+  app.post("/api/contracts/:id/upload-signed", upload.single("file"), async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
       const contract = await storage.getContractById(parseInt(req.params.id));
       if (!contract) return res.status(404).json({ message: "Contract not found" });
-      const { documentId, reason } = req.body || {};
+      let { documentId, reason } = req.body || {};
+      const file: any = (req as any).file;
+      if (file) {
+        const buf = Buffer.from(file.buffer);
+        const teamId = await getOrInitActiveTeamId(req, user.id);
+        if (!teamId) return res.status(400).json({ message: "No active team" });
+        const storageKey = makeDocumentStorageKey({ teamId, originalName: String(file.originalname || "signed-copy") });
+        const sha = sha256Hex(buf);
+        await uploadDocumentObject({ storageKey, contentType: String(file.mimetype || "application/pdf"), body: buf });
+        const doc = await storage.createDocument({
+          teamId,
+          title: `Signed copy — ${contract.title || `Contract #${contract.id}`}`,
+          kind: "signed_contract",
+          mimeType: String(file.mimetype || "application/pdf"),
+          sizeBytes: typeof file.size === "number" ? file.size : buf.length,
+          storageKey,
+          sha256: sha,
+          isPrivate: false,
+          createdBy: user.id,
+        } as any);
+        documentId = doc.id;
+      }
+      // M51: uploading a signed copy means the contract was signed — never
+      // regress an executed contract back to signed, and stamp signedAt when
+      // moving forward from sent/viewed/partially_signed.
+      const forwardStatus = contract.status === "executed" ? "executed" : "signed";
       const updated = await storage.updateContract(contract.id, {
-        status: "signed",
-        executedDocumentId: documentId || null,
-        signedAt: new Date(),
+        status: forwardStatus,
+        executedDocumentId: documentId || contract.executedDocumentId || null,
+        signedAt: contract.signedAt || new Date(),
       } as any);
       await storage.createContractEvent({
         contractId: contract.id,

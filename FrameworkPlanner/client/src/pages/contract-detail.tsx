@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { FileText, Download, Send, Eye, CheckCircle, AlertCircle, Users, Clock, History, Paperclip, StickyNote, ListTodo } from "lucide-react";
 
@@ -112,23 +112,31 @@ export default function ContractDetail() {
     onError: (e: any) => toast({ title: e?.message || "Failed to execute", variant: "destructive" }),
   });
 
+  // M51: the signed copy is a real file — stored in the document vault and
+  // linked to the contract via executedDocumentId.
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const uploadMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (file: File) => {
       if (!contractId) throw new Error("Missing contract");
+      const fd = new FormData();
+      fd.append("file", file);
       const res = await fetch(`/api/contracts/${contractId}/upload-signed`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ documentId: contract?.executedDocumentId || null, reason: "manual upload" }),
+        body: fd,
       });
       if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(text || `Failed to upload (${res.status})`);
+        let msg = `Failed to upload (${res.status})`;
+        try {
+          const j = JSON.parse(await res.text());
+          if (j?.message) msg = j.message;
+        } catch {}
+        throw new Error(msg);
       }
       return res.json();
     },
     onSuccess: () => {
-      toast({ title: "Signed copy uploaded" });
+      toast({ title: "Signed copy uploaded", description: "Stored in the document vault and linked to this contract." });
       queryClient.invalidateQueries({ queryKey: [`/api/contracts/${contractId}`] });
     },
     onError: (e: any) => toast({ title: e?.message || "Failed to upload", variant: "destructive" }),
@@ -187,7 +195,7 @@ export default function ContractDetail() {
                 <Send className="w-4 h-4 mr-2" /> Send for Signature
               </Button>
             ) : null}
-            {contract.status === "signed" ? (
+            {["signed", "sent", "viewed", "partially_signed"].includes(contract.status) ? (
               <Button size="sm" onClick={() => executeMutation.mutate()} data-testid="button-execute">
                 <CheckCircle className="w-4 h-4 mr-2" /> Execute
               </Button>
@@ -197,8 +205,8 @@ export default function ContractDetail() {
                 Void
               </Button>
             ) : null}
-            {contract.status === "executed" ? (
-              <Button size="sm" variant="secondary" onClick={() => uploadMutation.mutate()} data-testid="button-upload-signed">
+            {["sent", "viewed", "partially_signed", "signed", "executed"].includes(contract.status) ? (
+              <Button size="sm" variant="secondary" onClick={() => fileInputRef.current?.click()} data-testid="button-upload-signed">
                 <Paperclip className="w-4 h-4 mr-2" /> Upload Signed Copy
               </Button>
             ) : null}
@@ -348,10 +356,10 @@ export default function ContractDetail() {
                 <Button variant="outline" className="w-full justify-start" size="sm" onClick={() => setSendOpen(true)} disabled={contract.status !== "draft" && contract.status !== "ready_to_send"}>
                   <Send className="w-4 h-4 mr-2" /> Send for Signature
                 </Button>
-                <Button variant="outline" className="w-full justify-start" size="sm" disabled={contract.status !== "signed"} onClick={() => executeMutation.mutate()}>
+                <Button variant="outline" className="w-full justify-start" size="sm" disabled={!["signed", "sent", "viewed", "partially_signed"].includes(contract.status)} onClick={() => executeMutation.mutate()}>
                   <CheckCircle className="w-4 h-4 mr-2" /> Execute Contract
                 </Button>
-                <Button variant="outline" className="w-full justify-start" size="sm" onClick={() => uploadMutation.mutate()} disabled={contract.status !== "executed"}>
+                <Button variant="outline" className="w-full justify-start" size="sm" onClick={() => fileInputRef.current?.click()} disabled={!["sent", "viewed", "partially_signed", "signed", "executed"].includes(contract.status)}>
                   <Paperclip className="w-4 h-4 mr-2" /> Upload Signed Copy
                 </Button>
                 <Button variant="outline" className="w-full justify-start" size="sm" onClick={() => setVoidOpen(true)} disabled={contract.status === "executed" || contract.status === "voided"}>
@@ -376,6 +384,19 @@ export default function ContractDetail() {
             </Card>
           </div>
         </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/pdf,image/*"
+          className="hidden"
+          data-testid="input-upload-signed"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) uploadMutation.mutate(f);
+            e.target.value = "";
+          }}
+        />
 
         <Dialog open={sendOpen} onOpenChange={setSendOpen}>
           <DialogContent>
