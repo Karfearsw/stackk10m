@@ -18,6 +18,12 @@ export type TelnyxDialInput = {
   to: string;
   from?: string;
   connectionId?: string;
+  /** Optional client_state blob (base64) echoed back on every webhook event. */
+  clientState?: string;
+  /** Real answering-machine detection for ringless-voicemail drops. */
+  answeringMachineDetection?: { advanced?: boolean } | false;
+  /** Timeout in seconds —Telnyx hangs up if unanswered. */
+  timeoutSecs?: number;
 };
 
 export type TelnyxSmsInput = {
@@ -87,6 +93,17 @@ export class TelnyxClient {
       to: input.to,
       from,
     };
+    if (input.clientState) body.client_state = input.clientState;
+    if (input.timeoutSecs) body.timeout_secs = input.timeoutSecs;
+    if (input.answeringMachineDetection) {
+      body.answering_machine_detection = input.answeringMachineDetection.advanced ? "advanced" : "disabled";
+      body.answering_machine_detection_config = {
+        after_greeting_timeout: 6,
+        initial_silence_timeout: 5,
+        greeting_detection: true,
+        simple_machine_detection: true,
+      };
+    }
 
     const res = await fetch(`${this.baseUrl}/calls`, {
       method: "POST",
@@ -115,6 +132,45 @@ export class TelnyxClient {
     const callControlId = data?.data?.id || data?.call_control_id;
     if (!callControlId) throw new Error("Telnyx dial response missing call id");
     return { callControlId: String(callControlId) };
+  }
+
+  // RVM: play the voicemail audio into the answered call (voicemail box).
+  async playbackStart(callControlId: string, audioUrl: string): Promise<void> {
+    this.requireReady();
+    const res = await fetch(`${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/playback_start`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ audio_url: audioUrl }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) {
+      const data: any = await res.json().catch(() => ({}));
+      const err = new Error(data?.errors?.[0]?.title || data?.message || `Telnyx playback_start failed (${res.status})`) as any;
+      err.status = res.status;
+      err.code = data?.errors?.[0]?.code || data?.code || null;
+      throw err;
+    }
+  }
+
+  // RVM: live call status for poller reconciliation of missed webhook events.
+  async getCallStatus(callControlId: string): Promise<{ status: "queued" | "sending" | "sent" | "failed"; error?: string | null }> {
+    this.requireReady();
+    try {
+      const res = await fetch(`${this.baseUrl}/calls/${encodeURIComponent(callControlId)}`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) return { status: "sending", error: `status ${res.status}` };
+      const data: any = await res.json().catch(() => ({}));
+      const state = String(data?.data?.state || data?.data?.status || "").toLowerCase();
+      if (state === "hangup" || state === "completed") return { status: "sent" };
+      if (state === "busy" || state === "noanswer" || state === "canceled" || state === "failed") {
+        return { status: "failed", error: state };
+      }
+      return { status: "sending" };
+    } catch (e: any) {
+      return { status: "sending", error: String(e?.message || e) };
+    }
   }
 
   // Answer an inbound call (POST /v2/calls/{call_control_id}/actions/answer).

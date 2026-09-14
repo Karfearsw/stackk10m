@@ -97,6 +97,23 @@ export default function CommunicationsWorkspace() {
   const [taskTitle, setTaskTitle] = useState("");
   const [taskDue, setTaskDue] = useState("");
 
+  // Reusable SMS templates from the user's real Script Library (dialer_scripts).
+  const { data: smsScriptsData } = useQuery<any>({
+    queryKey: ["/api/scripts"],
+    queryFn: async () => {
+      try {
+        const res = await apiRequest("GET", "/api/scripts");
+        return await res.json();
+      } catch {
+        return { items: [] };
+      }
+    },
+  });
+  const smsTemplates = useMemo(
+    () => (Array.isArray(smsScriptsData?.items) ? smsScriptsData.items.slice(0, 8) : []),
+    [smsScriptsData],
+  );
+
   // Video
   const [videoOpen, setVideoOpen] = useState(false);
   const [videoRoomId, setVideoRoomId] = useState("");
@@ -613,6 +630,22 @@ export default function CommunicationsWorkspace() {
                         disabled={sendSms.isPending}
                       />
                       <Textarea value={smsBody} onChange={(e) => setSmsBody(e.target.value)} placeholder="Write a message…" rows={3} />
+                      {smsTemplates.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[11px] uppercase tracking-wide text-muted-foreground">Templates:</span>
+                          {smsTemplates.map((s: any) => (
+                            <button
+                              key={String(s?.id)}
+                              type="button"
+                              className="inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs hover:bg-accent"
+                              title={String(s?.content || "")}
+                              onClick={() => setSmsBody(String(s?.content || ""))}
+                            >
+                              {String(s?.name || "Script")}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-muted-foreground">{smsBody.length} / 160 chars</span>
                         <Button onClick={() => sendSms.mutate({ to: effectivePhone, body: smsBody })} disabled={!effectivePhone || !smsBody.trim() || sendSms.isPending}>

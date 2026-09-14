@@ -15,6 +15,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { isTemplateUsable, parseContractGeneratorSearch, withTemplateSelection } from "@/lib/contract-generator-params";
+import { PaginatedLetterView } from "@/components/contracts/PaginatedLetterView";
 
 function Row({ label, value }: { label: string; value: any }) {
   return (
@@ -497,12 +498,14 @@ function ContractCreator({ templates, properties, initialPropertyId, selectedTem
         </form>
 
         <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-          <DialogContent className="max-w-3xl max-h-[80vh] overflow-hidden flex flex-col">
+          <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden flex flex-col">
             <DialogHeader>
               <DialogTitle>Contract Preview</DialogTitle>
             </DialogHeader>
-            <div className="flex-1 overflow-auto border border-border rounded-md bg-muted/30 p-4 font-mono text-sm whitespace-pre-wrap">
-              {getPreviewContent()}
+            <div className="flex-1 overflow-auto border border-border rounded-md bg-muted/30 p-4">
+              {/* US-Letter paginated preview (user-requested): same layout as the
+                  printed letter — 8.5×11 pages, 1" margins, 12pt serif. */}
+              <PaginatedLetterView content={getPreviewContent()} />
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setPreviewOpen(false)}>Close</Button>

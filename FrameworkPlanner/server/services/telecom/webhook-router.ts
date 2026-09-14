@@ -1,10 +1,12 @@
 import { Router } from "express";
 import { pool } from "../../db.js";
+import { sql } from "drizzle-orm";
 import { telnyx } from "./telnyx-client.js";
 import { storage } from "../../storage.js";
 import { createTask } from "../tasks/task-service.js";
 import { emitTelephonyEventToAll } from "../../telephony/ws.js";
 import { handleWebhookEvent as handleSessionCallEvent, handleAiSessionEvent as handleSessionAiEvent } from "./call-sessions.js";
+import { getRvmAudioUrl } from "../rvm/provider.js";
 
 export function createTelnyxWebhookRouter() {
   const router = Router();
@@ -41,6 +43,7 @@ export function createTelnyxWebhookRouter() {
         if (eventType.startsWith("call.")) {
           await handleCallEvent(event);
           await handleSessionCallEvent(event);
+          await handleRvmCallEvent(event, eventType);
         } else if (eventType.startsWith("message.")) {
           await handleMessageEvent(event);
         } else if (eventType.startsWith("ai_assistant.")) {
@@ -65,6 +68,104 @@ export function createTelnyxWebhookRouter() {
   });
 
   return router;
+}
+
+// ── RVM drop lifecycle (real Telnyx answering-machine detection) ──────────
+
+// client_state on RVM dials carries { kind: "rvm", audioAssetId } (base64).
+function decodeRvmClientState(raw: unknown): { audioAssetId: number | null } {
+  try {
+    const b64 = String(raw || "");
+    if (!b64) return { audioAssetId: null };
+    const json = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+    if (json?.kind !== "rvm") return { audioAssetId: null };
+    const id = Number(json.audioAssetId);
+    return { audioAssetId: Number.isFinite(id) ? id : null };
+  } catch {
+    return { audioAssetId: null };
+  }
+}
+
+/**
+ * Drives a real ringless-voicemail drop over Call Control:
+ *  - call.machine.greeting.ended / call.machine.ended → play audio into the voicemail box
+ *  - call.human.detected → hang up immediately (a human answered; never drop VM audio on a person)
+ *  - call.playback.ended → hang up, mark the drop sent (voicemail actually left)
+ *  - call.hangup → mark failed unless it already completed via playback
+ *  - call.answered / call.initiated → keep the row in "sending"
+ */
+async function handleRvmCallEvent(event: any, eventType: string): Promise<void> {
+  const payload = event?.data?.payload || event?.payload || {};
+  const callControlId = String(payload.call_control_id || payload.callControlId || "");
+  if (!callControlId) return;
+  const { audioAssetId } = decodeRvmClientState(payload.client_state);
+
+  try {
+    const rowRes = await pool.query(
+      `SELECT id, campaign_id, status FROM rvm_drops WHERE provider_id = $1 ORDER BY id DESC LIMIT 1`,
+      [callControlId],
+    );
+    const row = (rowRes as any).rows?.[0];
+
+    if (eventType === "call.machine.greeting.ended" || eventType === "call.machine.ended") {
+      const assetId = audioAssetId ?? row?.campaign_id ?? null;
+      if (!assetId) return;
+      const audioUrl = await getRvmAudioUrl(Number(assetId)).catch(() => null);
+      if (!audioUrl) {
+        console.error(JSON.stringify({ ts: new Date().toISOString(), event: "rvm_webhook", kind: "audio_url_failed", callControlId }));
+        return;
+      }
+      await telnyx.playbackStart(callControlId, audioUrl);
+      if (row?.id) {
+        await pool.query(`UPDATE rvm_drops SET status = 'sending' WHERE id = $1`, [row.id]);
+      }
+      return;
+    }
+
+    if (eventType === "call.human.detected") {
+      // A real person answered — hang up and record the truth (no voicemail left).
+      await telnyx.hangup(callControlId).catch(() => {});
+      if (row?.id) {
+        await pool.query(
+          `UPDATE rvm_drops SET status = 'failed', error = 'human_answered', completed_at = NOW() WHERE id = $1`,
+          [row.id],
+        );
+      }
+      return;
+    }
+
+    if (eventType === "call.playback.ended" || eventType === "call.playback.finished") {
+      await telnyx.hangup(callControlId).catch(() => {});
+      if (row?.id) {
+        await pool.query(
+          `UPDATE rvm_drops SET status = 'sent', completed_at = NOW() WHERE id = $1`,
+          [row.id],
+        );
+      }
+      return;
+    }
+
+    if (eventType === "call.hangup" || eventType === "call.hangup.completed") {
+      const cause = String(payload.hangup_cause || payload.hangupCause || "").toLowerCase();
+      const already = row?.status === "sent" || row?.status === "failed";
+      if (row?.id && !already) {
+        await pool.query(
+          `UPDATE rvm_drops SET status = 'failed', error = $2, completed_at = NOW() WHERE id = $1`,
+          [row.id, cause || "hangup_before_voicemail"],
+        );
+      }
+      return;
+    }
+
+    if (eventType === "call.answered" || eventType === "call.initiated") {
+      if (row?.id && row.status === "queued") {
+        await pool.query(`UPDATE rvm_drops SET status = 'sending' WHERE id = $1`, [row.id]);
+      }
+      return;
+    }
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), event: "rvm_webhook", kind: "handler_failed", eventType, message: String(e?.message || e) }));
+  }
 }
 
 // ── Idempotency ────────────────────────────────────────────────────────────

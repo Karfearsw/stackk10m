@@ -106,6 +106,7 @@ function parseFiltersFromUrl() {
     city: get("city"),
     county: get("county"),
     leadType: get("leadType"),
+    source: get("source"),
     assignedTo: get("assignedTo") || "",
     tags: get("tags"),
     tagsMode: get("tagsMode") || "any",
@@ -143,6 +144,7 @@ function writeFiltersToUrl(filters: any) {
   set("city", filters.city);
   set("county", filters.county);
   set("leadType", filters.leadType);
+  set("source", filters.source);
   set("assignedTo", filters.assignedTo);
   set("tags", filters.tags);
   if (filters.tagsMode && filters.tagsMode !== "any") set("tagsMode", filters.tagsMode);
@@ -316,6 +318,7 @@ export default function Leads() {
       if (appliedFilters.city?.trim()) p.set("city", appliedFilters.city.trim());
       if (appliedFilters.county?.trim()) p.set("county", appliedFilters.county.trim());
       if (appliedFilters.leadType?.trim()) p.set("leadType", appliedFilters.leadType.trim());
+      if (appliedFilters.source?.trim()) p.set("source", appliedFilters.source.trim());
       if (appliedFilters.assignedTo?.trim()) p.set("assignedTo", appliedFilters.assignedTo.trim());
       if (appliedFilters.tags?.trim()) p.set("tags", appliedFilters.tags.trim());
       if (appliedFilters.tagsMode && appliedFilters.tagsMode !== "any") p.set("tagsMode", appliedFilters.tagsMode);
@@ -1090,6 +1093,7 @@ export default function Leads() {
         city: "",
         county: "",
         leadType: "",
+        source: "",
         assignedTo: "",
         tags: "",
         tagsMode: "any",
@@ -1155,6 +1159,7 @@ export default function Leads() {
       city: "",
       county: "",
       leadType: "",
+      source: "",
       assignedTo: "",
       tags: "",
       tagsMode: "any",
@@ -1386,6 +1391,23 @@ export default function Leads() {
                       {pipelineColumnsWithMissing.map((option) => (
                         <SelectItem key={option.value} value={option.value}>
                           {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Source</Label>
+                  <Select value={filters.source || "all"} onValueChange={(value) => setFilters((prev: any) => ({ ...prev, source: value === "all" ? "" : value }))}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      {(leadSourceOptions || []).map((o: any) => (
+                        <SelectItem key={String(o?.value)} value={String(o?.value)}>
+                          {String(o?.label || o?.value)}
                         </SelectItem>
                       ))}
                     </SelectContent>

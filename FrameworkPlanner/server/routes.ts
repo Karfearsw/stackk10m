@@ -3345,6 +3345,7 @@ export async function registerRoutes(
       const city = typeof req.query?.city === "string" ? req.query.city : "";
       const county = typeof req.query?.county === "string" ? req.query.county : "";
       const leadType = typeof req.query?.leadType === "string" ? req.query.leadType : "";
+      const sourceRaw = typeof req.query?.source === "string" ? req.query.source : "";
       const assignedToRaw = typeof req.query?.assignedTo === "string" ? req.query.assignedTo : "";
       const assignedTo = assignedToRaw === "unassigned" ? "unassigned" : assignedToRaw ? parseInt(assignedToRaw, 10) : undefined;
       const tagsRaw = typeof req.query?.tags === "string" ? req.query.tags : "";
@@ -3414,6 +3415,7 @@ export async function registerRoutes(
         city,
         county,
         leadType,
+        source: sourceRaw.trim() || undefined,
         assignedTo: typeof assignedTo === "number" && Number.isFinite(assignedTo) ? assignedTo : assignedTo === "unassigned" ? "unassigned" : undefined,
         tags,
         tagsMode,

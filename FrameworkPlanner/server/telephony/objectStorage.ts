@@ -41,6 +41,22 @@ export async function getTelephonyMediaSignedUrl(input: { key: string; expiresIn
   return url;
 }
 
+/** Upload raw bytes to the telephony media bucket (used for RVM audio). */
+export async function putTelephonyMediaObject(input: { key: string; body: Buffer; contentType: string }) {
+  const cfg = readStorageConfig();
+  if (!cfg) throw new Error("Telephony media storage is not configured");
+  const client = getClient(cfg);
+  await client.send(
+    new PutObjectCommand({
+      Bucket: cfg.bucket,
+      Key: input.key,
+      Body: input.body,
+      ContentType: input.contentType,
+    }),
+  );
+  return { key: input.key, contentType: input.contentType, sizeBytes: input.body.length };
+}
+
 export async function uploadTelephonyMediaFromUrl(input: { key: string; sourceUrl: string; contentType?: string }) {
   const cfg = readStorageConfig();
   if (!cfg) return null;

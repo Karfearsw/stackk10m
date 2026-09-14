@@ -144,6 +144,7 @@ export interface IStorage {
     city?: string;
     county?: string;
     leadType?: string;
+    source?: string;
     assignedTo?: number | "unassigned";
     tags?: string[];
     tagsMode?: "any" | "all";
@@ -242,6 +243,7 @@ export interface IStorage {
   getCampaignStats(campaignId: number): Promise<{ sends: number; failed: number }>;
 
   getRvmAudioAssets(userId: number): Promise<RvmAudioAsset[]>;
+  getRvmAudioAssetById(id: number): Promise<RvmAudioAsset | undefined>;
   createRvmAudioAsset(input: InsertRvmAudioAsset): Promise<RvmAudioAsset>;
   deleteRvmAudioAsset(id: number): Promise<void>;
   getRvmCampaigns(userId: number): Promise<RvmCampaign[]>;
@@ -897,6 +899,7 @@ export class DatabaseStorage implements IStorage {
     city?: string;
     county?: string;
     leadType?: string;
+    source?: string;
     assignedTo?: number | "unassigned";
     tags?: string[];
     tagsMode?: "any" | "all";
@@ -968,6 +971,9 @@ export class DatabaseStorage implements IStorage {
 
     const leadType = String(input.leadType || "").trim();
     if (leadType) whereParts.push(eq(leads.leadType, leadType));
+
+    const source = String(input.source || "").trim();
+    if (source) whereParts.push(sql`lower(${leads.source}) = ${source.toLowerCase()}`);
 
     const owner = String(input.owner || "").trim().toLowerCase();
     if (owner) {
@@ -1518,6 +1524,11 @@ export class DatabaseStorage implements IStorage {
 
   async getRvmAudioAssets(userId: number): Promise<RvmAudioAsset[]> {
     return db.select().from(rvmAudioAssets).where(eq(rvmAudioAssets.userId, userId)).orderBy(desc(rvmAudioAssets.createdAt));
+  }
+
+  async getRvmAudioAssetById(id: number): Promise<RvmAudioAsset | undefined> {
+    const result = await db.select().from(rvmAudioAssets).where(eq(rvmAudioAssets.id, id)).limit(1);
+    return result[0];
   }
 
   async createRvmAudioAsset(input: InsertRvmAudioAsset): Promise<RvmAudioAsset> {
