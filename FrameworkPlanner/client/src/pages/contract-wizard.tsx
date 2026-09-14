@@ -54,7 +54,10 @@ export default function ContractWizard() {
   const { data: buyers = [] } = useQuery<any[]>({ queryKey: ["/api/buyers"] });
   const { data: contacts = [] } = useQuery<any[]>({ queryKey: ["/api/contacts"] });
 
-  const selectedTemplate = useMemo(() => templates.find((t: any) => String(t.id) === form.templateId), [templates, form.templateId]);
+  // M52: keep the wizard's template list consistent with the Templates tab —
+  // archived templates are never selectable here.
+  const usableTemplates = useMemo(() => templates.filter((t: any) => String(t.status || "").trim().toLowerCase() !== "archived"), [templates]);
+  const selectedTemplate = useMemo(() => usableTemplates.find((t: any) => String(t.id) === form.templateId), [usableTemplates, form.templateId]);
   const selectedProperty = useMemo(() => properties.find((p: any) => String(p.id) === form.propertyId), [properties, form.propertyId]);
   const selectedLead = useMemo(() => leads.find((l: any) => String(l.id) === form.leadId), [leads, form.leadId]);
   const selectedBuyer = useMemo(() => buyers.find((b: any) => String(b.id) === form.buyerId), [buyers, form.buyerId]);
@@ -369,7 +372,7 @@ export default function ContractWizard() {
                   <SelectValue placeholder="Select a template" />
                 </SelectTrigger>
                 <SelectContent>
-                  {templates.map((t: any) => (
+                  {templates.filter((t: any) => String(t.status || "").trim().toLowerCase() !== "archived").map((t: any) => (
                     <SelectItem key={t.id} value={String(t.id)}>
                       {t.name} {t.status !== "approved" && <Badge variant="outline" className="ml-2">{t.status}</Badge>}
                     </SelectItem>

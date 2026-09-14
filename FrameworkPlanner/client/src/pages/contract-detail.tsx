@@ -186,6 +186,9 @@ export default function ContractDetail() {
                 {contract.title || `Contract #${contract.id}`}
               </h1>
               <Badge className={`${STATUS_COLORS[contract.status] || "bg-gray-500"} text-white capitalize`}>{contract.status}</Badge>
+              {contract.expiresAt && new Date(contract.expiresAt).getTime() < Date.now() && !["executed", "voided", "declined"].includes(String(contract.status)) && (
+                <Badge variant="destructive">Offer expired {new Date(contract.expiresAt).toLocaleDateString()}</Badge>
+              )}
             </div>
             <p className="text-muted-foreground">Contract #{contract.id} • {contract.contractType || "Contract"}</p>
           </div>
@@ -246,13 +249,30 @@ export default function ContractDetail() {
                       <div className="font-medium">{contract.inspectionDeadline ? new Date(contract.inspectionDeadline).toLocaleDateString() : "—"}</div>
                     </div>
                     <div>
+                      <span className="text-muted-foreground">Created</span>
+                      <div className="font-medium">{contract.createdAt ? new Date(contract.createdAt).toLocaleString() : "—"}</div>
+                    </div>
+                    <div>
                       <span className="text-muted-foreground">Sent At</span>
                       <div className="font-medium">{contract.sentAt ? new Date(contract.sentAt).toLocaleString() : "—"}</div>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Signed At</span>
+                      <div className="font-medium">{contract.signedAt ? new Date(contract.signedAt).toLocaleString() : "—"}</div>
                     </div>
                     <div>
                       <span className="text-muted-foreground">Executed At</span>
                       <div className="font-medium">{contract.executedAt ? new Date(contract.executedAt).toLocaleString() : "—"}</div>
                     </div>
+                    {contract.expiresAt && (
+                      <div>
+                        <span className="text-muted-foreground">Expires At</span>
+                        <div className={"font-medium " + (new Date(contract.expiresAt).getTime() < Date.now() && !["executed", "voided", "declined"].includes(String(contract.status)) ? "text-destructive" : "")}>
+                          {new Date(contract.expiresAt).toLocaleString()}
+                          {new Date(contract.expiresAt).getTime() < Date.now() && !["executed", "voided", "declined"].includes(String(contract.status)) ? " (expired)" : ""}
+                        </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 

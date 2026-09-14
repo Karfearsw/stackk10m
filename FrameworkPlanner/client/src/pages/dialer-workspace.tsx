@@ -105,7 +105,18 @@ function DialerWorkspaceInner() {
   const [followUpAt, setFollowUpAt] = useState<string>("");
   const [tagInput, setTagInput] = useState("");
   const [powerMode, setPowerMode] = useState(false);
-  const [autoAiAssistant, setAutoAiAssistant] = useState(false);
+  // M38: Settings → System is the single source of truth for the AI Screener.
+  // The dialer only reflects that state — it no longer keeps its own toggle,
+  // which previously showed the opposite of the system setting.
+  const { data: aiAssistantConfig } = useQuery<any>({
+    queryKey: ["/api/settings/telecom/ai-assistant"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/settings/telecom/ai-assistant");
+      return await res.json();
+    },
+    refetchInterval: 30000,
+  });
+  const autoAiAssistant = Boolean(aiAssistantConfig?.enabled);
   const [aiAssistantBusy, setAiAssistantBusy] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferNumber, setTransferNumber] = useState("");
@@ -842,9 +853,16 @@ function DialerWorkspaceInner() {
             <div className="flex items-center justify-between rounded-md border border-border p-3">
               <div className="space-y-1">
                 <div className="text-sm font-medium">AI Screener</div>
-                <div className="text-xs text-muted-foreground">Auto-start High-Intent Lead Screener on answered calls</div>
+                <div className="text-xs text-muted-foreground">
+                  {autoAiAssistant
+                    ? "On (set in Settings → System) — auto-starts on answered calls"
+                    : "Off (set in Settings → System)"}
+                </div>
               </div>
-              <Switch checked={autoAiAssistant} onCheckedChange={setAutoAiAssistant} />
+              <div className="flex items-center gap-2" data-testid="ai-screener-state">
+                <Switch checked={autoAiAssistant} disabled title="Managed in Settings → System" />
+                <a href="/settings?tab=system" className="text-xs text-primary underline underline-offset-2">Configure</a>
+              </div>
             </div>
 
             <div className="text-sm text-muted-foreground">

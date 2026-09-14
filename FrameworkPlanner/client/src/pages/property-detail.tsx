@@ -2308,6 +2308,24 @@ function DealRoomSection({ propertyId, userId }: { propertyId?: number; userId?:
     },
     enabled: !!propertyId,
   });
+  // M50: surface both contract sources in the Deal Room — the canonical
+  // document-contracts pipeline and the legacy contracts store.
+  const { data: contractDocuments = [] } = useQuery<any[]>({
+    queryKey: ["/api/contract-documents", propertyId],
+    queryFn: async () => {
+      const res = await fetch(`/api/contract-documents?limit=200`);
+      if (!res.ok) return [];
+      const items = await res.json();
+      return (Array.isArray(items) ? items : []).filter((d: any) => String(d.propertyId) === String(propertyId));
+    },
+    enabled: !!propertyId,
+  });
+  const DOC_STATUS_MAP: Record<string, { label: string; cls: string }> = {
+    draft: { label: "Draft", cls: "bg-gray-500/10 text-gray-700" },
+    sent: { label: "Sent", cls: "bg-blue-600/10 text-blue-700" },
+    executed: { label: "Executed", cls: "bg-green-600/10 text-green-700" },
+    closed: { label: "Closed", cls: "bg-purple-600/10 text-purple-700" },
+  };
 
   const { data: buyers = [] } = useQuery<any[]>({
     queryKey: ["/api/buyers"],
@@ -2746,19 +2764,40 @@ function DealRoomSection({ propertyId, userId }: { propertyId?: number; userId?:
           <ScrollArea className="h-56 border rounded-md p-2">
             {contractsLoading ? (
               <div className="py-6 text-center text-muted-foreground">Loading contracts…</div>
-            ) : contracts.length ? (
-              <div className="space-y-2">
-                {contracts.map((c: any) => (
-                  <div key={c.id} className="flex items-start justify-between border rounded-md p-3">
-                    <div>
-                      <div className="text-sm font-medium">Contract #{c.id}</div>
-                      <div className="text-xs text-muted-foreground">
-                        ${c.amount ? parseInt(String(c.amount), 10).toLocaleString() : "—"} · {c.status || "—"}
-                      </div>
-                    </div>
-                    <Badge variant="outline">{c.status || "—"}</Badge>
-                  </div>
-                ))}
+            ) : (contractDocuments.length || contracts.length) ? (
+              <div className="space-y-3">
+                {contractDocuments.length ? (
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold text-muted-foreground">Deal Documents</div>
+                    {contractDocuments.map((d: any) => {
+                      const st = DOC_STATUS_MAP[d.status] || { label: d.status || "—", cls: "" };
+                      const created = d.createdAt ? new Date(d.createdAt).toLocaleDateString() : "";
+                      return (
+                        <a key={d.id} href="/contract-generator" className="flex items-center justify-between border rounded-md p-3 hover:bg-muted/40">
+                          <div>
+                            <div className="text-sm font-medium">{d.title || `Document #${d.id}`}</div>
+                            <div className="text-xs text-muted-foreground">Created {created} · Pipeline status</div>
+                          </div>
+                          <Badge variant="outline" className={st.cls}>{st.label}</Badge>
+                        </a>
+                      );
+                    })}                  </div>
+                ) : null}
+                {contracts.length ? (
+                  <div className="space-y-2">
+                    <div className="text-xs font-semibold text-muted-foreground">Signature Contracts</div>
+                    {contracts.map((c: any) => (
+                      <a key={c.id} href={`/contracts/${c.id}`} className="flex items-start justify-between border rounded-md p-3 hover:bg-muted/40">
+                        <div>
+                          <div className="text-sm font-medium">{c.title || `Contract #${c.id}`}</div>
+                          <div className="text-xs text-muted-foreground">
+                            ${c.amount ? parseInt(String(c.amount), 10).toLocaleString() : "—"} · Created {c.createdAt ? new Date(c.createdAt).toLocaleDateString() : "—"}
+                          </div>
+                        </div>
+                        <Badge variant="outline" className="capitalize">{c.status || "—"}</Badge>
+                      </a>
+                    ))}                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="py-6 text-center text-muted-foreground">No contracts yet.</div>

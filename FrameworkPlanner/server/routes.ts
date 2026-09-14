@@ -154,6 +154,22 @@ function isDbConnectivityError(error: any): boolean {
   if (cause && cause !== error) return isDbConnectivityError(cause);
   return false;
 }
+// C6: startup diagnostics — record every registered API route so the health
+// endpoint can prove the route bootstrap completed and detect any failure.
+const routeRegistry: Array<{ method: string; path: string }> = [];
+export function getRouteRegistry() {
+  return routeRegistry;
+}
+function reg(method: string, path: string) {
+  routeRegistry.push({ method: String(method).toUpperCase(), path });
+  return true;
+}
+
+const BOOT_TIME = new Date();
+// C6: minimum number of API routes this build registers. If /api/system/routes
+// reports fewer, the route bootstrap partially failed (the 09-11 outage mode).
+const EXPECTED_ROUTE_COUNT = 450;
+
 function parseLimitOffset(query: any): { limit: number; offset: number } {
   const DEFAULT_LIMIT = 50;
   const MAX_LIMIT = process.env.NODE_ENV === "production" ? 100 : 500;
@@ -778,7 +794,7 @@ export async function registerRoutes(
     }
   });
   app.use("/api/v1/telecom/webhooks/telnyx", createTelnyxWebhookRouter());
-  app.get("/api/crm/fields", async (req, res) => {
+  reg("get", "/api/crm/fields"); app.get("/api/crm/fields", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const entityType = String(req.query.entityType || "");
@@ -787,7 +803,7 @@ export async function registerRoutes(
     }
     return res.json({ entityType, fields: getCrmFieldDefs(entityType as any) });
   });
-  app.post("/api/crm/import/preview", upload.single("file"), async (req, res) => {
+  reg("post", "/api/crm/import/preview"); app.post("/api/crm/import/preview", upload.single("file"), async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const entityType = String(req.body.entityType || "");
@@ -811,7 +827,7 @@ export async function registerRoutes(
       totalRows: parsed.rows.length,
     });
   });
-  app.post("/api/crm/import/jobs", upload.single("file"), async (req, res) => {
+  reg("post", "/api/crm/import/jobs"); app.post("/api/crm/import/jobs", upload.single("file"), async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const entityType = String(req.body.entityType || "");
@@ -852,7 +868,7 @@ export async function registerRoutes(
     }
     return res.status(201).json({ jobId: job.id });
   });
-  app.post("/api/crm/import/jobs/:id/run", async (req, res) => {
+  reg("post", "/api/crm/import/jobs/:id/run"); app.post("/api/crm/import/jobs/:id/run", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const jobId = parseInt(req.params.id, 10);
@@ -865,7 +881,7 @@ export async function registerRoutes(
     const errors = await listImportJobErrors(jobId, 50);
     return res.json({ job: nextJob, errors });
   });
-  app.get("/api/crm/import/jobs", async (req, res) => {
+  reg("get", "/api/crm/import/jobs"); app.get("/api/crm/import/jobs", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const rows = await db
@@ -876,7 +892,7 @@ export async function registerRoutes(
       .limit(20);
     return res.json({ jobs: rows });
   });
-  app.get("/api/crm/import/jobs/:id", async (req, res) => {
+  reg("get", "/api/crm/import/jobs/:id"); app.get("/api/crm/import/jobs/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const jobId = parseInt(req.params.id, 10);
@@ -887,7 +903,7 @@ export async function registerRoutes(
     const errors = await listImportJobErrors(jobId, 50);
     return res.json({ job, errors });
   });
-  app.get("/api/crm/import/jobs/:id/errors.csv", async (req, res) => {
+  reg("get", "/api/crm/import/jobs/:id/errors.csv"); app.get("/api/crm/import/jobs/:id/errors.csv", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const jobId = parseInt(req.params.id, 10);
@@ -907,7 +923,7 @@ export async function registerRoutes(
     res.setHeader("Content-Disposition", `attachment; filename="import-errors-${jobId}.csv"`);
     return res.send(lines.join("\n"));
   });
-  app.post("/api/crm/export/jobs", async (req, res) => {
+  reg("post", "/api/crm/export/jobs"); app.post("/api/crm/export/jobs", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const entityType = String(req.body.entityType || "");
@@ -944,7 +960,7 @@ export async function registerRoutes(
     const downloadUrl = `/api/crm/export/files/${job.id}/download?token=${encodeURIComponent(token)}`;
     return res.status(201).json({ jobId: job.id, downloadUrl });
   });
-  app.post("/api/crm/export/jobs/:id/run", async (req, res) => {
+  reg("post", "/api/crm/export/jobs/:id/run"); app.post("/api/crm/export/jobs/:id/run", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const exportId = parseInt(req.params.id, 10);
@@ -956,7 +972,7 @@ export async function registerRoutes(
     const nextJob = await getExportJob(exportId);
     return res.json({ job: nextJob });
   });
-  app.get("/api/crm/export/jobs", async (req, res) => {
+  reg("get", "/api/crm/export/jobs"); app.get("/api/crm/export/jobs", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const rows = await db
@@ -967,7 +983,7 @@ export async function registerRoutes(
       .limit(20);
     return res.json({ jobs: rows });
   });
-  app.get("/api/crm/export/jobs/:id", async (req, res) => {
+  reg("get", "/api/crm/export/jobs/:id"); app.get("/api/crm/export/jobs/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const exportId = parseInt(req.params.id, 10);
@@ -977,7 +993,7 @@ export async function registerRoutes(
     if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
     return res.json({ job });
   });
-  app.post("/api/crm/export/jobs/:id/renew-download", async (req, res) => {
+  reg("post", "/api/crm/export/jobs/:id/renew-download"); app.post("/api/crm/export/jobs/:id/renew-download", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const exportId = parseInt(req.params.id, 10);
@@ -990,7 +1006,7 @@ export async function registerRoutes(
     const downloadUrl = `/api/crm/export/files/${exportId}/download?token=${encodeURIComponent(token)}`;
     return res.json({ downloadUrl });
   });
-  app.get("/api/crm/export/files/:id/download", async (req, res) => {
+  reg("get", "/api/crm/export/files/:id/download"); app.get("/api/crm/export/files/:id/download", async (req, res) => {
     const exportId = parseInt(req.params.id, 10);
     if (!Number.isFinite(exportId)) return res.status(400).json({ message: "Invalid export id" });
     const token = String(req.query.token || "");
@@ -1006,7 +1022,7 @@ export async function registerRoutes(
     return res.send(buf);
   });
   // HEALTH CHECK
-  app.get("/api/health", async (req, res) => {
+  reg("get", "/api/health"); app.get("/api/health", async (req, res) => {
     try {
       // Perform a simple query to verify DB connectivity
       await storage.getUserByEmail("test@example.com");
@@ -1016,7 +1032,7 @@ export async function registerRoutes(
       res.status(500).json({ status: "error", db: "disconnected", message: error.message });
     }
   });
-  app.get("/api/version", async (_req, res) => {
+  reg("get", "/api/version"); app.get("/api/version", async (_req, res) => {
     const version = String(process.env.APP_VERSION || packageJson?.version || "0.0.0");
     const commitSha =
       String(
@@ -1089,17 +1105,17 @@ export async function registerRoutes(
       return null;
     }
   }
-  app.get("/api/xp/experiences", async (_req, res) => {
+  reg("get", "/api/xp/experiences"); app.get("/api/xp/experiences", async (_req, res) => {
     const items = await storage.listXpExperiences({ activeOnly: true });
     return res.json({ items });
   });
-  app.get("/api/xp/experiences/:slug", async (req, res) => {
+  reg("get", "/api/xp/experiences/:slug"); app.get("/api/xp/experiences/:slug", async (req, res) => {
     const slug = String(req.params.slug || "").trim();
     const experience = await storage.getXpExperienceBySlug(slug);
     if (!experience || !(experience as any).active) return res.status(404).json({ message: "Not found" });
     return res.json({ experience });
   });
-  app.get("/api/xp/experiences/:slug/availability", async (req, res) => {
+  reg("get", "/api/xp/experiences/:slug/availability"); app.get("/api/xp/experiences/:slug/availability", async (req, res) => {
     const slug = String(req.params.slug || "").trim();
     const experience = await storage.getXpExperienceBySlug(slug);
     if (!experience || !(experience as any).active) return res.status(404).json({ message: "Not found" });
@@ -1136,7 +1152,7 @@ export async function registerRoutes(
     }
     return res.json(out);
   });
-  app.post("/api/xp/bookings/checkout", async (req, res) => {
+  reg("post", "/api/xp/bookings/checkout"); app.post("/api/xp/bookings/checkout", async (req, res) => {
     const body = req.body || {};
     const experienceSlug = String(body.experienceSlug || "").trim();
     const experience = await storage.getXpExperienceBySlug(experienceSlug);
@@ -1224,7 +1240,7 @@ export async function registerRoutes(
     await storage.updateXpBookingStripeSession((booking as any).id, session.id);
     return res.status(201).json({ checkoutUrl: session.url });
   });
-  app.get("/api/xp/bookings/session/:sessionId", async (req, res) => {
+  reg("get", "/api/xp/bookings/session/:sessionId"); app.get("/api/xp/bookings/session/:sessionId", async (req, res) => {
     const sessionId = String(req.params.sessionId || "").trim();
     if (!sessionId) return res.status(400).json({ message: "Missing sessionId" });
     const booking = await storage.getXpBookingByStripeSessionId(sessionId);
@@ -1253,7 +1269,7 @@ export async function registerRoutes(
         : null,
     });
   });
-  app.post("/api/stripe/webhook", async (req, res) => {
+  reg("post", "/api/stripe/webhook"); app.post("/api/stripe/webhook", async (req, res) => {
     const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
     const webhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || "").trim();
     if (!stripeKey || !webhookSecret) return res.status(500).json({ message: "Stripe is not configured" });
@@ -1311,14 +1327,14 @@ export async function registerRoutes(
     }
     return res.json({ received: true });
   });
-  app.get("/api/xp/admin/experiences", async (req, res) => {
+  reg("get", "/api/xp/admin/experiences"); app.get("/api/xp/admin/experiences", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
     const items = await storage.listXpExperiences({ activeOnly: false });
     return res.json({ items });
   });
-  app.post("/api/xp/admin/experiences", async (req, res) => {
+  reg("post", "/api/xp/admin/experiences"); app.post("/api/xp/admin/experiences", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1379,7 +1395,7 @@ export async function registerRoutes(
     } as any);
     return res.status(201).json({ experience: row });
   });
-  app.patch("/api/xp/admin/experiences/:id", async (req, res) => {
+  reg("patch", "/api/xp/admin/experiences/:id"); app.patch("/api/xp/admin/experiences/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1438,7 +1454,7 @@ export async function registerRoutes(
     const row = await storage.updateXpExperience(id, patch);
     return res.json({ experience: row });
   });
-  app.delete("/api/xp/admin/experiences/:id", async (req, res) => {
+  reg("delete", "/api/xp/admin/experiences/:id"); app.delete("/api/xp/admin/experiences/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1447,7 +1463,7 @@ export async function registerRoutes(
     const row = await storage.deactivateXpExperience(id);
     return res.json({ experience: row });
   });
-  app.get("/api/xp/admin/experiences/:id/time-slots", async (req, res) => {
+  reg("get", "/api/xp/admin/experiences/:id/time-slots"); app.get("/api/xp/admin/experiences/:id/time-slots", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1458,7 +1474,7 @@ export async function registerRoutes(
     const items = await storage.listXpTimeSlots(id, { from, to, activeOnly: false });
     return res.json({ items });
   });
-  app.post("/api/xp/admin/experiences/:id/time-slots", async (req, res) => {
+  reg("post", "/api/xp/admin/experiences/:id/time-slots"); app.post("/api/xp/admin/experiences/:id/time-slots", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1472,7 +1488,7 @@ export async function registerRoutes(
     const row = await storage.createXpTimeSlot({ experienceId: id, startAt, endAt, capacity, active: req.body?.active !== false } as any);
     return res.status(201).json({ timeSlot: row });
   });
-  app.delete("/api/xp/admin/time-slots/:slotId", async (req, res) => {
+  reg("delete", "/api/xp/admin/time-slots/:slotId"); app.delete("/api/xp/admin/time-slots/:slotId", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1481,7 +1497,7 @@ export async function registerRoutes(
     await storage.deleteXpTimeSlot(slotId);
     return res.json({ ok: true });
   });
-  app.get("/api/xp/admin/experiences/:id/blackouts", async (req, res) => {
+  reg("get", "/api/xp/admin/experiences/:id/blackouts"); app.get("/api/xp/admin/experiences/:id/blackouts", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1492,7 +1508,7 @@ export async function registerRoutes(
     const items = await storage.listXpBlackouts(id, { from, to });
     return res.json({ items });
   });
-  app.post("/api/xp/admin/experiences/:id/blackouts", async (req, res) => {
+  reg("post", "/api/xp/admin/experiences/:id/blackouts"); app.post("/api/xp/admin/experiences/:id/blackouts", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1505,7 +1521,7 @@ export async function registerRoutes(
     const row = await storage.createXpBlackout({ experienceId: id, startAt, endAt, reason: String(req.body?.reason || "").trim() || null } as any);
     return res.status(201).json({ blackout: row });
   });
-  app.delete("/api/xp/admin/blackouts/:id", async (req, res) => {
+  reg("delete", "/api/xp/admin/blackouts/:id"); app.delete("/api/xp/admin/blackouts/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1514,7 +1530,7 @@ export async function registerRoutes(
     await storage.deleteXpBlackout(id);
     return res.json({ ok: true });
   });
-  app.get("/api/xp/admin/bookings", async (req, res) => {
+  reg("get", "/api/xp/admin/bookings"); app.get("/api/xp/admin/bookings", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1547,7 +1563,7 @@ export async function registerRoutes(
     });
     return res.json(out);
   });
-  app.get("/api/xp/admin/bookings/:id", async (req, res) => {
+  reg("get", "/api/xp/admin/bookings/:id"); app.get("/api/xp/admin/bookings/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1561,7 +1577,7 @@ export async function registerRoutes(
     const experience = await storage.getXpExperienceById(Number((booking as any).experienceId));
     return res.json({ booking, experience: experience || null });
   });
-  app.post("/api/xp/admin/bookings/:id/cancel", async (req, res) => {
+  reg("post", "/api/xp/admin/bookings/:id/cancel"); app.post("/api/xp/admin/bookings/:id/cancel", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1576,7 +1592,7 @@ export async function registerRoutes(
     const n = typeof v === "number" ? v : parseInt(String(v), 10);
     return Number.isFinite(n) ? n : null;
   }
-  app.get("/api/xp/admin/locations", async (req, res) => {
+  reg("get", "/api/xp/admin/locations"); app.get("/api/xp/admin/locations", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1587,7 +1603,7 @@ export async function registerRoutes(
     const items = await storage.listXpLocations({ activeOnly });
     return res.json({ items });
   });
-  app.post("/api/xp/admin/locations", async (req, res) => {
+  reg("post", "/api/xp/admin/locations"); app.post("/api/xp/admin/locations", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1605,7 +1621,7 @@ export async function registerRoutes(
     } as any);
     return res.status(201).json({ location: row });
   });
-  app.patch("/api/xp/admin/locations/:id", async (req, res) => {
+  reg("patch", "/api/xp/admin/locations/:id"); app.patch("/api/xp/admin/locations/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1623,7 +1639,7 @@ export async function registerRoutes(
     const row = await storage.updateXpLocation(id, patch);
     return res.json({ location: row });
   });
-  app.delete("/api/xp/admin/locations/:id", async (req, res) => {
+  reg("delete", "/api/xp/admin/locations/:id"); app.delete("/api/xp/admin/locations/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1632,7 +1648,7 @@ export async function registerRoutes(
     const row = await storage.deactivateXpLocation(id);
     return res.json({ location: row });
   });
-  app.get("/api/xp/admin/vehicles", async (req, res) => {
+  reg("get", "/api/xp/admin/vehicles"); app.get("/api/xp/admin/vehicles", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1648,7 +1664,7 @@ export async function registerRoutes(
     });
     return res.json({ items });
   });
-  app.post("/api/xp/admin/vehicles", async (req, res) => {
+  reg("post", "/api/xp/admin/vehicles"); app.post("/api/xp/admin/vehicles", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1663,7 +1679,7 @@ export async function registerRoutes(
     } as any);
     return res.status(201).json({ vehicle: row });
   });
-  app.patch("/api/xp/admin/vehicles/:id", async (req, res) => {
+  reg("patch", "/api/xp/admin/vehicles/:id"); app.patch("/api/xp/admin/vehicles/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1678,7 +1694,7 @@ export async function registerRoutes(
     const row = await storage.updateXpVehicle(id, patch);
     return res.json({ vehicle: row });
   });
-  app.delete("/api/xp/admin/vehicles/:id", async (req, res) => {
+  reg("delete", "/api/xp/admin/vehicles/:id"); app.delete("/api/xp/admin/vehicles/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1687,7 +1703,7 @@ export async function registerRoutes(
     const row = await storage.deactivateXpVehicle(id);
     return res.json({ vehicle: row });
   });
-  app.get("/api/xp/admin/concierges", async (req, res) => {
+  reg("get", "/api/xp/admin/concierges"); app.get("/api/xp/admin/concierges", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1698,7 +1714,7 @@ export async function registerRoutes(
     });
     return res.json({ items: safe });
   });
-  app.put("/api/xp/admin/bookings/:id/assignment", async (req, res) => {
+  reg("put", "/api/xp/admin/bookings/:id/assignment"); app.put("/api/xp/admin/bookings/:id/assignment", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1724,7 +1740,7 @@ export async function registerRoutes(
     });
     return res.json({ assignment });
   });
-  app.get("/api/xp/admin/bookings/:id/notes", async (req, res) => {
+  reg("get", "/api/xp/admin/bookings/:id/notes"); app.get("/api/xp/admin/bookings/:id/notes", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1738,7 +1754,7 @@ export async function registerRoutes(
     const items = await storage.listXpBookingNotes(id);
     return res.json({ items });
   });
-  app.post("/api/xp/admin/bookings/:id/notes", async (req, res) => {
+  reg("post", "/api/xp/admin/bookings/:id/notes"); app.post("/api/xp/admin/bookings/:id/notes", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isXpOpsUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -1757,7 +1773,7 @@ export async function registerRoutes(
   });
   // Small in-memory cache to stay polite with Nominatim's fair-use policy.
   const nominatimCache = new Map<string, any[]>();
-  app.get("/api/address/suggest", async (req, res) => {
+  reg("get", "/api/address/suggest"); app.get("/api/address/suggest", async (req, res) => {
     try {
       const qRaw = (req.query.q as string) || "";
       const q = qRaw.trim();
@@ -1839,7 +1855,7 @@ export async function registerRoutes(
     }
   });
   // GLOBAL SEARCH
-  app.get("/api/search", async (req, res) => {
+  reg("get", "/api/search"); app.get("/api/search", async (req, res) => {
     const startedAt = Date.now();
     try {
       const user = await requireAuth(req, res);
@@ -1960,7 +1976,7 @@ export async function registerRoutes(
   });
   // AUTH ENDPOINTS
   if (process.env.NODE_ENV !== "production") {
-    app.get("/api/auth/debug", (req, res) => {
+    reg("get", "/api/auth/debug"); app.get("/api/auth/debug", (req, res) => {
       const authHeader = String(req.headers.authorization || "");
       const isBearer = authHeader.startsWith("Bearer ");
       const tokenLen = isBearer ? authHeader.slice("Bearer ".length).trim().length : 0;
@@ -1975,7 +1991,7 @@ export async function registerRoutes(
       });
     });
   }
-  app.get("/api/auth/status", (_req, res) => {
+  reg("get", "/api/auth/status"); app.get("/api/auth/status", (_req, res) => {
     const snapshot = getAuthStatusSnapshot();
     res.json(snapshot);
   });
@@ -2000,7 +2016,7 @@ export async function registerRoutes(
     }
     return true;
   }
-  app.post("/api/auth/login", async (req, res) => {
+  reg("post", "/api/auth/login"); app.post("/api/auth/login", async (req, res) => {
     try {
       const requestId = (res.locals as any)?.requestId || undefined;
       const { email, password } = req.body;
@@ -2112,7 +2128,7 @@ export async function registerRoutes(
       res.status(500).json({ message: `Login failed: ${error.message}`, requestId });
     }
   });
-  app.post("/api/auth/password-reset/request", async (req, res) => {
+  reg("post", "/api/auth/password-reset/request"); app.post("/api/auth/password-reset/request", async (req, res) => {
     try {
       if (!checkAuthRateLimit(req, res)) return;
       const normalizedEmail = String(req.body?.email || "").trim().toLowerCase();
@@ -2181,7 +2197,7 @@ export async function registerRoutes(
       return sendAuthError(res, 503, { code: "email_send_failed", message: error?.message || "Email send failed" });
     }
   });
-  app.post("/api/auth/password-reset/confirm", async (req, res) => {
+  reg("post", "/api/auth/password-reset/confirm"); app.post("/api/auth/password-reset/confirm", async (req, res) => {
     try {
       if (!checkAuthRateLimit(req, res)) return;
       const token = String(req.body?.token || "").trim();
@@ -2231,7 +2247,7 @@ export async function registerRoutes(
       return res.status(500).json({ message: "Password reset failed" });
     }
   });
-  app.post("/api/auth/magic-link/request", async (req, res) => {
+  reg("post", "/api/auth/magic-link/request"); app.post("/api/auth/magic-link/request", async (req, res) => {
     try {
       if (!checkAuthRateLimit(req, res)) return;
       const normalizedEmail = String(req.body?.email || "").trim().toLowerCase();
@@ -2298,7 +2314,7 @@ export async function registerRoutes(
       return sendAuthError(res, 503, { code: "email_send_failed", message: error?.message || "Email send failed" });
     }
   });
-  app.post("/api/auth/magic-link/consume", async (req, res) => {
+  reg("post", "/api/auth/magic-link/consume"); app.post("/api/auth/magic-link/consume", async (req, res) => {
     try {
       if (!checkAuthRateLimit(req, res)) return;
       const token = String(req.body?.token || "").trim();
@@ -2345,7 +2361,7 @@ export async function registerRoutes(
       return res.status(500).json({ message: "Sign-in failed" });
     }
   });
-  app.post("/api/auth/dev-bypass", async (req, res) => {
+  reg("post", "/api/auth/dev-bypass"); app.post("/api/auth/dev-bypass", async (req, res) => {
     try {
       if (!isDevEmployeeBypassEnabled()) {
         return res.status(404).json({ message: "Not found" });
@@ -2450,7 +2466,7 @@ export async function registerRoutes(
       return res.status(500).json({ message: `Dev bypass failed: ${error.message}` });
     }
   });
-  app.post("/api/auth/signup", async (req, res) => {
+  reg("post", "/api/auth/signup"); app.post("/api/auth/signup", async (req, res) => {
     try {
       const { firstName, lastName, email, password, isActive = true, teamInviteCode } = req.body;
       
@@ -2544,7 +2560,7 @@ export async function registerRoutes(
       res.status(500).json({ message: `Signup failed: ${error.message}` });
     }
   });
-  app.post("/api/auth/logout", async (req, res) => {
+  reg("post", "/api/auth/logout"); app.post("/api/auth/logout", async (req, res) => {
     req.session.destroy((err) => {
       if (err) {
         return res.status(500).json({ message: "Failed to logout" });
@@ -2552,7 +2568,7 @@ export async function registerRoutes(
       res.json({ message: "Logged out successfully" });
     });
   });
-  app.get("/api/auth/me", async (req, res) => {
+  reg("get", "/api/auth/me"); app.get("/api/auth/me", async (req, res) => {
     try {
       const requestId = (res.locals as any)?.requestId || undefined;
       if (!req.session.userId) {
@@ -2573,7 +2589,7 @@ export async function registerRoutes(
   });
   // ---- In-app browser proxy: strips iframe-blocking headers ----
   const proxyRateLimit = new Map<number, { count: number; resetAt: number }>();
-  app.get("/api/playground/proxy", async (req, res) => {
+  reg("get", "/api/playground/proxy"); app.get("/api/playground/proxy", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -2753,7 +2769,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/playground/sessions/recent", async (req, res) => {
+  reg("get", "/api/playground/sessions/recent"); app.get("/api/playground/sessions/recent", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -2764,7 +2780,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/playground/sessions/open", async (req, res) => {
+  reg("post", "/api/playground/sessions/open"); app.post("/api/playground/sessions/open", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -2821,7 +2837,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/playground/sessions", async (req, res) => {
+  reg("post", "/api/playground/sessions"); app.post("/api/playground/sessions", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -2848,7 +2864,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/playground/sessions/:id", async (req, res) => {
+  reg("get", "/api/playground/sessions/:id"); app.get("/api/playground/sessions/:id", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -2860,7 +2876,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.patch("/api/playground/sessions/:id", async (req, res) => {
+  reg("patch", "/api/playground/sessions/:id"); app.patch("/api/playground/sessions/:id", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -2923,7 +2939,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/playground/sessions/:id/send", async (req, res) => {
+  reg("post", "/api/playground/sessions/:id/send"); app.post("/api/playground/sessions/:id/send", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -3088,7 +3104,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/playground/sessions/:id", async (req, res) => {
+  reg("delete", "/api/playground/sessions/:id"); app.delete("/api/playground/sessions/:id", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -3099,7 +3115,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/underwriting/templates", async (req, res) => {
+  reg("get", "/api/underwriting/templates"); app.get("/api/underwriting/templates", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -3118,7 +3134,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/underwriting/templates", async (req, res) => {
+  reg("post", "/api/underwriting/templates"); app.post("/api/underwriting/templates", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -3138,7 +3154,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/underwriting/templates/:id", async (req, res) => {
+  reg("patch", "/api/underwriting/templates/:id"); app.patch("/api/underwriting/templates/:id", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -3165,7 +3181,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/underwriting/templates/:id", async (req, res) => {
+  reg("delete", "/api/underwriting/templates/:id"); app.delete("/api/underwriting/templates/:id", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -3178,7 +3194,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/underwriting/ai", async (req, res) => {
+  reg("post", "/api/underwriting/ai"); app.post("/api/underwriting/ai", async (req, res) => {
     const schema = z.object({
       subject: z.object({ sqft: z.number().finite().optional().nullable() }).default({}),
       underwriting: underwritingSchemaV1,
@@ -3206,7 +3222,7 @@ export async function registerRoutes(
     }
   });
   // LEADS ENDPOINTS
-  app.get("/api/dashboard/stats", async (req, res) => {
+  reg("get", "/api/dashboard/stats"); app.get("/api/dashboard/stats", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -3241,7 +3257,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/leads", async (req, res) => {
+  reg("get", "/api/leads"); app.get("/api/leads", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -3392,7 +3408,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/leads/:id", async (req, res) => {
+  reg("get", "/api/leads/:id"); app.get("/api/leads/:id", async (req, res) => {
     try {
       const lead = await storage.getLeadById(parseInt(req.params.id));
       if (!lead) return res.status(404).json({ message: "Lead not found" });
@@ -3401,7 +3417,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/leads/:id/notes", async (req, res) => {
+  reg("get", "/api/leads/:id/notes"); app.get("/api/leads/:id/notes", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -3415,7 +3431,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/leads/:id/notes", async (req, res) => {
+  reg("post", "/api/leads/:id/notes"); app.post("/api/leads/:id/notes", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -3449,7 +3465,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/leads/views", async (req, res) => {
+  reg("get", "/api/leads/views"); app.get("/api/leads/views", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -3461,7 +3477,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/leads/views", async (req, res) => {
+  reg("post", "/api/leads/views"); app.post("/api/leads/views", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -3499,7 +3515,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/leads/views/:id", async (req, res) => {
+  reg("patch", "/api/leads/views/:id"); app.patch("/api/leads/views/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -3527,7 +3543,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/leads/views/:id", async (req, res) => {
+  reg("delete", "/api/leads/views/:id"); app.delete("/api/leads/views/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -3542,7 +3558,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/leads/views/by-token/:token", async (req, res) => {
+  reg("get", "/api/leads/views/by-token/:token"); app.get("/api/leads/views/by-token/:token", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
       if (!token) return res.status(404).json({ message: "Not found" });
@@ -3625,7 +3641,7 @@ export async function registerRoutes(
       sortDir,
     };
   };
-  app.post("/api/leads/bulk/preview", async (req, res) => {
+  reg("post", "/api/leads/bulk/preview"); app.post("/api/leads/bulk/preview", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -3677,7 +3693,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/leads/bulk/jobs", async (req, res) => {
+  reg("post", "/api/leads/bulk/jobs"); app.post("/api/leads/bulk/jobs", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -3837,7 +3853,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/leads/bulk/jobs/:id", async (req, res) => {
+  reg("get", "/api/leads/bulk/jobs/:id"); app.get("/api/leads/bulk/jobs/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -3851,7 +3867,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/ai/voice/parse", async (req, res) => {
+  reg("post", "/api/ai/voice/parse"); app.post("/api/ai/voice/parse", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -3903,7 +3919,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/ai/voice/preview", async (req, res) => {
+  reg("post", "/api/ai/voice/preview"); app.post("/api/ai/voice/preview", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -3980,7 +3996,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/ai/voice/apply", async (req, res) => {
+  reg("post", "/api/ai/voice/apply"); app.post("/api/ai/voice/apply", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4177,7 +4193,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/ai/voice/undo", async (req, res) => {
+  reg("post", "/api/ai/voice/undo"); app.post("/api/ai/voice/undo", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4213,7 +4229,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/audit/runs", async (req, res) => {
+  reg("get", "/api/audit/runs"); app.get("/api/audit/runs", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4225,7 +4241,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/audit/runs", async (req, res) => {
+  reg("post", "/api/audit/runs"); app.post("/api/audit/runs", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4236,7 +4252,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/audit/runs/:id/findings", async (req, res) => {
+  reg("get", "/api/audit/runs/:id/findings"); app.get("/api/audit/runs/:id/findings", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4248,7 +4264,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/audit/runs/:id/findings", async (req, res) => {
+  reg("post", "/api/audit/runs/:id/findings"); app.post("/api/audit/runs/:id/findings", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4287,7 +4303,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/audit/runs/:id/seed-pages", async (req, res) => {
+  reg("post", "/api/audit/runs/:id/seed-pages"); app.post("/api/audit/runs/:id/seed-pages", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4455,7 +4471,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/audit/findings/:id", async (req, res) => {
+  reg("patch", "/api/audit/findings/:id"); app.patch("/api/audit/findings/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4493,7 +4509,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/audit/release-gate", async (req, res) => {
+  reg("get", "/api/audit/release-gate"); app.get("/api/audit/release-gate", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4524,7 +4540,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/skip-trace/config", async (req, res) => {
+  reg("get", "/api/skip-trace/config"); app.get("/api/skip-trace/config", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4552,7 +4568,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/skip-trace/jobs", async (req, res) => {
+  reg("post", "/api/skip-trace/jobs"); app.post("/api/skip-trace/jobs", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4580,7 +4596,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/skip-trace/jobs/:jobId/run", async (req, res) => {
+  reg("post", "/api/skip-trace/jobs/:jobId/run"); app.post("/api/skip-trace/jobs/:jobId/run", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4597,7 +4613,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/skip-trace/jobs/:jobId", async (req, res) => {
+  reg("get", "/api/skip-trace/jobs/:jobId"); app.get("/api/skip-trace/jobs/:jobId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4646,7 +4662,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/leads/:id/skip-trace/latest", async (req, res) => {
+  reg("get", "/api/leads/:id/skip-trace/latest"); app.get("/api/leads/:id/skip-trace/latest", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4665,7 +4681,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/leads/:id/skip-trace", async (req, res) => {
+  reg("post", "/api/leads/:id/skip-trace"); app.post("/api/leads/:id/skip-trace", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4681,7 +4697,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/lead-source-options", async (req, res) => {
+  reg("get", "/api/lead-source-options"); app.get("/api/lead-source-options", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4727,7 +4743,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/lead-source-options", async (req, res) => {
+  reg("post", "/api/lead-source-options"); app.post("/api/lead-source-options", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4756,7 +4772,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/campaigns", async (req, res) => {
+  reg("get", "/api/campaigns"); app.get("/api/campaigns", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4767,7 +4783,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/campaigns", async (req, res) => {
+  reg("post", "/api/campaigns"); app.post("/api/campaigns", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4780,7 +4796,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/campaigns/:id", async (req, res) => {
+  reg("patch", "/api/campaigns/:id"); app.patch("/api/campaigns/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4797,7 +4813,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/campaigns/:id", async (req, res) => {
+  reg("delete", "/api/campaigns/:id"); app.delete("/api/campaigns/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4809,7 +4825,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/campaigns/:id/steps", async (req, res) => {
+  reg("get", "/api/campaigns/:id/steps"); app.get("/api/campaigns/:id/steps", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4821,7 +4837,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.put("/api/campaigns/:id/steps", async (req, res) => {
+  reg("put", "/api/campaigns/:id/steps"); app.put("/api/campaigns/:id/steps", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4857,7 +4873,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/campaigns/:id/enroll", async (req, res) => {
+  reg("post", "/api/campaigns/:id/enroll"); app.post("/api/campaigns/:id/enroll", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4877,7 +4893,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/campaigns/:id/stats", async (req, res) => {
+  reg("get", "/api/campaigns/:id/stats"); app.get("/api/campaigns/:id/stats", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4902,7 +4918,7 @@ export async function registerRoutes(
     if (startM <= endM) return mins >= startM && mins <= endM;
     return mins >= startM || mins <= endM;
   }
-  app.get("/api/rvm/audio-assets", async (req, res) => {
+  reg("get", "/api/rvm/audio-assets"); app.get("/api/rvm/audio-assets", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4913,7 +4929,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/rvm/audio-assets", async (req, res) => {
+  reg("post", "/api/rvm/audio-assets"); app.post("/api/rvm/audio-assets", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4930,7 +4946,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/rvm/audio-assets/:id", async (req, res) => {
+  reg("delete", "/api/rvm/audio-assets/:id"); app.delete("/api/rvm/audio-assets/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4942,7 +4958,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/rvm/campaigns", async (req, res) => {
+  reg("get", "/api/rvm/campaigns"); app.get("/api/rvm/campaigns", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4953,7 +4969,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/rvm/campaigns", async (req, res) => {
+  reg("post", "/api/rvm/campaigns"); app.post("/api/rvm/campaigns", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -4980,7 +4996,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/rvm/campaigns/:id", async (req, res) => {
+  reg("patch", "/api/rvm/campaigns/:id"); app.patch("/api/rvm/campaigns/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5001,7 +5017,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/rvm/campaigns/:id", async (req, res) => {
+  reg("delete", "/api/rvm/campaigns/:id"); app.delete("/api/rvm/campaigns/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5013,7 +5029,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/rvm/campaigns/:id/drops", async (req, res) => {
+  reg("get", "/api/rvm/campaigns/:id/drops"); app.get("/api/rvm/campaigns/:id/drops", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5025,7 +5041,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/rvm/campaigns/:id/launch", async (req, res) => {
+  reg("post", "/api/rvm/campaigns/:id/launch"); app.post("/api/rvm/campaigns/:id/launch", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5128,7 +5144,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/sync", async (req, res) => {
+  reg("post", "/api/sync"); app.post("/api/sync", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5215,7 +5231,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/leads", async (req, res) => {
+  reg("post", "/api/leads"); app.post("/api/leads", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5277,7 +5293,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/leads/:id", async (req, res) => {
+  reg("patch", "/api/leads/:id"); app.patch("/api/leads/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5369,7 +5385,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/leads/:id", async (req, res) => {
+  reg("delete", "/api/leads/:id"); app.delete("/api/leads/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5391,7 +5407,7 @@ export async function registerRoutes(
     }
   });
   // Convert lead to property (lead must be under_contract status)
-  app.post("/api/leads/:id/convert-to-property", async (req, res) => {
+  reg("post", "/api/leads/:id/convert-to-property"); app.post("/api/leads/:id/convert-to-property", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5482,7 +5498,7 @@ export async function registerRoutes(
     }
   });
   // OPPORTUNITIES ENDPOINTS (New Terminology)
-  app.get("/api/opportunities", async (req, res) => {
+  reg("get", "/api/opportunities"); app.get("/api/opportunities", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5504,7 +5520,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/opportunities/:id", async (req, res) => {
+  reg("get", "/api/opportunities/:id"); app.get("/api/opportunities/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5522,7 +5538,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/opportunities/:id/companies", async (req, res) => {
+  reg("get", "/api/opportunities/:id/companies"); app.get("/api/opportunities/:id/companies", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
       if (!ctx) return;
@@ -5533,7 +5549,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/opportunities/:id/companies", async (req, res) => {
+  reg("post", "/api/opportunities/:id/companies"); app.post("/api/opportunities/:id/companies", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
       if (!ctx) return;
@@ -5570,7 +5586,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/opportunities/:id/companies/:linkId", async (req, res) => {
+  reg("delete", "/api/opportunities/:id/companies/:linkId"); app.delete("/api/opportunities/:id/companies/:linkId", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
       if (!ctx) return;
@@ -5600,7 +5616,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/property-photos/:key", async (req, res) => {
+  reg("get", "/api/property-photos/:key"); app.get("/api/property-photos/:key", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5618,7 +5634,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/opportunities/:id/photos", upload.array("photos", 20), async (req, res) => {
+  reg("post", "/api/opportunities/:id/photos"); app.post("/api/opportunities/:id/photos", upload.array("photos", 20), async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5644,7 +5660,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/opportunities/:id/skip-trace/latest", async (req, res) => {
+  reg("get", "/api/opportunities/:id/skip-trace/latest"); app.get("/api/opportunities/:id/skip-trace/latest", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5663,7 +5679,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/opportunities/:id/skip-trace", async (req, res) => {
+  reg("post", "/api/opportunities/:id/skip-trace"); app.post("/api/opportunities/:id/skip-trace", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5680,7 +5696,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/opportunities/:id/comps/snapshots", async (req, res) => {
+  reg("get", "/api/opportunities/:id/comps/snapshots"); app.get("/api/opportunities/:id/comps/snapshots", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5727,7 +5743,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/opportunities/:id/comps/pull", async (req, res) => {
+  reg("post", "/api/opportunities/:id/comps/pull"); app.post("/api/opportunities/:id/comps/pull", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5891,7 +5907,7 @@ export async function registerRoutes(
     );
     return scored;
   }
-  app.get("/api/opportunities/:id/buyer-matches", async (req, res) => {
+  reg("get", "/api/opportunities/:id/buyer-matches"); app.get("/api/opportunities/:id/buyer-matches", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5908,7 +5924,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/opportunities/:id/buyer-matches/recompute", async (req, res) => {
+  reg("post", "/api/opportunities/:id/buyer-matches/recompute"); app.post("/api/opportunities/:id/buyer-matches/recompute", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5919,7 +5935,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/opportunities", async (req, res) => {
+  reg("post", "/api/opportunities"); app.post("/api/opportunities", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -5984,7 +6000,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/opportunities/:id", async (req, res) => {
+  reg("patch", "/api/opportunities/:id"); app.patch("/api/opportunities/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6061,7 +6077,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/opportunities/:id", async (req, res) => {
+  reg("delete", "/api/opportunities/:id"); app.delete("/api/opportunities/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6083,7 +6099,7 @@ export async function registerRoutes(
     }
   });
   // OPPORTUNITY STAGE WORKFLOW
-  app.post("/api/opportunities/:id/stage-change", async (req, res) => {
+  reg("post", "/api/opportunities/:id/stage-change"); app.post("/api/opportunities/:id/stage-change", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6260,7 +6276,7 @@ export async function registerRoutes(
     }
   });
   // OPPORTUNITY PARTIES
-  app.get("/api/opportunities/:id/parties", async (req, res) => {
+  reg("get", "/api/opportunities/:id/parties"); app.get("/api/opportunities/:id/parties", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6273,7 +6289,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/opportunities/:id/parties", async (req, res) => {
+  reg("post", "/api/opportunities/:id/parties"); app.post("/api/opportunities/:id/parties", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6288,7 +6304,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/opportunities/parties/:partyId", async (req, res) => {
+  reg("patch", "/api/opportunities/parties/:partyId"); app.patch("/api/opportunities/parties/:partyId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6302,7 +6318,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/opportunities/parties/:partyId", async (req, res) => {
+  reg("delete", "/api/opportunities/parties/:partyId"); app.delete("/api/opportunities/parties/:partyId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6319,7 +6335,7 @@ export async function registerRoutes(
   // PUBLIC LISTINGS (CRM-facing)
   // PROPERTY UNITS — per-unit rent roll for multi-unit / commercial opportunities
   const COMMERCIAL_UNIT_STATUSES = ["vacant", "occupied", "notice", "renovation", "down"];
-  app.get("/api/opportunities/:id/units", async (req, res) => {
+  reg("get", "/api/opportunities/:id/units"); app.get("/api/opportunities/:id/units", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6332,7 +6348,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/opportunities/:id/units", async (req, res) => {
+  reg("post", "/api/opportunities/:id/units"); app.post("/api/opportunities/:id/units", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6363,7 +6379,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/opportunities/:id/units/:unitId", async (req, res) => {
+  reg("patch", "/api/opportunities/:id/units/:unitId"); app.patch("/api/opportunities/:id/units/:unitId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6383,7 +6399,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/opportunities/:id/units/:unitId", async (req, res) => {
+  reg("delete", "/api/opportunities/:id/units/:unitId"); app.delete("/api/opportunities/:id/units/:unitId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6413,7 +6429,7 @@ export async function registerRoutes(
   // Money columns are recomputed server-side from the validated inputs via
   // computeCommissionMath so stored snapshots are authoritative.
   const round2 = (n: number) => Math.round(n * 100) / 100;
-  app.get("/api/opportunities/:id/commission-snapshots", async (req, res) => {
+  reg("get", "/api/opportunities/:id/commission-snapshots"); app.get("/api/opportunities/:id/commission-snapshots", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6426,7 +6442,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/opportunities/:id/commission-snapshots", async (req, res) => {
+  reg("post", "/api/opportunities/:id/commission-snapshots"); app.post("/api/opportunities/:id/commission-snapshots", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6476,7 +6492,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.delete("/api/opportunities/:id/commission-snapshots/:snapshotId", async (req, res) => {
+  reg("delete", "/api/opportunities/:id/commission-snapshots/:snapshotId"); app.delete("/api/opportunities/:id/commission-snapshots/:snapshotId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6496,7 +6512,7 @@ export async function registerRoutes(
     }
   });
 
-  app.get("/api/opportunities/:id/listings", async (req, res) => {
+  reg("get", "/api/opportunities/:id/listings"); app.get("/api/opportunities/:id/listings", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6509,7 +6525,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/opportunities/:id/listings", async (req, res) => {
+  reg("post", "/api/opportunities/:id/listings"); app.post("/api/opportunities/:id/listings", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6536,7 +6552,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/listings/:id", async (req, res) => {
+  reg("patch", "/api/listings/:id"); app.patch("/api/listings/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6557,7 +6573,7 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/listings/:id", async (req, res) => {
+  reg("delete", "/api/listings/:id"); app.delete("/api/listings/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6569,7 +6585,7 @@ export async function registerRoutes(
     }
   });
   // Log a listing share action to the opportunity timeline.
-  app.post("/api/listings/:id/share", async (req, res) => {
+  reg("post", "/api/listings/:id/share"); app.post("/api/listings/:id/share", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6594,7 +6610,7 @@ export async function registerRoutes(
     }
   });
   // BUYER INQUIRIES (CRM-facing)
-  app.get("/api/opportunities/:id/inquiries", async (req, res) => {
+  reg("get", "/api/opportunities/:id/inquiries"); app.get("/api/opportunities/:id/inquiries", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6607,7 +6623,7 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
-app.patch("/api/inquiries/:id", async (req, res) => {
+reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6643,7 +6659,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
   // Convert a buyer inquiry into a Buyer contact (dedupe by email/phone) and link
   // it to the opportunity as a buyer party.
-  app.post("/api/inquiries/:id/convert", async (req, res) => {
+  reg("post", "/api/inquiries/:id/convert"); app.post("/api/inquiries/:id/convert", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6726,7 +6742,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // Create a buyer offer directly from an inquiry.
-  app.post("/api/inquiries/:id/offer", async (req, res) => {
+  reg("post", "/api/inquiries/:id/offer"); app.post("/api/inquiries/:id/offer", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6763,7 +6779,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
     // OPPORTUNITY EVENTS
-  app.get("/api/opportunities/:id/events", async (req, res) => {
+  reg("get", "/api/opportunities/:id/events"); app.get("/api/opportunities/:id/events", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6778,7 +6794,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // PROPERTIES ENDPOINTS (Legacy Proxies)
-  app.get("/api/properties", async (req, res) => {
+  reg("get", "/api/properties"); app.get("/api/properties", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -6790,7 +6806,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // DIALER WORKSPACE ENDPOINTS (Queue)
-  app.get("/api/dialer/lists", async (req, res) => {
+  reg("get", "/api/dialer/lists"); app.get("/api/dialer/lists", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     res.json([
@@ -6799,7 +6815,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       { id: "all_callable", name: "All callable" },
     ]);
   });
-  app.get("/api/dialer/scripts", async (req, res) => {
+  reg("get", "/api/dialer/scripts"); app.get("/api/dialer/scripts", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     try {
@@ -6819,7 +6835,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/dialer/scripts", async (req, res) => {
+  reg("post", "/api/dialer/scripts"); app.post("/api/dialer/scripts", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     try {
@@ -6848,7 +6864,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/dialer/scripts/:id", async (req, res) => {
+  reg("patch", "/api/dialer/scripts/:id"); app.patch("/api/dialer/scripts/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     try {
@@ -6893,7 +6909,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/dialer/scripts/:id", async (req, res) => {
+  reg("delete", "/api/dialer/scripts/:id"); app.delete("/api/dialer/scripts/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     try {
@@ -6907,7 +6923,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
   // ========================= SCRIPT LIBRARY ROUTES =========================
 
-  app.get("/api/scripts", async (req, res) => {
+  reg("get", "/api/scripts"); app.get("/api/scripts", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     try {
@@ -6940,7 +6956,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.post("/api/scripts", async (req, res) => {
+  reg("post", "/api/scripts"); app.post("/api/scripts", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     try {
@@ -6970,7 +6986,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.patch("/api/scripts/:id", async (req, res) => {
+  reg("patch", "/api/scripts/:id"); app.patch("/api/scripts/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     try {
@@ -6998,7 +7014,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
 
   // M6: hard delete for scripts (archive alone left stale scripts stuck in
   // the library when the audit trail matters less than removal).
-  app.delete("/api/scripts/:id", async (req, res) => {
+  reg("delete", "/api/scripts/:id"); app.delete("/api/scripts/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     try {
@@ -7011,7 +7027,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.post("/api/scripts/:id/archive", async (req, res) => {
+  reg("post", "/api/scripts/:id/archive"); app.post("/api/scripts/:id/archive", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     try {
@@ -7024,7 +7040,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.post("/api/scripts/:id/practice", async (req, res) => {
+  reg("post", "/api/scripts/:id/practice"); app.post("/api/scripts/:id/practice", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     try {
@@ -7055,7 +7071,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.get("/api/scripts/:id/practice", async (req, res) => {
+  reg("get", "/api/scripts/:id/practice"); app.get("/api/scripts/:id/practice", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     try {
@@ -7075,7 +7091,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.post("/api/scripts/import", async (req, res) => {
+  reg("post", "/api/scripts/import"); app.post("/api/scripts/import", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     try {
@@ -7101,7 +7117,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
 
   // ========================= END SCRIPT LIBRARY ROUTES =========================
 
-  app.get("/api/dialer/queue", async (req, res) => {
+  reg("get", "/api/dialer/queue"); app.get("/api/dialer/queue", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     try {
@@ -7197,7 +7213,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // TELEPHONY ENDPOINTS (Dialer)
-  app.post("/api/telephony/calls", async (req, res) => {
+  reg("post", "/api/telephony/calls"); app.post("/api/telephony/calls", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7236,7 +7252,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/telephony/calls/:id", async (req, res) => {
+  reg("patch", "/api/telephony/calls/:id"); app.patch("/api/telephony/calls/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7382,7 +7398,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // Telephony realtime: WS relay token + polling fallback (Vercel-safe)
-  app.post("/api/telephony/ws-token", async (req, res) => {
+  reg("post", "/api/telephony/ws-token"); app.post("/api/telephony/ws-token", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7402,7 +7418,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/telephony/events/latest", async (req, res) => {
+  reg("get", "/api/telephony/events/latest"); app.get("/api/telephony/events/latest", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7455,7 +7471,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/telephony/history", async (req, res) => {
+  reg("get", "/api/telephony/history"); app.get("/api/telephony/history", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7477,7 +7493,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/telephony/contacts", async (req, res) => {
+  reg("get", "/api/telephony/contacts"); app.get("/api/telephony/contacts", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7491,7 +7507,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/telephony/spam/flag", async (req, res) => {
+  reg("post", "/api/telephony/spam/flag"); app.post("/api/telephony/spam/flag", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7511,7 +7527,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/telephony/spam/unflag", async (req, res) => {
+  reg("post", "/api/telephony/spam/unflag"); app.post("/api/telephony/spam/unflag", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7528,7 +7544,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/telephony/analytics/summary", async (req, res) => {
+  reg("get", "/api/telephony/analytics/summary"); app.get("/api/telephony/analytics/summary", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7541,7 +7557,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/telephony/voicemail", async (req, res) => {
+  reg("get", "/api/telephony/voicemail"); app.get("/api/telephony/voicemail", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7562,7 +7578,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/telephony/presence", async (req, res) => {
+  reg("get", "/api/telephony/presence"); app.get("/api/telephony/presence", async (req, res) => {
     try {
       const number = req.query.number as string;
       // Placeholder presence; integrate SwitchFree later
@@ -7571,7 +7587,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/telephony/health", async (req, res) => {
+  reg("get", "/api/telephony/health"); app.get("/api/telephony/health", async (req, res) => {
     try {
       // Check database connectivity
       await storage.getUserByEmail("test@example.com");
@@ -7649,13 +7665,13 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   // ── WebRTC Browser Softphone ───────────────────────────────────────────
   // Readiness (no secrets). Used to decide whether the browser softphone UI is
   // shown and to surface the exact blocker instead of silently hiding the feature.
-  app.get("/api/telephony/webrtc/health", (req, res) => {
+  reg("get", "/api/telephony/webrtc/health"); app.get("/api/telephony/webrtc/health", (req, res) => {
     res.json(getWebRtcReadiness());
   });
 
   // Client config for the @telnyx/webrtc SDK. Auth-gated: only a signed-in CRM
   // user may retrieve the login payload. The TELNYX_API_KEY never leaves the server.
-  app.get("/api/telephony/webrtc/config", async (req, res) => {
+  reg("get", "/api/telephony/webrtc/config"); app.get("/api/telephony/webrtc/config", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7666,7 +7682,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
 
   // Telnyx Onboarding Wizard: Live Validation
-  app.post("/api/telnyx/validate/api-key", async (req, res) => {
+  reg("post", "/api/telnyx/validate/api-key"); app.post("/api/telnyx/validate/api-key", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7696,7 +7712,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     } catch (error: any) { res.status(500).json({ ok: false, error: error?.message || "Validation failed" }); }
   });
 
-  app.post("/api/telnyx/validate/connection", async (req, res) => {
+  reg("post", "/api/telnyx/validate/connection"); app.post("/api/telnyx/validate/connection", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7727,7 +7743,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     } catch (error: any) { res.status(500).json({ ok: false, error: error?.message || "Validation failed" }); }
   });
 
-  app.post("/api/telnyx/validate/messaging-profile", async (req, res) => {
+  reg("post", "/api/telnyx/validate/messaging-profile"); app.post("/api/telnyx/validate/messaging-profile", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7765,7 +7781,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
 
   // COMMS READINESS — unified channel status (Phase 9)
-  app.get("/api/comms/readiness", async (req, res) => {
+  reg("get", "/api/comms/readiness"); app.get("/api/comms/readiness", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7779,7 +7795,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   // ADMIN: Run migrations manually (post-deploy / manual trigger)
   // Requires admin auth. Uses a PostgreSQL advisory lock to prevent
   // concurrent migration runs across multiple Vercel instances.
-  app.post("/api/admin/migrate", async (req, res) => {
+  reg("post", "/api/admin/migrate"); app.post("/api/admin/migrate", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -7810,7 +7826,19 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // SYSTEM HEALTH (Aggregated diagnostics)
-  app.get("/api/system/health", async (_req, res) => {
+  // C6: route-bootstrap diagnostics — proves which API routes registered at
+  // startup and when, so a partial bootstrap (C6-style outage) is detectable.
+  reg("get", "/api/system/routes"); app.get("/api/system/routes", async (_req, res) => {
+    const routes = getRouteRegistry();
+    res.json({
+      registeredAt: BOOT_TIME.toISOString(),
+      count: routes.length,
+      expected: EXPECTED_ROUTE_COUNT,
+      complete: routes.length >= EXPECTED_ROUTE_COUNT,
+      routes,
+    });
+  });
+  reg("get", "/api/system/health"); app.get("/api/system/health", async (_req, res) => {
     try {
       // DB connectivity
       let dbStatus = "disconnected";
@@ -7918,7 +7946,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/telephony/sms", async (req, res) => {
+  reg("post", "/api/telephony/sms"); app.post("/api/telephony/sms", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8055,7 +8083,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
 
   // ── SMS Conversation Threads ───────────────────────────────────────────
-  app.get("/api/telephony/sms/threads", async (req, res) => {
+  reg("get", "/api/telephony/sms/threads"); app.get("/api/telephony/sms/threads", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8068,7 +8096,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.get("/api/telephony/sms/threads/:phone/messages", async (req, res) => {
+  reg("get", "/api/telephony/sms/threads/:phone/messages"); app.get("/api/telephony/sms/threads/:phone/messages", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8084,7 +8112,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
     }
   });
-  app.post("/api/telephony/outbound/dispatch", async (req, res) => {
+  reg("post", "/api/telephony/outbound/dispatch"); app.post("/api/telephony/outbound/dispatch", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8210,7 +8238,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
     }
   });
-  app.post("/api/telephony/outbound/:callControlId/hangup", async (req, res) => {
+  reg("post", "/api/telephony/outbound/:callControlId/hangup"); app.post("/api/telephony/outbound/:callControlId/hangup", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8243,7 +8271,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
 
   // ── Call Control: Mute ──────────────────────────────────────────────
-  app.post("/api/telephony/outbound/:callControlId/mute", async (req, res) => {
+  reg("post", "/api/telephony/outbound/:callControlId/mute"); app.post("/api/telephony/outbound/:callControlId/mute", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8265,7 +8293,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
 
   // ── Call Control: Hold ──────────────────────────────────────────────
-  app.post("/api/telephony/outbound/:callControlId/hold", async (req, res) => {
+  reg("post", "/api/telephony/outbound/:callControlId/hold"); app.post("/api/telephony/outbound/:callControlId/hold", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8291,7 +8319,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
 
   // ── Call Control: Transfer ──────────────────────────────────────────
-  app.post("/api/telephony/outbound/:callControlId/transfer", async (req, res) => {
+  reg("post", "/api/telephony/outbound/:callControlId/transfer"); app.post("/api/telephony/outbound/:callControlId/transfer", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8333,7 +8361,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
 
   // ── Call Control: AI Assistant ─────────────────────────────────────
-  app.post("/api/telephony/outbound/:callControlId/ai-assistant", async (req, res) => {
+  reg("post", "/api/telephony/outbound/:callControlId/ai-assistant"); app.post("/api/telephony/outbound/:callControlId/ai-assistant", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8375,7 +8403,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
     }
   });  // ── Inbound Call Accept / Decline ────────────────────────────────────  // ── Admin Call Audit ─────────────────────────────────────────────────
-  app.get("/api/telephony/admin/calls", async (req, res) => {
+  reg("get", "/api/telephony/admin/calls"); app.get("/api/telephony/admin/calls", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8398,7 +8426,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.get("/api/v1/telecom/call-sessions", async (req, res) => {
+  reg("get", "/api/v1/telecom/call-sessions"); app.get("/api/v1/telecom/call-sessions", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8423,7 +8451,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
 
 
-  app.post("/api/telephony/inbound/:callControlId/accept", async (req, res) => {
+  reg("post", "/api/telephony/inbound/:callControlId/accept"); app.post("/api/telephony/inbound/:callControlId/accept", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8488,7 +8516,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.post("/api/telephony/inbound/:callControlId/decline", async (req, res) => {
+  reg("post", "/api/telephony/inbound/:callControlId/decline"); app.post("/api/telephony/inbound/:callControlId/decline", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8517,20 +8545,20 @@ app.patch("/api/inquiries/:id", async (req, res) => {
 
 
   // ── Call Sessions (two-legged click-to-dial + AI screening) ─────────
-  app.get("/api/v1/telecom/features", async (req, res) => {
+  reg("get", "/api/v1/telecom/features"); app.get("/api/v1/telecom/features", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     res.json(await callSessions.getCallFeatures());
   });
 
-  app.get("/api/v1/telecom/agent-phone", async (req, res) => {
+  reg("get", "/api/v1/telecom/agent-phone"); app.get("/api/v1/telecom/agent-phone", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const setting = await storage.getAgentPhoneSetting(user.id).catch(() => undefined);
     res.json({ phoneE164: setting?.phoneE164 || null, defaultCallMode: setting?.defaultCallMode || "human_first", verified: !!setting?.verified });
   });
 
-  app.put("/api/v1/telecom/agent-phone", async (req, res) => {
+  reg("put", "/api/v1/telecom/agent-phone"); app.put("/api/v1/telecom/agent-phone", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const phone = String(req.body?.phoneE164 || "").trim();
@@ -8546,7 +8574,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     res.json({ ok: true, phoneE164: phone, defaultCallMode: mode });
   });
 
-  app.post("/api/v1/telecom/call-sessions", async (req, res) => {
+  reg("post", "/api/v1/telecom/call-sessions"); app.post("/api/v1/telecom/call-sessions", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const leadId = Number(req.body?.leadId);
@@ -8559,7 +8587,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     res.json({ ok: true, session: result.session });
   });
 
-  app.get("/api/v1/telecom/call-sessions/:id", async (req, res) => {
+  reg("get", "/api/v1/telecom/call-sessions/:id"); app.get("/api/v1/telecom/call-sessions/:id", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const result = await callSessions.getSessionDetail(Number(req.params.id), user);
@@ -8567,7 +8595,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     res.json(result);
   });
 
-  app.get("/api/v1/telecom/call-sessions/:id/events", async (req, res) => {
+  reg("get", "/api/v1/telecom/call-sessions/:id/events"); app.get("/api/v1/telecom/call-sessions/:id/events", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const result = await callSessions.getSessionEvents(Number(req.params.id), user);
@@ -8575,7 +8603,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     res.json(result);
   });
 
-  app.post("/api/v1/telecom/call-sessions/:id/cancel", async (req, res) => {
+  reg("post", "/api/v1/telecom/call-sessions/:id/cancel"); app.post("/api/v1/telecom/call-sessions/:id/cancel", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const result = await callSessions.cancelOrHangupSession(Number(req.params.id), user.id);
@@ -8583,7 +8611,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     res.json(result);
   });
 
-  app.post("/api/v1/telecom/call-sessions/:id/hangup", async (req, res) => {
+  reg("post", "/api/v1/telecom/call-sessions/:id/hangup"); app.post("/api/v1/telecom/call-sessions/:id/hangup", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const result = await callSessions.cancelOrHangupSession(Number(req.params.id), user.id, { hangup: true });
@@ -8591,7 +8619,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     res.json(result);
   });
 
-  app.post("/api/v1/telecom/call-sessions/:id/request-human-handoff", async (req, res) => {
+  reg("post", "/api/v1/telecom/call-sessions/:id/request-human-handoff"); app.post("/api/v1/telecom/call-sessions/:id/request-human-handoff", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const result = await callSessions.requestHumanHandoff(Number(req.params.id), user.id);
@@ -8599,7 +8627,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     res.json(result);
   });
 
-  app.post("/api/v1/telecom/call-sessions/:id/disposition", async (req, res) => {
+  reg("post", "/api/v1/telecom/call-sessions/:id/disposition"); app.post("/api/v1/telecom/call-sessions/:id/disposition", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const result = await callSessions.setDisposition(Number(req.params.id), user.id, {
@@ -8611,7 +8639,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     res.json(result);
   });
 
-  app.post("/api/v1/telecom/call-sessions/:id/notes", async (req, res) => {
+  reg("post", "/api/v1/telecom/call-sessions/:id/notes"); app.post("/api/v1/telecom/call-sessions/:id/notes", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const result = await callSessions.addSessionNote(Number(req.params.id), user.id, String(req.body?.note || ""));
@@ -8619,7 +8647,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     res.json(result);
   });
 
-  app.post("/api/v1/telecom/call-sessions/:id/callback", async (req, res) => {
+  reg("post", "/api/v1/telecom/call-sessions/:id/callback"); app.post("/api/v1/telecom/call-sessions/:id/callback", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const result = await callSessions.scheduleCallback(Number(req.params.id), user.id, { dueAt: String(req.body?.dueAt || ""), note: req.body?.note ? String(req.body.note) : undefined });
@@ -8629,7 +8657,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
 
 
   // ── Provider Readiness ──────────────────────────────────────────────
-  app.get("/api/system/provider-readiness", async (req, res) => {
+  reg("get", "/api/system/provider-readiness"); app.get("/api/system/provider-readiness", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8642,7 +8670,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
 
   // ── AI Assistant Settings (DB override, admin-editable) ────────────────
-  app.get("/api/settings/telecom/ai-assistant", async (req, res) => {
+  reg("get", "/api/settings/telecom/ai-assistant"); app.get("/api/settings/telecom/ai-assistant", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8662,7 +8690,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.put("/api/settings/telecom/ai-assistant", async (req, res) => {
+  reg("put", "/api/settings/telecom/ai-assistant"); app.put("/api/settings/telecom/ai-assistant", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8699,7 +8727,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
 
   // ── Video Rooms ─────────────────────────────────────────────────────
-  app.post("/api/video/rooms", async (req, res) => {
+  reg("post", "/api/video/rooms"); app.post("/api/video/rooms", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8750,7 +8778,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.get("/api/video/rooms/:roomId/join", async (req, res) => {
+  reg("get", "/api/video/rooms/:roomId/join"); app.get("/api/video/rooms/:roomId/join", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8771,7 +8799,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.post("/api/video/rooms/:roomId/end", async (req, res) => {
+  reg("post", "/api/video/rooms/:roomId/end"); app.post("/api/video/rooms/:roomId/end", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8799,7 +8827,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.get("/api/video/health", async (_req, res) => {
+  reg("get", "/api/video/health"); app.get("/api/video/health", async (_req, res) => {
     try {
       const { telnyxVideo } = await import("./services/telecom/video.js");
       const health = await telnyxVideo.healthCheck();
@@ -8809,7 +8837,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.get("/api/video/rooms", async (req, res) => {
+  reg("get", "/api/video/rooms"); app.get("/api/video/rooms", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -8861,7 +8889,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     const row = (rows as any).rows?.[0];
     return row?.id ? Number(row.id) : null;
   }
-  app.get("/api/properties/:id", async (req, res) => {
+  reg("get", "/api/properties/:id"); app.get("/api/properties/:id", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       const property = await storage.getPropertyById(id);
@@ -8877,7 +8905,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/properties", async (req, res) => {
+  reg("post", "/api/properties"); app.post("/api/properties", async (req, res) => {
     try {
       const validated = insertPropertySchema.parse(req.body);
       const property = await storage.createProperty(validated);
@@ -8896,7 +8924,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/properties/:id", async (req, res) => {
+  reg("patch", "/api/properties/:id"); app.patch("/api/properties/:id", async (req, res) => {
     try {
       const partial = insertPropertySchema.partial().parse(req.body);
       const property = await storage.updateProperty(parseInt(req.params.id), partial);
@@ -8915,7 +8943,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/properties/:id", async (req, res) => {
+  reg("delete", "/api/properties/:id"); app.delete("/api/properties/:id", async (req, res) => {
     try {
       const property = await storage.getPropertyById(parseInt(req.params.id));
       await storage.deleteProperty(parseInt(req.params.id));
@@ -8935,13 +8963,22 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // CONTRACTS ENDPOINTS
-  app.get("/api/contracts", async (req, res) => {
+  reg("get", "/api/contracts"); app.get("/api/contracts", async (req, res) => {
     try {
       const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
+      // M50: the Deal Room filters by opportunity; legacy rows carry
+      // property_id, canonical rows carry opportunity_id (both point at the
+      // same properties row).
+      const opportunityId = req.query.opportunityId ? parseInt(req.query.opportunityId as string) : undefined;
+      const effPropertyId = propertyId ?? opportunityId;
       const { limit, offset } = parseLimitOffset(req.query);
-      if (propertyId) {
-        const items = await storage.getContractsByPropertyId(propertyId, limit, offset);
-        return res.json(items);
+      if (effPropertyId) {
+        const byProp = await storage.getContractsByPropertyId(effPropertyId, limit, offset);
+        if (opportunityId && !propertyId) {
+          const items = (byProp as any[]).filter((c: any) => !c.opportunityId || Number(c.opportunityId) === opportunityId);
+          return res.json(items);
+        }
+        return res.json(byProp);
       }
       const items = await storage.getContracts(limit, offset);
       res.json(items);
@@ -8949,7 +8986,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/contracts/:id", async (req, res) => {
+  reg("get", "/api/contracts/:id"); app.get("/api/contracts/:id", async (req, res) => {
     try {
       const contract = await storage.getContractById(parseInt(req.params.id));
       if (!contract) return res.status(404).json({ message: "Contract not found" });
@@ -8958,7 +8995,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contracts", async (req, res) => {
+  reg("post", "/api/contracts"); app.post("/api/contracts", async (req, res) => {
     try {
       // M46 (contract wizard crash): the wizard stores its deal terms on the
       // document-contracts model but posts here; zod strips those extra keys
@@ -8982,7 +9019,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/contracts/:id", async (req, res) => {
+  reg("patch", "/api/contracts/:id"); app.patch("/api/contracts/:id", async (req, res) => {
     try {
       const partial = insertContractSchema.partial().parse(req.body);
       const contract = await storage.updateContract(parseInt(req.params.id), partial);
@@ -8994,7 +9031,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/contracts/:id", async (req, res) => {
+  reg("delete", "/api/contracts/:id"); app.delete("/api/contracts/:id", async (req, res) => {
     try {
       await storage.deleteContract(parseInt(req.params.id));
       res.json({ message: "Contract deleted" });
@@ -9002,7 +9039,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contracts/:id/send", async (req, res) => {
+  reg("post", "/api/contracts/:id/send"); app.post("/api/contracts/:id/send", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -9052,7 +9089,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contracts/:id/void", async (req, res) => {
+  reg("post", "/api/contracts/:id/void"); app.post("/api/contracts/:id/void", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -9077,7 +9114,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contracts/:id/execute", async (req, res) => {
+  reg("post", "/api/contracts/:id/execute"); app.post("/api/contracts/:id/execute", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -9090,6 +9127,20 @@ app.patch("/api/inquiries/:id", async (req, res) => {
         return res.status(400).json({ message: `Cannot execute contract from status: ${contract.status}` });
       }
       const updated = await storage.updateContract(contract.id, { status: "executed", executedAt: new Date(), signedAt: contract.signedAt || new Date() } as any);
+      // M50 sync: executing a contract advances the linked opportunity to
+      // under_contract (mirrors the contract-documents send/close flow).
+      try {
+        const linkedOppId = (updated as any).opportunityId || (updated as any).propertyId || null;
+        if (linkedOppId) {
+          const prop = await storage.getPropertyById(Number(linkedOppId));
+          if (prop && !["under_contract", "in_disposition", "sold", "closed", "dead", "voided"].includes(String((prop as any).stage || ""))) {
+            await storage.updateProperty(Number(linkedOppId), { stage: "under_contract", stageChangedAt: new Date(), lastActivityAt: new Date() } as any);
+            await logOpportunityEvent(Number(linkedOppId), "stage_changed", "Stage changed to Under Contract", `Auto-advanced: contract executed (${updated.title || `Contract #${updated.id}`}).`, user.id, "system", { oldStage: (prop as any).stage, newStage: "under_contract", contractId: updated.id });
+          }
+        }
+      } catch (e: any) {
+        console.error("execute: opportunity auto-advance failed:", e?.message);
+      }
       await storage.createContractEvent({
         contractId: contract.id,
         actorType: "user",
@@ -9106,7 +9157,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
   // M51: upload-signed accepts either an existing vault documentId or a real
   // multipart file (stored in the document vault, linked to the contract).
-  app.post("/api/contracts/:id/upload-signed", upload.single("file"), async (req, res) => {
+  reg("post", "/api/contracts/:id/upload-signed"); app.post("/api/contracts/:id/upload-signed", upload.single("file"), async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -9157,7 +9208,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contracts/:id/validate", async (req, res) => {
+  reg("post", "/api/contracts/:id/validate"); app.post("/api/contracts/:id/validate", async (req, res) => {
     try {
       const contract = await storage.getContractById(parseInt(req.params.id));
       if (!contract) return res.status(404).json({ message: "Contract not found" });
@@ -9169,7 +9220,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contracts/:id/generate-document", async (req, res) => {
+  reg("post", "/api/contracts/:id/generate-document"); app.post("/api/contracts/:id/generate-document", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -9213,7 +9264,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/contracts/:id/signers", async (req, res) => {
+  reg("get", "/api/contracts/:id/signers"); app.get("/api/contracts/:id/signers", async (req, res) => {
     try {
       const signers = await storage.getContractSignersByContract(parseInt(req.params.id));
       res.json(signers);
@@ -9221,7 +9272,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contracts/:id/signers", async (req, res) => {
+  reg("post", "/api/contracts/:id/signers"); app.post("/api/contracts/:id/signers", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -9239,7 +9290,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/contracts/signers/:signerId", async (req, res) => {
+  reg("patch", "/api/contracts/signers/:signerId"); app.patch("/api/contracts/signers/:signerId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -9250,7 +9301,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/contracts/:id/events", async (req, res) => {
+  reg("get", "/api/contracts/:id/events"); app.get("/api/contracts/:id/events", async (req, res) => {
     try {
       const events = await storage.getContractEventsByContract(parseInt(req.params.id));
       res.json(events);
@@ -9258,7 +9309,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/contracts/:id/fields", async (req, res) => {
+  reg("get", "/api/contracts/:id/fields"); app.get("/api/contracts/:id/fields", async (req, res) => {
     try {
       const fields = await storage.getContractFieldsByContract(parseInt(req.params.id));
       res.json(fields);
@@ -9266,7 +9317,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contracts/:id/fields", async (req, res) => {
+  reg("post", "/api/contracts/:id/fields"); app.post("/api/contracts/:id/fields", async (req, res) => {
     try {
       const validated = insertContractFieldSchema.parse(req.body);
       const field = await storage.createContractField({ ...validated, contractId: parseInt(req.params.id) });
@@ -9275,7 +9326,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/contracts/fields/:fieldId", async (req, res) => {
+  reg("patch", "/api/contracts/fields/:fieldId"); app.patch("/api/contracts/fields/:fieldId", async (req, res) => {
     try {
       const partial = insertContractFieldSchema.partial().parse(req.body);
       const field = await storage.updateContractField(parseInt(req.params.fieldId), partial);
@@ -9284,7 +9335,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/contracts/fields/:fieldId", async (req, res) => {
+  reg("delete", "/api/contracts/fields/:fieldId"); app.delete("/api/contracts/fields/:fieldId", async (req, res) => {
     try {
       await storage.deleteContractField(parseInt(req.params.fieldId));
       res.json({ message: "Field deleted" });
@@ -9292,7 +9343,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contract-templates/:id/preview", async (req, res) => {
+  reg("post", "/api/contract-templates/:id/preview"); app.post("/api/contract-templates/:id/preview", async (req, res) => {
     try {
       const template = await storage.getContractTemplateById(parseInt(req.params.id));
       if (!template) return res.status(404).json({ message: "Template not found" });
@@ -9311,7 +9362,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // CONTACTS ENDPOINTS
-  app.get("/api/contacts", async (req, res) => {
+  reg("get", "/api/contacts"); app.get("/api/contacts", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -9338,7 +9389,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/contacts/:id", async (req, res) => {
+  reg("get", "/api/contacts/:id"); app.get("/api/contacts/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -9349,7 +9400,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contacts", async (req, res) => {
+  reg("post", "/api/contacts"); app.post("/api/contacts", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -9360,7 +9411,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/contacts/:id", async (req, res) => {
+  reg("patch", "/api/contacts/:id"); app.patch("/api/contacts/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -9371,7 +9422,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/contacts/:id", async (req, res) => {
+  reg("delete", "/api/contacts/:id"); app.delete("/api/contacts/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -9381,7 +9432,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/companies", async (req, res) => {
+  reg("get", "/api/companies"); app.get("/api/companies", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
       if (!ctx) return;
@@ -9394,7 +9445,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/companies", async (req, res) => {
+  reg("post", "/api/companies"); app.post("/api/companies", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
       if (!ctx) return;
@@ -9421,7 +9472,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/companies/:id", async (req, res) => {
+  reg("get", "/api/companies/:id"); app.get("/api/companies/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
       if (!ctx) return;
@@ -9433,7 +9484,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.patch("/api/companies/:id", async (req, res) => {
+  reg("patch", "/api/companies/:id"); app.patch("/api/companies/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
       if (!ctx) return;
@@ -9463,7 +9514,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/companies/:id", async (req, res) => {
+  reg("delete", "/api/companies/:id"); app.delete("/api/companies/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
       if (!ctx) return;
@@ -9491,7 +9542,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/companies/:id/people", async (req, res) => {
+  reg("get", "/api/companies/:id/people"); app.get("/api/companies/:id/people", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
       if (!ctx) return;
@@ -9504,7 +9555,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/companies/:id/people", async (req, res) => {
+  reg("post", "/api/companies/:id/people"); app.post("/api/companies/:id/people", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
       if (!ctx) return;
@@ -9537,7 +9588,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/companies/:companyId/people/:companyPersonId", async (req, res) => {
+  reg("delete", "/api/companies/:companyId/people/:companyPersonId"); app.delete("/api/companies/:companyId/people/:companyPersonId", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
       if (!ctx) return;
@@ -9566,7 +9617,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/documents", async (req, res) => {
+  reg("get", "/api/documents"); app.get("/api/documents", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
       if (!ctx) return;
@@ -9596,7 +9647,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     if (Number(document.createdBy) === Number(ctx.user.id)) return true;
     return teamRoleRank(ctx.membership?.role) >= teamRoleRank("admin") || isManagerUser(ctx.user);
   }
-  app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
+  reg("post", "/api/documents/upload"); app.post("/api/documents/upload", upload.single("file"), async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
       if (!ctx) return;
@@ -9692,7 +9743,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/documents/:id", async (req, res) => {
+  reg("get", "/api/documents/:id"); app.get("/api/documents/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
       if (!ctx) return;
@@ -9707,7 +9758,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/documents/:id/download", async (req, res) => {
+  reg("get", "/api/documents/:id/download"); app.get("/api/documents/:id/download", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
       if (!ctx) return;
@@ -9736,7 +9787,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   // Phase 6: in-app preview. Streams the stored object inline so PDFs and
   // images render in a browser viewport without forcing a download. The
   // storage key / signed URL is never exposed to the client.
-  app.get("/api/documents/:id/preview", async (req, res) => {
+  reg("get", "/api/documents/:id/preview"); app.get("/api/documents/:id/preview", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
       if (!ctx) return;
@@ -9766,7 +9817,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/documents/:id/link", async (req, res) => {
+  reg("post", "/api/documents/:id/link"); app.post("/api/documents/:id/link", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
       if (!ctx) return;
@@ -9802,7 +9853,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/documents/:id/link/:linkId", async (req, res) => {
+  reg("delete", "/api/documents/:id/link/:linkId"); app.delete("/api/documents/:id/link/:linkId", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
       if (!ctx) return;
@@ -9833,7 +9884,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/documents/:id/versions", async (req, res) => {
+  reg("get", "/api/documents/:id/versions"); app.get("/api/documents/:id/versions", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "viewer" });
       if (!ctx) return;
@@ -9847,7 +9898,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/documents/:id/versions", upload.single("file"), async (req, res) => {
+  reg("post", "/api/documents/:id/versions"); app.post("/api/documents/:id/versions", upload.single("file"), async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "member" });
       if (!ctx) return;
@@ -9903,7 +9954,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/automations", async (req, res) => {
+  reg("get", "/api/automations"); app.get("/api/automations", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
       if (!ctx) return;
@@ -9914,7 +9965,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/automations", async (req, res) => {
+  reg("post", "/api/automations"); app.post("/api/automations", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
       if (!ctx) return;
@@ -9972,7 +10023,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/automations/:id", async (req, res) => {
+  reg("get", "/api/automations/:id"); app.get("/api/automations/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
       if (!ctx) return;
@@ -9989,7 +10040,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.patch("/api/automations/:id", async (req, res) => {
+  reg("patch", "/api/automations/:id"); app.patch("/api/automations/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
       if (!ctx) return;
@@ -10050,7 +10101,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/automations/:id", async (req, res) => {
+  reg("delete", "/api/automations/:id"); app.delete("/api/automations/:id", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
       if (!ctx) return;
@@ -10078,7 +10129,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/automations/:id/runs", async (req, res) => {
+  reg("get", "/api/automations/:id/runs"); app.get("/api/automations/:id/runs", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
       if (!ctx) return;
@@ -10093,7 +10144,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // Dry-run an automation against a test event
-  app.post("/api/automations/:id/test", async (req, res) => {
+  reg("post", "/api/automations/:id/test"); app.post("/api/automations/:id/test", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
       if (!ctx) return;
@@ -10118,7 +10169,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // CONTRACT TEMPLATES ENDPOINTS
-  app.get("/api/contract-templates", async (req, res) => {
+  reg("get", "/api/contract-templates"); app.get("/api/contract-templates", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
       const category = typeof req.query?.category === "string" ? req.query.category : undefined;
@@ -10131,7 +10182,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/contract-templates/:id", async (req, res) => {
+  reg("get", "/api/contract-templates/:id"); app.get("/api/contract-templates/:id", async (req, res) => {
     try {
       const template = await storage.getContractTemplateById(parseInt(req.params.id));
       if (!template) return res.status(404).json({ message: "Template not found" });
@@ -10140,7 +10191,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contract-templates", async (req, res) => {
+  reg("post", "/api/contract-templates"); app.post("/api/contract-templates", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -10156,7 +10207,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/contract-templates/:id", async (req, res) => {
+  reg("patch", "/api/contract-templates/:id"); app.patch("/api/contract-templates/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -10174,7 +10225,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/contract-templates/:id", async (req, res) => {
+  reg("delete", "/api/contract-templates/:id"); app.delete("/api/contract-templates/:id", async (req, res) => {
     try {
       await storage.deleteContractTemplate(parseInt(req.params.id));
       res.json({ message: "Template deleted" });
@@ -10183,7 +10234,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // Phase 6 governance: approve/publish a template (admin/manager).
-  app.post("/api/contract-templates/:id/approve", async (req, res) => {
+  reg("post", "/api/contract-templates/:id/approve"); app.post("/api/contract-templates/:id/approve", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -10199,7 +10250,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
   // Phase 6 governance: editing an approved template must not overwrite history.
   // Creates a new draft version with lineage (parentTemplateId, version+1).
-  app.post("/api/contract-templates/:id/revise", async (req, res) => {
+  reg("post", "/api/contract-templates/:id/revise"); app.post("/api/contract-templates/:id/revise", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -10217,7 +10268,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // CONTRACT DOCUMENTS ENDPOINTS
-  app.get("/api/contract-documents", async (req, res) => {
+  reg("get", "/api/contract-documents"); app.get("/api/contract-documents", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
       const documents = await storage.getContractDocuments(limit, offset);
@@ -10226,7 +10277,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/contract-documents/:id", async (req, res) => {
+  reg("get", "/api/contract-documents/:id"); app.get("/api/contract-documents/:id", async (req, res) => {
     try {
       const document = await storage.getContractDocumentById(parseInt(req.params.id));
       if (!document) return res.status(404).json({ message: "Document not found" });
@@ -10236,7 +10287,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
     // Phase 6: rendered text preview of a generated contract document.
-  app.get("/api/contract-documents/:id/view", async (req, res) => {
+  reg("get", "/api/contract-documents/:id/view"); app.get("/api/contract-documents/:id/view", async (req, res) => {
     try {
       const actor = await requireAuth(req, res);
       if (!actor) return;
@@ -10264,7 +10315,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     return out;
   }
   // Phase 6: generate a printable PDF from a contract document using pdf-lib.
-  app.get("/api/contract-documents/:id/pdf", async (req, res) => {
+  reg("get", "/api/contract-documents/:id/pdf"); app.get("/api/contract-documents/:id/pdf", async (req, res) => {
     try {
       const actor = await requireAuth(req, res);
       if (!actor) return;
@@ -10298,7 +10349,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-    app.post("/api/contract-documents", async (req, res) => {
+    reg("post", "/api/contract-documents"); app.post("/api/contract-documents", async (req, res) => {
     try {
       const validated = insertContractDocumentSchema.parse(req.body);
       const document = await storage.createContractDocument(validated);
@@ -10307,7 +10358,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/contract-documents/:id", async (req, res) => {
+  reg("patch", "/api/contract-documents/:id"); app.patch("/api/contract-documents/:id", async (req, res) => {
     try {
       const partial = insertContractDocumentSchema.partial().parse(req.body);
       const document = await storage.updateContractDocument(parseInt(req.params.id), partial);
@@ -10316,7 +10367,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/contract-documents/:id", async (req, res) => {
+  reg("delete", "/api/contract-documents/:id"); app.delete("/api/contract-documents/:id", async (req, res) => {
     try {
       await storage.deleteContractDocument(parseInt(req.params.id));
       res.json({ message: "Document deleted" });
@@ -10327,7 +10378,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   // Disposition audit fix: "Close Deal & Record Revenue" must do more than flip a
   // status. This endpoint records the closing on the deal_assignments ledger,
   // advances the opportunity to sold, and writes an activity entry.
-  app.post("/api/contract-documents/:id/close", async (req, res) => {
+  reg("post", "/api/contract-documents/:id/close"); app.post("/api/contract-documents/:id/close", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -10432,7 +10483,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/contract-documents/:id/envelopes", async (req, res) => {
+  reg("get", "/api/contract-documents/:id/envelopes"); app.get("/api/contract-documents/:id/envelopes", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -10444,7 +10495,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contract-documents/:id/envelopes", async (req, res) => {
+  reg("post", "/api/contract-documents/:id/envelopes"); app.post("/api/contract-documents/:id/envelopes", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -10513,7 +10564,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/contract-envelopes/:id", async (req, res) => {
+  reg("get", "/api/contract-envelopes/:id"); app.get("/api/contract-envelopes/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -10526,7 +10577,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/contract-envelopes/:id/upload-signed", async (req, res) => {
+  reg("post", "/api/contract-envelopes/:id/upload-signed"); app.post("/api/contract-envelopes/:id/upload-signed", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -10562,7 +10613,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/sign/envelopes/:token", async (req, res) => {
+  reg("get", "/api/sign/envelopes/:token"); app.get("/api/sign/envelopes/:token", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
       if (!token) return res.status(404).json({ message: "Not found" });
@@ -10597,7 +10648,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/sign/envelopes/:token/viewed", async (req, res) => {
+  reg("post", "/api/sign/envelopes/:token/viewed"); app.post("/api/sign/envelopes/:token/viewed", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
@@ -10623,7 +10674,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/sign/envelopes/:token/decline", async (req, res) => {
+  reg("post", "/api/sign/envelopes/:token/decline"); app.post("/api/sign/envelopes/:token/decline", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
@@ -10646,7 +10697,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/sign/envelopes/:token/sign", async (req, res) => {
+  reg("post", "/api/sign/envelopes/:token/sign"); app.post("/api/sign/envelopes/:token/sign", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
@@ -10726,7 +10777,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/sign/envelopes/:token/pdf", async (req, res) => {
+  reg("get", "/api/sign/envelopes/:token/pdf"); app.get("/api/sign/envelopes/:token/pdf", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
@@ -10741,7 +10792,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/sign/signers/:token", async (req, res) => {
+  reg("get", "/api/sign/signers/:token"); app.get("/api/sign/signers/:token", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
       if (!token) return res.status(404).json({ message: "Not found" });
@@ -10785,7 +10836,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/sign/signers/:token/viewed", async (req, res) => {
+  reg("post", "/api/sign/signers/:token/viewed"); app.post("/api/sign/signers/:token/viewed", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
@@ -10801,7 +10852,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/sign/signers/:token/decline", async (req, res) => {
+  reg("post", "/api/sign/signers/:token/decline"); app.post("/api/sign/signers/:token/decline", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
@@ -10827,7 +10878,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/sign/signers/:token/sign", async (req, res) => {
+  reg("post", "/api/sign/signers/:token/sign"); app.post("/api/sign/signers/:token/sign", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
       const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
@@ -10899,7 +10950,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // DOCUMENT VERSIONS ENDPOINTS
-  app.get("/api/documents/:documentId/versions", async (req, res) => {
+  reg("get", "/api/documents/:documentId/versions"); app.get("/api/documents/:documentId/versions", async (req, res) => {
     try {
       const versions = await storage.getDocumentVersions(parseInt(req.params.documentId));
       res.json(versions);
@@ -10907,7 +10958,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/documents/:documentId/versions", async (req, res) => {
+  reg("post", "/api/documents/:documentId/versions"); app.post("/api/documents/:documentId/versions", async (req, res) => {
     try {
       const validated = insertDocumentVersionSchema.parse({
         ...req.body,
@@ -10920,7 +10971,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // LOIS ENDPOINTS
-  app.get("/api/lois", async (req, res) => {
+  reg("get", "/api/lois"); app.get("/api/lois", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
       const allLois = await storage.getLois(limit, offset);
@@ -10929,7 +10980,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/lois/:id", async (req, res) => {
+  reg("get", "/api/lois/:id"); app.get("/api/lois/:id", async (req, res) => {
     try {
       const loi = await storage.getLoiById(parseInt(req.params.id));
       if (!loi) return res.status(404).json({ message: "LOI not found" });
@@ -10938,7 +10989,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/lois", async (req, res) => {
+  reg("post", "/api/lois"); app.post("/api/lois", async (req, res) => {
     try {
       const validated = insertLoiSchema.parse(req.body);
       const loi = await storage.createLoi(validated);
@@ -10947,7 +10998,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/lois/:id", async (req, res) => {
+  reg("patch", "/api/lois/:id"); app.patch("/api/lois/:id", async (req, res) => {
     try {
       const partial = insertLoiSchema.partial().parse(req.body);
       const loi = await storage.updateLoi(parseInt(req.params.id), partial);
@@ -10956,7 +11007,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/lois/:id", async (req, res) => {
+  reg("delete", "/api/lois/:id"); app.delete("/api/lois/:id", async (req, res) => {
     try {
       await storage.deleteLoi(parseInt(req.params.id));
       res.json({ message: "LOI deleted" });
@@ -10965,7 +11016,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // USERS ENDPOINTS
-  app.get("/api/users", async (req, res) => {
+  reg("get", "/api/users"); app.get("/api/users", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
       const users = (await storage.getUsers(limit, offset)) as any[];
@@ -10985,7 +11036,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // Serves the raw base64 profile picture as a cacheable image response.
-  app.get("/api/users/:id/avatar", async (req, res) => {
+  reg("get", "/api/users/:id/avatar"); app.get("/api/users/:id/avatar", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
@@ -11009,7 +11060,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
   // Serves the user's banner config + custom banner image payloads (kept out
   // of /api/users responses because they can be multi-MB base64 blobs).
-  app.get("/api/users/:id/banner", async (req, res) => {
+  reg("get", "/api/users/:id/banner"); app.get("/api/users/:id/banner", async (req, res) => {
     try {
       const id = parseInt(req.params.id);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
@@ -11028,7 +11079,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       return res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/users/:id", async (req, res) => {
+  reg("get", "/api/users/:id"); app.get("/api/users/:id", async (req, res) => {
     try {
       // Excludes multi-MB payload columns; avatars load via /api/users/:id/avatar
       // and banner payloads via /api/users/:id/banner.
@@ -11040,7 +11091,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/users", async (req, res) => {
+  reg("post", "/api/users"); app.post("/api/users", async (req, res) => {
     try {
       const validated = insertUserSchema.parse(req.body);
       const user = await storage.createUser(validated);
@@ -11050,7 +11101,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // Change password
-  app.patch("/api/users/:id/password", async (req, res) => {
+  reg("patch", "/api/users/:id/password"); app.patch("/api/users/:id/password", async (req, res) => {
     if (!req.session.userId) {
       return res.status(401).json({ message: "Not authenticated" });
     }
@@ -11082,7 +11133,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: "Failed to change password" });
     }
   });
-  app.patch("/api/users/:id", async (req, res) => {
+  reg("patch", "/api/users/:id"); app.patch("/api/users/:id", async (req, res) => {
     try {
       const actor = await requireAuth(req, res);
       if (!actor) return;
@@ -11104,7 +11155,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // TWO FACTOR AUTH ENDPOINTS — self-or-admin only, password re-auth for sensitive changes
-  app.get("/api/users/:userId/2fa", async (req, res) => {
+  reg("get", "/api/users/:userId/2fa"); app.get("/api/users/:userId/2fa", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11116,7 +11167,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/users/:userId/2fa", async (req, res) => {
+  reg("post", "/api/users/:userId/2fa"); app.post("/api/users/:userId/2fa", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11144,7 +11195,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/users/:userId/2fa/verify", async (req, res) => {
+  reg("post", "/api/users/:userId/2fa/verify"); app.post("/api/users/:userId/2fa/verify", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11169,7 +11220,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/auth/login/2fa", async (req, res) => {
+  reg("post", "/api/auth/login/2fa"); app.post("/api/auth/login/2fa", async (req, res) => {
     try {
       const { tempToken, code } = req.body || {};
       if (!tempToken || !code) return res.status(400).json({ message: "Missing tempToken or code" });
@@ -11214,7 +11265,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.patch("/api/users/:userId/2fa", async (req, res) => {
+  reg("patch", "/api/users/:userId/2fa"); app.patch("/api/users/:userId/2fa", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11229,7 +11280,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/users/:userId/2fa", async (req, res) => {
+  reg("delete", "/api/users/:userId/2fa"); app.delete("/api/users/:userId/2fa", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11266,7 +11317,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // BACKUP CODES ENDPOINTS — hashed at rest; plain codes returned only at generation time
-  app.get("/api/users/:userId/backup-codes", async (req, res) => {
+  reg("get", "/api/users/:userId/backup-codes"); app.get("/api/users/:userId/backup-codes", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11279,7 +11330,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/users/:userId/backup-codes", async (req, res) => {
+  reg("post", "/api/users/:userId/backup-codes"); app.post("/api/users/:userId/backup-codes", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11292,7 +11343,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/users/:userId/backup-codes/generate", async (req, res) => {
+  reg("post", "/api/users/:userId/backup-codes/generate"); app.post("/api/users/:userId/backup-codes/generate", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11361,7 +11412,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   }
 
-  app.get("/api/docs/categories", async (req, res) => {
+  reg("get", "/api/docs/categories"); app.get("/api/docs/categories", async (req, res) => {
     try {
       const ctx = await resolveDocsTeam(req, res);
       if (!ctx) return;
@@ -11373,7 +11424,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.post("/api/docs/categories", async (req, res) => {
+  reg("post", "/api/docs/categories"); app.post("/api/docs/categories", async (req, res) => {
     try {
       const ctx = await resolveDocsTeam(req, res);
       if (!ctx) return;
@@ -11395,7 +11446,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.patch("/api/docs/categories/:id", async (req, res) => {
+  reg("patch", "/api/docs/categories/:id"); app.patch("/api/docs/categories/:id", async (req, res) => {
     try {
       const ctx = await resolveDocsTeam(req, res);
       if (!ctx) return;
@@ -11413,7 +11464,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.delete("/api/docs/categories/:id", async (req, res) => {
+  reg("delete", "/api/docs/categories/:id"); app.delete("/api/docs/categories/:id", async (req, res) => {
     try {
       const ctx = await resolveDocsTeam(req, res);
       if (!ctx) return;
@@ -11426,7 +11477,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
 
   // List page metadata (no bodies). q searches title/summary/body.
-  app.get("/api/docs/pages", async (req, res) => {
+  reg("get", "/api/docs/pages"); app.get("/api/docs/pages", async (req, res) => {
     try {
       const ctx = await resolveDocsTeam(req, res);
       if (!ctx) return;
@@ -11440,7 +11491,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.post("/api/docs/pages", async (req, res) => {
+  reg("post", "/api/docs/pages"); app.post("/api/docs/pages", async (req, res) => {
     try {
       const ctx = await resolveDocsTeam(req, res);
       if (!ctx) return;
@@ -11468,7 +11519,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.get("/api/docs/pages/:slug", async (req, res) => {
+  reg("get", "/api/docs/pages/:slug"); app.get("/api/docs/pages/:slug", async (req, res) => {
     try {
       const ctx = await resolveDocsTeam(req, res);
       if (!ctx) return;
@@ -11481,7 +11532,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.patch("/api/docs/pages/:id", async (req, res) => {
+  reg("patch", "/api/docs/pages/:id"); app.patch("/api/docs/pages/:id", async (req, res) => {
     try {
       const ctx = await resolveDocsTeam(req, res);
       if (!ctx) return;
@@ -11506,7 +11557,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.delete("/api/docs/pages/:id", async (req, res) => {
+  reg("delete", "/api/docs/pages/:id"); app.delete("/api/docs/pages/:id", async (req, res) => {
     try {
       const ctx = await resolveDocsTeam(req, res);
       if (!ctx) return;
@@ -11520,7 +11571,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
 
-  app.get("/api/pipeline-config", async (req, res) => {
+  reg("get", "/api/pipeline-config"); app.get("/api/pipeline-config", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -11539,7 +11590,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.put("/api/pipeline-config", async (req, res) => {
+  reg("put", "/api/pipeline-config"); app.put("/api/pipeline-config", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -11564,7 +11615,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // GLOBAL ACTIVITY ENDPOINT
-  app.get("/api/activity", async (req, res) => {
+  reg("get", "/api/activity"); app.get("/api/activity", async (req, res) => {
     try {
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
       const group = String(req.query.group || "").trim().toLowerCase() === "true";
@@ -11666,7 +11717,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/activity", async (req, res) => {
+  reg("post", "/api/activity"); app.post("/api/activity", async (req, res) => {
     try {
       const userId = req.session.userId;
       if (!userId) return res.status(401).json({ message: "Unauthorized" });
@@ -11685,7 +11736,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/audit", async (req, res) => {
+  reg("get", "/api/audit"); app.get("/api/audit", async (req, res) => {
     try {
       const ctx = await requireActiveTeam(req, res, { minRole: "admin" });
       if (!ctx) return;
@@ -11754,7 +11805,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/teams/my", async (req, res) => {
+  reg("get", "/api/teams/my"); app.get("/api/teams/my", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11764,7 +11815,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/teams/active", async (req, res) => {
+  reg("get", "/api/teams/active"); app.get("/api/teams/active", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11776,7 +11827,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.put("/api/teams/active", async (req, res) => {
+  reg("put", "/api/teams/active"); app.put("/api/teams/active", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11793,7 +11844,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/teams/join", async (req, res) => {
+  reg("post", "/api/teams/join"); app.post("/api/teams/join", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11826,7 +11877,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/teams", async (req, res) => {
+  reg("get", "/api/teams"); app.get("/api/teams", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11836,7 +11887,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/teams/:id", async (req, res) => {
+  reg("get", "/api/teams/:id"); app.get("/api/teams/:id", async (req, res) => {
     try {
       const teamId = parseInt(req.params.id);
       const ctx = await requireTeamMembership(req, res, { teamId, minRole: "viewer" });
@@ -11848,7 +11899,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/teams", async (req, res) => {
+  reg("post", "/api/teams"); app.post("/api/teams", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11877,7 +11928,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/teams/:id", async (req, res) => {
+  reg("patch", "/api/teams/:id"); app.patch("/api/teams/:id", async (req, res) => {
     try {
       const teamId = parseInt(req.params.id);
       const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
@@ -11892,7 +11943,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/teams/:id", async (req, res) => {
+  reg("delete", "/api/teams/:id"); app.delete("/api/teams/:id", async (req, res) => {
     try {
       const teamId = parseInt(req.params.id);
       const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
@@ -11903,7 +11954,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/teams/:teamId/members", async (req, res) => {
+  reg("get", "/api/teams/:teamId/members"); app.get("/api/teams/:teamId/members", async (req, res) => {
     try {
       const teamId = parseInt(req.params.teamId);
       const ctx = await requireTeamMembership(req, res, { teamId, minRole: "viewer" });
@@ -11919,7 +11970,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/teams/:teamId/invite", async (req, res) => {
+  reg("post", "/api/teams/:teamId/invite"); app.post("/api/teams/:teamId/invite", async (req, res) => {
     try {
       const teamId = parseInt(req.params.teamId);
       const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
@@ -11953,7 +12004,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/teams/:teamId/members", async (req, res) => {
+  reg("post", "/api/teams/:teamId/members"); app.post("/api/teams/:teamId/members", async (req, res) => {
     try {
       const teamId = parseInt(req.params.teamId);
       const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
@@ -11965,7 +12016,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/team-members/:id", async (req, res) => {
+  reg("patch", "/api/team-members/:id"); app.patch("/api/team-members/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -11981,7 +12032,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/team-members/:id", async (req, res) => {
+  reg("delete", "/api/team-members/:id"); app.delete("/api/team-members/:id", async (req, res) => {
     try {
       const existing = await storage.getTeamMemberById(parseInt(req.params.id));
       if (!existing) return res.status(404).json({ message: "Not found" });
@@ -11994,7 +12045,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/teams/:teamId/activity", async (req, res) => {
+  reg("get", "/api/teams/:teamId/activity"); app.get("/api/teams/:teamId/activity", async (req, res) => {
     try {
       const teamId = parseInt(req.params.teamId);
       const ctx = await requireTeamMembership(req, res, { teamId, minRole: "viewer" });
@@ -12006,7 +12057,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/teams/:teamId/activity", async (req, res) => {
+  reg("post", "/api/teams/:teamId/activity"); app.post("/api/teams/:teamId/activity", async (req, res) => {
     try {
       const teamId = parseInt(req.params.teamId);
       const ctx = await requireTeamMembership(req, res, { teamId, minRole: "admin" });
@@ -12019,7 +12070,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // NOTIFICATION PREFERENCES ENDPOINTS
-  app.get("/api/users/:userId/notification-preferences", async (req, res) => {
+  reg("get", "/api/users/:userId/notification-preferences"); app.get("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12031,7 +12082,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/users/:userId/notification-preferences", async (req, res) => {
+  reg("post", "/api/users/:userId/notification-preferences"); app.post("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12044,7 +12095,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/users/:userId/notification-preferences", async (req, res) => {
+  reg("patch", "/api/users/:userId/notification-preferences"); app.patch("/api/users/:userId/notification-preferences", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12058,7 +12109,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // USER NOTIFICATIONS ENDPOINTS (actual notification messages)
-  app.get("/api/users/:userId/notifications", async (req, res) => {
+  reg("get", "/api/users/:userId/notifications"); app.get("/api/users/:userId/notifications", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12071,7 +12122,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/users/:userId/notifications/unread-count", async (req, res) => {
+  reg("get", "/api/users/:userId/notifications/unread-count"); app.get("/api/users/:userId/notifications/unread-count", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12083,7 +12134,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/users/:userId/notifications", async (req, res) => {
+  reg("post", "/api/users/:userId/notifications"); app.post("/api/users/:userId/notifications", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12096,7 +12147,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/notifications/:id/read", async (req, res) => {
+  reg("patch", "/api/notifications/:id/read"); app.patch("/api/notifications/:id/read", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12112,7 +12163,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/notifications/:id", async (req, res) => {
+  reg("delete", "/api/notifications/:id"); app.delete("/api/notifications/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12128,7 +12179,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.delete("/api/users/:userId/notifications", async (req, res) => {
+  reg("delete", "/api/users/:userId/notifications"); app.delete("/api/users/:userId/notifications", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12140,7 +12191,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.patch("/api/users/:userId/notifications/read-all", async (req, res) => {
+  reg("patch", "/api/users/:userId/notifications/read-all"); app.patch("/api/users/:userId/notifications/read-all", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12153,7 +12204,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // INTERNAL TEAM MESSAGING (separate from external SMS)
-  app.get("/api/messages/conversations", async (req, res) => {
+  reg("get", "/api/messages/conversations"); app.get("/api/messages/conversations", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12163,7 +12214,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/messages", async (req, res) => {
+  reg("get", "/api/messages"); app.get("/api/messages", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12187,7 +12238,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/messages/unread-count", async (req, res) => {
+  reg("get", "/api/messages/unread-count"); app.get("/api/messages/unread-count", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12197,7 +12248,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/messages/read", async (req, res) => {
+  reg("post", "/api/messages/read"); app.post("/api/messages/read", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12208,7 +12259,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/messages", async (req, res) => {
+  reg("post", "/api/messages"); app.post("/api/messages", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12278,7 +12329,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // CALENDAR EVENTS (internal meetings)
-  app.get("/api/calendar-events", async (req, res) => {
+  reg("get", "/api/calendar-events"); app.get("/api/calendar-events", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12290,7 +12341,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/calendar-events", async (req, res) => {
+  reg("post", "/api/calendar-events"); app.post("/api/calendar-events", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12334,7 +12385,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/calendar-events/:id", async (req, res) => {
+  reg("patch", "/api/calendar-events/:id"); app.patch("/api/calendar-events/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12373,7 +12424,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/calendar-events/:id", async (req, res) => {
+  reg("delete", "/api/calendar-events/:id"); app.delete("/api/calendar-events/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12401,7 +12452,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     return Number(task?.createdBy) === Number(user?.id) || Number(task?.assignedToUserId) === Number(user?.id);
   }
   // TASKS ENDPOINTS
-  app.get("/api/tasks", async (req, res) => {
+  reg("get", "/api/tasks"); app.get("/api/tasks", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12449,7 +12500,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/tasks", async (req, res) => {
+  reg("post", "/api/tasks"); app.post("/api/tasks", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12469,7 +12520,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/tasks/:id", async (req, res) => {
+  reg("patch", "/api/tasks/:id"); app.patch("/api/tasks/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12490,7 +12541,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/tasks/:id/complete", async (req, res) => {
+  reg("post", "/api/tasks/:id/complete"); app.post("/api/tasks/:id/complete", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12506,7 +12557,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/tasks/:id", async (req, res) => {
+  reg("delete", "/api/tasks/:id"); app.delete("/api/tasks/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12553,7 +12604,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     });
     return task;
   }
-  app.get("/api/leads/:id/tasks", async (req, res) => {
+  reg("get", "/api/leads/:id/tasks"); app.get("/api/leads/:id/tasks", async (req, res) => {
     try {
       const out = await listEntityTasks(req, res, { type: "lead", id: parseInt(req.params.id) });
       if (!out) return;
@@ -12562,7 +12613,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/leads/:id/tasks", async (req, res) => {
+  reg("post", "/api/leads/:id/tasks"); app.post("/api/leads/:id/tasks", async (req, res) => {
     try {
       const task = await createEntityTask(req, res, { type: "lead", id: parseInt(req.params.id) });
       if (!task) return;
@@ -12571,7 +12622,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/opportunities/:id/tasks", async (req, res) => {
+  reg("get", "/api/opportunities/:id/tasks"); app.get("/api/opportunities/:id/tasks", async (req, res) => {
     try {
       const out = await listEntityTasks(req, res, { type: "opportunity", id: parseInt(req.params.id) });
       if (!out) return;
@@ -12580,7 +12631,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/opportunities/:id/tasks", async (req, res) => {
+  reg("post", "/api/opportunities/:id/tasks"); app.post("/api/opportunities/:id/tasks", async (req, res) => {
     try {
       const task = await createEntityTask(req, res, { type: "opportunity", id: parseInt(req.params.id) });
       if (!task) return;
@@ -12589,7 +12640,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/buyers/:id/tasks", async (req, res) => {
+  reg("get", "/api/buyers/:id/tasks"); app.get("/api/buyers/:id/tasks", async (req, res) => {
     try {
       const out = await listEntityTasks(req, res, { type: "buyer", id: parseInt(req.params.id) });
       if (!out) return;
@@ -12598,7 +12649,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/buyers/:id/tasks", async (req, res) => {
+  reg("post", "/api/buyers/:id/tasks"); app.post("/api/buyers/:id/tasks", async (req, res) => {
     try {
       const task = await createEntityTask(req, res, { type: "buyer", id: parseInt(req.params.id) });
       if (!task) return;
@@ -12607,7 +12658,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/campaigns/:id/tasks", async (req, res) => {
+  reg("get", "/api/campaigns/:id/tasks"); app.get("/api/campaigns/:id/tasks", async (req, res) => {
     try {
       const out = await listEntityTasks(req, res, { type: "campaign", id: parseInt(req.params.id) });
       if (!out) return;
@@ -12616,7 +12667,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/campaigns/:id/tasks", async (req, res) => {
+  reg("post", "/api/campaigns/:id/tasks"); app.post("/api/campaigns/:id/tasks", async (req, res) => {
     try {
       const task = await createEntityTask(req, res, { type: "campaign", id: parseInt(req.params.id) });
       if (!task) return;
@@ -12625,7 +12676,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/ai/config", async (_req, res) => {
+  reg("get", "/api/ai/config"); app.get("/api/ai/config", async (_req, res) => {
     const required = [
       "TELNYX_API_KEY",
       "TELNYX_CONNECTION_ID",
@@ -12637,12 +12688,12 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     const ready = missing.length === 0;
     res.json({ ready, missing });
   });
-  app.get("/api/ai/ping", async (_req, res) => {
+  reg("get", "/api/ai/ping"); app.get("/api/ai/ping", async (_req, res) => {
     const ok = Boolean(process.env.TELNYX_API_KEY && process.env.TELNYX_CONNECTION_ID && process.env.TELNYX_MESSAGING_PROFILE_ID);
     res.json({ ok });
   });
   // USER GOALS ENDPOINTS
-  app.get("/api/users/:userId/goals", async (req, res) => {
+  reg("get", "/api/users/:userId/goals"); app.get("/api/users/:userId/goals", async (req, res) => {
     try {
       const goals = await storage.getUserGoals(parseInt(req.params.userId));
       res.json(goals);
@@ -12650,7 +12701,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/goals/:id", async (req, res) => {
+  reg("get", "/api/goals/:id"); app.get("/api/goals/:id", async (req, res) => {
     try {
       const goal = await storage.getUserGoalById(parseInt(req.params.id));
       if (!goal) return res.status(404).json({ message: "Goal not found" });
@@ -12659,7 +12710,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/users/:userId/goals", async (req, res) => {
+  reg("post", "/api/users/:userId/goals"); app.post("/api/users/:userId/goals", async (req, res) => {
     try {
       const validated = insertUserGoalSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
       const goal = await storage.createUserGoal(validated);
@@ -12668,7 +12719,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/goals/:id", async (req, res) => {
+  reg("patch", "/api/goals/:id"); app.patch("/api/goals/:id", async (req, res) => {
     try {
       const partial = insertUserGoalSchema.partial().parse(req.body);
       const goal = await storage.updateUserGoal(parseInt(req.params.id), partial);
@@ -12677,7 +12728,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/goals/:id", async (req, res) => {
+  reg("delete", "/api/goals/:id"); app.delete("/api/goals/:id", async (req, res) => {
     try {
       await storage.deleteUserGoal(parseInt(req.params.id));
       res.json({ message: "Goal deleted" });
@@ -12686,7 +12737,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
     }
   });
   // OFFERS ENDPOINTS
-  app.get("/api/offers", async (req, res) => {
+  reg("get", "/api/offers"); app.get("/api/offers", async (req, res) => {
     try {
       const userId = req.query.userId ? parseInt(req.query.userId as string) : undefined;
       const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
@@ -12706,7 +12757,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/offers/:id", async (req, res) => {
+  reg("get", "/api/offers/:id"); app.get("/api/offers/:id", async (req, res) => {
     try {
       const offer = await storage.getOfferById(parseInt(req.params.id));
       if (!offer) return res.status(404).json({ message: "Offer not found" });
@@ -12715,7 +12766,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/offers", async (req, res) => {
+  reg("post", "/api/offers"); app.post("/api/offers", async (req, res) => {
     try {
       const validated = insertOfferSchema.parse(req.body);
       const offer = await storage.createOffer(validated);
@@ -12724,7 +12775,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/offers/:id", async (req, res) => {
+  reg("patch", "/api/offers/:id"); app.patch("/api/offers/:id", async (req, res) => {
     try {
       const partial = insertOfferSchema.partial().parse(req.body);
       const offer = await storage.updateOffer(parseInt(req.params.id), partial);
@@ -12733,7 +12784,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/offers/:id", async (req, res) => {
+  reg("delete", "/api/offers/:id"); app.delete("/api/offers/:id", async (req, res) => {
     try {
       await storage.deleteOffer(parseInt(req.params.id));
       res.json({ message: "Offer deleted" });
@@ -12743,7 +12794,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
 // BUYER OFFERS ENDPOINTS (deal-execution offer management)
   const BUYER_OFFER_STATUSES = ["draft", "received", "countered", "accepted", "rejected", "withdrawn", "expired"];
-  app.get("/api/opportunities/:id/offers", async (req, res) => {
+  reg("get", "/api/opportunities/:id/offers"); app.get("/api/opportunities/:id/offers", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12756,7 +12807,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/opportunities/:id/offers", async (req, res) => {
+  reg("post", "/api/opportunities/:id/offers"); app.post("/api/opportunities/:id/offers", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12799,7 +12850,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-app.post("/api/buyer-offers/:id/counter", async (req, res) => {
+reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/counter", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12834,7 +12885,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/buyer-offers/:id/status", async (req, res) => {
+  reg("patch", "/api/buyer-offers/:id/status"); app.patch("/api/buyer-offers/:id/status", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12886,7 +12937,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/work-categories", async (req, res) => {
+  reg("get", "/api/work-categories"); app.get("/api/work-categories", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12897,7 +12948,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/work-categories", async (req, res) => {
+  reg("post", "/api/work-categories"); app.post("/api/work-categories", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12909,7 +12960,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/work-categories/:id", async (req, res) => {
+  reg("patch", "/api/work-categories/:id"); app.patch("/api/work-categories/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12922,7 +12973,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/work-categories/:id", async (req, res) => {
+  reg("delete", "/api/work-categories/:id"); app.delete("/api/work-categories/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -12934,7 +12985,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/timeclock/current", async (req, res) => {
+  reg("get", "/api/timeclock/current"); app.get("/api/timeclock/current", async (req, res) => {
     try {
       if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
       const session = await storage.getOpenTimeClockSession(req.session.userId);
@@ -12954,7 +13005,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/timeclock/auto-start", async (req, res) => {
+  reg("post", "/api/timeclock/auto-start"); app.post("/api/timeclock/auto-start", async (req, res) => {
     try {
       if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
       const { clientNow, tzOffsetMinutes } = req.body || {};
@@ -12988,7 +13039,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/timeclock/auto-stop", async (req, res) => {
+  reg("post", "/api/timeclock/auto-stop"); app.post("/api/timeclock/auto-stop", async (req, res) => {
     try {
       if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
       const { clientNow, tzOffsetMinutes } = req.body || {};
@@ -13004,7 +13055,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.patch("/api/timeclock/current", async (req, res) => {
+  reg("patch", "/api/timeclock/current"); app.patch("/api/timeclock/current", async (req, res) => {
     try {
       if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
       const { task } = req.body || {};
@@ -13016,7 +13067,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/timesheet", async (req, res) => {
+  reg("get", "/api/timesheet"); app.get("/api/timesheet", async (req, res) => {
     try {
       if (!req.session.userId) return res.status(401).json({ message: "Not authenticated" });
       const sessionUser = await storage.getUserById(req.session.userId);
@@ -13033,7 +13084,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
     }
   });
   // TIMESHEET ENTRIES ENDPOINTS
-  app.get("/api/users/:userId/timesheet", async (req, res) => {
+  reg("get", "/api/users/:userId/timesheet"); app.get("/api/users/:userId/timesheet", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
       const entries = await storage.getTimesheetEntries(parseInt(req.params.userId), limit, offset);
@@ -13042,7 +13093,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/timesheet/:id", async (req, res) => {
+  reg("get", "/api/timesheet/:id"); app.get("/api/timesheet/:id", async (req, res) => {
     try {
       const entry = await storage.getTimesheetEntryById(parseInt(req.params.id));
       if (!entry) return res.status(404).json({ message: "Entry not found" });
@@ -13051,7 +13102,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/users/:userId/timesheet", async (req, res) => {
+  reg("post", "/api/users/:userId/timesheet"); app.post("/api/users/:userId/timesheet", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13077,7 +13128,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/timesheet/:id", async (req, res) => {
+  reg("patch", "/api/timesheet/:id"); app.patch("/api/timesheet/:id", async (req, res) => {
     try {
       const partial = insertTimesheetEntrySchema.partial().parse(req.body);
       const entry = await storage.updateTimesheetEntry(parseInt(req.params.id), partial);
@@ -13086,7 +13137,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/timesheet/:id", async (req, res) => {
+  reg("delete", "/api/timesheet/:id"); app.delete("/api/timesheet/:id", async (req, res) => {
     try {
       await storage.deleteTimesheetEntry(parseInt(req.params.id));
       res.json({ message: "Entry deleted" });
@@ -13094,7 +13145,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/timesheet/:id/submit", async (req, res) => {
+  reg("post", "/api/timesheet/:id/submit"); app.post("/api/timesheet/:id/submit", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13109,7 +13160,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/timesheet/:id/approve", async (req, res) => {
+  reg("post", "/api/timesheet/:id/approve"); app.post("/api/timesheet/:id/approve", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13122,7 +13173,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/timesheet/:id/dispute", async (req, res) => {
+  reg("post", "/api/timesheet/:id/dispute"); app.post("/api/timesheet/:id/dispute", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13136,7 +13187,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/timesheet/:id/mark-paid", async (req, res) => {
+  reg("post", "/api/timesheet/:id/mark-paid"); app.post("/api/timesheet/:id/mark-paid", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13149,7 +13200,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/approvals/timesheet", async (req, res) => {
+  reg("get", "/api/approvals/timesheet"); app.get("/api/approvals/timesheet", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13166,7 +13217,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/payroll/summary", async (req, res) => {
+  reg("get", "/api/payroll/summary"); app.get("/api/payroll/summary", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13181,7 +13232,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/worker-profiles", async (req, res) => {
+  reg("get", "/api/worker-profiles"); app.get("/api/worker-profiles", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13195,7 +13246,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.put("/api/worker-profiles/:userId", async (req, res) => {
+  reg("put", "/api/worker-profiles/:userId"); app.put("/api/worker-profiles/:userId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13209,7 +13260,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.get("/api/category-rate-overrides", async (req, res) => {
+  reg("get", "/api/category-rate-overrides"); app.get("/api/category-rate-overrides", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13222,7 +13273,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.put("/api/category-rate-overrides/:userId/:categoryId", async (req, res) => {
+  reg("put", "/api/category-rate-overrides/:userId/:categoryId"); app.put("/api/category-rate-overrides/:userId/:categoryId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13237,7 +13288,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/category-rate-overrides/:userId/:categoryId", async (req, res) => {
+  reg("delete", "/api/category-rate-overrides/:userId/:categoryId"); app.delete("/api/category-rate-overrides/:userId/:categoryId", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13251,7 +13302,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/commissions/events", async (req, res) => {
+  reg("get", "/api/commissions/events"); app.get("/api/commissions/events", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13267,7 +13318,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/commissions/participants", async (req, res) => {
+  reg("get", "/api/commissions/participants"); app.get("/api/commissions/participants", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13281,7 +13332,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/commissions/participants", async (req, res) => {
+  reg("post", "/api/commissions/participants"); app.post("/api/commissions/participants", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13293,7 +13344,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/commissions/participants/:id", async (req, res) => {
+  reg("delete", "/api/commissions/participants/:id"); app.delete("/api/commissions/participants/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13304,7 +13355,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/commissions/ledger", async (req, res) => {
+  reg("get", "/api/commissions/ledger"); app.get("/api/commissions/ledger", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13319,7 +13370,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/commissions/ledger/:id/approve", async (req, res) => {
+  reg("post", "/api/commissions/ledger/:id/approve"); app.post("/api/commissions/ledger/:id/approve", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13332,7 +13383,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/commissions/ledger/:id/dispute", async (req, res) => {
+  reg("post", "/api/commissions/ledger/:id/dispute"); app.post("/api/commissions/ledger/:id/dispute", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13346,7 +13397,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/commissions/ledger/:id/mark-paid", async (req, res) => {
+  reg("post", "/api/commissions/ledger/:id/mark-paid"); app.post("/api/commissions/ledger/:id/mark-paid", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13360,7 +13411,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
     }
   });
   // BUYERS ENDPOINTS
-  app.get("/api/buyers", async (req, res) => {
+  reg("get", "/api/buyers"); app.get("/api/buyers", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13376,7 +13427,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/buyers/:id", async (req, res) => {
+  reg("get", "/api/buyers/:id"); app.get("/api/buyers/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13387,7 +13438,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/buyers", async (req, res) => {
+  reg("post", "/api/buyers"); app.post("/api/buyers", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13415,7 +13466,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error?.message || "Failed to create buyer" });
     }
   });
-  app.patch("/api/buyers/:id", async (req, res) => {
+  reg("patch", "/api/buyers/:id"); app.patch("/api/buyers/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13429,7 +13480,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/buyers/:id", async (req, res) => {
+  reg("delete", "/api/buyers/:id"); app.delete("/api/buyers/:id", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13440,7 +13491,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
     }
   });
   // BUYER COMMUNICATIONS ENDPOINTS
-  app.get("/api/buyers/:buyerId/communications", async (req, res) => {
+  reg("get", "/api/buyers/:buyerId/communications"); app.get("/api/buyers/:buyerId/communications", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
       const comms = await storage.getBuyerCommunications(parseInt(req.params.buyerId), limit, offset);
@@ -13449,7 +13500,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/buyers/:buyerId/communications", async (req, res) => {
+  reg("post", "/api/buyers/:buyerId/communications"); app.post("/api/buyers/:buyerId/communications", async (req, res) => {
     try {
       const validated = insertBuyerCommunicationSchema.parse({
         ...req.body,
@@ -13461,7 +13512,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/buyer-communications/:id", async (req, res) => {
+  reg("delete", "/api/buyer-communications/:id"); app.delete("/api/buyer-communications/:id", async (req, res) => {
     try {
       await storage.deleteBuyerCommunication(parseInt(req.params.id));
       res.json({ message: "Communication deleted" });
@@ -13470,7 +13521,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
     }
   });
   // DEAL ASSIGNMENTS ENDPOINTS
-  app.get("/api/deal-assignments", async (req, res) => {
+  reg("get", "/api/deal-assignments"); app.get("/api/deal-assignments", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
       const assignments = await storage.getDealAssignments(limit, offset);
@@ -13479,7 +13530,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/deal-assignments/:id", async (req, res) => {
+  reg("get", "/api/deal-assignments/:id"); app.get("/api/deal-assignments/:id", async (req, res) => {
     try {
       const assignment = await storage.getDealAssignmentById(parseInt(req.params.id));
       if (!assignment) return res.status(404).json({ message: "Assignment not found" });
@@ -13488,7 +13539,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/properties/:propertyId/assignments", async (req, res) => {
+  reg("get", "/api/properties/:propertyId/assignments"); app.get("/api/properties/:propertyId/assignments", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
       const assignments = await storage.getDealAssignmentsByPropertyId(parseInt(req.params.propertyId), limit, offset);
@@ -13497,7 +13548,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/buyers/:buyerId/assignments", async (req, res) => {
+  reg("get", "/api/buyers/:buyerId/assignments"); app.get("/api/buyers/:buyerId/assignments", async (req, res) => {
     try {
       const { limit, offset } = parseLimitOffset(req.query);
       const assignments = await storage.getDealAssignmentsByBuyerId(parseInt(req.params.buyerId), limit, offset);
@@ -13506,7 +13557,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/deal-assignments", async (req, res) => {
+  reg("post", "/api/deal-assignments"); app.post("/api/deal-assignments", async (req, res) => {
     try {
       const validated = insertDealAssignmentSchema.parse(req.body);
       const assignment = await storage.createDealAssignment(validated);
@@ -13518,7 +13569,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.patch("/api/deal-assignments/:id", async (req, res) => {
+  reg("patch", "/api/deal-assignments/:id"); app.patch("/api/deal-assignments/:id", async (req, res) => {
     try {
       const partial = insertDealAssignmentSchema.partial().parse(req.body);
       const assignment = await storage.updateDealAssignment(parseInt(req.params.id), partial);
@@ -13530,7 +13581,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.delete("/api/deal-assignments/:id", async (req, res) => {
+  reg("delete", "/api/deal-assignments/:id"); app.delete("/api/deal-assignments/:id", async (req, res) => {
     try {
       await storage.deleteDealAssignment(parseInt(req.params.id));
       res.json({ message: "Assignment deleted" });
@@ -13538,7 +13589,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.get("/api/reports/source", async (req, res) => {
+  reg("get", "/api/reports/source"); app.get("/api/reports/source", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
@@ -13615,7 +13666,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
     }
   });
   // ===== PUBLIC LISTING ROUTES (no auth required) =====
-  app.get("/api/public/listings/:token", async (req, res) => {
+  reg("get", "/api/public/listings/:token"); app.get("/api/public/listings/:token", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
       if (!token) return res.status(404).json({ message: "Not found" });
@@ -13687,7 +13738,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(500).json({ message: error.message });
     }
   });
-  app.post("/api/listings/:token/inquiries", async (req, res) => {
+  reg("post", "/api/listings/:token/inquiries"); app.post("/api/listings/:token/inquiries", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
       if (!token) return res.status(404).json({ message: "Not found" });
@@ -13769,7 +13820,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
       res.status(400).json({ message: error.message });
     }
   });
-  app.post("/api/listings/:token/offer", async (req, res) => {
+  reg("post", "/api/listings/:token/offer"); app.post("/api/listings/:token/offer", async (req, res) => {
     try {
       const token = String(req.params.token || "").trim();
       if (!token) return res.status(404).json({ message: "Not found" });
@@ -13820,7 +13871,7 @@ app.post("/api/buyer-offers/:id/counter", async (req, res) => {
     }
   });
   // Public listing view route (serves the React app with token in context)
-  app.get("/api/public/listings/:token/view", async (req, res) => {
+  reg("get", "/api/public/listings/:token/view"); app.get("/api/public/listings/:token/view", async (req, res) => {
     const token = String(req.params.token || "").trim();
     if (!token) return res.status(404).json({ message: "Not found" });
     const listing = await storage.getPublicListingByToken(token);

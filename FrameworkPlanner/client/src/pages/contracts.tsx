@@ -58,6 +58,8 @@ type Contract = {
   earnestMoney?: string;
   sentAt?: string;
   executedAt?: string;
+  signedAt?: string;
+  expiresAt?: string;
 };
 
 export default function Contracts() {
@@ -262,12 +264,21 @@ export default function Contracts() {
                     </div>
                     <div>
                       <h3 className="font-semibold text-foreground">{contract.title || `Contract #${contract.id}`}</h3>
-                      <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
+                      <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground flex-wrap">
                         <span className="capitalize">{contract.contractType || "Contract"}</span>
                         <Badge variant="outline" className={`${STATUS_COLORS[contract.status]}/10 capitalize`}>
                           {contract.status}
                         </Badge>
                         <span>Property: {contract.propertyId}</span>
+                        {contract.createdAt ? <span title="Created">Created {new Date(contract.createdAt).toLocaleDateString()}</span> : null}
+                        {contract.sentAt ? <span title="Sent">Sent {new Date(contract.sentAt).toLocaleDateString()}</span> : null}
+                        {contract.signedAt ? <span title="Signed">Signed {new Date(contract.signedAt).toLocaleDateString()}</span> : null}
+                        {contract.executedAt ? <span title="Executed">Executed {new Date(contract.executedAt).toLocaleDateString()}</span> : null}
+                        {contract.expiresAt ? (
+                          <span className={(new Date(contract.expiresAt).getTime() < Date.now() && !["executed", "voided", "declined"].includes(String(contract.status))) ? "text-destructive font-medium" : ""}>
+                            Expires {new Date(contract.expiresAt).toLocaleDateString()}
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   </div>
