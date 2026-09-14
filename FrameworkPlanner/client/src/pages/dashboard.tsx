@@ -11,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useLocation } from "wouter";
+import { computeDealMetrics } from "@/lib/deal-metrics";
 
 interface ActivityLog {
   id: number;
@@ -225,23 +226,11 @@ export default function Dashboard() {
   }, [leads, tasks, contractDocuments, contracts, stats]);
 
   const kpiData = useMemo(() => {
-    const closedDocuments = contractDocuments.filter(doc => doc.status === 'closed');
-    
-    let totalAssignmentFees = 0;
-    closedDocuments.forEach(doc => {
-      try {
-        if (doc.mergeData) {
-          const data = typeof doc.mergeData === 'string' ? JSON.parse(doc.mergeData) : doc.mergeData;
-          if (data.closingData?.assignmentFee) {
-            totalAssignmentFees += parseFloat(data.closingData.assignmentFee) || 0;
-          }
-        }
-      } catch (e) {}
-    });
-
-    const totalContractValue = contracts.reduce((sum, contract) => {
-      return sum + (parseFloat(contract.amount) || 0);
-    }, 0);
+    // N1: closed-deal count and revenue come from the shared metrics helper
+    // (same rule as Analytics) so the two pages can't disagree.
+    const metrics = computeDealMetrics(contracts, contractDocuments);
+    const totalAssignmentFees = metrics.revenue;
+    const closedDeals = metrics.dealsClosed;
 
     const activeLeads = typeof stats?.activeLeads === "number"
       ? stats.activeLeads
@@ -252,8 +241,6 @@ export default function Dashboard() {
     const dealsInPipeline = contractDocuments.filter(doc => 
       doc.status === 'draft' || doc.status === 'sent' || doc.status === 'executed'
     ).length;
-
-    const closedDeals = closedDocuments.length;
 
     const totalLeads = typeof stats?.activeLeads === "number" ? stats.activeLeads : leads.length;
     const conversionRate = totalLeads > 0 
@@ -268,7 +255,10 @@ export default function Dashboard() {
         trend: "up",
         icon: DollarSign,
         description: "",
-        href: "/contracts?tab=list&status=closed",
+        // N10: the canonical "closed" documents live in the generator store's
+        // Closing tab; the old status=closed deep-link filtered a vocabulary
+        // this store doesn't use.
+        href: "/contracts?tab=closing",
       },
       {
         title: "Active Leads",
@@ -277,7 +267,7 @@ export default function Dashboard() {
         trend: "neutral",
         icon: Users,
         description: "",
-        href: "/leads?statusIn=new,contacted&sortKey=oldest_untouched&sortDir=asc",
+        href: "/leads?statusIn=new,contacted,qualified&sortKey=oldest_untouched&sortDir=asc",
       },
       {
         title: "Deals in Pipeline",

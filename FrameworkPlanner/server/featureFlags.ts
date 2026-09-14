@@ -7,6 +7,7 @@ export const featureEnvVars = {
   comps: "FEATURE_COMPS",
   buyer_match: "FEATURE_BUYER_MATCH",
   voice_playground: "FEATURE_VOICE_PLAYGROUND",
+  public_listings: "FEATURE_PUBLIC_LISTINGS",
 } as const;
 
 export type FeatureFlagKey = keyof typeof featureEnvVars;

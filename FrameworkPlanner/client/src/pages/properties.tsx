@@ -1240,6 +1240,7 @@ export default function Opportunities() {
             getId={(p: any) => p.id}
             getStatus={(p: any) => (p.stage ? String(p.stage) : p.status ? statusFilterToStage(String(p.status)) : null)}
             emptyText="No opportunities"
+            onMoveItem={(p: any, stage) => quickUpdatePropertyMutation.mutate({ id: p.id, data: { status: stage } })}
             renderItem={(p: any) => (
               <OpportunityPipelineCard
                 opportunity={p}

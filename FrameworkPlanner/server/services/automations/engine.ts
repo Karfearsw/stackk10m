@@ -206,6 +206,16 @@ async function executeAction(event: AutomationEvent, automationName: string, act
     const url = String(cfg.url || "").trim();
     const secret = String(cfg.secret || "").trim();
     if (!url || !/^https:\/\//i.test(url)) return { ok: false, kind: "webhook", error: "Invalid url" };
+    // M33: block placeholder/example hosts — "Test Auto" pointed at
+    // example.com for weeks and every run consumed a raw HTML page.
+    try {
+      const host = new URL(url).hostname.toLowerCase();
+      if (/(^|\.)example\.(com|org|net)$/.test(host) || host === "localhost" || host === "127.0.0.1" || host.endsWith(".local")) {
+        return { ok: false, kind: "webhook", error: `Refusing to post to placeholder host "${host}"` };
+      }
+    } catch {
+      return { ok: false, kind: "webhook", error: "Invalid url" };
+    }
     if (!secret) return { ok: false, kind: "webhook", error: "Missing secret" };
     const timeoutMs = typeof cfg.timeoutMs === "number" && Number.isFinite(cfg.timeoutMs) ? cfg.timeoutMs : 5000;
     const retries = typeof cfg.retries === "number" && Number.isFinite(cfg.retries) ? cfg.retries : 2;

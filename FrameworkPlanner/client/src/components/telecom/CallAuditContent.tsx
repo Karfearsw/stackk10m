@@ -7,7 +7,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { RefreshCw, ShieldAlert } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
+import { Download, RefreshCw, ShieldAlert } from "lucide-react";
 
 const CALL_STATUSES = ["ringing", "answered", "ended", "missed", "failed", "transferring"];
 const DISPOSITIONS = ["connected", "qualified", "qualified_handoff", "callback_requested", "voicemail", "no_answer", "busy", "wrong_number_confirmed", "wrong_number_review", "not_interested", "do_not_call", "invalid_number", "failed", "abandoned", "agent_unavailable", "bridge_failed"];
@@ -30,6 +31,7 @@ function agentName(r: any): string {
 }
 
 export function CallAuditContent() {
+  const { toast } = useToast();
   const [userId, setUserId] = useState("");
   const [status, setStatus] = useState("");
   const [disposition, setDisposition] = useState("");
@@ -73,6 +75,40 @@ export function CallAuditContent() {
   });
 
   const apply = () => setApplied((n) => n + 1);
+
+  // M45: export the currently filtered calls as CSV.
+  const exportCsv = () => {
+    const rows = calls || [];
+    if (!rows.length) {
+      toast({ title: "Nothing to export", description: "Apply filters with results first." });
+      return;
+    }
+    const headers = ["when", "agent", "direction", "number", "status", "disposition", "duration_seconds", "note"];
+    const escape = (v: any) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [headers.join(",")];
+    for (const c of rows) {
+      lines.push([
+        fmtDate(c.started_at),
+        agentName(c),
+        c.direction,
+        c.number,
+        c.status,
+        c.disposition || "",
+        c.duration_ms != null ? Math.round(c.duration_ms / 1000) : "",
+        c.note || "",
+      ].map(escape).join(","));
+    }
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `call-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <div className="space-y-6">
@@ -126,6 +162,9 @@ export function CallAuditContent() {
           <Button size="sm" onClick={apply}>Apply</Button>
           <Button size="sm" variant="outline" onClick={() => { refetchCalls(); refetchSessions(); }}>
             <RefreshCw className="mr-1 h-3 w-3" /> Refresh
+          </Button>
+          <Button size="sm" variant="outline" onClick={exportCsv} title="Export the filtered calls as CSV">
+            <Download className="mr-1 h-3 w-3" /> Export CSV
           </Button>
         </CardContent>
       </Card>

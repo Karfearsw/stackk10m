@@ -256,7 +256,14 @@ export default function RvmPage() {
               <Label>Lead IDs (comma or space separated)</Label>
               <Input value={leadIdsCsv} onChange={(e) => setLeadIdsCsv(e.target.value)} placeholder="123, 124, 125" />
             </div>
-            <Button variant="secondary" onClick={() => launchMutation.mutate()} disabled={launchMutation.isPending}>
+            {/* M21: Launch used to stay enabled with no campaign, no audio,
+                and empty Lead IDs — a misclick fired an invalid request. */}
+            <Button
+              variant="secondary"
+              onClick={() => launchMutation.mutate()}
+              disabled={launchMutation.isPending || !activeCampaignId || !leadIdsCsv.trim() || !selectedAudioId}
+              title={!activeCampaignId ? "Select a campaign first" : !leadIdsCsv.trim() ? "Enter at least one Lead ID" : !selectedAudioId ? "Select an audio asset" : "Launch RVM"}
+            >
               Launch RVM
             </Button>
 

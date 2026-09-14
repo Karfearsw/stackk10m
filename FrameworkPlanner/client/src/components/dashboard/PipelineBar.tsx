@@ -6,8 +6,10 @@ import { useLocation } from "wouter";
 export function PipelineBar() {
   const [, setLocation] = useLocation();
 
+  // M24: keep this definition identical to the dashboard "Active Leads" KPI
+  // (new + contacted + qualified) so the strip and the KPI can't disagree.
   const { data: leadsResp } = useQuery<any>({
-    queryKey: ['/api/leads?limit=1&statusIn=new,contacted'],
+    queryKey: ['/api/leads?limit=1&statusIn=new,contacted,qualified'],
   });
 
   const { data: opportunities = [] } = useQuery<any[]>({
@@ -34,7 +36,7 @@ export function PipelineBar() {
       textColor: "text-blue-600",
       bgColor: "bg-blue-50",
       borderColor: "border-blue-200",
-      href: "/leads?statusIn=new,contacted&sortKey=oldest_untouched&sortDir=asc",
+      href: "/leads?statusIn=new,contacted,qualified&sortKey=oldest_untouched&sortDir=asc",
     },
     {
       id: "negotiation",

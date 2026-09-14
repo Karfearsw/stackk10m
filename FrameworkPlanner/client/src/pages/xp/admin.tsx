@@ -246,6 +246,16 @@ export default function XpAdminPage() {
     cancellationPolicy: "",
   });
   const [createItinerary, setCreateItinerary] = useState<XpItinerary | null>(null);
+  // Inline validation: surface field errors before submit instead of a bare 400 toast.
+  const createErrors = {
+    slug: !form.slug.trim()
+      ? "Slug is required"
+      : !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(form.slug.trim())
+        ? "Use lowercase letters, numbers and dashes (e.g. ocean-luxe)"
+        : "",
+    title: !form.title.trim() ? "Title is required" : "",
+  };
+  const createHasErrors = Boolean(createErrors.slug || createErrors.title);
 
   const createExperience = useMutation({
     mutationFn: async () => {
@@ -676,11 +686,13 @@ export default function XpAdminPage() {
               <div className="space-y-4">
                 <div className="space-y-2">
                   <Label>Slug</Label>
-                  <Input value={form.slug} onChange={(e) => setForm((p) => ({ ...p, slug: e.target.value }))} placeholder="ocean-luxe" />
+                  <Input value={form.slug} onChange={(e) => setForm((p) => ({ ...p, slug: e.target.value }))} placeholder="ocean-luxe" aria-invalid={!!createErrors.slug} />
+                  {createErrors.slug ? <p className="text-xs text-destructive">{createErrors.slug}</p> : null}
                 </div>
                 <div className="space-y-2">
                   <Label>Title</Label>
-                  <Input value={form.title} onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))} placeholder="Ocean Luxe Experience" />
+                  <Input value={form.title} onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))} placeholder="Ocean Luxe Experience" aria-invalid={!!createErrors.title} />
+                  {createErrors.title ? <p className="text-xs text-destructive">{createErrors.title}</p> : null}
                 </div>
                 <div className="space-y-2">
                   <Label>Description</Label>
@@ -713,7 +725,7 @@ export default function XpAdminPage() {
                     <Input value={form.priceTotal} onChange={(e) => setForm((p) => ({ ...p, priceTotal: e.target.value }))} placeholder="500.00" />
                   </div>
                 </div>
-                <Button disabled={createExperience.isPending} onClick={() => createExperience.mutate()}>
+                <Button disabled={createExperience.isPending || createHasErrors} onClick={() => createExperience.mutate()}>
                   Create
                 </Button>
               </div>
@@ -1240,6 +1252,7 @@ export default function XpAdminPage() {
                     <TableRow>
                       <TableHead>Name</TableHead>
                       <TableHead>Type</TableHead>
+                      <TableHead>License plate</TableHead>
                       <TableHead>Location</TableHead>
                       <TableHead></TableHead>
                     </TableRow>
@@ -1249,6 +1262,8 @@ export default function XpAdminPage() {
                       <TableRow key={v.id}>
                         <TableCell>{v.name}</TableCell>
                         <TableCell>{v.type || "tesla"}</TableCell>
+                        {/* XP-16: the plate is captured in the dialog; display it. */}
+                        <TableCell className="font-mono text-xs">{String(v.licensePlate || "") || "—"}</TableCell>
                         <TableCell>{v.locationId ? locations.find((l) => l.id === v.locationId)?.name || `#${v.locationId}` : ""}</TableCell>
                         <TableCell className="text-right">
                           <div className="flex justify-end gap-2">
@@ -1282,7 +1297,7 @@ export default function XpAdminPage() {
                     ))}
                     {vehicles.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">
+                        <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
                           No vehicles yet.
                         </TableCell>
                       </TableRow>

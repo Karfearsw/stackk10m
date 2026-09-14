@@ -1438,6 +1438,11 @@ function ClosingModule({ contracts, properties }: { contracts: any[], properties
   const handleCloseDeal = () => {
     if (!selectedContract) return;
     const allChecked = closingData.buyerPaid && closingData.titleReceived && closingData.fundsWired && closingData.docsRecorded;
+    const feeNum = parseFloat(String(closingData.assignmentFee || ""));
+    if (!Number.isFinite(feeNum) || feeNum < 0) {
+      toast({ title: "Enter the assignment fee collected", variant: "destructive" });
+      return;
+    }
     if (!allChecked) {
       toast({ title: "Please complete all checklist items", variant: "destructive" });
       return;

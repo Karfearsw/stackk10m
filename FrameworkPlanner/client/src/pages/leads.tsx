@@ -2242,6 +2242,7 @@ export default function Leads() {
             getId={(lead: any) => lead.id}
             getStatus={(lead: any) => lead.status}
             emptyText="No leads"
+            onMoveItem={(lead: any, status) => updateMutation.mutate({ id: lead.id, data: { status } })}
             renderItem={(lead: any) => (
               <LeadPipelineCard
                 lead={lead}

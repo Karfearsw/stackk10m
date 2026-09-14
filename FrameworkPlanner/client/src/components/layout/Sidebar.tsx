@@ -28,6 +28,7 @@ import {
   Ticket,
   Zap,
   ScrollText,
+  FileSignature,
   Shield,
   ActivitySquare,
   MoreHorizontal,
@@ -91,6 +92,7 @@ const menuGroups = [
     items: [
       { name: "Companies", href: "/companies", icon: Building2 },
       { name: "Documents", href: "/documents", icon: FolderOpen },
+      { name: "LOIs", href: "/lois", icon: FileSignature },
       { name: "Documentation", href: "/docs", icon: BookOpen },
     ],
   },
@@ -114,6 +116,7 @@ const menuGroups = [
       { name: "System Health", href: "/system-health", icon: ActivitySquare },
       { name: "Playground", href: "/playground", icon: Lightbulb },
       { name: "Scripts", href: "/scripts", icon: FileText },
+      { name: "Call Audit", href: "/call-audit", icon: ScrollText },
     ],
   },
 ];
@@ -422,8 +425,9 @@ export function Sidebar() {
               </button>
 
               <div className="mt-3 text-[11px] text-sidebar-foreground/50 truncate">
-                v{String(versionInfo?.version || "0.0.0")}
-                {versionInfo?.commitSha ? ` (${String(versionInfo.commitSha).slice(0, 7)})` : ""}
+                {versionInfo?.version
+                  ? `v${String(versionInfo.version)}${versionInfo?.commitSha ? ` (${String(versionInfo.commitSha).slice(0, 7)})` : ""}`
+                  : ""}
               </div>
             </>
           ) : (

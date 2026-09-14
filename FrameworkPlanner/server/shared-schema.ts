@@ -1050,6 +1050,9 @@ export type InsertXpBlackout = z.infer<typeof insertXpBlackoutSchema>;
 
 export const xpBookings = pgTable("xp_bookings", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  // Customer-facing booking reference (PNR-style, e.g. OL-4F7K2Q). Generated
+  // at booking time so it can appear on confirmations and the admin grid.
+  referenceCode: varchar("reference_code", { length: 20 }),
   experienceId: integer("experience_id").notNull(),
   kind: varchar("kind", { length: 20 }).notNull(),
   customerName: varchar("customer_name", { length: 255 }).notNull(),
@@ -1184,6 +1187,7 @@ export const NOTIFICATION_CATEGORY_KEYS = [
   "internal_message",
   "voicemail",
   "meeting_invite",
+  "xp_booking_confirmed",
   "system",
 ] as const;
 

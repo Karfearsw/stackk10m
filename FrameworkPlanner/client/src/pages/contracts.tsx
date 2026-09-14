@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Plus, Filter, FileText, Download, Eye, AlertCircle, ChevronRight } from "lucide-react";
+import { Plus, Filter, FileText, Download, Eye, AlertCircle, ChevronRight, Trash2 } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -66,6 +66,7 @@ export default function Contracts() {
   const queryClient = useQueryClient();
   const [location] = useLocation();
   const [createOpen, setCreateOpen] = useState(false);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
     propertyId: "",
@@ -135,6 +136,25 @@ export default function Contracts() {
       } catch {}
       toast.error(msg);
     },
+  });
+
+  // M18: contracts previously could not be deleted from this page (test
+  // clutter was permanent without DB access). Executed contracts are protected.
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await apiRequest("DELETE", `/api/contracts/${id}`);
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `Failed to delete contract (${res.status})`);
+      }
+      return res.json().catch(() => ({}));
+    },
+    onSuccess: () => {
+      toast.success("Contract deleted");
+      setConfirmDeleteId(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/contracts"] });
+    },
+    onError: (e: any) => toast.error(e?.message || "Failed to delete contract"),
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -286,6 +306,34 @@ export default function Contracts() {
                     <Button variant="outline" size="sm" asChild>
                       <a href={`/contracts/${contract.id}`}><Eye className="w-4 h-4 mr-2" /> View</a>
                     </Button>
+                    {confirmDeleteId === contract.id ? (
+                      <>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          disabled={deleteMutation.isPending}
+                          onClick={() => deleteMutation.mutate(contract.id)}
+                          data-testid={`button-confirm-delete-contract-${contract.id}`}
+                        >
+                          {deleteMutation.isPending ? "Deleting..." : "Confirm delete"}
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => setConfirmDeleteId(null)}>
+                          Cancel
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        disabled={contract.status === "executed"}
+                        title={contract.status === "executed" ? "Executed contracts cannot be deleted" : "Delete contract"}
+                        onClick={() => setConfirmDeleteId(contract.id)}
+                        data-testid={`button-delete-contract-${contract.id}`}
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" /> Delete
+                      </Button>
+                    )}
                   </div>
                 </div>
               ))}

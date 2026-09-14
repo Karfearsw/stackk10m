@@ -48,6 +48,8 @@ const Dialer = React.lazy(() => import("@/pages/dialer"));
 const DialerWorkspace = React.lazy(() => import("@/pages/dialer-workspace"));
 const CommunicationsWorkspace = React.lazy(() => import("@/pages/workspace-communications"));
 const ScriptsPage = React.lazy(() => import("@/pages/scripts"));
+const CallAuditPage = React.lazy(() => import("@/pages/call-audit"));
+const LoisPage = React.lazy(() => import("@/pages/lois"));
 const VoicemailPage = React.lazy(() => import("@/pages/voicemail"));
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
 const TeamsPage = React.lazy(() => import("@/pages/teams"));
@@ -120,12 +122,15 @@ function Router() {
         </Suspense>
       )} />
 
-      {/* XP Routes */}
+      {/* XP Routes — static slugs first so /xp/:slug never shadows them */}
       <Route path="/xp" component={() => <ProtectedRoute component={XpLandingPage} />} />
       <Route path="/xp/experience" component={() => <ProtectedRoute component={XpExperiencePage} />} />
       <Route path="/xp/admin" component={() => <ProtectedRoute component={XpAdminPage} />} />
       <Route path="/xp/checkout-success" component={() => <ProtectedRoute component={XpCheckoutSuccessPage} />} />
       <Route path="/xp/checkout-cancel" component={() => <ProtectedRoute component={XpCheckoutCancelPage} />} />
+      {/* XP-CRIT-1: the storefront links to /xp/<slug>; without this route the
+          entire customer booking flow 404s. */}
+      <Route path="/xp/:slug" component={() => <ProtectedRoute component={XpExperiencePage} />} />
 
       {/* Core Protected Routes */}
       <Route path="/" component={() => (isAuthenticated ? <ProtectedRoute component={Dashboard} /> : <Redirect to="/login" />)} />
@@ -162,6 +167,12 @@ function Router() {
       <Route path="/dialer/workspace" component={() => <ProtectedRoute component={DialerWorkspace} />} />
       <Route path="/workspace/communications" component={() => <ProtectedRoute component={CommunicationsWorkspace} />} />
       <Route path="/scripts" component={() => <ProtectedRoute component={ScriptsPage} />} />
+      {/* N5: Call Audit was only reachable as a Settings tab; the nav deep-link
+          404'd. Dedicated route reuses the same CallAuditContent component. */}
+      <Route path="/call-audit" component={() => <ProtectedRoute component={CallAuditPage} />} />
+      {/* M22/M29: LOIs live in the Document Management tabs; give them a real
+          standalone route so the lifecycle is reachable and /lois doesn't 404. */}
+      <Route path="/lois" component={() => <ProtectedRoute component={LoisPage} />} />
       <Route path="/system-health" component={() => <ProtectedRoute component={SystemHealthPage} />} />
       <Route path="/teams" component={() => <ProtectedRoute component={TeamsPage} />} />
       <Route path="/companies" component={() => <ProtectedRoute component={CompaniesPage} />} />

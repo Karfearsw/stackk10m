@@ -12,11 +12,37 @@ import { QueryError } from "@/components/ui/query-state";
 import { useAuth } from "@/contexts/AuthContext";
 import { apiRequest } from "@/lib/queryClient";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertTriangle, CheckCircle2, Filter, Loader2, Mail, MessageSquare, Phone, Plus, RefreshCw, Send, Users, XCircle, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
 type CampaignRow = { id: number; name: string; status: string; type: string | null; description: string | null; createdAt: string | null; updatedAt: string | null };
+
+// M20: "Active" campaigns are inert when no SMS provider is configured —
+// surface the provider state instead of implying messages are sending.
+function SmsConfigBanner() {
+  const { data: readiness } = useQuery<any>({
+    queryKey: ["/api/system/provider-readiness"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/system/provider-readiness");
+      return await res.json();
+    },
+    staleTime: 60_000,
+    retry: false,
+  });
+  const smsConfigured = Boolean(readiness?.sms?.configured && readiness?.sms?.reachable);
+  if (!readiness || smsConfigured) return null;
+  return (
+    <Alert className="border-amber-300 bg-amber-50 text-amber-900">
+      <AlertTriangle className="h-4 w-4" />
+      <AlertTitle>SMS is not configured</AlertTitle>
+      <AlertDescription>
+        Campaigns (even ones marked Active) will not send messages until Telnyx SMS is configured in Settings → System.
+      </AlertDescription>
+    </Alert>
+  );
+}
 type CampaignStep = { id: number; stepOrder: number; channel: string; offsetDays: number; sendWindowStart: string | null; sendWindowEnd: string | null; templateText: string };
 type CampaignStats = { sends: number; failed: number; enrolled: number; completed: number };
 
@@ -99,6 +125,9 @@ export default function Campaigns() {
             <Button onClick={() => { setSelectedId(null); setActiveTab("create"); }}><Plus className="h-4 w-4 mr-1" />New Campaign</Button>
           </div>
         </div>
+        {/* M20: an "Active" campaign is misleading when no SMS provider is
+            configured — nothing can actually send. Surface the provider state. */}
+        <SmsConfigBanner />
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
             <TabsTrigger value="list">All Campaigns</TabsTrigger>

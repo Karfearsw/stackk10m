@@ -127,7 +127,7 @@ import Stripe from "stripe";
 import { getDocumentContent, getDocumentSignedUrl, isDocumentVaultConfigured, makeDocumentStorageKey, sha256Hex, uploadDocumentObject } from "./media/documentVault.js";
 import { registerMediaRoutes } from "./media/media-routes.js";
 import { detectMimeFromMagic, maxMediaUploadBytes, maxImageUploadBytes, maxVideoUploadBytes, probeImageDimensions, validateMediaFile } from "./media/mime-guard.js";
-import { getMediaAssetById, assertMediaTeam, attachMedia, setMediaDeliveryMode } from "./media/mediaVault.js";
+import { getMediaAssetById, assertMediaTeam, attachMedia, setMediaDeliveryMode, listMediaByAttachments } from "./media/mediaVault.js";
 import { planMessageDelivery, linkFallbackText } from "./media/mms-plan.js";
 import { makeMediaShareUrl } from "./media/share-token.js";
 import speakeasy from "speakeasy";
@@ -623,8 +623,11 @@ export function isValidStage(stage: string): stage is OpportunityStage {
 }
 export function canTransitionStage(from: OpportunityStage, to: OpportunityStage): boolean {
   if (from === to) return true;
-  const terminal = new Set(["closed", "dead", "voided"]);
+  const terminal = new Set(["dead", "voided"]);
   if (terminal.has(from) && !terminal.has(to)) return false;
+  // N3: closed↔sold must be reversible — Sold is the stage whose expectations
+  // include receiving the assignment fee, and the audit caught a real close
+  // that needed to move closed→sold. Only dead/voided are one-way now.
   return true;
 }
 export function generateSlug(title: string): string {
@@ -1194,6 +1197,7 @@ export async function registerRoutes(
     const stripeKey = String(process.env.STRIPE_SECRET_KEY || "").trim();
     if (!stripeKey) return res.status(500).json({ message: "Stripe is not configured" });
     const booking = await storage.createXpBookingPending({
+      // P0 #5: reference code is generated in storage if not supplied.
       experienceId,
       kind,
       customerName,
@@ -1208,6 +1212,7 @@ export async function registerRoutes(
       stripePaymentIntentId: null,
       stripeCustomerId: null,
     } as any);
+    const bookingReference = String((booking as any).referenceCode || "").trim();
     const stripe = new Stripe(stripeKey, { apiVersion: stripeApiVersion });
     const origin = `${req.protocol}://${req.get("host")}`;
     const session = await stripe.checkout.sessions.create({
@@ -1232,13 +1237,16 @@ export async function registerRoutes(
       ],
       metadata: {
         bookingId: String((booking as any).id),
+        bookingReference: bookingReference,
         experienceId: String(experienceId),
         kind,
         paymentMode: paymentMode.data,
       },
     });
     await storage.updateXpBookingStripeSession((booking as any).id, session.id);
-    return res.status(201).json({ checkoutUrl: session.url });
+    // P0 #6: the customer's checkout session must carry the booking reference
+    // so the confirmation page can show it even before the webhook confirms.
+    return res.status(201).json({ checkoutUrl: session.url, bookingReference });
   });
   reg("get", "/api/xp/bookings/session/:sessionId"); app.get("/api/xp/bookings/session/:sessionId", async (req, res) => {
     const sessionId = String(req.params.sessionId || "").trim();
@@ -1249,6 +1257,7 @@ export async function registerRoutes(
     return res.json({
       booking: {
         id: (booking as any).id,
+        referenceCode: (booking as any).referenceCode || null,
         kind: (booking as any).kind,
         status: (booking as any).status,
         customerName: (booking as any).customerName,
@@ -1296,8 +1305,50 @@ export async function registerRoutes(
       if (booking && String((booking as any).status) !== "confirmed") {
         const confirmed = await storage.confirmXpBookingByStripeSessionId({ sessionId, paymentIntentId, stripeCustomerId });
         if (confirmed) {
+          // P0 #6: booking confirmation email + in-app notification. Email is
+          // best-effort: when RESEND_API_KEY is not configured the customer
+          // still gets the on-screen reference and the ops side (task) below.
+          const xpRef = String((confirmed as any).referenceCode || "").trim();
+          // Best-effort lookup: the confirmation flow must never fail because
+          // the experience row is unreadable (or in tests, mocked out).
+          let xpExperience: any = null;
+          try {
+            xpExperience = await storage.getXpExperienceById(Number((confirmed as any).experienceId));
+          } catch {}
+          const xpWhen = `${new Date((confirmed as any).startAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}`;
+          try {
+            await sendResendEmail({
+              to: String((confirmed as any).customerEmail || ""),
+              subject: `Your Ocean Luxe Experiences booking is confirmed${xpRef ? ` — ${xpRef}` : ""}`,
+              text: [
+                `Thank you, ${String((confirmed as any).customerName || "there")}!`,
+                ``,
+                xpExperience ? `Experience: ${String((xpExperience as any).title || "")}` : null,
+                `When: ${xpWhen}`,
+                xpRef ? `Booking reference: ${xpRef}` : null,
+                `Amount paid now: ${String((confirmed as any).currency || "USD")} ${String((confirmed as any).depositAmount || "")}`,
+                ``,
+                `Our concierge team will reach out before your experience. Keep this reference for any questions.`,
+              ].filter((l): l is string => l !== null).join("\n"),
+            });
+          } catch (e: any) {
+            console.error("[XP] booking confirmation email failed:", e?.message);
+          }
           const admin = await xpPickAdminUser();
           if (admin) {
+            try {
+              await notifyUser({
+                userId: admin.id,
+                category: "xp_booking_confirmed",
+                title: `XP booking confirmed${xpRef ? ` (${xpRef})` : ""}`,
+                description: `${String((confirmed as any).customerName || "Customer")} — ${xpExperience ? String((xpExperience as any).title || "") + " — " : ""}${xpWhen}`,
+                relatedType: "xp_booking",
+                relatedId: (confirmed as any).id,
+                eventKey: `xp_booking_confirmed:${(confirmed as any).id}`,
+              });
+            } catch (e: any) {
+              console.error("[XP] booking confirmation notification failed:", e?.message);
+            }
             await createTask({
               title: `XP booking confirmed: ${String((confirmed as any).customerName || "")}`.trim(),
               description: JSON.stringify({
@@ -1609,9 +1660,11 @@ export async function registerRoutes(
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
     const name = String(req.body?.name || "").trim();
     if (!name) return res.status(400).json({ message: "Missing name" });
+    const locType = String(req.body?.type || "resort").trim() || "resort";
+    if (!XP_LOCATION_TYPES.has(locType)) return res.status(400).json({ message: `Invalid location type "${locType}"` });
     const row = await storage.createXpLocation({
       name,
-      type: String(req.body?.type || "resort").trim() || "resort",
+      type: locType,
       address1: String(req.body?.address1 || "").trim() || null,
       address2: String(req.body?.address2 || "").trim() || null,
       city: String(req.body?.city || "").trim() || null,
@@ -1629,7 +1682,11 @@ export async function registerRoutes(
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
     const patch: any = {};
     if (req.body?.name !== undefined) patch.name = String(req.body?.name || "").trim();
-    if (req.body?.type !== undefined) patch.type = String(req.body?.type || "").trim() || "resort";
+    if (req.body?.type !== undefined) {
+      const locType = String(req.body?.type || "").trim() || "resort";
+      if (!XP_LOCATION_TYPES.has(locType)) return res.status(400).json({ message: `Invalid location type "${locType}"` });
+      patch.type = locType;
+    }
     if (req.body?.address1 !== undefined) patch.address1 = String(req.body?.address1 || "").trim() || null;
     if (req.body?.address2 !== undefined) patch.address2 = String(req.body?.address2 || "").trim() || null;
     if (req.body?.city !== undefined) patch.city = String(req.body?.city || "").trim() || null;
@@ -1664,15 +1721,21 @@ export async function registerRoutes(
     });
     return res.json({ items });
   });
+  // XP-15: the Type value must be one of the UI's own vocabulary — "tesla"
+  // was stored for a boat because a native select silently submitted junk.
+  const XP_VEHICLE_TYPES = new Set(["tesla", "driver", "sprinter"]);
+  const XP_LOCATION_TYPES = new Set(["resort", "pickup", "service_area"]);
   reg("post", "/api/xp/admin/vehicles"); app.post("/api/xp/admin/vehicles", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
     const name = String(req.body?.name || "").trim();
     if (!name) return res.status(400).json({ message: "Missing name" });
+    const type = String(req.body?.type || "tesla").trim() || "tesla";
+    if (!XP_VEHICLE_TYPES.has(type)) return res.status(400).json({ message: `Invalid vehicle type "${type}"` });
     const row = await storage.createXpVehicle({
       name,
-      type: String(req.body?.type || "tesla").trim() || "tesla",
+      type,
       licensePlate: String(req.body?.licensePlate || "").trim() || null,
       locationId: parseNullableInt(req.body?.locationId),
       active: true,
@@ -1687,7 +1750,11 @@ export async function registerRoutes(
     if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
     const patch: any = {};
     if (req.body?.name !== undefined) patch.name = String(req.body?.name || "").trim();
-    if (req.body?.type !== undefined) patch.type = String(req.body?.type || "").trim() || "tesla";
+    if (req.body?.type !== undefined) {
+      const type = String(req.body?.type || "").trim() || "tesla";
+      if (!XP_VEHICLE_TYPES.has(type)) return res.status(400).json({ message: `Invalid vehicle type "${type}"` });
+      patch.type = type;
+    }
     if (req.body?.licensePlate !== undefined) patch.licensePlate = String(req.body?.licensePlate || "").trim() || null;
     if (req.body?.locationId !== undefined) patch.locationId = parseNullableInt(req.body?.locationId);
     if (req.body?.active !== undefined) patch.active = Boolean(req.body?.active);
@@ -6516,6 +6583,11 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
+      // N11: the public_listings feature flag used to be displayed but never
+      // enforced — the feature fully worked with the flag off. Gate the
+      // CRM-facing listing management surface on it (public token endpoints
+      // for external buyers stay open).
+      if (!(await isFeatureEnabled(user.id, "public_listings", isFeatureBypassUser(user)))) return res.status(403).json({ message: "Public Listings is not enabled for this account. Ask an administrator to enable the public_listings feature." });
       const opportunityId = parseInt(req.params.id, 10);
       const property = await storage.getPropertyById(opportunityId);
       if (!property) return res.status(404).json({ message: "Opportunity not found" });
@@ -6529,6 +6601,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "public_listings", isFeatureBypassUser(user)))) return res.status(403).json({ message: "Public Listings is not enabled for this account. Ask an administrator to enable the public_listings feature." });
       const opportunityId = parseInt(req.params.id, 10);
       const property = await storage.getPropertyById(opportunityId);
       if (!property) return res.status(404).json({ message: "Opportunity not found" });
@@ -6556,6 +6629,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "public_listings", isFeatureBypassUser(user)))) return res.status(403).json({ message: "Public Listings is not enabled for this account. Ask an administrator to enable the public_listings feature." });
       const listingId = parseInt(req.params.id, 10);
       const existing = await storage.getPublicListingById(listingId);
       if (!existing) return res.status(404).json({ message: "Listing not found" });
@@ -6577,6 +6651,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "public_listings", isFeatureBypassUser(user)))) return res.status(403).json({ message: "Public Listings is not enabled for this account. Ask an administrator to enable the public_listings feature." });
       const listingId = parseInt(req.params.id, 10);
       await storage.deletePublicListing(listingId);
       res.json({ message: "Listing deleted" });
@@ -8963,6 +9038,137 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     }
   });
   // CONTRACTS ENDPOINTS
+  // M22: the client has called /api/lois since the LOI Creator shipped, but
+  // the endpoints never existed (only schema + storage). LOIs are letter-of-
+  // intent records with a draft → sent → accepted/declined lifecycle.
+  const coerceLoiBody = (body: any) => {
+    const b: any = { ...(body || {}) };
+    // The wizard-style client sends closingDate as an HTML date string; the
+    // column is a timestamp, so coerce before zod validation.
+    if (typeof b.closingDate === "string") b.closingDate = b.closingDate.trim() ? new Date(b.closingDate) : null;
+    if (typeof b.sentDate === "string") b.sentDate = b.sentDate.trim() ? new Date(b.sentDate) : null;
+    if (typeof b.responseDate === "string") b.responseDate = b.responseDate.trim() ? new Date(b.responseDate) : null;
+    return b;
+  };
+  reg("get", "/api/lois"); app.get("/api/lois", async (req, res) => {
+    try {
+      const { limit, offset } = parseLimitOffset(req.query);
+      const items = await storage.getLois(limit, offset);
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/lois"); app.post("/api/lois", async (req, res) => {
+    try {
+      const validated = insertLoiSchema.parse(coerceLoiBody(req.body));
+      const loi = await storage.createLoi(validated);
+      res.status(201).json(loi);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  reg("get", "/api/lois/:id"); app.get("/api/lois/:id", async (req, res) => {
+    try {
+      const loi = await storage.getLoiById(parseInt(req.params.id, 10));
+      if (!loi) return res.status(404).json({ message: "LOI not found" });
+      res.json(loi);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("patch", "/api/lois/:id"); app.patch("/api/lois/:id", async (req, res) => {
+    try {
+      const partial = insertLoiSchema.partial().parse(coerceLoiBody(req.body));
+      const loi = await storage.updateLoi(parseInt(req.params.id, 10), partial);
+      if (!loi) return res.status(404).json({ message: "LOI not found" });
+      res.json(loi);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  reg("delete", "/api/lois/:id"); app.delete("/api/lois/:id", async (req, res) => {
+    try {
+      await storage.deleteLoi(parseInt(req.params.id, 10));
+      res.json({ message: "LOI deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // DEAL ASSIGNMENTS ENDPOINTS — M19/M36 fix: the 725139a routes rewrite
+  // dropped these, leaving the Deal Room's Buyer Assignments hitting dead
+  // endpoints. Restored from the pre-rewrite implementation; the "Buyer
+  // #null" orphan came from ON DELETE SET NULL rows being rendered anyway.
+  reg("get", "/api/deal-assignments"); app.get("/api/deal-assignments", async (req, res) => {
+    try {
+      const { limit, offset } = parseLimitOffset(req.query);
+      const assignments = await storage.getDealAssignments(limit, offset);
+      res.json(assignments);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/deal-assignments/:id"); app.get("/api/deal-assignments/:id", async (req, res) => {
+    try {
+      const assignment = await storage.getDealAssignmentById(parseInt(req.params.id, 10));
+      if (!assignment) return res.status(404).json({ message: "Assignment not found" });
+      res.json(assignment);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/properties/:propertyId/assignments"); app.get("/api/properties/:propertyId/assignments", async (req, res) => {
+    try {
+      const { limit, offset } = parseLimitOffset(req.query);
+      const assignments = await storage.getDealAssignmentsByPropertyId(parseInt(req.params.propertyId), limit, offset);
+      res.json(assignments);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/buyers/:buyerId/assignments"); app.get("/api/buyers/:buyerId/assignments", async (req, res) => {
+    try {
+      const { limit, offset } = parseLimitOffset(req.query);
+      const assignments = await storage.getDealAssignmentsByBuyerId(parseInt(req.params.buyerId), limit, offset);
+      res.json(assignments);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/deal-assignments"); app.post("/api/deal-assignments", async (req, res) => {
+    try {
+      const validated = insertDealAssignmentSchema.parse(req.body);
+      const assignment = await storage.createDealAssignment(validated);
+      res.status(201).json(assignment);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  reg("patch", "/api/deal-assignments/:id"); app.patch("/api/deal-assignments/:id", async (req, res) => {
+    try {
+      const partial = insertDealAssignmentSchema.partial().parse(req.body);
+      const assignment = await storage.updateDealAssignment(parseInt(req.params.id, 10), partial);
+      res.json(assignment);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  reg("delete", "/api/deal-assignments/:id"); app.delete("/api/deal-assignments/:id", async (req, res) => {
+    try {
+      await storage.deleteDealAssignment(parseInt(req.params.id, 10));
+      res.json({ message: "Assignment deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   reg("get", "/api/contracts"); app.get("/api/contracts", async (req, res) => {
     try {
       const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
@@ -9341,6 +9547,664 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.json({ message: "Field deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
+    }
+  });
+  // ===== CONTRACT DOCUMENTS (Store B — Document Management) =====
+  // Ported back after the routes rewrite dropped the whole surface: the
+  // Document Management page, dashboard contract counts, e-sign links, and
+  // Close Deal & Record Revenue all call these endpoints.
+  reg("get", "/api/contract-documents"); app.get("/api/contract-documents", async (req, res) => {
+    try {
+      const { limit, offset } = parseLimitOffset(req.query);
+      const documents = await storage.getContractDocuments(limit, offset);
+      res.json(documents);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("get", "/api/contract-documents/:id"); app.get("/api/contract-documents/:id", async (req, res) => {
+    try {
+      const document = await storage.getContractDocumentById(parseInt(req.params.id));
+      if (!document) return res.status(404).json({ message: "Document not found" });
+      res.json(document);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // Phase 6: rendered text preview of a generated contract document.
+  reg("get", "/api/contract-documents/:id/view"); app.get("/api/contract-documents/:id/view", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const doc = await storage.getContractDocumentById(parseInt(req.params.id));
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+      const content = String((doc as any).content ?? "");
+      res.json({ id: doc.id, title: doc.title, documentType: (doc as any).documentType, content });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  function wrapTextLines(text: string, maxChars: number = 95): string[] {
+    const words = String(text).split(/\s+/);
+    const out: string[] = [];
+    let line = "";
+    for (const w of words) {
+      if ((line + " " + w).trim().length > maxChars) {
+        if (line) out.push(line.trim());
+        line = w;
+      } else {
+        line = line ? line + " " + w : w;
+      }
+    }
+    if (line) out.push(line.trim());
+    return out;
+  }
+  // Phase 6: generate a printable PDF from a contract document using pdf-lib.
+  reg("get", "/api/contract-documents/:id/pdf"); app.get("/api/contract-documents/:id/pdf", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const doc = await storage.getContractDocumentById(parseInt(req.params.id));
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+      const pdfLib = await import("pdf-lib");
+      const pdf = await pdfLib.PDFDocument.create();
+      const lines = String((doc as any).content ?? "").split(/\r?\n/);
+      const page = pdf.addPage([612, 792]);
+      const helvetica = await pdf.embedFont(pdfLib.StandardFonts.Helvetica);
+      let y = 750;
+      for (const raw of lines) {
+        const line = String(raw).trim();
+        if (!line) { y -= 14; continue; }
+        const cleaned = line.replace(/[\u0000-\b\u000b\f\u000e-\u001f]/g, "");
+        try {
+          const wrapped = wrapTextLines(cleaned, 95);
+          for (const seg of wrapped) {
+            if (y < 40) { y = 750; }
+            page.drawText(seg, { x: 50, y: y, size: 10, font: helvetica });
+            y -= 14;
+          }
+        } catch {}
+      }
+      const bytes = await pdf.save();
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(String(doc.title || "contract"))}.pdf"`);
+      res.setHeader("X-Content-Type-Options", "nosniff");
+      res.send(Buffer.from(bytes));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/contract-documents"); app.post("/api/contract-documents", async (req, res) => {
+    try {
+      const validated = insertContractDocumentSchema.parse(req.body);
+      const document = await storage.createContractDocument(validated);
+      res.status(201).json(document);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  reg("patch", "/api/contract-documents/:id"); app.patch("/api/contract-documents/:id", async (req, res) => {
+    try {
+      const partial = insertContractDocumentSchema.partial().parse(req.body);
+      const document = await storage.updateContractDocument(parseInt(req.params.id), partial);
+      res.json(document);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  reg("delete", "/api/contract-documents/:id"); app.delete("/api/contract-documents/:id", async (req, res) => {
+    try {
+      await storage.deleteContractDocument(parseInt(req.params.id));
+      res.json({ message: "Document deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // "Close Deal & Record Revenue" records the closing on the deal_assignments
+  // ledger, advances the opportunity to sold, and writes an activity entry.
+  reg("post", "/api/contract-documents/:id/close"); app.post("/api/contract-documents/:id/close", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const docId = parseInt(req.params.id, 10);
+      const doc = await storage.getContractDocumentById(docId);
+      if (!doc) return res.status(404).json({ message: "Contract not found" });
+      if ((doc as any).status === "closed") return res.status(400).json({ message: "Contract already closed" });
+
+      const body = req.body || {};
+      const closingData = body.closingData || {};
+      const num = (v: any) => {
+        const n = parseFloat(String(v ?? "").replace(/[$,]/g, ""));
+        return Number.isFinite(n) ? n.toFixed(2) : null;
+      };
+      const assignmentFee = num(closingData.assignmentFee);
+      const closingCosts = num(closingData.closingCosts);
+      const buyerPaid = !!closingData.buyerPaid;
+      const titleReceived = !!closingData.titleReceived;
+      const fundsWired = !!closingData.fundsWired;
+      const docsRecorded = !!closingData.docsRecorded;
+
+      const updated = await storage.updateContractDocument(docId, { status: "closed", updatedAt: new Date() } as any);
+
+      // Write/refresh the per-deal payout ledger row (deal_assignments).
+      const propertyId = (doc as any).propertyId ?? null;
+      if (propertyId) {
+        try {
+          const existing = await storage.getDealAssignmentsByPropertyId(propertyId);
+          const prior = (existing || [])[0];
+          const payoutReceived = buyerPaid && fundsWired && docsRecorded;
+          const payload = {
+            propertyId,
+            assignmentFee,
+            status: "closed",
+            closingDate: new Date(),
+            earnestMoneyReceived: buyerPaid,
+            titleCleared: titleReceived,
+            closingScheduled: fundsWired,
+            documentsComplete: docsRecorded,
+            payoutReceived,
+            payoutAmount: payoutReceived ? assignmentFee : null,
+            notes: [closingCosts ? `Closing costs: $${closingCosts}` : "", closingData.notes || ""].filter(Boolean).join(" — ") || null,
+            updatedAt: new Date(),
+          };
+          if (prior) {
+            await storage.updateDealAssignment(prior.id, payload as any);
+          } else {
+            await storage.createDealAssignment(payload as any);
+          }
+        } catch (e: any) {
+          console.error("close: deal_assignments ledger write failed:", e?.message);
+        }
+
+        // Advance the opportunity to sold.
+        try {
+          const property = await storage.getPropertyById(propertyId);
+          if (property && !["sold", "closed", "dead", "voided"].includes(String((property as any).stage || ""))) {
+            await storage.updateProperty(propertyId, { stage: "sold", stageChangedAt: new Date(), lastActivityAt: new Date() } as any);
+            await logOpportunityEvent(propertyId, "stage_changed", "Stage changed to Sold", `Contract "${doc.title}" closed; assignment fee ${assignmentFee ? "$" + Number(assignmentFee).toLocaleString() : "not recorded"}.`, user.id, "system", { oldStage: (property as any).stage, newStage: "sold" });
+          }
+        } catch {}
+      }
+
+      try {
+        await storage.createGlobalActivity({
+          userId: user.id,
+          action: "closed_deal",
+          description: `Closed deal: ${doc.title}${assignmentFee ? ` — fee $${Number(assignmentFee).toLocaleString()}` : ""}`,
+          metadata: JSON.stringify({ contractDocumentId: docId, propertyId, assignmentFee, closingCosts }),
+        } as any);
+      } catch {}
+
+      res.json({ contract: updated });
+    } catch (error: any) {
+      console.error("POST /api/contract-documents/:id/close failed:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // ===== E-SIGN ENVELOPES (token-based signing on contract_documents) =====
+  reg("get", "/api/contract-documents/:id/envelopes"); app.get("/api/contract-documents/:id/envelopes", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "esign", isFeatureBypassUser(user)))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
+      const id = parseInt(req.params.id);
+      const rows = await storage.getContractEnvelopesByDocument(id);
+      res.json(rows.map((e: any) => ({ ...e, tokenHash: undefined })));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/contract-documents/:id/envelopes"); app.post("/api/contract-documents/:id/envelopes", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "esign", isFeatureBypassUser(user)))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
+      const id = parseInt(req.params.id);
+      const doc = await storage.getContractDocumentById(id);
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+      const schema = z.object({
+        signerName: z.string().trim().min(1).max(255),
+        signerEmail: z.string().trim().email().max(255),
+        expiresInDays: z.number().int().min(1).max(120).optional(),
+      });
+      const payload = schema.parse(req.body || {});
+      const token = crypto.randomBytes(24).toString("hex");
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const expiresAt = new Date(Date.now() + (payload.expiresInDays ?? 30) * 24 * 60 * 60 * 1000);
+      const env = await storage.createContractEnvelope({
+        documentId: id,
+        status: "sent",
+        signerName: payload.signerName,
+        signerEmail: payload.signerEmail,
+        tokenHash,
+        expiresAt,
+        sentAt: new Date(),
+        auditJson: JSON.stringify([{ event: "sent", at: new Date().toISOString(), userId: user.id }]),
+      } as any);
+      await storage.updateContractDocument(id, { status: "sent" } as any);
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "contract_sent",
+        description: `Contract sent for signature: ${doc.title}`,
+        metadata: JSON.stringify({ documentId: id, envelopeId: env.id, signerEmail: payload.signerEmail }),
+      } as any);
+      const origin = `${req.protocol}://${req.get("host")}`;
+      const signerUrl = `${origin}/sign/${token}`;
+      let emailSent = false;
+      let emailError: string | null = null;
+      try {
+        const subject = `Signature requested: ${String(doc.title || "Document")}`;
+        const text = `You have a document to sign.\n\n${signerUrl}\n\nThis link expires on ${expiresAt.toISOString()}.`;
+        const html = `<p>You have a document to sign.</p><p><a href="${signerUrl}">${signerUrl}</a></p><p>This link expires on ${expiresAt.toISOString()}.</p>`;
+        await sendResendEmail({ to: payload.signerEmail, subject, text, html });
+        emailSent = true;
+      } catch (e: any) {
+        emailError = String(e?.message || e);
+      }
+      try {
+        const audit = (() => {
+          try {
+            const parsed = JSON.parse(String((env as any).auditJson || "[]"));
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        })();
+        audit.push({
+          event: emailSent ? "email_sent" : "email_failed",
+          at: new Date().toISOString(),
+          to: payload.signerEmail,
+          error: emailSent ? undefined : emailError,
+        });
+        await storage.updateContractEnvelope(env.id, { auditJson: JSON.stringify(audit) } as any);
+      } catch {}
+      res.status(201).json({ envelopeId: env.id, signerUrl, expiresAt: expiresAt.toISOString(), emailSent, emailError });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  reg("get", "/api/contract-envelopes/:id"); app.get("/api/contract-envelopes/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "esign", isFeatureBypassUser(user)))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
+      const id = parseInt(req.params.id);
+      const env = await storage.getContractEnvelopeById(id);
+      if (!env) return res.status(404).json({ message: "Not found" });
+      res.json({ ...env, tokenHash: undefined, signatureImageBase64: undefined, signedPdfBase64: undefined });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/contract-envelopes/:id/upload-signed"); app.post("/api/contract-envelopes/:id/upload-signed", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "esign", isFeatureBypassUser(user)))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
+      const id = parseInt(req.params.id);
+      const schema = z.object({ signedPdfBase64: z.string().trim().min(1) });
+      const payload = schema.parse(req.body || {});
+      const env = await storage.getContractEnvelopeById(id);
+      if (!env) return res.status(404).json({ message: "Not found" });
+      const audit = (() => {
+        try {
+          const parsed = JSON.parse(String((env as any).auditJson || "[]"));
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      })();
+      audit.push({ event: "uploaded", at: new Date().toISOString(), userId: user.id });
+      const updated = await storage.updateContractEnvelope(id, {
+        status: "signed",
+        signedAt: new Date(),
+        signedPdfBase64: payload.signedPdfBase64,
+        auditJson: JSON.stringify(audit),
+      } as any);
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "contract_uploaded",
+        description: "Signed contract uploaded",
+        metadata: JSON.stringify({ envelopeId: id, documentId: updated.documentId }),
+      } as any);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  // ===== PUBLIC SIGNING ROUTES (token-authenticated, no session) =====
+  reg("get", "/api/sign/envelopes/:token"); app.get("/api/sign/envelopes/:token", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      if (!token) return res.status(404).json({ message: "Not found" });
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const env = await storage.getContractEnvelopeByTokenHash(tokenHash);
+      if (!env) return res.status(404).json({ message: "Not found" });
+      if ((env as any).expiresAt && new Date((env as any).expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
+      const doc = await storage.getContractDocumentById(env.documentId);
+      if (!doc) return res.status(404).json({ message: "Not found" });
+      let mergeData: any = {};
+      try {
+        mergeData = (doc as any).mergeData ? JSON.parse(String((doc as any).mergeData)) : {};
+      } catch {
+        mergeData = {};
+      }
+      const merged = mergeTemplate(String((doc as any).content || ""), mergeData);
+      res.json({
+        envelope: {
+          id: env.id,
+          status: env.status,
+          signerName: env.signerName,
+          signerEmail: env.signerEmail,
+          expiresAt: (env as any).expiresAt,
+          sentAt: (env as any).sentAt,
+          viewedAt: (env as any).viewedAt,
+          signedAt: (env as any).signedAt,
+          declinedAt: (env as any).declinedAt,
+        },
+        document: { id: doc.id, title: doc.title, content: merged },
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/sign/envelopes/:token/viewed"); app.post("/api/sign/envelopes/:token/viewed", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const env = await storage.getContractEnvelopeByTokenHash(tokenHash);
+      if (!env) return res.status(404).json({ message: "Not found" });
+      if ((env as any).expiresAt && new Date((env as any).expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
+      const audit = (() => {
+        try {
+          const parsed = JSON.parse(String((env as any).auditJson || "[]"));
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      })();
+      audit.push({ event: "viewed", at: new Date().toISOString(), ip: req.ip, ua: req.headers["user-agent"] || "" });
+      await storage.updateContractEnvelope(env.id, {
+        status: env.status === "sent" ? "viewed" : env.status,
+        viewedAt: (env as any).viewedAt || new Date(),
+        auditJson: JSON.stringify(audit),
+      } as any);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/sign/envelopes/:token/decline"); app.post("/api/sign/envelopes/:token/decline", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const env = await storage.getContractEnvelopeByTokenHash(tokenHash);
+      if (!env) return res.status(404).json({ message: "Not found" });
+      if ((env as any).expiresAt && new Date((env as any).expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
+      if (env.status === "signed") return res.status(400).json({ message: "Already signed" });
+      const audit = (() => {
+        try {
+          const parsed = JSON.parse(String((env as any).auditJson || "[]"));
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      })();
+      audit.push({ event: "declined", at: new Date().toISOString(), ip: req.ip, ua: req.headers["user-agent"] || "" });
+      await storage.updateContractEnvelope(env.id, { status: "declined", declinedAt: new Date(), auditJson: JSON.stringify(audit) } as any);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/sign/envelopes/:token/sign"); app.post("/api/sign/envelopes/:token/sign", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const env = await storage.getContractEnvelopeByTokenHash(tokenHash);
+      if (!env) return res.status(404).json({ message: "Not found" });
+      if ((env as any).expiresAt && new Date((env as any).expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
+      if (env.status === "signed") return res.status(400).json({ message: "Already signed" });
+      if (env.status === "declined") return res.status(400).json({ message: "Declined" });
+      const schema = z.object({
+        signatureType: z.enum(["typed", "drawn"]),
+        signatureText: z.string().trim().max(255).optional().nullable(),
+        signatureImageBase64: z.string().trim().optional().nullable(),
+      });
+      const payload = schema.parse(req.body || {});
+      if (payload.signatureType === "typed" && !String(payload.signatureText || "").trim()) return res.status(400).json({ message: "Signature text is required" });
+      if (payload.signatureType === "drawn" && !String(payload.signatureImageBase64 || "").trim()) return res.status(400).json({ message: "Signature image is required" });
+      const doc = await storage.getContractDocumentById(env.documentId);
+      if (!doc) return res.status(404).json({ message: "Not found" });
+      let mergeData: any = {};
+      try {
+        mergeData = (doc as any).mergeData ? JSON.parse(String((doc as any).mergeData)) : {};
+      } catch {
+        mergeData = {};
+      }
+      const merged = mergeTemplate(String((doc as any).content || ""), mergeData);
+      const audit = (() => {
+        try {
+          const parsed = JSON.parse(String((env as any).auditJson || "[]"));
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      })();
+      audit.push({ event: "signed", at: new Date().toISOString(), ip: req.ip, ua: req.headers["user-agent"] || "" });
+      const auditLines = [
+        `Envelope #${env.id}`,
+        `Signer: ${String(env.signerName || "")} <${String(env.signerEmail || "")}>`,
+        `Signed at: ${new Date().toISOString()}`,
+      ];
+      const signedPdfBase64 = await generateSignedPdfBase64({
+        title: String(doc.title || "Document"),
+        contentText: merged,
+        signatureType: payload.signatureType,
+        signatureText: payload.signatureText || null,
+        signatureImageBase64: payload.signatureImageBase64 || null,
+        auditLines,
+      });
+      await storage.updateContractEnvelope(env.id, {
+        status: "signed",
+        signedAt: new Date(),
+        signatureType: payload.signatureType,
+        signatureText: payload.signatureText || null,
+        signatureImageBase64: payload.signatureType === "drawn" ? payload.signatureImageBase64 || null : null,
+        signedPdfBase64,
+        auditJson: JSON.stringify(audit),
+      } as any);
+      await storage.updateContractDocument(env.documentId, { status: "executed" } as any).catch((e: any) => {
+        console.error(JSON.stringify({ ts: new Date().toISOString(), event: "esign", kind: "document_update_failed", documentId: env.documentId, message: String(e?.message || e) }));
+      });
+      await storage.createGlobalActivity({
+        userId: 0,
+        action: "contract_signed",
+        description: `Contract signed: ${String(doc.title || "")}`,
+        metadata: JSON.stringify({ envelopeId: env.id, documentId: env.documentId, signerEmail: env.signerEmail || null }),
+      } as any).catch(() => {});
+      try {
+        await onContractSigned({
+          documentId: env.documentId,
+          title: String(doc.title || "").trim(),
+          propertyId: (doc as any)?.propertyId ?? null,
+        });
+      } catch {}
+      res.json({ ok: true, signedPdfBase64 });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  reg("get", "/api/sign/envelopes/:token/pdf"); app.get("/api/sign/envelopes/:token/pdf", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const env = await storage.getContractEnvelopeByTokenHash(tokenHash);
+      if (!env) return res.status(404).json({ message: "Not found" });
+      if (!env.signedPdfBase64) return res.status(404).json({ message: "Not found" });
+      const bytes = Buffer.from(String(env.signedPdfBase64), "base64");
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename="signed-envelope-${env.id}.pdf"`);
+      res.send(bytes);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("get", "/api/sign/signers/:token"); app.get("/api/sign/signers/:token", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      if (!token) return res.status(404).json({ message: "Not found" });
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const signer = await storage.getContractSignerByTokenHash(tokenHash);
+      if (!signer) return res.status(404).json({ message: "Not found" });
+      if (signer.expiresAt && new Date(signer.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
+      if (signer.status === "signed") return res.status(400).json({ message: "Already signed" });
+      if (signer.status === "declined") return res.status(400).json({ message: "Declined" });
+      const contract = await storage.getContractById(signer.contractId);
+      if (!contract) return res.status(404).json({ message: "Not found" });
+      let docContent = "";
+      let docTitle = "Contract";
+      if ((contract as any).generatedDocumentId) {
+        const doc = await storage.getContractDocumentById((contract as any).generatedDocumentId);
+        if (doc) {
+          docTitle = doc.title;
+          let mergeData: any = {};
+          try { mergeData = (doc as any).mergeData ? JSON.parse(String((doc as any).mergeData)) : {}; } catch { mergeData = {}; }
+          const fallback = (contract as any).mergeDataSnapshot || {};
+          const merged = mergeTemplate(String((doc as any).content || ""), { ...fallback, ...mergeData });
+          docContent = merged;
+        }
+      }
+      res.json({
+        signer: {
+          id: signer.id,
+          name: signer.name,
+          email: signer.email,
+          role: signer.role,
+          status: signer.status,
+          expiresAt: signer.expiresAt,
+          sentAt: signer.sentAt,
+          viewedAt: signer.viewedAt,
+          signedAt: signer.signedAt,
+        },
+        contract: { id: contract.id, status: contract.status },
+        document: { title: docTitle, content: docContent },
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/sign/signers/:token/viewed"); app.post("/api/sign/signers/:token/viewed", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const signer = await storage.getContractSignerByTokenHash(tokenHash);
+      if (!signer) return res.status(404).json({ message: "Not found" });
+      if (signer.expiresAt && new Date(signer.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
+      const updated = await storage.updateContractSigner(signer.id, {
+        status: signer.status === "sent" ? "viewed" : signer.status,
+        viewedAt: new Date(),
+      } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/sign/signers/:token/decline"); app.post("/api/sign/signers/:token/decline", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const signer = await storage.getContractSignerByTokenHash(tokenHash);
+      if (!signer) return res.status(404).json({ message: "Not found" });
+      if (signer.expiresAt && new Date(signer.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
+      if (signer.status === "signed") return res.status(400).json({ message: "Already signed" });
+      const updated = await storage.updateContractSigner(signer.id, {
+        status: "declined",
+        declinedAt: new Date(),
+      } as any);
+      await storage.createContractEvent({
+        contractId: signer.contractId,
+        actorType: "contact",
+        actorContactId: signer.contactId || undefined,
+        eventType: "declined",
+        payloadJson: JSON.stringify({ signerId: signer.id }),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+      });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/sign/signers/:token/sign"); app.post("/api/sign/signers/:token/sign", async (req, res) => {
+    try {
+      const token = String(req.params.token || "").trim();
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const signer = await storage.getContractSignerByTokenHash(tokenHash);
+      if (!signer) return res.status(404).json({ message: "Not found" });
+      if (signer.expiresAt && new Date(signer.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
+      if (signer.status === "signed") return res.status(400).json({ message: "Already signed" });
+      if (signer.status === "declined") return res.status(400).json({ message: "Declined" });
+      const schema = z.object({
+        signatureType: z.enum(["typed", "drawn"]),
+        signatureText: z.string().trim().max(255).optional().nullable(),
+        signatureImageBase64: z.string().trim().optional().nullable(),
+        legalName: z.string().trim().max(255).optional(),
+        consent: z.boolean().optional(),
+      });
+      const payload = schema.parse(req.body || {});
+      if (payload.signatureType === "typed" && !String(payload.signatureText || "").trim()) return res.status(400).json({ message: "Signature text is required" });
+      if (payload.signatureType === "drawn" && !String(payload.signatureImageBase64 || "").trim()) return res.status(400).json({ message: "Signature image is required" });
+      const contract = await storage.getContractById(signer.contractId);
+      if (!contract) return res.status(404).json({ message: "Not found" });
+      let docContent = "";
+      if ((contract as any).generatedDocumentId) {
+        const doc = await storage.getContractDocumentById((contract as any).generatedDocumentId);
+        if (doc) {
+          let mergeData: any = {};
+          try { mergeData = (doc as any).mergeData ? JSON.parse(String((doc as any).mergeData)) : {}; } catch { mergeData = {}; }
+          const fallback = (contract as any).mergeDataSnapshot || {};
+          docContent = mergeTemplate(String((doc as any).content || ""), { ...fallback, ...mergeData });
+        }
+      }
+      const auditLines = [
+        `Contract #${contract.id}`,
+        `Signer: ${signer.name} <${signer.email || ""}>`,
+        `Signed at: ${new Date().toISOString()}`,
+      ];
+      const signedPdfBase64 = await generateSignedPdfBase64({
+        title: `Contract #${contract.id}`,
+        contentText: docContent,
+        signatureType: payload.signatureType,
+        signatureText: payload.signatureText || null,
+        signatureImageBase64: payload.signatureImageBase64 || null,
+        auditLines,
+      });
+      const signatureMetadata = {
+        signatureType: payload.signatureType,
+        legalName: payload.legalName || signer.name,
+        consent: payload.consent || false,
+        signedAt: new Date().toISOString(),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+      };
+      await storage.updateContractSigner(signer.id, {
+        status: "signed",
+        signedAt: new Date(),
+        signatureMetadataJson: JSON.stringify(signatureMetadata),
+      } as any);
+      await storage.createContractEvent({
+        contractId: signer.contractId,
+        actorType: "contact",
+        actorContactId: signer.contactId || undefined,
+        eventType: "signed",
+        payloadJson: JSON.stringify({ signerId: signer.id, signatureType: payload.signatureType }),
+        ip: req.ip,
+        userAgent: String(req.headers["user-agent"] || ""),
+      });
+      res.json({ ok: true, signedPdfBase64 });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
     }
   });
   reg("post", "/api/contract-templates/:id/preview"); app.post("/api/contract-templates/:id/preview", async (req, res) => {
@@ -12222,16 +13086,24 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       const limit = Math.min(parseInt(String(req.query.limit || "100"), 10) || 100, 500);
       const offset = parseInt(String(req.query.offset || "0"), 10) || 0;
       const messages = await storage.getInternalMessages(user.id, withUserId, limit, offset);
-      // Hydrate media attachments per message for gallery rendering.
-      let mediaIdsByMessage: Record<number, number[]> = {};
+      // Hydrate full media assets per message for gallery/video rendering.
+      let mediaByMessage: Record<number, any[]> = {};
       try {
-        mediaIdsByMessage = await storage.getMediaIdsForInternalMessages((messages || []).map((m: any) => m.id));
+        const teamId = await getOrInitActiveTeamId(req, user.id);
+        if (teamId != null) {
+          mediaByMessage = await listMediaByAttachments({
+            teamId,
+            entityType: "internal_message",
+            entityIds: (messages || []).map((m: any) => Number(m.id)),
+          });
+        }
       } catch (e) {
-        console.error("mediaIds hydration failed (non-blocking):", e);
+        console.error("media hydration failed (non-blocking):", e);
       }
       const enriched = (messages || []).map((m: any) => ({
         ...m,
-        mediaIds: mediaIdsByMessage[Number(m.id)] || [],
+        media: mediaByMessage[Number(m.id)] || [],
+        mediaIds: (mediaByMessage[Number(m.id)] || []).map((a: any) => a.id),
       }));
       res.json(enriched);
     } catch (error: any) {

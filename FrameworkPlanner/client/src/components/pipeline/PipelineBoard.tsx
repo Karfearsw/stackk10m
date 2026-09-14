@@ -1,4 +1,4 @@
-import { ReactNode, useMemo } from "react";
+import { ReactNode, useMemo, useState } from "react";
 import { PipelineColumn } from "./types";
 
 type PipelineBoardProps<T> = {
@@ -8,6 +8,8 @@ type PipelineBoardProps<T> = {
   getStatus: (item: T) => string | null | undefined;
   renderItem: (item: T) => ReactNode;
   emptyText?: string;
+  /** M37: when provided, cards can be dragged between stage columns. */
+  onMoveItem?: (item: T, newStatus: string) => void;
 };
 
 export function PipelineBoard<T>({
@@ -17,7 +19,10 @@ export function PipelineBoard<T>({
   getStatus,
   renderItem,
   emptyText = "No items",
+  onMoveItem,
 }: PipelineBoardProps<T>) {
+  const [dragOverColumn, setDragOverColumn] = useState<string | null>(null);
+
   const { normalizedColumns, grouped } = useMemo(() => {
     const base = (columns || []).filter((c) => c?.value && c?.label);
     const byValue = new Map<string, PipelineColumn>();
@@ -44,13 +49,44 @@ export function PipelineBoard<T>({
     return <div className="text-sm text-muted-foreground">{emptyText}</div>;
   }
 
+  const canDrag = typeof onMoveItem === "function";
+
   return (
     <div className="w-full overflow-x-auto">
       <div className="flex gap-4 min-w-max pb-2">
         {normalizedColumns.map((col) => {
           const colItems = grouped.get(col.value) || [];
+          const isOther = col.value === "__other__";
+          const droppable = canDrag && !isOther;
           return (
-            <div key={col.value} className="w-[320px] flex-shrink-0">
+            <div
+              key={col.value}
+              className={`w-[320px] flex-shrink-0 rounded-md transition-colors ${
+                droppable && dragOverColumn === col.value ? "bg-primary/5 outline outline-1 outline-dashed outline-primary/40" : ""
+              }`}
+              onDragOver={(e) => {
+                if (!droppable) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
+                setDragOverColumn(col.value);
+              }}
+              onDragLeave={(e) => {
+                if (!droppable) return;
+                if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                setDragOverColumn((c) => (c === col.value ? null : c));
+              }}
+              onDrop={(e) => {
+                if (!droppable) return;
+                e.preventDefault();
+                setDragOverColumn(null);
+                const rawId = e.dataTransfer.getData("text/plain");
+                if (!rawId) return;
+                const moved = (items || []).find((it) => String(getId(it)) === rawId);
+                if (!moved) return;
+                if (String(getStatus(moved) || "") === col.value) return;
+                onMoveItem?.(moved, col.value);
+              }}
+            >
               <div className="flex items-center justify-between px-1">
                 <div className="text-sm font-medium">{col.label}</div>
                 <div className="text-xs text-muted-foreground">{colItems.length}</div>
@@ -58,7 +94,16 @@ export function PipelineBoard<T>({
               <div className="mt-2 space-y-3">
                 {colItems.length ? (
                   colItems.map((item) => (
-                    <div key={String(getId(item))}>
+                    <div
+                      key={String(getId(item))}
+                      draggable={canDrag}
+                      onDragStart={(e) => {
+                        if (!canDrag) return;
+                        e.dataTransfer.setData("text/plain", String(getId(item)));
+                        e.dataTransfer.effectAllowed = "move";
+                      }}
+                      className={canDrag ? "cursor-grab active:cursor-grabbing" : undefined}
+                    >
                       {renderItem(item)}
                     </div>
                   ))
@@ -73,4 +118,3 @@ export function PipelineBoard<T>({
     </div>
   );
 }
-

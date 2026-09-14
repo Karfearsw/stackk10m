@@ -4,6 +4,7 @@ import { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, Cart
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { QueryError } from "@/components/ui/query-state";
+import { computeDealMetrics } from "@/lib/deal-metrics";
 
 const COLORS = ["#0a0a0a", "#D4AF37", "#C9A227", "#E7D39C", "#F6EED1"];
 
@@ -25,19 +26,11 @@ export default function Analytics() {
     queryKey: ['/api/contract-documents'],
   });
   const docRevenue = useMemo(() => {
-    let total = 0;
-    let closed = 0;
-    (contractDocuments as any[]).forEach((doc: any) => {
-      if (doc.status !== "closed") return;
-      closed += 1;
-      try {
-        const md = doc.mergeData ? (typeof doc.mergeData === "string" ? JSON.parse(doc.mergeData) : doc.mergeData) : {};
-        const fee = parseFloat(String(md?.closingData?.assignmentFee ?? md?.assignmentFee ?? ""));
-        if (Number.isFinite(fee)) total += fee;
-      } catch {}
-    });
-    return { total, closed };
-  }, [contractDocuments]);
+    // N1: kept as a queryable shape but computed by the shared helper so the
+    // dashboard and this page always agree on closed deals and revenue.
+    const metrics = computeDealMetrics(contracts, contractDocuments as any[]);
+    return { total: metrics.revenue, closed: metrics.dealsClosed };
+  }, [contracts, contractDocuments]);
 
   const { data: sourceReport } = useQuery<any>({
     queryKey: ["/api/reports/source"],
@@ -61,20 +54,16 @@ export default function Analytics() {
 
   // Calculate YTD metrics
   const ytdMetrics = useMemo(() => {
-    const closedContracts = contracts.filter(c => c.status === 'signed' || c.status === 'closed');
-    const storeARevenue = closedContracts.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
-    const totalRevenue = storeARevenue + docRevenue.total;
-    const closedDeals = closedContracts.length + docRevenue.closed;
-    const avgDealSize = closedDeals > 0 ? totalRevenue / closedDeals : 0;
-    const conversionRate = leads.length > 0 ? (closedDeals / leads.length) * 100 : 0;
-
+    // N1: docRevenue now comes from the shared helper (Store B closed docs +
+    // wet-ink Store A executed contracts), counted once — no double-mixing.
+    const conversionRate = leads.length > 0 ? (docRevenue.closed / leads.length) * 100 : 0;
     return {
-      revenue: totalRevenue,
-      closedDeals,
-      avgDealSize,
+      revenue: docRevenue.total,
+      closedDeals: docRevenue.closed,
+      avgDealSize: docRevenue.closed > 0 ? docRevenue.total / docRevenue.closed : 0,
       conversionRate
     };
-  }, [leads, contracts, docRevenue]);
+  }, [leads.length, docRevenue]);
 
   // Monthly performance data
   const monthlyData = useMemo(() => {

@@ -228,8 +228,11 @@ export default function TasksPage() {
     const items = list?.items || [];
     const q = search.trim().toLowerCase();
     const terminal = new Set(["completed", "canceled"]);
+    // M25: the Completed tab used to inherit the "Active" status filter,
+    // which strips completed tasks — leaving that tab permanently empty.
+    const ignoreStatusFilter = tab === "completed";
     return items.filter((t) => {
-      if (status === "active") {
+      if (status === "active" && !ignoreStatusFilter) {
         const s = String(t.status || "open").trim().toLowerCase();
         if (terminal.has(s)) return false;
       }
@@ -241,7 +244,7 @@ export default function TasksPage() {
       }
       return true;
     });
-  }, [list?.items, search, status]);
+  }, [list?.items, search, status, tab]);
 
   const todayStart = useMemo(() => startOfDay(new Date()), []);
   const todayEnd = useMemo(() => endOfDay(new Date()), []);
@@ -493,7 +496,7 @@ export default function TasksPage() {
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant={counts.overdue ? "destructive" : "secondary"}>Overdue {counts.overdue}</Badge>
                 <Badge variant={counts.today ? "default" : "secondary"}>Today {counts.today}</Badge>
-                <Badge variant={counts.next7 ? "default" : "secondary"}>Next 7 {counts.next7}</Badge>
+                <Badge variant={counts.next7 ? "default" : "secondary"}>Next 7: {counts.next7}</Badge>
                 <Badge variant="secondary">No due {counts.noDue}</Badge>
               </div>
             </CardTitle>

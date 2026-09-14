@@ -1,5 +1,16 @@
 import { db } from "./db.js";
 import { asc, desc, sql } from "drizzle-orm";
+
+// P0 #5: customer-facing booking reference (PNR-style). Unambiguous
+// alphabet (no 0/O/1/I) so codes read aloud or typed without mistakes.
+const XP_REF_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+export function generateXpBookingReference(): string {
+  let code = "";
+  for (let i = 0; i < 6; i++) {
+    code += XP_REF_ALPHABET[Math.floor(Math.random() * XP_REF_ALPHABET.length)];
+  }
+  return `OL-${code}`;
+}
 import { 
   leads, leadNotes, savedViews, leadBulkActionJobs, aiActionLogs, aiActionUndo, appAuditRuns, appAuditFindings, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, contractSigners, contractEvents, contractFields, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, workCategories, timesheetEntries, timeClockSessions, workerProfiles, categoryRateOverrides, payPeriods, approvalEvents, commissionEvents, dealParticipants, commissionLedgerEntries, globalActivityLogs,
@@ -469,7 +480,6 @@ export interface IStorage {
   getInternalMessageUnreadCount(userId: number): Promise<number>;
   markInternalMessagesRead(userId: number, withUserId?: number): Promise<void>;
   getInternalMessageConversations(userId: number): Promise<any[]>;
-  getMediaIdsForInternalMessages(messageIds: number[]): Promise<Record<number, number[]>>;
 
   // Calendar Events
   createCalendarEvent(event: InsertCalendarEvent): Promise<CalendarEvent>;
@@ -2721,23 +2731,6 @@ export class DatabaseStorage implements IStorage {
     return (rows as any).rows ?? [];
   }
 
-  async getMediaIdsForInternalMessages(messageIds: number[]): Promise<Record<number, number[]>> {
-    const ids = (messageIds || []).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0);
-    if (!ids.length) return {};
-    const result: any = await db.execute(sql`
-      SELECT entity_id AS message_id, array_agg(media_asset_id ORDER BY media_asset_id) AS ids
-      FROM media_attachments
-      WHERE entity_type = 'internal_message' AND entity_id = ANY(${ids})
-      GROUP BY entity_id
-    `);
-    const map: Record<number, number[]> = {};
-    for (const r of (result as any).rows || []) {
-      map[Number(r.message_id)] = (r.ids || []).map(Number);
-    }
-    return map;
-  }
-
-
   async markInternalMessagesRead(userId: number, withUserId?: number): Promise<void> {
     if (withUserId) {
       await db
@@ -4112,11 +4105,10 @@ export class DatabaseStorage implements IStorage {
     if (typeof input?.locationId === "number") whereParts.push(eq(xpBookingAssignments.locationId, input.locationId));
     if (typeof input?.vehicleId === "number") whereParts.push(eq(xpBookingAssignments.vehicleId, input.vehicleId));
 
-    const whereClause = whereParts.length ? and(...whereParts) : undefined;
-
-    const rows: any = await db
+    const whereClause = whereParts.length ? and(...whereParts) : undefined;      const rows: any = await db
       .select({
         id: xpBookings.id,
+        referenceCode: xpBookings.referenceCode,
         experienceId: xpBookings.experienceId,
         kind: xpBookings.kind,
         customerName: xpBookings.customerName,
@@ -4162,6 +4154,7 @@ export class DatabaseStorage implements IStorage {
 
     const items = rows.map((r: any) => ({
       id: r.id,
+      referenceCode: r.referenceCode,
       experienceId: r.experienceId,
       kind: r.kind,
       customerName: r.customerName,
@@ -4256,6 +4249,7 @@ export class DatabaseStorage implements IStorage {
     const notes = await this.listXpBookingNotes(id);
     return {
       id: r.id,
+      referenceCode: (r as any).referenceCode ?? null,
       experienceId: r.experienceId,
       kind: r.kind,
       customerName: r.customerName,
@@ -4290,7 +4284,13 @@ export class DatabaseStorage implements IStorage {
 
   async createXpBookingPending(input: InsertXpBooking): Promise<XpBooking> {
     const now = new Date();
-    const result = await db.insert(xpBookings).values({ ...(input as any), createdAt: now, updatedAt: now } as any).returning();
+    // P0: every booking gets a customer-facing reference code (PNR-style) used
+    // on confirmations and as a searchable column in the admin grid.
+    const referenceCode = (input as any).referenceCode || generateXpBookingReference();
+    const result = await db
+      .insert(xpBookings)
+      .values({ ...(input as any), referenceCode, createdAt: now, updatedAt: now } as any)
+      .returning();
     return result[0];
   }
 
