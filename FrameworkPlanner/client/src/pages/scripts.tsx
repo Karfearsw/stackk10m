@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { BookOpen, Plus, Search, Play, BarChart3, Upload, Clock, Hash, Star, FileText } from "lucide-react";
+import { BookOpen, Plus, Search, Play, BarChart3, Upload, Clock, Hash, Star, FileText, Trash2 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { toast } from "sonner";
@@ -150,6 +150,21 @@ export default function Scripts() {
                       <Play className="h-3 w-3 mr-1" /> Practice</Button>
                     <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(s.content || ""); toast.success("Copied!"); }}>Copy</Button>
                     <Button size="sm" variant="ghost" onClick={() => { setEditScript(s); setEditorOpen(true); }}>Edit</Button>
+                    <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
+                      data-testid={`button-delete-script-${s.id}`}
+                      onClick={async () => {
+                        // M6: delete needs an explicit confirm (audit M35 pattern)
+                        if (!window.confirm(`Delete script "${s.name}"? This cannot be undone.`)) return;
+                        try {
+                          await apiRequest("DELETE", `/api/scripts/${s.id}`);
+                          toast.success("Script deleted");
+                          refetch();
+                        } catch (e: any) {
+                          toast.error(e?.message || "Failed to delete script");
+                        }
+                      }}>
+                      <Trash2 className="h-3 w-3 mr-1" /> Delete
+                    </Button>
                   </div>
                 </CardContent>
               </Card>

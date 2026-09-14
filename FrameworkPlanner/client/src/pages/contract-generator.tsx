@@ -1294,6 +1294,15 @@ function ContractsList({
           </DialogHeader>
           <div className="space-y-3">
             <div className="text-sm text-muted-foreground">{sendContract?.title || ""}</div>
+            {/* M49: the built-in e-sign service records the envelope and a signing
+                link but does not send email; disclose that so agents hand-deliver
+                the link instead of assuming a provider email went out. */}
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+              <strong>How sending works:</strong> this creates a secure signing link —
+              no email is sent automatically. Copy the link and deliver it to the signer
+              yourself (or via your email tool). Status updates to Viewed / Signed once the
+              signer opens and completes it.
+            </div>
             <div className="grid gap-2">
               <Label>Signer name</Label>
               <Input value={signerName} onChange={(e) => setSignerName(e.target.value)} placeholder="Seller name" />
@@ -1464,7 +1473,26 @@ function ClosingModule({ contracts, properties }: { contracts: any[], properties
               {executedContracts.map((contract: any) => (
                 <div
                   key={contract.id}
-                  onClick={() => setSelectedContract(contract)}
+                  onClick={() => {
+                    // M47: prefill the checklist from the contract's own values
+                    // instead of hardcoding 10000/500.
+                    let md: any = {};
+                    try {
+                      md = contract.mergeData ? (typeof contract.mergeData === "string" ? JSON.parse(contract.mergeData) : contract.mergeData) : {};
+                    } catch { md = {}; }
+                    const fee = String(md?.closingData?.assignmentFee ?? md?.assignmentFee ?? "");
+                    const costs = String(md?.closingData?.closingCosts ?? md?.closingCosts ?? "");
+                    setSelectedContract(contract);
+                    setClosingData({
+                      assignmentFee: fee,
+                      closingCosts: costs,
+                      buyerPaid: false,
+                      titleReceived: false,
+                      fundsWired: false,
+                      docsRecorded: false,
+                      notes: "",
+                    });
+                  }}
                   className={`p-4 border rounded-lg cursor-pointer transition-colors ${
                     selectedContract?.id === contract.id 
                       ? 'border-primary bg-primary/5' 

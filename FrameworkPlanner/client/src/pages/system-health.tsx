@@ -125,10 +125,10 @@ export default function SystemHealthPage() {
             <CardContent>
               {Array.isArray(data.modules) ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {data.modules.map((m: any) => (
-                    <div key={m.key} className="rounded-md border border-border p-3">
+                  {data.modules.filter(Boolean).map((m: any) => (
+                    <div key={m.key || m.label} className="rounded-md border border-border p-3">
                       <div className="flex items-center justify-between">
-                        <span className="font-medium text-sm">{m.label}</span>
+                        <span className="font-medium text-sm">{m.label || m.key || "Module"}</span>
                         <span
                           className={`text-xs font-semibold px-2 py-0.5 rounded-full ${
                             m.state === "healthy"
@@ -160,10 +160,10 @@ export default function SystemHealthPage() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-              {data.features.map((f: any) => (
-                <div key={f.key} className="rounded-md border border-border p-3">
+              {data.features.filter(Boolean).map((f: any) => (
+                <div key={f.key || f.label} className="rounded-md border border-border p-3">
                   <div className="flex items-center justify-between">
-                    <span className="font-medium text-sm">{f.label}</span>
+                    <span className="font-medium text-sm">{f.label || f.key || "Feature"}</span>
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${f.enabled ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700"}`}>
                       {f.enabled ? "enabled" : "disabled"}
                     </span>

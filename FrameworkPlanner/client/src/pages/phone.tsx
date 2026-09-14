@@ -513,6 +513,8 @@ export default function PhoneWorkspace() {
                               <Button
                                 size="sm"
                                 variant="secondary"
+                                title={`Load ${c.name || "contact"} into the dialer`}
+                                aria-label={`Load ${c.name || "contact"} into the dialer`}
                                 onClick={() => {
                                   const next = String(c.numbers?.[0] || "").replace(/[^\d+]/g, "");
                                   setNumber(next);
@@ -570,6 +572,8 @@ export default function PhoneWorkspace() {
                               <Button
                                 size="sm"
                                 variant="outline"
+                                title="Load this number into the dialer (does not place a call)"
+                                aria-label="Load this number into the dialer (does not place a call)"
                                 onClick={() => {
                                   setNumber(String(h.number || ""));
                                   setTabAndUrl("dial");

@@ -18,6 +18,27 @@ export default function Analytics() {
     queryKey: ['/api/contracts'],
   });
 
+  // M47: the canonical deal pipeline lives on /api/contract-documents (the
+  // wizard/generator store); legacy Store A contracts only carry the raw
+  // purchase price, not the assignment fee, so revenue read $0 forever.
+  const { data: contractDocuments = [] } = useQuery<any[]>({
+    queryKey: ['/api/contract-documents'],
+  });
+  const docRevenue = useMemo(() => {
+    let total = 0;
+    let closed = 0;
+    (contractDocuments as any[]).forEach((doc: any) => {
+      if (doc.status !== "closed") return;
+      closed += 1;
+      try {
+        const md = doc.mergeData ? (typeof doc.mergeData === "string" ? JSON.parse(doc.mergeData) : doc.mergeData) : {};
+        const fee = parseFloat(String(md?.closingData?.assignmentFee ?? md?.assignmentFee ?? ""));
+        if (Number.isFinite(fee)) total += fee;
+      } catch {}
+    });
+    return { total, closed };
+  }, [contractDocuments]);
+
   const { data: sourceReport } = useQuery<any>({
     queryKey: ["/api/reports/source"],
     queryFn: async () => {
@@ -41,17 +62,19 @@ export default function Analytics() {
   // Calculate YTD metrics
   const ytdMetrics = useMemo(() => {
     const closedContracts = contracts.filter(c => c.status === 'signed' || c.status === 'closed');
-    const totalRevenue = closedContracts.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
-    const avgDealSize = closedContracts.length > 0 ? totalRevenue / closedContracts.length : 0;
-    const conversionRate = leads.length > 0 ? (closedContracts.length / leads.length) * 100 : 0;
+    const storeARevenue = closedContracts.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+    const totalRevenue = storeARevenue + docRevenue.total;
+    const closedDeals = closedContracts.length + docRevenue.closed;
+    const avgDealSize = closedDeals > 0 ? totalRevenue / closedDeals : 0;
+    const conversionRate = leads.length > 0 ? (closedDeals / leads.length) * 100 : 0;
 
     return {
       revenue: totalRevenue,
-      closedDeals: closedContracts.length,
+      closedDeals,
       avgDealSize,
       conversionRate
     };
-  }, [leads, contracts]);
+  }, [leads, contracts, docRevenue]);
 
   // Monthly performance data
   const monthlyData = useMemo(() => {

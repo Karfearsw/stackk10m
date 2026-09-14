@@ -6956,9 +6956,12 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       if (isDefault) {
         await db.execute(sql`UPDATE dialer_scripts SET is_default = false, updated_at = now() WHERE user_id = ${user.id} AND is_default = true`);
       }
+      // drizzle expands JS arrays into parameter lists, so an empty tags array
+      // produced `VALUES (..., )` — pass a Postgres array literal instead.
+      const tagsLiteral = sql.raw(`ARRAY[${tags.map((t: string) => "'" + String(t).replace(/'/g, "''") + "'").join(",")}]::text[]`);
       const ins: any = await db.execute(sql`
         INSERT INTO dialer_scripts (user_id, name, content, description, category, tags, is_default)
-        VALUES (${user.id}, ${name}, ${content}, ${description}, ${category}, ${tags}, ${isDefault})
+        VALUES (${user.id}, ${name}, ${content}, ${description}, ${category}, ${tagsLiteral}, ${isDefault})
         RETURNING id, name, content, description, category, tags, is_default as "isDefault", created_at as "createdAt"
       `);
       res.json({ item: (ins.rows || [])[0] });
@@ -6987,6 +6990,21 @@ app.patch("/api/inquiries/:id", async (req, res) => {
         await db.execute(sql`UPDATE dialer_scripts SET is_default = false, updated_at = now() WHERE user_id = ${user.id} AND is_default = true AND id != ${id}`);
       }
       await db.execute(sql`UPDATE dialer_scripts SET name = ${nameNext}, content = ${contentNext}, description = ${descNext}, category = ${catNext}, tags = ${tagsNext}, is_default = ${isDefaultNext}, updated_at = now() WHERE id = ${id} AND user_id = ${user.id}`);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // M6: hard delete for scripts (archive alone left stale scripts stuck in
+  // the library when the audit trail matters less than removal).
+  app.delete("/api/scripts/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+      await db.execute(sql`DELETE FROM dialer_scripts WHERE id = ${id} AND user_id = ${user.id}`);
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -7234,6 +7252,25 @@ app.patch("/api/inquiries/:id", async (req, res) => {
         beforeLeadId = row?.lead_id ?? null;
       } catch {}
       const patch = { ...(req.body || {}) };
+      // C8/M5: one disposition taxonomy with the call-sessions service. Map
+      // legacy dialer values to the canonical set so Call Audit can filter them.
+      if (typeof patch.disposition === "string") {
+        const d = patch.disposition.trim();
+        if (d === "") {
+          patch.disposition = null;
+        } else if (d === "answered") {
+          patch.disposition = "connected";
+        } else if (d === "call_back") {
+          patch.disposition = "callback_requested";
+        } else if (d === "wrong_number") {
+          patch.disposition = "wrong_number_confirmed";
+        } else {
+          const { ALLOWED_DISPOSITIONS } = await import("./services/telecom/call-sessions.js");
+          if (!ALLOWED_DISPOSITIONS.has(d)) {
+            return res.status(400).json({ message: `Invalid disposition: ${d}` });
+          }
+        }
+      }
       const followUpAtRaw = patch.followUpAt;
       delete patch.followUpAt;
       if (patch.metadata && typeof patch.metadata !== "string") patch.metadata = JSON.stringify(patch.metadata);
@@ -7253,6 +7290,10 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       const metaLeadId = meta?.leadId ? Number(meta.leadId) : null;
       const propertyId = meta?.propertyId ? Number(meta.propertyId) : null;
       const effectiveLeadId = (typeof updated.leadId === "number" ? updated.leadId : null) || beforeLeadId || metaLeadId;
+      // M5: a do_not_call disposition must set the lead's DNC flag.
+      if (patch.disposition === "do_not_call" && effectiveLeadId) {
+        try { await storage.updateLead(effectiveLeadId, { doNotCall: true } as any); } catch {}
+      }
       if (nextStatus && nextStatus !== beforeStatus) {
         const terminal = new Set(["answered", "missed", "failed"]);
         if (terminal.has(nextStatus)) {
@@ -7852,7 +7893,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
         { key: "telnyx_voice", label: "Telnyx Voice", state: telnyxReady ? "healthy" : telnyxResult.status === "unconfigured" ? "unconfigured" : "unavailable", detail: telnyxResult.message || "Unknown", hint: (telnyxResult as any).hint || null, lastChecked: checkedAt },
         { key: "telnyx_sms", label: "Telnyx SMS", state: telnyxReady && has("TELNYX_MESSAGING_PROFILE_ID") ? "healthy" : !has("TELNYX_MESSAGING_PROFILE_ID") ? "unconfigured" : "unavailable", detail: !has("TELNYX_MESSAGING_PROFILE_ID") ? "TELNYX_MESSAGING_PROFILE_ID missing" : "SMS requires valid Telnyx credentials", lastChecked: checkedAt },
         { key: "telnyx_webhook", label: "Telnyx webhook", state: has("TELNYX_WEBHOOK_URL") ? "healthy" : "unconfigured", detail: has("TELNYX_WEBHOOK_URL") ? "Webhook URL configured" : "TELNYX_WEBHOOK_URL missing — call events / inbound SMS not received", lastChecked: checkedAt },
-        { key: "skip_trace", label: "Skip trace provider", state: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") || process.env.SKIP_TRACE_PROVIDER === "free-web" ? "healthy" : "unconfigured", detail: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") ? "Skip trace provider configured" : process.env.SKIP_TRACE_PROVIDER === "free-web" ? "Free public-web research provider active (no API keys required)" : "No skip trace provider configured — set SKIP_TRACE_PROVIDER=free-web for free lookups", lastChecked: checkedAt },,
+        { key: "skip_trace", label: "Skip trace provider", state: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") || process.env.SKIP_TRACE_PROVIDER === "free-web" ? "healthy" : "unconfigured", detail: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") ? "Skip trace provider configured" : process.env.SKIP_TRACE_PROVIDER === "free-web" ? "Free public-web research provider active (no API keys required)" : "No skip trace provider configured — set SKIP_TRACE_PROVIDER=free-web for free lookups", lastChecked: checkedAt },
         { key: "calendar", label: "Calendar / meetings", state: "healthy", detail: "Internal CRM calendar active; external calendar sync requires an opt-in connector", lastChecked: checkedAt },
         { key: "campaigns", label: "Ad / campaign providers", state: has("META_ADS_TOKEN") || has("GOOGLE_ADS_TOKEN") ? "healthy" : "unconfigured", detail: has("META_ADS_TOKEN") || has("GOOGLE_ADS_TOKEN") ? "Ad provider configured" : "No ad network credentials — campaign planning works, live ad delivery is off", lastChecked: checkedAt },
         { key: "automations", label: "Automation engine", state: "healthy", detail: "Automation engine available (trigger/conditions/actions)", lastChecked: checkedAt },
@@ -8919,7 +8960,19 @@ app.patch("/api/inquiries/:id", async (req, res) => {
   });
   app.post("/api/contracts", async (req, res) => {
     try {
-      const validated = insertContractSchema.parse(req.body);
+      // M46 (contract wizard crash): the wizard stores its deal terms on the
+      // document-contracts model but posts here; zod strips those extra keys
+      // and the NOT NULL constraint on amount rejected the auto-created draft.
+      // Default amount from purchasePrice (or 0) so the wizard can advance.
+      const body: any = req.body || {};
+      // ownerUserId: 0 is a "no owner" sentinel the wizard sends; the live
+      // contracts table has a nullable owner_user_id FK to users, so 0 would
+      // violate it. Omit it entirely (NULL) when absent or zero.
+      if (!body.ownerUserId) delete body.ownerUserId;
+      const validated = insertContractSchema.parse({
+        ...body,
+        amount: body.amount ?? body.purchasePrice ?? "0",
+      });
       const contract = await storage.createContract(validated);
       try {
         await syncCommissionEventsForContract(contract);
@@ -10255,6 +10308,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
 
       const body = req.body || {};
       const closingData = body.closingData || {};
+      let stageAdvanced = false;
       const num = (v: any) => {
         const n = parseFloat(String(v ?? "").replace(/[$,]/g, ""));
         return Number.isFinite(n) ? n.toFixed(2) : null;
@@ -10266,7 +10320,28 @@ app.patch("/api/inquiries/:id", async (req, res) => {
       const fundsWired = !!closingData.fundsWired;
       const docsRecorded = !!closingData.docsRecorded;
 
-      const updated = await storage.updateContractDocument(docId, { status: "closed", updatedAt: new Date() } as any);
+      // M47: persist the closing record into mergeData so Dashboard revenue
+      // (which reads mergeData.closingData.assignmentFee) reflects the close.
+      let mergedMergeData: string | undefined;
+      try {
+        const md = doc.mergeData ? (typeof doc.mergeData === "string" ? JSON.parse(doc.mergeData) : doc.mergeData) : {};
+        mergedMergeData = JSON.stringify({
+          ...md,
+          assignmentFee: assignmentFee ?? (md as any).assignmentFee ?? null,
+          closingData: {
+            ...((md as any).closingData || {}),
+            assignmentFee,
+            closingCosts,
+            buyerPaid,
+            titleReceived,
+            fundsWired,
+            docsRecorded,
+            notes: closingData.notes || null,
+            closedAt: new Date().toISOString(),
+          },
+        });
+      } catch { mergedMergeData = undefined; }
+      const updated = await storage.updateContractDocument(docId, { status: "closed", ...(mergedMergeData ? { mergeData: mergedMergeData } : {}), updatedAt: new Date() } as any);
 
       // Write/refresh the per-deal payout ledger row (deal_assignments).
       const propertyId = doc.propertyId ?? null;
@@ -10303,6 +10378,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
         try {
           const property = await storage.getPropertyById(propertyId);
           if (property && !["sold", "closed", "dead", "voided"].includes(String((property as any).stage || ""))) {
+            stageAdvanced = true;
             await storage.updateProperty(propertyId, { stage: "sold", stageChangedAt: new Date(), lastActivityAt: new Date() } as any);
             await logOpportunityEvent(propertyId, "stage_changed", "Stage changed to Sold", `Contract "${doc.title}" closed; assignment fee ${assignmentFee ? "$" + Number(assignmentFee).toLocaleString() : "not recorded"}.`, user.id, "system", { oldStage: (property as any).stage, newStage: "sold" });
           }
@@ -10320,7 +10396,7 @@ app.patch("/api/inquiries/:id", async (req, res) => {
         }
       } catch {}
 
-      res.json({ contract: updated });
+      res.json({ contract: updated, stageAdvanced });
     } catch (error: any) {
       console.error("POST /api/contract-documents/:id/close failed:", error);
       res.status(500).json({ message: error.message });

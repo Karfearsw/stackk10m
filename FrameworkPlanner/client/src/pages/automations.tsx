@@ -416,7 +416,14 @@ export function AutomationsContent() {
                           <Button variant="outline" size="sm" onClick={() => setSelectedId(a.id)} data-testid={`view-${a.id}`}>
                             View
                           </Button>
-                          <Button variant="ghost" size="sm" className="text-destructive" onClick={() => deleteMutation.mutate(a.id)}>
+                          <Button variant="ghost" size="sm" className="text-destructive" data-testid={`delete-${a.id}`}
+                            onClick={() => {
+                              // M35: deleting destroyed the automation instantly with
+                              // no confirm and no feedback.
+                              if (window.confirm(`Delete automation "${a.name}"? This cannot be undone.`)) {
+                                deleteMutation.mutate(a.id);
+                              }
+                            }}>
                             Delete
                           </Button>
                         </div>

@@ -243,6 +243,10 @@ export function classifyProviderResult(result: any | null): ProviderResultInfo {
   const providerName = toStr(result.providerName).trim() || null;
   const completedAt = result.completedAt ?? null;
   const costCents = toFinite(result.costCents);
+  // M34: never present mock-provider output as real contact data.
+  const mockWarning = providerName === "mock"
+    ? " — MOCK PROVIDER: simulated demo data, NOT verified contact information. Do not use for outreach."
+    : "";
 
   if (status === "pending") {
     return { state: "pending", label: "In progress", detail: "The provider lookup is running or queued.", providerName, completedAt, costCents };
@@ -251,10 +255,10 @@ export function classifyProviderResult(result: any | null): ProviderResultInfo {
     const phones = phonesOf(result);
     const emails = emailsOf(result);
     if (phones.length && emails.length) {
-      return { state: "hit", label: "Hit", detail: `Found ${phones.length} phone(s) and ${emails.length} email(s).`, providerName, completedAt, costCents };
+      return { state: "hit", label: "Hit", detail: `Found ${phones.length} phone(s) and ${emails.length} email(s).${mockWarning}`, providerName, completedAt, costCents };
     }
     if (phones.length || emails.length) {
-      return { state: "partial", label: "Partial hit", detail: `Found ${phones.length ? phones.length + " phone(s)" : "no phones"} and ${emails.length ? emails.length + " email(s)" : "no emails"}.`, providerName, completedAt, costCents };
+      return { state: "partial", label: "Partial hit", detail: `Found ${phones.length ? phones.length + " phone(s)" : "no phones"} and ${emails.length ? emails.length + " email(s)" : "no emails"}.${mockWarning}`, providerName, completedAt, costCents };
     }
     return { state: "no_hit", label: "No hit", detail: "Provider completed but returned no contact data for this owner/property.", providerName, completedAt, costCents };
   }

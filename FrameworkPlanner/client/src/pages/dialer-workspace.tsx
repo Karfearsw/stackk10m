@@ -215,7 +215,15 @@ function DialerWorkspaceInner() {
     aiAutoStartedRef.current = false;
   }, [activeItem?.leadId]);
 
-  const wrapUpValid = Boolean(disposition) && (disposition !== "call_back" || Boolean(followUpAt));
+  // C8/M5: one disposition taxonomy shared with Call Audit and the call-sessions
+  // service (ALLOWED_DISPOSITIONS). Dialer-only legacy values (answered/call_back)
+  // could never be filtered in Call Audit, making manual dispositions un-auditable.
+  const DISPOSITIONS = [
+    "connected", "qualified", "qualified_handoff", "callback_requested", "voicemail",
+    "no_answer", "busy", "wrong_number_confirmed", "wrong_number_review", "not_interested",
+    "do_not_call", "invalid_number", "failed", "abandoned", "agent_unavailable", "bridge_failed",
+  ] as const;
+  const wrapUpValid = Boolean(disposition) && (disposition !== "callback_requested" || Boolean(followUpAt));
 
   const { data: lead } = useQuery<any>({
     queryKey: activeItem?.leadId ? [`/api/leads/${activeItem.leadId}`] : ["lead-none"],
@@ -303,6 +311,23 @@ function DialerWorkspaceInner() {
     const res = await apiRequest("PATCH", `/api/telephony/calls/${id}`, patch);
     return await res.json();
   };
+
+  // M40: queue filters now load immediately instead of silently doing nothing
+  // until "Start Session" is pressed.
+  const loadQueue = useCallback(async (listId: string) => {
+    try {
+      setQueueLoading(true);
+      const qs = new URLSearchParams({ listId, limit: "50" });
+      const res = await apiRequest("GET", `/api/dialer/queue?${qs.toString()}`);
+      const data = await res.json();
+      setQueue(Array.isArray(data.items) ? data.items : []);
+      setActiveIndex(0);
+    } catch {
+      /* keep previous queue on failure */
+    } finally {
+      setQueueLoading(false);
+    }
+  }, [setQueue, setActiveIndex]);
 
   const formatted = useMemo(() => formatE164(number), [number]);
 
@@ -562,16 +587,16 @@ function DialerWorkspaceInner() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="flex flex-wrap gap-2">
-              <Button variant={state.listId === "new" ? "default" : "outline"} onClick={() => setListId("new")}>
+              <Button variant={state.listId === "new" ? "default" : "outline"} onClick={() => { setListId("new"); loadQueue("new"); }}>
                 New
               </Button>
               <Button
                 variant={state.listId === "followups_due" ? "default" : "outline"}
-                onClick={() => setListId("followups_due")}
+                onClick={() => { setListId("followups_due"); loadQueue("followups_due"); }}
               >
                 Follow-ups
               </Button>
-              <Button variant={state.listId === "all_callable" ? "default" : "outline"} onClick={() => setListId("all_callable")}>
+              <Button variant={state.listId === "all_callable" ? "default" : "outline"} onClick={() => { setListId("all_callable"); loadQueue("all_callable"); }}>
                 All
               </Button>
             </div>
@@ -579,17 +604,7 @@ function DialerWorkspaceInner() {
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="secondary"
-                onClick={async () => {
-                  try {
-                    setQueueLoading(true);
-                    const qs = new URLSearchParams({ listId: state.listId, limit: "50" });
-                     const res = await apiRequest("GET", `/api/dialer/queue?${qs.toString()}`);
-                     const data = await res.json();
-                    setQueue(Array.isArray(data.items) ? data.items : []);
-                  } finally {
-                    setQueueLoading(false);
-                  }
-                }}
+                onClick={() => loadQueue(state.listId)}
               >
                 {queueLoading ? "Loading…" : "Start Session"}
               </Button>
@@ -609,23 +624,44 @@ function DialerWorkspaceInner() {
               </Button>
             </div>
 
+            <div className="text-xs text-muted-foreground" data-testid="queue-count">
+              {state.queue.length ? `${state.queue.length} lead${state.queue.length === 1 ? "" : "s"} loaded · ${state.listId === "new" ? "New" : state.listId === "followups_due" ? "Follow-ups due" : "All callable"}` : "Pick New / Follow-ups / All to load a queue"}
+            </div>
             <ScrollArea className="max-h-[40vh] sm:max-h-[50vh] lg:max-h-[60vh] min-h-[10rem] border rounded-md p-2">
               {!state.queue.length ? (
-                <div className="text-sm text-muted-foreground">No queue loaded</div>
+                <div className="text-sm text-muted-foreground">{queueLoading ? "Loading queue…" : "No leads in this queue — try another filter"}</div>
               ) : (
                 <div className="space-y-2">
                   {state.queue.map((item, idx) => {
                     const isActive = idx === state.activeIndex;
                     return (
-                      <button
-                        key={item.leadId}
-                        className={`w-full text-left rounded-md border p-2 ${isActive ? "border-primary bg-primary/10" : "border-border hover:bg-muted/40"}`}
-                        onClick={() => setActiveIndex(idx)}
-                      >
-                        <div className="text-sm font-medium truncate">{item.ownerName}</div>
-                        <div className="text-xs text-muted-foreground truncate">{item.address}</div>
-                        <div className="text-xs text-muted-foreground truncate">{item.ownerPhone}</div>
-                      </button>
+                      <div key={item.leadId} className={`rounded-md border p-2 ${isActive ? "border-primary bg-primary/10" : "border-border hover:bg-muted/40"}`}>
+                        <button
+                          className="w-full text-left"
+                          onClick={() => setActiveIndex(idx)}
+                        >
+                          <div className="text-sm font-medium truncate">{item.ownerName}</div>
+                          <div className="text-xs text-muted-foreground truncate">{item.address}</div>
+                          <div className="text-xs text-muted-foreground truncate">{item.ownerPhone}</div>
+                        </button>
+                        <button
+                          className="mt-1 text-[11px] text-muted-foreground hover:text-destructive underline underline-offset-2"
+                          title="Remove this lead from the session queue"
+                          aria-label={`Remove ${item.ownerName || "lead"} from queue`}
+                          data-testid={`queue-remove-${item.leadId}`}
+                          onClick={() => {
+                            // M41: minimal queue management — remove a lead from
+                            // this session's queue without deleting the lead.
+                            const nextQueue = state.queue.filter((_: any, i: number) => i !== idx);
+                            setQueue(nextQueue);
+                            if (state.activeIndex >= nextQueue.length) {
+                              setActiveIndex(Math.max(0, nextQueue.length - 1));
+                            }
+                          }}
+                        >
+                          Remove from queue
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -1101,7 +1137,7 @@ function DialerWorkspaceInner() {
                       onChange={(e) => setDisposition(e.target.value)}
                     >
                       <option value="">Select disposition</option>
-                      {["answered", "no_answer", "wrong_number", "call_back", "do_not_call"].map((d) => (
+                      {DISPOSITIONS.map((d) => (
                         <option key={d} value={d}>
                           {d}
                         </option>
@@ -1115,16 +1151,33 @@ function DialerWorkspaceInner() {
                     <Button
                       variant="secondary"
                       onClick={async () => {
-                        if (!callId) return;
                         if (saveLogPending) return;
                         if (!wrapUpValid) return;
+                        const leadId = activeItem?.leadId ?? null;
+                        if (!callId && !leadId) return;
                         setSaveLogPending(true);
                         try {
-                          await patchCallLog(callId, {
+                          const patch = {
                             disposition: disposition || null,
                             note: note || null,
                             followUpAt: followUpAt ? new Date(followUpAt).toISOString() : null,
-                          });
+                          };
+                          if (callId) {
+                            await patchCallLog(callId, patch);
+                          } else {
+                            // M4: manual/offline disposition logging — create a
+                            // completed call-log row when no call was placed.
+                            const res = await apiRequest("POST", "/api/telephony/calls", {
+                              direction: "outbound",
+                              number: number || activeItem?.ownerPhone || "",
+                              leadId,
+                              status: "ended",
+                              startedAt: new Date().toISOString(),
+                              metadata: { manualLog: true },
+                            });
+                            const log = await res.json();
+                            await patchCallLog(log.id, patch);
+                          }
                           queryClient.invalidateQueries({ queryKey: ["/api/activity"] });
                           setLogSaved(true);
                           if (powerMode) next();
@@ -1132,13 +1185,13 @@ function DialerWorkspaceInner() {
                           setSaveLogPending(false);
                         }
                       }}
-                      disabled={!callId || saveLogPending || !wrapUpValid}
+                      disabled={saveLogPending || !wrapUpValid || (!callId && !activeItem?.leadId)}
                     >
                       Save Log
                     </Button>
-                    {callId && !wrapUpValid ? (
+                    {!wrapUpValid ? (
                       <div className="text-xs text-muted-foreground">
-                        {disposition ? "Follow-up date required for call_back." : "Select a disposition to save the log."}
+                        {disposition ? "Follow-up date required for callback_requested." : "Select a disposition to save the log."}
                       </div>
                     ) : null}
                     {callId && !logSaved ? (
