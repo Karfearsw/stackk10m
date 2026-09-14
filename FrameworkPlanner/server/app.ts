@@ -288,6 +288,7 @@ import { startRvmPoller } from "./cron/rvm-poller.js";
 import { startTaskReminders } from "./cron/task-reminders.js";
 import { startSkipTraceWorker } from "./cron/skip-trace-worker.js";
 import { startContractReminderWorker } from "./cron/contract-reminders.js";
+import { startContractExpirySweeper } from "./cron/contract-expiry-sweeper.js";
 
 export default async function runApp(
   setup: (app: Express, server: Server) => Promise<void>,
@@ -530,6 +531,12 @@ await pool.query(`
   const enableContractReminders = !isServerless && process.env.NODE_ENV !== "test";
   if (enableContractReminders && hasDatabaseUrl) {
     startContractReminderWorker(3600000);
+  }
+
+  // Contract expiry automation: auto-flag lapsed offers + N-day warnings (dashboard Needs Attention).
+  const enableContractExpirySweeper = !isServerless && process.env.NODE_ENV !== "test";
+  if (enableContractExpirySweeper && hasDatabaseUrl) {
+    startContractExpirySweeper(Number(process.env.EXPIRY_SWEEP_INTERVAL_MS || "600000"));
   }
 
   app.get("/api/metrics", async (_req, res) => {

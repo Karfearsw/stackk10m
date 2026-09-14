@@ -2,7 +2,7 @@ import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Server, Database, Phone, Shield, ActivitySquare, Key, ToggleLeft, ToggleRight } from "lucide-react";
+import { Loader2, Server, Database, Phone, Shield, ShieldAlert, ShieldCheck, ActivitySquare, Key, ToggleLeft, ToggleRight } from "lucide-react";
 
 export default function SystemHealthPage() {
   const { data, refetch, isFetching, error } = useQuery<any>({
@@ -18,6 +18,16 @@ export default function SystemHealthPage() {
     queryKey: ["/api/version"],
     queryFn: async () => {
       const res = await fetch("/api/version", { credentials: "include" });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+  });
+
+  // C6 route-bootstrap diagnostics: did every API route register at startup?
+  const { data: routes } = useQuery<any>({
+    queryKey: ["/api/system/routes"],
+    queryFn: async () => {
+      const res = await fetch("/api/system/routes", { credentials: "include" });
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     },
@@ -47,6 +57,30 @@ export default function SystemHealthPage() {
           <CardContent className="p-6">
             <p className="text-destructive">Failed to load diagnostics</p>
             <Button variant="outline" onClick={() => refetch()} className="mt-3">Retry</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {routes && !routes.complete && (
+        <Card className="border-destructive">
+          <CardContent className="p-4 flex items-start gap-3">
+            <ShieldAlert className="w-5 h-5 text-destructive mt-0.5 shrink-0" />
+            <div className="space-y-1">
+              <p className="font-medium text-destructive">Partial API bootstrap — routes may be missing</p>
+              <p className="text-sm text-muted-foreground">
+                {routes.count} of {routes.expected} expected routes registered
+                {routes.registeredAt ? ` at ${new Date(routes.registeredAt).toLocaleString()}` : ""}. Some endpoints are likely 404ing — restart the server and re-check.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      {routes?.complete && (
+        <Card>
+          <CardContent className="p-3 flex items-center gap-2 text-sm text-muted-foreground">
+            <ShieldCheck className="w-4 h-4 text-green-600 shrink-0" />
+            Route bootstrap complete: {routes.count}/{routes.expected} API routes registered
+            {routes.registeredAt ? ` at ${new Date(routes.registeredAt).toLocaleString()}` : ""}.
           </CardContent>
         </Card>
       )}

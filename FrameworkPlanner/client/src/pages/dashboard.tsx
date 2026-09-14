@@ -180,6 +180,33 @@ export default function Dashboard() {
       })
       .slice(0, 5);
 
+    // Contract expiry automation: expiring soon (within window) + already expired.
+    // Expiry lives on the signature-store contracts (expiresAt); terminal + voided
+    // statuses never surface here.
+    const expiryTerminal = new Set(["executed", "voided", "declined", "expired"]);
+    const expiryWarnCutoff = new Date(todayStart.getTime() + 5 * 24 * 60 * 60 * 1000);
+    const isLiveForExpiry = (c: any) => {
+      if (!c?.expiresAt) return false;
+      const d = new Date(c.expiresAt);
+      if (Number.isNaN(d.valueOf())) return false;
+      return !expiryTerminal.has(String(c.status || ""));
+    };
+    const expiringSoon = (contracts || []).filter((c: any) => {
+      if (!isLiveForExpiry(c)) return false;
+      const d = new Date(c.expiresAt);
+      return d.getTime() >= now.getTime() && d.getTime() <= expiryWarnCutoff.getTime();
+    });
+    const expiringSoonTop = [...expiringSoon]
+      .sort((a: any, b: any) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime())
+      .slice(0, 5);
+    const expiredContracts = (contracts || []).filter((c: any) => {
+      if (String(c?.status || "") === "expired") return true;
+      return isLiveForExpiry(c) && new Date(c.expiresAt).getTime() < now.getTime();
+    });
+    const expiredContractsTop = [...expiredContracts]
+      .sort((a: any, b: any) => new Date(b.expiresAt).getTime() - new Date(a.expiresAt).getTime())
+      .slice(0, 5);
+
     return {
       staleCutoffYmd,
       staleLeadsCount: typeof stats?.staleLeadsCount === "number" ? stats.staleLeadsCount : staleLeads.length,
@@ -190,8 +217,12 @@ export default function Dashboard() {
       followUpsDueTop,
       inFlightContractsCount: inFlightContracts.length,
       inFlightContractsTop,
+      expiringSoonCount: expiringSoon.length,
+      expiringSoonTop,
+      expiredContractsCount: expiredContracts.length,
+      expiredContractsTop,
     };
-  }, [leads, tasks, contractDocuments, stats]);
+  }, [leads, tasks, contractDocuments, contracts, stats]);
 
   const kpiData = useMemo(() => {
     const closedDocuments = contractDocuments.filter(doc => doc.status === 'closed');
@@ -438,7 +469,7 @@ export default function Dashboard() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-6">
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="text-sm font-medium text-muted-foreground">Stale leads (14+ days)</div>
@@ -535,6 +566,77 @@ export default function Dashboard() {
                   ))
                 ) : (
                   <div className="text-xs text-muted-foreground">No follow-ups due today</div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium text-muted-foreground">Expiring offers (≤5 days)</div>
+                <button
+                  type="button"
+                  className="inline-flex items-center text-xs text-primary hover:underline"
+                  onClick={() => setLocation(`/contracts?tab=list&statusIn=ready_to_send,sent,viewed,partially_signed`)}
+                >
+                  Open <ArrowUpRight className="ml-1 h-3 w-3" />
+                </button>
+              </div>
+              <div className="text-2xl font-bold">{needsAttention.expiringSoonCount.toLocaleString()}</div>
+              <div className="space-y-2">
+                {needsAttention.expiringSoonTop.length ? (
+                  needsAttention.expiringSoonTop.map((c: any) => {
+                    const days = Math.max(0, Math.ceil((new Date(c.expiresAt).getTime() - Date.now()) / 86400000));
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className="w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted/50"
+                        onClick={() => setLocation(`/contracts/${c.id}`)}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-sm font-medium truncate">{c.title || "Contract"}</div>
+                          <Badge variant="outline" className="shrink-0">{days === 0 ? "Today" : `${days}d left`}</Badge>
+                        </div>
+                        <div className="text-xs text-muted-foreground truncate">Expires {new Date(c.expiresAt).toLocaleDateString()}</div>
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="text-xs text-muted-foreground">No offers expiring soon</div>
+                )}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-medium text-muted-foreground">Expired offers</div>
+                <button
+                  type="button"
+                  className="inline-flex items-center text-xs text-primary hover:underline"
+                  onClick={() => setLocation(`/contracts?tab=list&statusIn=expired`)}
+                >
+                  Open <ArrowUpRight className="ml-1 h-3 w-3" />
+                </button>
+              </div>
+              <div className="text-2xl font-bold">{needsAttention.expiredContractsCount.toLocaleString()}</div>
+              <div className="space-y-2">
+                {needsAttention.expiredContractsTop.length ? (
+                  needsAttention.expiredContractsTop.map((c: any) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className="w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted/50"
+                      onClick={() => setLocation(`/contracts/${c.id}`)}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-sm font-medium truncate">{c.title || "Contract"}</div>
+                        <Badge variant="destructive" className="shrink-0 capitalize">{String(c.status || "expired")}</Badge>
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">Expired {new Date(c.expiresAt).toLocaleDateString()}</div>
+                    </button>
+                  ))
+                ) : (
+                  <div className="text-xs text-muted-foreground">No expired offers</div>
                 )}
               </div>
             </div>
