@@ -721,7 +721,10 @@ export type InsertBuyerCommunication = z.infer<typeof insertBuyerCommunicationSc
 export const dealAssignments = pgTable("deal_assignments", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   propertyId: integer("property_id").notNull(),
-  buyerId: integer("buyer_id").notNull(),
+  // Nullable: a deal can close (fee collected) before an end-buyer row is
+  // linked in the CRM. Matches migration 0065 which dropped NOT NULL on the
+  // live database (the declaration below was never updated to match).
+  buyerId: integer("buyer_id"),
   contractId: integer("contract_id"),
   assignmentFee: decimal("assignment_fee", { precision: 12, scale: 2 }),
   purchasePrice: decimal("purchase_price", { precision: 12, scale: 2 }),

@@ -6310,6 +6310,28 @@ export async function registerRoutes(
             await storage.updateProperty(propertyId, { closingDate: stageNow });
           }
         } catch {}
+        // DEV-002: a pipeline close (stage -> sold/closed without the Close
+        // Deal flow) must still leave a per-deal ledger row, otherwise closed
+        // deals vanish from revenue entirely. Never overwrite an existing
+        // closed row's fee — the Close Deal flow owns the actuals.
+        try {
+          const existing = await storage.getDealAssignmentsByPropertyId(propertyId);
+          const hasClosed = (existing || []).some((r: any) => String((r as any).status) === "closed");
+          if (!hasClosed) {
+            const prior = (existing || [])[0] || null;
+            const payload = {
+              propertyId,
+              status: "closed",
+              closingDate: stageNow,
+              notes: `Recorded automatically on stage change to '${newStage}'. Update with the actual fee via Close Deal & Record Revenue.`,
+              updatedAt: stageNow,
+            };
+            if (prior) await storage.updateDealAssignment(prior.id, payload as any);
+            else await storage.createDealAssignment(payload as any);
+          }
+        } catch (e: any) {
+          console.error("stage-change: deal_assignments ledger write failed:", e?.message);
+        }
         try {
           const listings = await storage.getPublicListingsByOpportunity(propertyId);
           for (const l of listings) {
@@ -6340,6 +6362,111 @@ export async function registerRoutes(
       }
       const updated = await storage.getPropertyById(propertyId);
       res.json({ property: { ...(updated as any), images: resolvePropertyImages((updated as any).images) }, oldStage, newStage });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // ===== OPPORTUNITY CLOSE — "Close Deal & Record Revenue" (DEV-002) =====
+  // The opportunity-level revenue path: closing a deal from the pipeline
+  // (not via a contract document). Records the closing on the
+  // deal_assignments ledger, advances the opportunity to sold, and writes
+  // activity. The Dashboard / Analytics revenue KPIs read the ledger (plus
+  // closed contract documents), so a pipeline close posts revenue too.
+  reg("post", "/api/opportunities/:id/close"); app.post("/api/opportunities/:id/close", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const propertyId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(propertyId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const stage = String((property as any).stage || "");
+      if (["dead", "voided"].includes(stage)) {
+        return res.status(400).json({ message: `Cannot close a deal in stage '${stage}'.` });
+      }
+
+      const body = req.body || {};
+      const num = (v: any) => {
+        const n = parseFloat(String(v ?? "").replace(/[$,]/g, ""));
+        return Number.isFinite(n) && n >= 0 ? n.toFixed(2) : null;
+      };
+      const assignmentFee = num(body.assignmentFee);
+      if (assignmentFee === null) {
+        return res.status(400).json({ message: "Enter the assignment fee collected (0 or more)." });
+      }
+      const closingCosts = num(body.closingCosts);
+      const buyerPaid = !!body.buyerPaid;
+      const titleReceived = !!body.titleReceived;
+      const fundsWired = !!body.fundsWired;
+      const docsRecorded = !!body.docsRecorded;
+      const payoutReceived = buyerPaid && fundsWired && docsRecorded;
+
+      const now = new Date();
+      let ledger: any = null;
+      try {
+        const existing = await storage.getDealAssignmentsByPropertyId(propertyId);
+        const prior = (existing || []).find((r: any) => String((r as any).status) === "closed") || (existing || [])[0] || null;
+        const payload = {
+          propertyId,
+          assignmentFee,
+          status: "closed",
+          closingDate: now,
+          earnestMoneyReceived: buyerPaid,
+          titleCleared: titleReceived,
+          closingScheduled: fundsWired,
+          documentsComplete: docsRecorded,
+          payoutReceived,
+          payoutAmount: payoutReceived ? assignmentFee : null,
+          notes: [closingCosts !== null ? `Closing costs: $${Number(closingCosts).toLocaleString()}` : "", body.notes || ""].filter(Boolean).join(" \u2014 ") || null,
+          updatedAt: now,
+        };
+        ledger = prior
+          ? await storage.updateDealAssignment(prior.id, payload as any)
+          : await storage.createDealAssignment(payload as any);
+      } catch (e: any) {
+        console.error("opportunity close: deal_assignments ledger write failed:", e?.message);
+        return res.status(500).json({ message: "Could not record revenue on the deal ledger." });
+      }
+
+      // Advance to sold (same terminal stage as the contract close path).
+      let stageAdvanced = false;
+      try {
+        if (!["sold", "closed", "dead", "voided"].includes(stage)) {
+          stageAdvanced = true;
+          const patch: any = { stage: "sold", stageChangedAt: now, lastActivityAt: now };
+          if (!(property as any).closingDate) patch.closingDate = now;
+          await storage.updateProperty(propertyId, patch);
+          await logOpportunityEvent(propertyId, "stage_changed", "Stage changed to Sold", `Deal closed; assignment fee $${Number(assignmentFee).toLocaleString()}.`, user.id, "system", { oldStage: stage, newStage: "sold" });
+        }
+      } catch {}
+
+      try {
+        await storage.createGlobalActivity({
+          userId: user.id,
+          action: "closed_deal",
+          description: `Closed deal: ${(property as any).address || `Opportunity #${propertyId}`} \u2014 fee $${Number(assignmentFee).toLocaleString()}`,
+          metadata: JSON.stringify({ propertyId, assignmentFee, closingCosts, ledgerId: ledger?.id }),
+        } as any);
+      } catch {}
+
+      const updated = await storage.getPropertyById(propertyId);
+      res.json({ property: updated, ledger, stageAdvanced });
+    } catch (error: any) {
+      console.error("POST /api/opportunities/:id/close failed:", error);
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // Ledger list for the Dashboard / Analytics revenue KPIs (DEV-002: the
+  // ledger is a first-class revenue source alongside closed documents).
+  reg("get", "/api/deal-assignments"); app.get("/api/deal-assignments", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { limit, offset } = parseLimitOffset(req.query);
+      const status = typeof req.query?.status === "string" ? req.query.status.trim() : "";
+      const rows = status
+        ? await storage.getDealAssignmentsByStatus(status, limit, offset)
+        : await storage.getDealAssignments(limit, offset);
+      res.json(rows);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -9659,87 +9786,6 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       await storage.deleteContractDocument(parseInt(req.params.id));
       res.json({ message: "Document deleted" });
     } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  // "Close Deal & Record Revenue" records the closing on the deal_assignments
-  // ledger, advances the opportunity to sold, and writes an activity entry.
-  reg("post", "/api/contract-documents/:id/close"); app.post("/api/contract-documents/:id/close", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      const docId = parseInt(req.params.id, 10);
-      const doc = await storage.getContractDocumentById(docId);
-      if (!doc) return res.status(404).json({ message: "Contract not found" });
-      if ((doc as any).status === "closed") return res.status(400).json({ message: "Contract already closed" });
-
-      const body = req.body || {};
-      const closingData = body.closingData || {};
-      const num = (v: any) => {
-        const n = parseFloat(String(v ?? "").replace(/[$,]/g, ""));
-        return Number.isFinite(n) ? n.toFixed(2) : null;
-      };
-      const assignmentFee = num(closingData.assignmentFee);
-      const closingCosts = num(closingData.closingCosts);
-      const buyerPaid = !!closingData.buyerPaid;
-      const titleReceived = !!closingData.titleReceived;
-      const fundsWired = !!closingData.fundsWired;
-      const docsRecorded = !!closingData.docsRecorded;
-
-      const updated = await storage.updateContractDocument(docId, { status: "closed", updatedAt: new Date() } as any);
-
-      // Write/refresh the per-deal payout ledger row (deal_assignments).
-      const propertyId = (doc as any).propertyId ?? null;
-      if (propertyId) {
-        try {
-          const existing = await storage.getDealAssignmentsByPropertyId(propertyId);
-          const prior = (existing || [])[0];
-          const payoutReceived = buyerPaid && fundsWired && docsRecorded;
-          const payload = {
-            propertyId,
-            assignmentFee,
-            status: "closed",
-            closingDate: new Date(),
-            earnestMoneyReceived: buyerPaid,
-            titleCleared: titleReceived,
-            closingScheduled: fundsWired,
-            documentsComplete: docsRecorded,
-            payoutReceived,
-            payoutAmount: payoutReceived ? assignmentFee : null,
-            notes: [closingCosts ? `Closing costs: $${closingCosts}` : "", closingData.notes || ""].filter(Boolean).join(" — ") || null,
-            updatedAt: new Date(),
-          };
-          if (prior) {
-            await storage.updateDealAssignment(prior.id, payload as any);
-          } else {
-            await storage.createDealAssignment(payload as any);
-          }
-        } catch (e: any) {
-          console.error("close: deal_assignments ledger write failed:", e?.message);
-        }
-
-        // Advance the opportunity to sold.
-        try {
-          const property = await storage.getPropertyById(propertyId);
-          if (property && !["sold", "closed", "dead", "voided"].includes(String((property as any).stage || ""))) {
-            await storage.updateProperty(propertyId, { stage: "sold", stageChangedAt: new Date(), lastActivityAt: new Date() } as any);
-            await logOpportunityEvent(propertyId, "stage_changed", "Stage changed to Sold", `Contract "${doc.title}" closed; assignment fee ${assignmentFee ? "$" + Number(assignmentFee).toLocaleString() : "not recorded"}.`, user.id, "system", { oldStage: (property as any).stage, newStage: "sold" });
-          }
-        } catch {}
-      }
-
-      try {
-        await storage.createGlobalActivity({
-          userId: user.id,
-          action: "closed_deal",
-          description: `Closed deal: ${doc.title}${assignmentFee ? ` — fee $${Number(assignmentFee).toLocaleString()}` : ""}`,
-          metadata: JSON.stringify({ contractDocumentId: docId, propertyId, assignmentFee, closingCosts }),
-        } as any);
-      } catch {}
-
-      res.json({ contract: updated });
-    } catch (error: any) {
-      console.error("POST /api/contract-documents/:id/close failed:", error);
       res.status(500).json({ message: error.message });
     }
   });

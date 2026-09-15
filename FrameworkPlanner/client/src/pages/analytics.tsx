@@ -25,12 +25,17 @@ export default function Analytics() {
   const { data: contractDocuments = [] } = useQuery<any[]>({
     queryKey: ['/api/contract-documents'],
   });
+  // DEV-002: the per-deal ledger is a first-class revenue source — pipeline
+  // closes (no contract document) record here.
+  const { data: dealLedger = [] } = useQuery<any[]>({
+    queryKey: ['/api/deal-assignments?status=closed'],
+  });
   const docRevenue = useMemo(() => {
     // N1: kept as a queryable shape but computed by the shared helper so the
     // dashboard and this page always agree on closed deals and revenue.
-    const metrics = computeDealMetrics(contracts, contractDocuments as any[]);
+    const metrics = computeDealMetrics(contracts, contractDocuments as any[], { ledger: dealLedger });
     return { total: metrics.revenue, closed: metrics.dealsClosed };
-  }, [contracts, contractDocuments]);
+  }, [contracts, contractDocuments, dealLedger]);
 
   const { data: sourceReport } = useQuery<any>({
     queryKey: ["/api/reports/source"],

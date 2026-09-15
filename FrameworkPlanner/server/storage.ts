@@ -614,6 +614,7 @@ export interface IStorage {
   getDealAssignmentById(id: number): Promise<DealAssignment | undefined>;
   getDealAssignmentsByPropertyId(propertyId: number): Promise<DealAssignment[]>;
   getDealAssignmentsByBuyerId(buyerId: number): Promise<DealAssignment[]>;
+  getDealAssignmentsByStatus(status: string, limit?: number, offset?: number): Promise<DealAssignment[]>;
   createDealAssignment(assignment: InsertDealAssignment): Promise<DealAssignment>;
   updateDealAssignment(id: number, assignment: Partial<InsertDealAssignment>): Promise<DealAssignment>;
   deleteDealAssignment(id: number): Promise<void>;
@@ -3403,6 +3404,12 @@ export class DatabaseStorage implements IStorage {
 
   async getDealAssignmentsByBuyerId(buyerId: number, limit?: number, offset: number = 0): Promise<DealAssignment[]> {
     let q: any = db.select().from(dealAssignments).where(eq(dealAssignments.buyerId, buyerId));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q as unknown as Promise<DealAssignment[]>;
+  }
+
+  async getDealAssignmentsByStatus(status: string, limit?: number, offset: number = 0): Promise<DealAssignment[]> {
+    let q: any = db.select().from(dealAssignments).where(eq(dealAssignments.status, status));
     if (typeof limit === "number") q = q.limit(limit).offset(offset);
     return q as unknown as Promise<DealAssignment[]>;
   }
