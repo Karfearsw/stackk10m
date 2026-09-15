@@ -8148,6 +8148,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   // C6: route-bootstrap diagnostics — proves which API routes registered at
   // startup and when, so a partial bootstrap (C6-style outage) is detectable.
   reg("get", "/api/system/routes"); app.get("/api/system/routes", async (_req, res) => {
+    try { await requireAuth(_req, res); } catch { return; }
+    if (res.headersSent) return;
     const routes = getRouteRegistry();
     res.json({
       registeredAt: BOOT_TIME.toISOString(),
@@ -8158,6 +8160,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     });
   });
   reg("get", "/api/system/health"); app.get("/api/system/health", async (_req, res) => {
+    try { await requireAuth(_req, res); } catch { return; }
+    if (res.headersSent) return;
     try {
       // DB connectivity
       let dbStatus = "disconnected";
@@ -13090,6 +13094,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     }
   });
   reg("get", "/api/ai/config"); app.get("/api/ai/config", async (_req, res) => {
+    try { await requireAuth(_req, res); } catch { return; }
+    if (res.headersSent) return;
     const required = [
       "TELNYX_API_KEY",
       "TELNYX_CONNECTION_ID",
