@@ -3480,6 +3480,8 @@ export async function registerRoutes(
   });
   reg("get", "/api/leads/:id"); app.get("/api/leads/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const lead = await storage.getLeadById(parseInt(req.params.id));
       if (!lead) return res.status(404).json({ message: "Lead not found" });
       res.json(lead);
@@ -6513,6 +6515,77 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
+  reg("get", "/api/deal-assignments/:id"); app.get("/api/deal-assignments/:id", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const assignment = await storage.getDealAssignmentById(parseInt(req.params.id, 10));
+      if (!assignment) return res.status(404).json({ message: "Assignment not found" });
+      res.json(assignment);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/properties/:propertyId/assignments"); app.get("/api/properties/:propertyId/assignments", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const { limit, offset } = parseLimitOffset(req.query);
+      const assignments = await storage.getDealAssignmentsByPropertyId(parseInt(req.params.propertyId), limit, offset);
+      res.json(assignments);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/buyers/:buyerId/assignments"); app.get("/api/buyers/:buyerId/assignments", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const { limit, offset } = parseLimitOffset(req.query);
+      const assignments = await storage.getDealAssignmentsByBuyerId(parseInt(req.params.buyerId), limit, offset);
+      res.json(assignments);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/deal-assignments"); app.post("/api/deal-assignments", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const validated = insertDealAssignmentSchema.parse(req.body);
+      const assignment = await storage.createDealAssignment(validated);
+      res.status(201).json(assignment);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  reg("patch", "/api/deal-assignments/:id"); app.patch("/api/deal-assignments/:id", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const partial = insertDealAssignmentSchema.partial().parse(req.body);
+      const assignment = await storage.updateDealAssignment(parseInt(req.params.id, 10), partial);
+      res.json(assignment);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  reg("delete", "/api/deal-assignments/:id"); app.delete("/api/deal-assignments/:id", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      await storage.deleteDealAssignment(parseInt(req.params.id, 10));
+      res.json({ message: "Assignment deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // OPPORTUNITY PARTIES
   reg("get", "/api/opportunities/:id/parties"); app.get("/api/opportunities/:id/parties", async (req, res) => {
     try {
@@ -9137,6 +9210,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   }
   reg("get", "/api/properties/:id"); app.get("/api/properties/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const id = parseInt(req.params.id);
       const property = await storage.getPropertyById(id);
       if (!property) return res.status(404).json({ message: "Property not found" });
@@ -9153,6 +9228,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("post", "/api/properties"); app.post("/api/properties", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
       const validated = insertPropertySchema.parse(req.body);
       const property = await storage.createProperty(validated);
       
@@ -9172,6 +9249,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("patch", "/api/properties/:id"); app.patch("/api/properties/:id", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
       const partial = insertPropertySchema.partial().parse(req.body);
       const property = await storage.updateProperty(parseInt(req.params.id), partial);
       
@@ -9191,6 +9270,9 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("delete", "/api/properties/:id"); app.delete("/api/properties/:id", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const id = parseInt(req.params.id);
       const property = await storage.getPropertyById(parseInt(req.params.id));
       await storage.deleteProperty(parseInt(req.params.id));
       
@@ -9223,6 +9305,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   };
   reg("get", "/api/lois"); app.get("/api/lois", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
       const { limit, offset } = parseLimitOffset(req.query);
       const items = await storage.getLois(limit, offset);
       res.json(items);
@@ -9232,6 +9316,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("post", "/api/lois"); app.post("/api/lois", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const validated = insertLoiSchema.parse(coerceLoiBody(req.body));
       const loi = await storage.createLoi(validated);
       res.status(201).json(loi);
@@ -9241,6 +9327,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("get", "/api/lois/:id"); app.get("/api/lois/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const loi = await storage.getLoiById(parseInt(req.params.id, 10));
       if (!loi) return res.status(404).json({ message: "LOI not found" });
       res.json(loi);
@@ -9250,6 +9338,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("patch", "/api/lois/:id"); app.patch("/api/lois/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const partial = insertLoiSchema.partial().parse(coerceLoiBody(req.body));
       const loi = await storage.updateLoi(parseInt(req.params.id, 10), partial);
       if (!loi) return res.status(404).json({ message: "LOI not found" });
@@ -9260,6 +9350,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("delete", "/api/lois/:id"); app.delete("/api/lois/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       await storage.deleteLoi(parseInt(req.params.id, 10));
       res.json({ message: "LOI deleted" });
     } catch (error: any) {
@@ -9267,81 +9359,10 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     }
   });
 
-  // DEAL ASSIGNMENTS ENDPOINTS — M19/M36 fix: the 725139a routes rewrite
-  // dropped these, leaving the Deal Room's Buyer Assignments hitting dead
-  // endpoints. Restored from the pre-rewrite implementation; the "Buyer
-  // #null" orphan came from ON DELETE SET NULL rows being rendered anyway.
-  reg("get", "/api/deal-assignments"); app.get("/api/deal-assignments", async (req, res) => {
-    try {
-      const { limit, offset } = parseLimitOffset(req.query);
-      const assignments = await storage.getDealAssignments(limit, offset);
-      res.json(assignments);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  reg("get", "/api/deal-assignments/:id"); app.get("/api/deal-assignments/:id", async (req, res) => {
-    try {
-      const assignment = await storage.getDealAssignmentById(parseInt(req.params.id, 10));
-      if (!assignment) return res.status(404).json({ message: "Assignment not found" });
-      res.json(assignment);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  reg("get", "/api/properties/:propertyId/assignments"); app.get("/api/properties/:propertyId/assignments", async (req, res) => {
-    try {
-      const { limit, offset } = parseLimitOffset(req.query);
-      const assignments = await storage.getDealAssignmentsByPropertyId(parseInt(req.params.propertyId), limit, offset);
-      res.json(assignments);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  reg("get", "/api/buyers/:buyerId/assignments"); app.get("/api/buyers/:buyerId/assignments", async (req, res) => {
-    try {
-      const { limit, offset } = parseLimitOffset(req.query);
-      const assignments = await storage.getDealAssignmentsByBuyerId(parseInt(req.params.buyerId), limit, offset);
-      res.json(assignments);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
-  reg("post", "/api/deal-assignments"); app.post("/api/deal-assignments", async (req, res) => {
-    try {
-      const validated = insertDealAssignmentSchema.parse(req.body);
-      const assignment = await storage.createDealAssignment(validated);
-      res.status(201).json(assignment);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  reg("patch", "/api/deal-assignments/:id"); app.patch("/api/deal-assignments/:id", async (req, res) => {
-    try {
-      const partial = insertDealAssignmentSchema.partial().parse(req.body);
-      const assignment = await storage.updateDealAssignment(parseInt(req.params.id, 10), partial);
-      res.json(assignment);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-
-  reg("delete", "/api/deal-assignments/:id"); app.delete("/api/deal-assignments/:id", async (req, res) => {
-    try {
-      await storage.deleteDealAssignment(parseInt(req.params.id, 10));
-      res.json({ message: "Assignment deleted" });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-
   reg("get", "/api/contracts"); app.get("/api/contracts", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
       const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
       // M50: the Deal Room filters by opportunity; legacy rows carry
       // property_id, canonical rows carry opportunity_id (both point at the
@@ -9365,6 +9386,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("get", "/api/contracts/:id"); app.get("/api/contracts/:id", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
       const contract = await storage.getContractById(parseInt(req.params.id));
       if (!contract) return res.status(404).json({ message: "Contract not found" });
       res.json(contract);
@@ -9374,6 +9397,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("post", "/api/contracts"); app.post("/api/contracts", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
       // M46 (contract wizard crash): the wizard stores its deal terms on the
       // document-contracts model but posts here; zod strips those extra keys
       // and the NOT NULL constraint on amount rejected the auto-created draft.
@@ -9398,6 +9423,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("patch", "/api/contracts/:id"); app.patch("/api/contracts/:id", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
       const partial = insertContractSchema.partial().parse(req.body);
       const contract = await storage.updateContract(parseInt(req.params.id), partial);
       try {
@@ -9410,6 +9437,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("delete", "/api/contracts/:id"); app.delete("/api/contracts/:id", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
       await storage.deleteContract(parseInt(req.params.id));
       res.json({ message: "Contract deleted" });
     } catch (error: any) {
@@ -9643,6 +9672,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("get", "/api/contracts/:id/signers"); app.get("/api/contracts/:id/signers", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const signers = await storage.getContractSignersByContract(parseInt(req.params.id));
       res.json(signers);
     } catch (error: any) {
@@ -9680,6 +9711,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("get", "/api/contracts/:id/events"); app.get("/api/contracts/:id/events", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const events = await storage.getContractEventsByContract(parseInt(req.params.id));
       res.json(events);
     } catch (error: any) {
@@ -9688,6 +9721,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("get", "/api/contracts/:id/fields"); app.get("/api/contracts/:id/fields", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const fields = await storage.getContractFieldsByContract(parseInt(req.params.id));
       res.json(fields);
     } catch (error: any) {
@@ -9696,6 +9731,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("post", "/api/contracts/:id/fields"); app.post("/api/contracts/:id/fields", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const validated = insertContractFieldSchema.parse(req.body);
       const field = await storage.createContractField({ ...validated, contractId: parseInt(req.params.id) });
       res.status(201).json(field);
@@ -9705,6 +9742,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("patch", "/api/contracts/fields/:fieldId"); app.patch("/api/contracts/fields/:fieldId", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const partial = insertContractFieldSchema.partial().parse(req.body);
       const field = await storage.updateContractField(parseInt(req.params.fieldId), partial);
       res.json(field);
@@ -9714,6 +9753,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("delete", "/api/contracts/fields/:fieldId"); app.delete("/api/contracts/fields/:fieldId", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       await storage.deleteContractField(parseInt(req.params.fieldId));
       res.json({ message: "Field deleted" });
     } catch (error: any) {
@@ -9726,6 +9767,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   // Close Deal & Record Revenue all call these endpoints.
   reg("get", "/api/contract-documents"); app.get("/api/contract-documents", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const { limit, offset } = parseLimitOffset(req.query);
       const documents = await storage.getContractDocuments(limit, offset);
       res.json(documents);
@@ -9735,6 +9778,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("get", "/api/contract-documents/:id"); app.get("/api/contract-documents/:id", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
       const document = await storage.getContractDocumentById(parseInt(req.params.id));
       if (!document) return res.status(404).json({ message: "Document not found" });
       res.json(document);
@@ -9807,6 +9852,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("post", "/api/contract-documents"); app.post("/api/contract-documents", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const validated = insertContractDocumentSchema.parse(req.body);
       const document = await storage.createContractDocument(validated);
       res.status(201).json(document);
@@ -9816,6 +9863,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("patch", "/api/contract-documents/:id"); app.patch("/api/contract-documents/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const partial = insertContractDocumentSchema.partial().parse(req.body);
       const document = await storage.updateContractDocument(parseInt(req.params.id), partial);
       res.json(document);
@@ -9825,9 +9874,145 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("delete", "/api/contract-documents/:id"); app.delete("/api/contract-documents/:id", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
       await storage.deleteContractDocument(parseInt(req.params.id));
       res.json({ message: "Document deleted" });
     } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // DOCUMENT VERSIONS ENDPOINTS (salvaged from the routes-rewrite duplicate
+  // block — these were registered only there, so the live server never had them)
+  reg("get", "/api/documents/:documentId/versions"); app.get("/api/documents/:documentId/versions", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const versions = await storage.getDocumentVersions(parseInt(req.params.documentId));
+      res.json(versions);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/documents/:documentId/versions"); app.post("/api/documents/:documentId/versions", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const validated = insertDocumentVersionSchema.parse({
+        ...req.body,
+        documentId: parseInt(req.params.documentId)
+      });
+      const version = await storage.createDocumentVersion(validated);
+      res.status(201).json(version);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  // Disposition audit fix: "Close Deal & Record Revenue" must do more than flip a
+  // status. This endpoint records the closing on the deal_assignments ledger,
+  // advances the opportunity to sold, and writes an activity entry.
+  reg("post", "/api/contract-documents/:id/close"); app.post("/api/contract-documents/:id/close", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const docId = parseInt(req.params.id, 10);
+      const doc = await storage.getContractDocumentById(docId);
+      if (!doc) return res.status(404).json({ message: "Contract not found" });
+      if (doc.status === "closed") return res.status(400).json({ message: "Contract already closed" });
+
+      const body = req.body || {};
+      const closingData = body.closingData || {};
+      let stageAdvanced = false;
+      const num = (v: any) => {
+        const n = parseFloat(String(v ?? "").replace(/[$,]/g, ""));
+        return Number.isFinite(n) ? n.toFixed(2) : null;
+      };
+      const assignmentFee = num(closingData.assignmentFee);
+      const closingCosts = num(closingData.closingCosts);
+      const buyerPaid = !!closingData.buyerPaid;
+      const titleReceived = !!closingData.titleReceived;
+      const fundsWired = !!closingData.fundsWired;
+      const docsRecorded = !!closingData.docsRecorded;
+
+      // M47: persist the closing record into mergeData so Dashboard revenue
+      // (which reads mergeData.closingData.assignmentFee) reflects the close.
+      let mergedMergeData: string | undefined;
+      try {
+        const md = doc.mergeData ? (typeof doc.mergeData === "string" ? JSON.parse(doc.mergeData) : doc.mergeData) : {};
+        mergedMergeData = JSON.stringify({
+          ...md,
+          assignmentFee: assignmentFee ?? (md as any).assignmentFee ?? null,
+          closingData: {
+            ...((md as any).closingData || {}),
+            assignmentFee,
+            closingCosts,
+            buyerPaid,
+            titleReceived,
+            fundsWired,
+            docsRecorded,
+            notes: closingData.notes || null,
+            closedAt: new Date().toISOString(),
+          },
+        });
+      } catch { mergedMergeData = undefined; }
+      const updated = await storage.updateContractDocument(docId, { status: "closed", ...(mergedMergeData ? { mergeData: mergedMergeData } : {}), updatedAt: new Date() } as any);
+
+      // Write/refresh the per-deal payout ledger row (deal_assignments).
+      const propertyId = doc.propertyId ?? null;
+      if (propertyId) {
+        try {
+          const existing = await storage.getDealAssignmentsByPropertyId(propertyId);
+          const prior = (existing || [])[0];
+          const payoutReceived = buyerPaid && fundsWired && docsRecorded;
+          const payload = {
+            propertyId,
+            assignmentFee,
+            status: "closed",
+            closingDate: new Date(),
+            earnestMoneyReceived: buyerPaid,
+            titleCleared: titleReceived,
+            closingScheduled: fundsWired,
+            documentsComplete: docsRecorded,
+            payoutReceived,
+            payoutAmount: payoutReceived ? assignmentFee : null,
+            notes: [closingCosts ? `Closing costs: $${closingCosts}` : "", closingData.notes || ""].filter(Boolean).join(" — ") || null,
+            updatedAt: new Date(),
+          };
+          if (prior) {
+            await storage.updateDealAssignment(prior.id, payload);
+          } else {
+            await storage.createDealAssignment(payload);
+          }
+        } catch (e: any) {
+          console.error("close: deal_assignments ledger write failed:", e?.message);
+        }
+
+        // Advance the opportunity to sold (projected fee lives in Financial Analysis;
+        // this records the collected fee on the ledger).
+        try {
+          const property = await storage.getPropertyById(propertyId);
+          if (property && !["sold", "closed", "dead", "voided"].includes(String((property as any).stage || ""))) {
+            stageAdvanced = true;
+            await storage.updateProperty(propertyId, { stage: "sold", stageChangedAt: new Date(), lastActivityAt: new Date() } as any);
+            await logOpportunityEvent(propertyId, "stage_changed", "Stage changed to Sold", `Contract "${doc.title}" closed; assignment fee ${assignmentFee ? "$" + Number(assignmentFee).toLocaleString() : "not recorded"}.`, user.id, "system", { oldStage: (property as any).stage, newStage: "sold" });
+          }
+        } catch {}
+      }
+
+      try {
+        if (req.session.userId) {
+          await storage.createGlobalActivity({
+            userId: req.session.userId,
+            action: "closed_deal",
+            description: `Closed deal: ${doc.title}${assignmentFee ? ` — fee $${Number(assignmentFee).toLocaleString()}` : ""}`,
+            metadata: JSON.stringify({ contractDocumentId: docId, propertyId, assignmentFee, closingCosts }),
+          });
+        }
+      } catch {}
+
+      res.json({ contract: updated, stageAdvanced });
+    } catch (error: any) {
+      console.error("POST /api/contract-documents/:id/close failed:", error);
       res.status(500).json({ message: error.message });
     }
   });
@@ -11125,6 +11310,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   // CONTRACT TEMPLATES ENDPOINTS
   reg("get", "/api/contract-templates"); app.get("/api/contract-templates", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const { limit, offset } = parseLimitOffset(req.query);
       const category = typeof req.query?.category === "string" ? req.query.category : undefined;
       const jurisdiction = typeof req.query?.jurisdiction === "string" ? req.query.jurisdiction : undefined;
@@ -11138,6 +11325,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("get", "/api/contract-templates/:id"); app.get("/api/contract-templates/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const template = await storage.getContractTemplateById(parseInt(req.params.id));
       if (!template) return res.status(404).json({ message: "Template not found" });
       res.json(template);
@@ -11181,6 +11370,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("delete", "/api/contract-templates/:id"); app.delete("/api/contract-templates/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       await storage.deleteContractTemplate(parseInt(req.params.id));
       res.json({ message: "Template deleted" });
     } catch (error: any) {
@@ -11221,757 +11412,11 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.status(500).json({ message: error.message });
     }
   });
-  // CONTRACT DOCUMENTS ENDPOINTS
-  reg("get", "/api/contract-documents"); app.get("/api/contract-documents", async (req, res) => {
-    try {
-      const { limit, offset } = parseLimitOffset(req.query);
-      const documents = await storage.getContractDocuments(limit, offset);
-      res.json(documents);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("get", "/api/contract-documents/:id"); app.get("/api/contract-documents/:id", async (req, res) => {
-    try {
-      const document = await storage.getContractDocumentById(parseInt(req.params.id));
-      if (!document) return res.status(404).json({ message: "Document not found" });
-      res.json(document);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-    // Phase 6: rendered text preview of a generated contract document.
-  reg("get", "/api/contract-documents/:id/view"); app.get("/api/contract-documents/:id/view", async (req, res) => {
-    try {
-      const actor = await requireAuth(req, res);
-      if (!actor) return;
-      const doc = await storage.getContractDocumentById(parseInt(req.params.id));
-      if (!doc) return res.status(404).json({ message: "Document not found" });
-      const content = String(doc.content ?? "");
-      res.json({ id: doc.id, title: doc.title, documentType: doc.documentType, content });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  function wrapText(text: string, maxChars: number = 95): string[] {
-    const words = String(text).split(/\s+/);
-    const out: string[] = [];
-    let line = "";
-    for (const w of words) {
-      if ((line + " " + w).trim().length > maxChars) {
-        if (line) out.push(line.trim());
-        line = w;
-      } else {
-        line = line ? line + " " + w : w;
-      }
-    }
-    if (line) out.push(line.trim());
-    return out;
-  }
-  // Phase 6: generate a printable PDF from a contract document using pdf-lib.
-  reg("get", "/api/contract-documents/:id/pdf"); app.get("/api/contract-documents/:id/pdf", async (req, res) => {
-    try {
-      const actor = await requireAuth(req, res);
-      if (!actor) return;
-      const doc = await storage.getContractDocumentById(parseInt(req.params.id));
-      if (!doc) return res.status(404).json({ message: "Document not found" });
-      const pdfLib = await import("pdf-lib");
-      const pdf = await pdfLib.PDFDocument.create();
-      const lines = String(doc.content ?? "").split(/\r?\n/);
-      const page = pdf.addPage([612, 792]);
-      const helvetica = await pdf.embedFont(pdfLib.StandardFonts.Helvetica);
-      let y = 750;
-      for (const raw of lines) {
-        const line = String(raw).trim();
-        if (!line) { y -= 14; continue; }
-        const cleaned = line.replace(/[ --]/g, "");
-        try {
-          const wrapped = wrapText(cleaned, 95);
-          for (const seg of wrapped) {
-            if (y < 40) { y = 750; page.drawText("", { x: 0, y: 0 }); }
-            page.drawText(seg, { x: 50, y: y, size: 10, font: helvetica });
-            y -= 14;
-          }
-        } catch {}
-      }
-      const bytes = await pdf.save();
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `inline; filename="${encodeURIComponent(String(doc.title || "contract"))}.pdf"`);
-      res.setHeader("X-Content-Type-Options", "nosniff");
-      res.send(Buffer.from(bytes));
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-    reg("post", "/api/contract-documents"); app.post("/api/contract-documents", async (req, res) => {
-    try {
-      const validated = insertContractDocumentSchema.parse(req.body);
-      const document = await storage.createContractDocument(validated);
-      res.status(201).json(document);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-  reg("patch", "/api/contract-documents/:id"); app.patch("/api/contract-documents/:id", async (req, res) => {
-    try {
-      const partial = insertContractDocumentSchema.partial().parse(req.body);
-      const document = await storage.updateContractDocument(parseInt(req.params.id), partial);
-      res.json(document);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-  reg("delete", "/api/contract-documents/:id"); app.delete("/api/contract-documents/:id", async (req, res) => {
-    try {
-      await storage.deleteContractDocument(parseInt(req.params.id));
-      res.json({ message: "Document deleted" });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  // Disposition audit fix: "Close Deal & Record Revenue" must do more than flip a
-  // status. This endpoint records the closing on the deal_assignments ledger,
-  // advances the opportunity to sold, and writes an activity entry.
-  reg("post", "/api/contract-documents/:id/close"); app.post("/api/contract-documents/:id/close", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      const docId = parseInt(req.params.id, 10);
-      const doc = await storage.getContractDocumentById(docId);
-      if (!doc) return res.status(404).json({ message: "Contract not found" });
-      if (doc.status === "closed") return res.status(400).json({ message: "Contract already closed" });
-
-      const body = req.body || {};
-      const closingData = body.closingData || {};
-      let stageAdvanced = false;
-      const num = (v: any) => {
-        const n = parseFloat(String(v ?? "").replace(/[$,]/g, ""));
-        return Number.isFinite(n) ? n.toFixed(2) : null;
-      };
-      const assignmentFee = num(closingData.assignmentFee);
-      const closingCosts = num(closingData.closingCosts);
-      const buyerPaid = !!closingData.buyerPaid;
-      const titleReceived = !!closingData.titleReceived;
-      const fundsWired = !!closingData.fundsWired;
-      const docsRecorded = !!closingData.docsRecorded;
-
-      // M47: persist the closing record into mergeData so Dashboard revenue
-      // (which reads mergeData.closingData.assignmentFee) reflects the close.
-      let mergedMergeData: string | undefined;
-      try {
-        const md = doc.mergeData ? (typeof doc.mergeData === "string" ? JSON.parse(doc.mergeData) : doc.mergeData) : {};
-        mergedMergeData = JSON.stringify({
-          ...md,
-          assignmentFee: assignmentFee ?? (md as any).assignmentFee ?? null,
-          closingData: {
-            ...((md as any).closingData || {}),
-            assignmentFee,
-            closingCosts,
-            buyerPaid,
-            titleReceived,
-            fundsWired,
-            docsRecorded,
-            notes: closingData.notes || null,
-            closedAt: new Date().toISOString(),
-          },
-        });
-      } catch { mergedMergeData = undefined; }
-      const updated = await storage.updateContractDocument(docId, { status: "closed", ...(mergedMergeData ? { mergeData: mergedMergeData } : {}), updatedAt: new Date() } as any);
-
-      // Write/refresh the per-deal payout ledger row (deal_assignments).
-      const propertyId = doc.propertyId ?? null;
-      if (propertyId) {
-        try {
-          const existing = await storage.getDealAssignmentsByPropertyId(propertyId);
-          const prior = (existing || [])[0];
-          const payoutReceived = buyerPaid && fundsWired && docsRecorded;
-          const payload = {
-            propertyId,
-            assignmentFee,
-            status: "closed",
-            closingDate: new Date(),
-            earnestMoneyReceived: buyerPaid,
-            titleCleared: titleReceived,
-            closingScheduled: fundsWired,
-            documentsComplete: docsRecorded,
-            payoutReceived,
-            payoutAmount: payoutReceived ? assignmentFee : null,
-            notes: [closingCosts ? `Closing costs: $${closingCosts}` : "", closingData.notes || ""].filter(Boolean).join(" — ") || null,
-            updatedAt: new Date(),
-          };
-          if (prior) {
-            await storage.updateDealAssignment(prior.id, payload);
-          } else {
-            await storage.createDealAssignment(payload);
-          }
-        } catch (e: any) {
-          console.error("close: deal_assignments ledger write failed:", e?.message);
-        }
-
-        // Advance the opportunity to sold (projected fee lives in Financial Analysis;
-        // this records the collected fee on the ledger).
-        try {
-          const property = await storage.getPropertyById(propertyId);
-          if (property && !["sold", "closed", "dead", "voided"].includes(String((property as any).stage || ""))) {
-            stageAdvanced = true;
-            await storage.updateProperty(propertyId, { stage: "sold", stageChangedAt: new Date(), lastActivityAt: new Date() } as any);
-            await logOpportunityEvent(propertyId, "stage_changed", "Stage changed to Sold", `Contract "${doc.title}" closed; assignment fee ${assignmentFee ? "$" + Number(assignmentFee).toLocaleString() : "not recorded"}.`, user.id, "system", { oldStage: (property as any).stage, newStage: "sold" });
-          }
-        } catch {}
-      }
-
-      try {
-        if (req.session.userId) {
-          await storage.createGlobalActivity({
-            userId: req.session.userId,
-            action: "closed_deal",
-            description: `Closed deal: ${doc.title}${assignmentFee ? ` — fee $${Number(assignmentFee).toLocaleString()}` : ""}`,
-            metadata: JSON.stringify({ contractDocumentId: docId, propertyId, assignmentFee, closingCosts }),
-          });
-        }
-      } catch {}
-
-      res.json({ contract: updated, stageAdvanced });
-    } catch (error: any) {
-      console.error("POST /api/contract-documents/:id/close failed:", error);
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("get", "/api/contract-documents/:id/envelopes"); app.get("/api/contract-documents/:id/envelopes", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "esign", isFeatureBypassUser(user)))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
-      const id = parseInt(req.params.id);
-      const rows = await storage.getContractEnvelopesByDocument(id);
-      res.json(rows.map((e: any) => ({ ...e, tokenHash: undefined })));
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("post", "/api/contract-documents/:id/envelopes"); app.post("/api/contract-documents/:id/envelopes", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "esign", isFeatureBypassUser(user)))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
-      const id = parseInt(req.params.id);
-      const doc = await storage.getContractDocumentById(id);
-      if (!doc) return res.status(404).json({ message: "Document not found" });
-      const schema = z.object({
-        signerName: z.string().trim().min(1).max(255),
-        signerEmail: z.string().trim().email().max(255),
-        expiresInDays: z.number().int().min(1).max(120).optional(),
-      });
-      const payload = schema.parse(req.body || {});
-      const token = crypto.randomBytes(24).toString("hex");
-      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-      const expiresAt = new Date(Date.now() + (payload.expiresInDays ?? 30) * 24 * 60 * 60 * 1000);
-      const env = await storage.createContractEnvelope({
-        documentId: id,
-        status: "sent",
-        signerName: payload.signerName,
-        signerEmail: payload.signerEmail,
-        tokenHash,
-        expiresAt,
-        sentAt: new Date(),
-        auditJson: JSON.stringify([{ event: "sent", at: new Date().toISOString(), userId: user.id }]),
-      } as any);
-      await storage.updateContractDocument(id, { status: "sent" } as any);
-      await storage.createGlobalActivity({
-        userId: user.id,
-        action: "contract_sent",
-        description: `Contract sent for signature: ${doc.title}`,
-        metadata: JSON.stringify({ documentId: id, envelopeId: env.id, signerEmail: payload.signerEmail }),
-      } as any);
-      const origin = `${req.protocol}://${req.get("host")}`;
-      const signerUrl = `${origin}/sign/${token}`;
-      let emailSent = false;
-      let emailError: string | null = null;
-      try {
-        const subject = `Signature requested: ${String(doc.title || "Document")}`;
-        const text = `You have a document to sign.\n\n${signerUrl}\n\nThis link expires on ${expiresAt.toISOString()}.`;
-        const html = `<p>You have a document to sign.</p><p><a href="${signerUrl}">${signerUrl}</a></p><p>This link expires on ${expiresAt.toISOString()}.</p>`;
-        await sendResendEmail({ to: payload.signerEmail, subject, text, html });
-        emailSent = true;
-      } catch (e: any) {
-        emailError = String(e?.message || e);
-      }
-      try {
-        const audit = (() => {
-          try {
-            const parsed = JSON.parse(String((env as any).auditJson || "[]"));
-            return Array.isArray(parsed) ? parsed : [];
-          } catch {
-            return [];
-          }
-        })();
-        audit.push({
-          event: emailSent ? "email_sent" : "email_failed",
-          at: new Date().toISOString(),
-          to: payload.signerEmail,
-          error: emailSent ? undefined : emailError,
-        });
-        await storage.updateContractEnvelope(env.id, { auditJson: JSON.stringify(audit) } as any);
-      } catch {}
-      res.status(201).json({ envelopeId: env.id, signerUrl, expiresAt: expiresAt.toISOString(), emailSent, emailError });
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-  reg("get", "/api/contract-envelopes/:id"); app.get("/api/contract-envelopes/:id", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "esign", isFeatureBypassUser(user)))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
-      const id = parseInt(req.params.id);
-      const env = await storage.getContractEnvelopeById(id);
-      if (!env) return res.status(404).json({ message: "Not found" });
-      res.json({ ...env, tokenHash: undefined, signatureImageBase64: undefined, signedPdfBase64: undefined });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("post", "/api/contract-envelopes/:id/upload-signed"); app.post("/api/contract-envelopes/:id/upload-signed", async (req, res) => {
-    try {
-      const user = await requireAuth(req, res);
-      if (!user) return;
-      if (!(await isFeatureEnabled(user.id, "esign", isFeatureBypassUser(user)))) return res.status(403).json({ message: "E-sign is not enabled for this account. Ask an administrator to enable the esign feature." });
-      const id = parseInt(req.params.id);
-      const schema = z.object({ signedPdfBase64: z.string().trim().min(1) });
-      const payload = schema.parse(req.body || {});
-      const env = await storage.getContractEnvelopeById(id);
-      if (!env) return res.status(404).json({ message: "Not found" });
-      const audit = (() => {
-        try {
-          const parsed = JSON.parse(String((env as any).auditJson || "[]"));
-          return Array.isArray(parsed) ? parsed : [];
-        } catch {
-          return [];
-        }
-      })();
-      audit.push({ event: "uploaded", at: new Date().toISOString(), userId: user.id });
-      const updated = await storage.updateContractEnvelope(id, {
-        status: "signed",
-        signedAt: new Date(),
-        signedPdfBase64: payload.signedPdfBase64,
-        auditJson: JSON.stringify(audit),
-      } as any);
-      await storage.createGlobalActivity({
-        userId: user.id,
-        action: "contract_uploaded",
-        description: "Signed contract uploaded",
-        metadata: JSON.stringify({ envelopeId: id, documentId: updated.documentId }),
-      } as any);
-      res.json({ ok: true });
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-  reg("get", "/api/sign/envelopes/:token"); app.get("/api/sign/envelopes/:token", async (req, res) => {
-    try {
-      const token = String(req.params.token || "").trim();
-      if (!token) return res.status(404).json({ message: "Not found" });
-      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-      const env = await storage.getContractEnvelopeByTokenHash(tokenHash);
-      if (!env) return res.status(404).json({ message: "Not found" });
-      if ((env as any).expiresAt && new Date((env as any).expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
-      const doc = await storage.getContractDocumentById(env.documentId);
-      if (!doc) return res.status(404).json({ message: "Not found" });
-      let mergeData: any = {};
-      try {
-        mergeData = doc.mergeData ? JSON.parse(String(doc.mergeData)) : {};
-      } catch {
-        mergeData = {};
-      }
-      const merged = mergeTemplate(String(doc.content || ""), mergeData);
-      res.json({
-        envelope: {
-          id: env.id,
-          status: env.status,
-          signerName: env.signerName,
-          signerEmail: env.signerEmail,
-          expiresAt: (env as any).expiresAt,
-          sentAt: (env as any).sentAt,
-          viewedAt: (env as any).viewedAt,
-          signedAt: (env as any).signedAt,
-          declinedAt: (env as any).declinedAt,
-        },
-        document: { id: doc.id, title: doc.title, content: merged },
-      });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("post", "/api/sign/envelopes/:token/viewed"); app.post("/api/sign/envelopes/:token/viewed", async (req, res) => {
-    try {
-      const token = String(req.params.token || "").trim();
-      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-      const env = await storage.getContractEnvelopeByTokenHash(tokenHash);
-      if (!env) return res.status(404).json({ message: "Not found" });
-      if ((env as any).expiresAt && new Date((env as any).expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
-      const audit = (() => {
-        try {
-          const parsed = JSON.parse(String((env as any).auditJson || "[]"));
-          return Array.isArray(parsed) ? parsed : [];
-        } catch {
-          return [];
-        }
-      })();
-      audit.push({ event: "viewed", at: new Date().toISOString(), ip: req.ip, ua: req.headers["user-agent"] || "" });
-      await storage.updateContractEnvelope(env.id, {
-        status: env.status === "sent" ? "viewed" : env.status,
-        viewedAt: (env as any).viewedAt || new Date(),
-        auditJson: JSON.stringify(audit),
-      } as any);
-      res.json({ ok: true });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("post", "/api/sign/envelopes/:token/decline"); app.post("/api/sign/envelopes/:token/decline", async (req, res) => {
-    try {
-      const token = String(req.params.token || "").trim();
-      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-      const env = await storage.getContractEnvelopeByTokenHash(tokenHash);
-      if (!env) return res.status(404).json({ message: "Not found" });
-      if ((env as any).expiresAt && new Date((env as any).expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
-      if (env.status === "signed") return res.status(400).json({ message: "Already signed" });
-      const audit = (() => {
-        try {
-          const parsed = JSON.parse(String((env as any).auditJson || "[]"));
-          return Array.isArray(parsed) ? parsed : [];
-        } catch {
-          return [];
-        }
-      })();
-      audit.push({ event: "declined", at: new Date().toISOString(), ip: req.ip, ua: req.headers["user-agent"] || "" });
-      await storage.updateContractEnvelope(env.id, { status: "declined", declinedAt: new Date(), auditJson: JSON.stringify(audit) } as any);
-      res.json({ ok: true });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("post", "/api/sign/envelopes/:token/sign"); app.post("/api/sign/envelopes/:token/sign", async (req, res) => {
-    try {
-      const token = String(req.params.token || "").trim();
-      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-      const env = await storage.getContractEnvelopeByTokenHash(tokenHash);
-      if (!env) return res.status(404).json({ message: "Not found" });
-      if ((env as any).expiresAt && new Date((env as any).expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
-      if (env.status === "signed") return res.status(400).json({ message: "Already signed" });
-      if (env.status === "declined") return res.status(400).json({ message: "Declined" });
-      const schema = z.object({
-        signatureType: z.enum(["typed", "drawn"]),
-        signatureText: z.string().trim().max(255).optional().nullable(),
-        signatureImageBase64: z.string().trim().optional().nullable(),
-      });
-      const payload = schema.parse(req.body || {});
-      if (payload.signatureType === "typed" && !String(payload.signatureText || "").trim()) return res.status(400).json({ message: "Signature text is required" });
-      if (payload.signatureType === "drawn" && !String(payload.signatureImageBase64 || "").trim()) return res.status(400).json({ message: "Signature image is required" });
-      const doc = await storage.getContractDocumentById(env.documentId);
-      if (!doc) return res.status(404).json({ message: "Not found" });
-      let mergeData: any = {};
-      try {
-        mergeData = doc.mergeData ? JSON.parse(String(doc.mergeData)) : {};
-      } catch {
-        mergeData = {};
-      }
-      const merged = mergeTemplate(String(doc.content || ""), mergeData);
-      const audit = (() => {
-        try {
-          const parsed = JSON.parse(String((env as any).auditJson || "[]"));
-          return Array.isArray(parsed) ? parsed : [];
-        } catch {
-          return [];
-        }
-      })();
-      audit.push({ event: "signed", at: new Date().toISOString(), ip: req.ip, ua: req.headers["user-agent"] || "" });
-      const auditLines = [
-        `Envelope #${env.id}`,
-        `Signer: ${String(env.signerName || "")} <${String(env.signerEmail || "")}>`,
-        `Signed at: ${new Date().toISOString()}`,
-      ];
-      const signedPdfBase64 = await generateSignedPdfBase64({
-        title: String(doc.title || "Document"),
-        contentText: merged,
-        signatureType: payload.signatureType,
-        signatureText: payload.signatureText || null,
-        signatureImageBase64: payload.signatureImageBase64 || null,
-        auditLines,
-      });
-      await storage.updateContractEnvelope(env.id, {
-        status: "signed",
-        signedAt: new Date(),
-        signatureType: payload.signatureType,
-        signatureText: payload.signatureText || null,
-        signatureImageBase64: payload.signatureType === "drawn" ? payload.signatureImageBase64 || null : null,
-        signedPdfBase64,
-        auditJson: JSON.stringify(audit),
-      } as any);
-      await storage.updateContractDocument(env.documentId, { status: "executed" } as any).catch((e: any) => {
-        console.error(JSON.stringify({ ts: new Date().toISOString(), event: "esign", kind: "document_update_failed", documentId: env.documentId, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
-      });
-      await storage.createGlobalActivity({
-        userId: 0,
-        action: "contract_signed",
-        description: `Contract signed: ${String(doc.title || "")}`,
-        metadata: JSON.stringify({ envelopeId: env.id, documentId: env.documentId, signerEmail: env.signerEmail || null }),
-      } as any).catch((e: any) => {
-        console.error(JSON.stringify({ ts: new Date().toISOString(), event: "esign", kind: "activity_log_failed", action: "contract_signed", documentId: env.documentId, envelopeId: env.id, message: String(e?.message || e), code: e?.code ? String(e.code) : null }));
-      });
-      try {
-        await onContractSigned({
-          documentId: env.documentId,
-          title: String(doc.title || "").trim(),
-          propertyId: (doc as any)?.propertyId ?? null,
-        });
-      } catch {}
-      res.json({ ok: true });
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-  reg("get", "/api/sign/envelopes/:token/pdf"); app.get("/api/sign/envelopes/:token/pdf", async (req, res) => {
-    try {
-      const token = String(req.params.token || "").trim();
-      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-      const env = await storage.getContractEnvelopeByTokenHash(tokenHash);
-      if (!env) return res.status(404).json({ message: "Not found" });
-      if (!env.signedPdfBase64) return res.status(404).json({ message: "Not found" });
-      const bytes = Buffer.from(String(env.signedPdfBase64), "base64");
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `inline; filename="signed-envelope-${env.id}.pdf"`);
-      res.send(bytes);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("get", "/api/sign/signers/:token"); app.get("/api/sign/signers/:token", async (req, res) => {
-    try {
-      const token = String(req.params.token || "").trim();
-      if (!token) return res.status(404).json({ message: "Not found" });
-      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-      const signer = await storage.getContractSignerByTokenHash(tokenHash);
-      if (!signer) return res.status(404).json({ message: "Not found" });
-      if (signer.expiresAt && new Date(signer.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
-      if (signer.status === "signed") return res.status(400).json({ message: "Already signed" });
-      if (signer.status === "declined") return res.status(400).json({ message: "Declined" });
-      const contract = await storage.getContractById(signer.contractId);
-      if (!contract) return res.status(404).json({ message: "Not found" });
-      let docContent = "";
-      let docTitle = "Contract";
-      if (contract.generatedDocumentId) {
-        const doc = await storage.getContractDocumentById(contract.generatedDocumentId);
-        if (doc) {
-          docTitle = doc.title;
-          let mergeData: any = {};
-          try { mergeData = doc.mergeData ? JSON.parse(String(doc.mergeData)) : {}; } catch { mergeData = {}; }
-          const fallback = contract.mergeDataSnapshot || {};
-          const merged = mergeTemplate(String(doc.content || ""), { ...fallback, ...mergeData });
-          docContent = merged;
-        }
-      }
-      res.json({
-        signer: {
-          id: signer.id,
-          name: signer.name,
-          email: signer.email,
-          role: signer.role,
-          status: signer.status,
-          expiresAt: signer.expiresAt,
-          sentAt: signer.sentAt,
-          viewedAt: signer.viewedAt,
-          signedAt: signer.signedAt,
-        },
-        contract: { id: contract.id, status: contract.status },
-        document: { title: docTitle, content: docContent },
-      });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("post", "/api/sign/signers/:token/viewed"); app.post("/api/sign/signers/:token/viewed", async (req, res) => {
-    try {
-      const token = String(req.params.token || "").trim();
-      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-      const signer = await storage.getContractSignerByTokenHash(tokenHash);
-      if (!signer) return res.status(404).json({ message: "Not found" });
-      if (signer.expiresAt && new Date(signer.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
-      const updated = await storage.updateContractSigner(signer.id, {
-        status: signer.status === "sent" ? "viewed" : signer.status,
-        viewedAt: new Date(),
-      } as any);
-      res.json(updated);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("post", "/api/sign/signers/:token/decline"); app.post("/api/sign/signers/:token/decline", async (req, res) => {
-    try {
-      const token = String(req.params.token || "").trim();
-      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-      const signer = await storage.getContractSignerByTokenHash(tokenHash);
-      if (!signer) return res.status(404).json({ message: "Not found" });
-      if (signer.expiresAt && new Date(signer.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
-      if (signer.status === "signed") return res.status(400).json({ message: "Already signed" });
-      const updated = await storage.updateContractSigner(signer.id, {
-        status: "declined",
-        declinedAt: new Date(),
-      } as any);
-      await storage.createContractEvent({
-        contractId: signer.contractId,
-        actorType: "contact",
-        actorContactId: signer.contactId || undefined,
-        eventType: "declined",
-        payloadJson: JSON.stringify({ signerId: signer.id }),
-        ip: req.ip,
-        userAgent: String(req.headers["user-agent"] || ""),
-      });
-      res.json(updated);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("post", "/api/sign/signers/:token/sign"); app.post("/api/sign/signers/:token/sign", async (req, res) => {
-    try {
-      const token = String(req.params.token || "").trim();
-      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-      const signer = await storage.getContractSignerByTokenHash(tokenHash);
-      if (!signer) return res.status(404).json({ message: "Not found" });
-      if (signer.expiresAt && new Date(signer.expiresAt).getTime() < Date.now()) return res.status(410).json({ message: "Link expired" });
-      if (signer.status === "signed") return res.status(400).json({ message: "Already signed" });
-      if (signer.status === "declined") return res.status(400).json({ message: "Declined" });
-      const schema = z.object({
-        signatureType: z.enum(["typed", "drawn"]),
-        signatureText: z.string().trim().max(255).optional().nullable(),
-        signatureImageBase64: z.string().trim().optional().nullable(),
-        legalName: z.string().trim().max(255).optional(),
-        consent: z.boolean().optional(),
-      });
-      const payload = schema.parse(req.body || {});
-      if (payload.signatureType === "typed" && !String(payload.signatureText || "").trim()) return res.status(400).json({ message: "Signature text is required" });
-      if (payload.signatureType === "drawn" && !String(payload.signatureImageBase64 || "").trim()) return res.status(400).json({ message: "Signature image is required" });
-      const contract = await storage.getContractById(signer.contractId);
-      if (!contract) return res.status(404).json({ message: "Not found" });
-      let docContent = "";
-      if (contract.generatedDocumentId) {
-        const doc = await storage.getContractDocumentById(contract.generatedDocumentId);
-        if (doc) {
-          let mergeData: any = {};
-          try { mergeData = doc.mergeData ? JSON.parse(String(doc.mergeData)) : {}; } catch { mergeData = {}; }
-          const fallback = contract.mergeDataSnapshot || {};
-          docContent = mergeTemplate(String(doc.content || ""), { ...fallback, ...mergeData });
-        }
-      }
-      const auditLines = [
-        `Contract #${contract.id}`,
-        `Signer: ${signer.name} <${signer.email || ""}>`,
-        `Signed at: ${new Date().toISOString()}`,
-      ];
-      const signedPdfBase64 = await generateSignedPdfBase64({
-        title: `Contract #${contract.id}`,
-        contentText: docContent,
-        signatureType: payload.signatureType,
-        signatureText: payload.signatureText || null,
-        signatureImageBase64: payload.signatureImageBase64 || null,
-        auditLines,
-      });
-      const signatureMetadata = {
-        signatureType: payload.signatureType,
-        legalName: payload.legalName || signer.name,
-        consent: payload.consent || false,
-        signedAt: new Date().toISOString(),
-        ip: req.ip,
-        userAgent: String(req.headers["user-agent"] || ""),
-      };
-      await storage.updateContractSigner(signer.id, {
-        status: "signed",
-        signedAt: new Date(),
-        signatureMetadataJson: JSON.stringify(signatureMetadata),
-      } as any);
-      await storage.createContractEvent({
-        contractId: signer.contractId,
-        actorType: "contact",
-        actorContactId: signer.contactId || undefined,
-        eventType: "signed",
-        payloadJson: JSON.stringify({ signerId: signer.id, signatureType: payload.signatureType }),
-        ip: req.ip,
-        userAgent: String(req.headers["user-agent"] || ""),
-      });
-      res.json({ ok: true, signedPdfBase64 });
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-  // DOCUMENT VERSIONS ENDPOINTS
-  reg("get", "/api/documents/:documentId/versions"); app.get("/api/documents/:documentId/versions", async (req, res) => {
-    try {
-      const versions = await storage.getDocumentVersions(parseInt(req.params.documentId));
-      res.json(versions);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("post", "/api/documents/:documentId/versions"); app.post("/api/documents/:documentId/versions", async (req, res) => {
-    try {
-      const validated = insertDocumentVersionSchema.parse({
-        ...req.body,
-        documentId: parseInt(req.params.documentId)
-      });
-      const version = await storage.createDocumentVersion(validated);
-      res.status(201).json(version);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-  // LOIS ENDPOINTS
-  reg("get", "/api/lois"); app.get("/api/lois", async (req, res) => {
-    try {
-      const { limit, offset } = parseLimitOffset(req.query);
-      const allLois = await storage.getLois(limit, offset);
-      res.json(allLois);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("get", "/api/lois/:id"); app.get("/api/lois/:id", async (req, res) => {
-    try {
-      const loi = await storage.getLoiById(parseInt(req.params.id));
-      if (!loi) return res.status(404).json({ message: "LOI not found" });
-      res.json(loi);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("post", "/api/lois"); app.post("/api/lois", async (req, res) => {
-    try {
-      const validated = insertLoiSchema.parse(req.body);
-      const loi = await storage.createLoi(validated);
-      res.status(201).json(loi);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-  reg("patch", "/api/lois/:id"); app.patch("/api/lois/:id", async (req, res) => {
-    try {
-      const partial = insertLoiSchema.partial().parse(req.body);
-      const loi = await storage.updateLoi(parseInt(req.params.id), partial);
-      res.json(loi);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-  reg("delete", "/api/lois/:id"); app.delete("/api/lois/:id", async (req, res) => {
-    try {
-      await storage.deleteLoi(parseInt(req.params.id));
-      res.json({ message: "LOI deleted" });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
   // USERS ENDPOINTS
   reg("get", "/api/users"); app.get("/api/users", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
       const { limit, offset } = parseLimitOffset(req.query);
       const users = (await storage.getUsers(limit, offset)) as any[];
       // Hide inactive (archived/deactivated) accounts from pickers; never expose
@@ -12035,6 +11480,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("get", "/api/users/:id"); app.get("/api/users/:id", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
       // Excludes multi-MB payload columns; avatars load via /api/users/:id/avatar
       // and banner payloads via /api/users/:id/banner.
       const user = await storage.getUserByIdWithoutProfilePicture(parseInt(req.params.id));
@@ -12047,6 +11494,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("post", "/api/users"); app.post("/api/users", async (req, res) => {
     try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
       const validated = insertUserSchema.parse(req.body);
       const user = await storage.createUser(validated);
       res.status(201).json(user);
@@ -12571,6 +12020,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   // GLOBAL ACTIVITY ENDPOINT
   reg("get", "/api/activity"); app.get("/api/activity", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
       const group = String(req.query.group || "").trim().toLowerCase() === "true";
       const windowMinutesRaw = req.query.windowMinutes ? parseInt(req.query.windowMinutes as string) : 15;
@@ -13657,6 +13108,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   // USER GOALS ENDPOINTS
   reg("get", "/api/users/:userId/goals"); app.get("/api/users/:userId/goals", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const goals = await storage.getUserGoals(parseInt(req.params.userId));
       res.json(goals);
     } catch (error: any) {
@@ -13665,6 +13118,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("get", "/api/goals/:id"); app.get("/api/goals/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const goal = await storage.getUserGoalById(parseInt(req.params.id));
       if (!goal) return res.status(404).json({ message: "Goal not found" });
       res.json(goal);
@@ -13674,6 +13129,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("post", "/api/users/:userId/goals"); app.post("/api/users/:userId/goals", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const validated = insertUserGoalSchema.parse({ ...req.body, userId: parseInt(req.params.userId) });
       const goal = await storage.createUserGoal(validated);
       res.status(201).json(goal);
@@ -13683,6 +13140,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("patch", "/api/goals/:id"); app.patch("/api/goals/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const partial = insertUserGoalSchema.partial().parse(req.body);
       const goal = await storage.updateUserGoal(parseInt(req.params.id), partial);
       res.json(goal);
@@ -13692,6 +13151,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("delete", "/api/goals/:id"); app.delete("/api/goals/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       await storage.deleteUserGoal(parseInt(req.params.id));
       res.json({ message: "Goal deleted" });
     } catch (error: any) {
@@ -13701,6 +13162,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   // OFFERS ENDPOINTS
   reg("get", "/api/offers"); app.get("/api/offers", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const userId = req.query.userId ? parseInt(req.query.userId as string) : undefined;
       const propertyId = req.query.propertyId ? parseInt(req.query.propertyId as string) : undefined;
       const { limit, offset } = parseLimitOffset(req.query);
@@ -13721,6 +13184,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("get", "/api/offers/:id"); app.get("/api/offers/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const offer = await storage.getOfferById(parseInt(req.params.id));
       if (!offer) return res.status(404).json({ message: "Offer not found" });
       res.json(offer);
@@ -13730,6 +13195,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("post", "/api/offers"); app.post("/api/offers", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const validated = insertOfferSchema.parse(req.body);
       const offer = await storage.createOffer(validated);
       res.status(201).json(offer);
@@ -13739,6 +13206,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("patch", "/api/offers/:id"); app.patch("/api/offers/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const partial = insertOfferSchema.partial().parse(req.body);
       const offer = await storage.updateOffer(parseInt(req.params.id), partial);
       res.json(offer);
@@ -13748,6 +13217,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
   reg("delete", "/api/offers/:id"); app.delete("/api/offers/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       await storage.deleteOffer(parseInt(req.params.id));
       res.json({ message: "Offer deleted" });
     } catch (error: any) {
@@ -14092,6 +13563,8 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
   });
   reg("patch", "/api/timesheet/:id"); app.patch("/api/timesheet/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const partial = insertTimesheetEntrySchema.partial().parse(req.body);
       const entry = await storage.updateTimesheetEntry(parseInt(req.params.id), partial);
       res.json(entry);
@@ -14101,6 +13574,8 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
   });
   reg("delete", "/api/timesheet/:id"); app.delete("/api/timesheet/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       await storage.deleteTimesheetEntry(parseInt(req.params.id));
       res.json({ message: "Entry deleted" });
     } catch (error: any) {
@@ -14455,6 +13930,8 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
   // BUYER COMMUNICATIONS ENDPOINTS
   reg("get", "/api/buyers/:buyerId/communications"); app.get("/api/buyers/:buyerId/communications", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const { limit, offset } = parseLimitOffset(req.query);
       const comms = await storage.getBuyerCommunications(parseInt(req.params.buyerId), limit, offset);
       res.json(comms);
@@ -14464,6 +13941,8 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
   });
   reg("post", "/api/buyers/:buyerId/communications"); app.post("/api/buyers/:buyerId/communications", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       const validated = insertBuyerCommunicationSchema.parse({
         ...req.body,
         buyerId: parseInt(req.params.buyerId)
@@ -14476,77 +13955,10 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
   });
   reg("delete", "/api/buyer-communications/:id"); app.delete("/api/buyer-communications/:id", async (req, res) => {
     try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
       await storage.deleteBuyerCommunication(parseInt(req.params.id));
       res.json({ message: "Communication deleted" });
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  // DEAL ASSIGNMENTS ENDPOINTS
-  reg("get", "/api/deal-assignments"); app.get("/api/deal-assignments", async (req, res) => {
-    try {
-      const { limit, offset } = parseLimitOffset(req.query);
-      const assignments = await storage.getDealAssignments(limit, offset);
-      res.json(assignments);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("get", "/api/deal-assignments/:id"); app.get("/api/deal-assignments/:id", async (req, res) => {
-    try {
-      const assignment = await storage.getDealAssignmentById(parseInt(req.params.id));
-      if (!assignment) return res.status(404).json({ message: "Assignment not found" });
-      res.json(assignment);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("get", "/api/properties/:propertyId/assignments"); app.get("/api/properties/:propertyId/assignments", async (req, res) => {
-    try {
-      const { limit, offset } = parseLimitOffset(req.query);
-      const assignments = await storage.getDealAssignmentsByPropertyId(parseInt(req.params.propertyId), limit, offset);
-      res.json(assignments);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("get", "/api/buyers/:buyerId/assignments"); app.get("/api/buyers/:buyerId/assignments", async (req, res) => {
-    try {
-      const { limit, offset } = parseLimitOffset(req.query);
-      const assignments = await storage.getDealAssignmentsByBuyerId(parseInt(req.params.buyerId), limit, offset);
-      res.json(assignments);
-    } catch (error: any) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  reg("post", "/api/deal-assignments"); app.post("/api/deal-assignments", async (req, res) => {
-    try {
-      const validated = insertDealAssignmentSchema.parse(req.body);
-      const assignment = await storage.createDealAssignment(validated);
-      try {
-        await syncCommissionEventsForDealAssignment(assignment);
-      } catch {}
-      res.status(201).json(assignment);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-  reg("patch", "/api/deal-assignments/:id"); app.patch("/api/deal-assignments/:id", async (req, res) => {
-    try {
-      const partial = insertDealAssignmentSchema.partial().parse(req.body);
-      const assignment = await storage.updateDealAssignment(parseInt(req.params.id), partial);
-      try {
-        await syncCommissionEventsForDealAssignment(assignment);
-      } catch {}
-      res.json(assignment);
-    } catch (error: any) {
-      res.status(400).json({ message: error.message });
-    }
-  });
-  reg("delete", "/api/deal-assignments/:id"); app.delete("/api/deal-assignments/:id", async (req, res) => {
-    try {
-      await storage.deleteDealAssignment(parseInt(req.params.id));
-      res.json({ message: "Assignment deleted" });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
