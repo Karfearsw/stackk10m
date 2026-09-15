@@ -59,6 +59,7 @@ import { PipelineBoard } from "@/components/pipeline/PipelineBoard";
 import { LeadPipelineCard } from "@/components/pipeline/LeadPipelineCard";
 import { EntityActivity } from "@/components/activity/EntityActivity";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
+import { LeadNotesList } from "@/components/leads/LeadNotesList";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 import { SkipTraceJobPanel } from "@/components/skipTrace/SkipTraceJobPanel";
 import { VoiceActionDialog } from "@/components/leads/VoiceActionDialog";
@@ -1906,6 +1907,10 @@ export default function Leads() {
                   </div>
                 )}
                 <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="estimatedValue" className="text-right">Est. Value</Label>
+                  <Input id="estimatedValue" type="number" min="0" step="1000" placeholder="250000" className="col-span-3" value={newLead.estimatedValue} onChange={(e) => setNewLead({...newLead, estimatedValue: e.target.value})} data-testid="input-lead-value" />
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="status" className="text-right">Status</Label>
                   <Select value={newLead.status} onValueChange={(value) => setNewLead({...newLead, status: value})}>
                     <SelectTrigger className="col-span-3" data-testid="select-lead-status">
@@ -2383,10 +2388,7 @@ export default function Leads() {
               <EntityTasksWidget entityType="lead" entityId={selectedLead.id} />
 
               <div>
-                <div className="text-xs text-muted-foreground mb-1">Notes</div>
-                <div className="whitespace-pre-wrap text-sm border rounded-md p-3 bg-muted/30">
-                  {selectedLead.notes || "No notes yet."}
-                </div>
+                <LeadNotesList leadId={selectedLead.id} />
               </div>
 
               <div className="flex flex-col gap-2">
@@ -2510,6 +2512,10 @@ export default function Leads() {
                   />
                 </div>
               )}
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="edit-estimatedValue" className="text-right">Est. Value</Label>
+                <Input id="edit-estimatedValue" type="number" min="0" step="1000" placeholder="250000" className="col-span-3" value={editingLead.estimatedValue || ""} onChange={(e) => setEditingLead({...editingLead, estimatedValue: e.target.value})} data-testid="input-edit-value" />
+              </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-status" className="text-right">Status</Label>
                 <Select value={editingLead.status} onValueChange={(value) => setEditingLead({...editingLead, status: value})}>

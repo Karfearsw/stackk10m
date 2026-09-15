@@ -21,7 +21,7 @@ type CampaignRow = { id: number; name: string; status: string; type: string | nu
 
 // M20: "Active" campaigns are inert when no SMS provider is configured —
 // surface the provider state instead of implying messages are sending.
-function SmsConfigBanner() {
+function useSmsReady() {
   const { data: readiness } = useQuery<any>({
     queryKey: ["/api/system/provider-readiness"],
     queryFn: async () => {
@@ -31,7 +31,10 @@ function SmsConfigBanner() {
     staleTime: 60_000,
     retry: false,
   });
-  const smsConfigured = Boolean(readiness?.sms?.configured && readiness?.sms?.reachable);
+  return { readiness, smsConfigured: Boolean(readiness?.sms?.configured && readiness?.sms?.reachable) };
+}
+function SmsConfigBanner() {
+  const { readiness, smsConfigured } = useSmsReady();
   if (!readiness || smsConfigured) return null;
   return (
     <Alert className="border-amber-300 bg-amber-50 text-amber-900">
@@ -199,6 +202,8 @@ function CampaignDetail({ campaign, steps, stats }: { campaign: CampaignRow; ste
   const qc = useQueryClient();
   const [tab, setTab] = useState("steps");
   const st = STATUSES[campaign.status] || STATUSES.draft;
+  // M20: don't let a campaign go Active while SMS can't send.
+  const { smsConfigured } = useSmsReady();
   const statusMutation = useMutation({
     mutationFn: async (newStatus: string) => { const res = await apiRequest("PATCH", `/api/campaigns/${campaign.id}`, { status: newStatus }); return await res.json(); },
     onSuccess: async () => { toast.success("Updated"); await qc.invalidateQueries({ queryKey: ["/api/campaigns"] }); },
@@ -216,9 +221,14 @@ function CampaignDetail({ campaign, steps, stats }: { campaign: CampaignRow; ste
           </div>
           <div className="flex gap-2 mt-4">
             {campaign.status === "draft" && (
+              <span title={smsConfigured ? "" : "SMS is not configured — messages cannot send"}>
               <Button
                 size="sm"
                 onClick={() => {
+                  if (!smsConfigured) {
+                    toast.error("SMS is not configured. Configure Telnyx SMS in Settings → System before activating.");
+                    return;
+                  }
                   if (!window.confirm("Activate this campaign? Active campaigns will begin sending messages to enrolled contacts on their scheduled dates.")) return;
                   statusMutation.mutate("active");
                 }}
@@ -227,6 +237,7 @@ function CampaignDetail({ campaign, steps, stats }: { campaign: CampaignRow; ste
               >
                 <Send className="h-4 w-4 mr-1" />Activate
               </Button>
+              </span>
             )}
             {campaign.status === "active" && <Button size="sm" variant="outline" onClick={() => statusMutation.mutate("paused")} disabled={statusMutation.isPending}>Pause</Button>}
             {campaign.status === "paused" && <Button size="sm" onClick={() => statusMutation.mutate("active")} disabled={statusMutation.isPending}>Resume</Button>}

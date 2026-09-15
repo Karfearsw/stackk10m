@@ -1,4 +1,5 @@
 import { Layout } from "@/components/layout/Layout";
+import { formatTaskType } from "@/lib/task-types";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -699,7 +700,7 @@ export default function TasksPage() {
                                   />
                                   <div className="min-w-0">
                                     <div className="truncate font-medium">{g.title}</div>
-                                    <div className="text-xs text-muted-foreground">{g.type}</div>
+                                    <div className="text-xs text-muted-foreground">{formatTaskType(g.type)}</div>
                                   </div>
                                 </div>
                                 <div className="flex shrink-0 items-center gap-2">
@@ -710,6 +711,7 @@ export default function TasksPage() {
                               </div>
                             </AccordionTrigger>
                             <AccordionContent>
+                              <div className="overflow-x-auto">
                               <Table>
                                 <TableHeader>
                                   <TableRow>
@@ -746,7 +748,7 @@ export default function TasksPage() {
                                           ) : null}
                                         </div>
                                       </TableCell>
-                                      <TableCell>{t.type || "general"}</TableCell>
+                                      <TableCell>{formatTaskType(t.type)}</TableCell>
                                       <TableCell>
                                         <Dialog>
                                           <DialogTrigger asChild>
@@ -843,6 +845,7 @@ export default function TasksPage() {
                                   ))}
                                 </TableBody>
                               </Table>
+                              </div>
                             </AccordionContent>
                           </AccordionItem>
                         );
@@ -851,6 +854,7 @@ export default function TasksPage() {
                   </Accordion>
                 ) : null}
 
+                <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -894,7 +898,7 @@ export default function TasksPage() {
                             ) : null}
                           </div>
                         </TableCell>
-                        <TableCell>{t.type || "general"}</TableCell>
+                        <TableCell>{formatTaskType(t.type)}</TableCell>
                         <TableCell>
                           <Dialog>
                             <DialogTrigger asChild>
@@ -995,6 +999,7 @@ export default function TasksPage() {
                     ) : null}
                   </TableBody>
                 </Table>
+                </div>
               </div>
             )}
           </CardContent>

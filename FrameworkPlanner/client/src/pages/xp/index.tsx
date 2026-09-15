@@ -93,6 +93,13 @@ export default function XpLandingPage() {
           <div className="rounded-xl border border-border/60 bg-background/60 p-8 text-center">
             <div className="text-base font-semibold">No experiences found</div>
             <div className="mt-2 text-sm text-muted-foreground">Try a different search or clear filters.</div>
+            <button
+              type="button"
+              onClick={() => { setQ(""); setMode("all"); }}
+              className="mt-4 inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-accent"
+            >
+              Clear filters
+            </button>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">

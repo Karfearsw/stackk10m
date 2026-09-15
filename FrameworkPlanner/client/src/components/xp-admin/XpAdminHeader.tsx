@@ -1,4 +1,3 @@
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 export function XpAdminHeader({
@@ -20,9 +19,6 @@ export function XpAdminHeader({
       </div>
       <div className="flex items-center gap-2">
         {right}
-        <Button variant="secondary" size="sm" className="hidden sm:inline-flex">
-          Orlando concierge
-        </Button>
       </div>
     </div>
   );

@@ -47,6 +47,7 @@ export function AutomationsContent() {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<WizardStep>("trigger");
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
 
   const [form, setForm] = useState({
     name: "",
@@ -417,13 +418,7 @@ export function AutomationsContent() {
                             View
                           </Button>
                           <Button variant="ghost" size="sm" className="text-destructive" data-testid={`delete-${a.id}`}
-                            onClick={() => {
-                              // M35: deleting destroyed the automation instantly with
-                              // no confirm and no feedback.
-                              if (window.confirm(`Delete automation "${a.name}"? This cannot be undone.`)) {
-                                deleteMutation.mutate(a.id);
-                              }
-                            }}>
+                            onClick={() => setDeleteTarget({ id: a.id, name: a.name })}>
                             Delete
                           </Button>
                         </div>
@@ -490,6 +485,34 @@ export function AutomationsContent() {
                 Refresh runs
               </Button>
               <Button onClick={() => setSelectedId(null)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* M35: in-app delete confirmation (replaces native confirm()). */}
+        <Dialog open={!!deleteTarget} onOpenChange={(o) => { if (!o) setDeleteTarget(null); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete automation</DialogTitle>
+            </DialogHeader>
+            <div className="text-sm text-muted-foreground">
+              Delete automation "{deleteTarget?.name}"? This cannot be undone.
+            </div>
+            <DialogFooter>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  if (deleteTarget) {
+                    deleteMutation.mutate(deleteTarget.id, {
+                      onSuccess: () => setDeleteTarget(null),
+                    });
+                  }
+                }}
+                disabled={deleteMutation.isPending}
+              >
+                {deleteMutation.isPending ? "Deleting..." : "Delete"}
+              </Button>
+              <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

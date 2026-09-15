@@ -18,6 +18,7 @@ import { TelnyxHealthStatus } from "@/components/telephony/TelnyxHealthStatus";
 import { EntityActivity } from "@/components/activity/EntityActivity";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { formatDisposition } from "@/lib/dispositions";
 import { toast } from "sonner";
 import type { DialerQueueItem } from "@/lib/dialerTypes";
 
@@ -1157,7 +1158,7 @@ function DialerWorkspaceInner() {
                       <option value="">Select disposition</option>
                       {DISPOSITIONS.map((d) => (
                         <option key={d} value={d}>
-                          {d}
+                          {formatDisposition(d)}
                         </option>
                       ))}
                     </select>

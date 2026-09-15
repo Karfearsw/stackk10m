@@ -1723,8 +1723,9 @@ export async function registerRoutes(
   });
   // XP-15: the Type value must be one of the UI's own vocabulary — "tesla"
   // was stored for a boat because a native select silently submitted junk.
-  const XP_VEHICLE_TYPES = new Set(["tesla", "driver", "sprinter"]);
-  const XP_LOCATION_TYPES = new Set(["resort", "pickup", "service_area"]);
+  // XP-15: keep this set aligned with the SelectItem options in client/src/pages/xp/admin.tsx.
+  const XP_VEHICLE_TYPES = new Set(["tesla", "suv", "sprinter", "boat", "yacht", "driver", "other"]);
+  const XP_LOCATION_TYPES = new Set(["resort", "marina", "venue", "restaurant", "pickup", "service_area", "other"]);
   reg("post", "/api/xp/admin/vehicles"); app.post("/api/xp/admin/vehicles", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -3534,6 +3535,36 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
+  // M15: note lifecycle - edit body, delete note.
+  reg("patch", "/api/leads/notes/:noteId"); app.patch("/api/leads/notes/:noteId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const noteId = parseInt(req.params.noteId, 10);
+      if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
+      const body = z.object({ body: z.string().trim().min(1).max(20_000) }).parse(req.body || {});
+      const existing = await storage.getLeadNoteById(noteId);
+      if (!existing) return res.status(404).json({ message: "Note not found" });
+      const note = await storage.updateLeadNote(noteId, body.body);
+      res.json(note);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+  reg("delete", "/api/leads/notes/:noteId"); app.delete("/api/leads/notes/:noteId", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const noteId = parseInt(req.params.noteId, 10);
+      if (!Number.isFinite(noteId)) return res.status(400).json({ message: "Invalid note id" });
+      const existing = await storage.getLeadNoteById(noteId);
+      if (!existing) return res.status(404).json({ message: "Note not found" });
+      await storage.deleteLeadNote(noteId);
+      res.status(204).end();
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
   reg("get", "/api/leads/views"); app.get("/api/leads/views", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -4876,6 +4907,17 @@ export async function registerRoutes(
         status: z.string().trim().min(1).max(20).optional(),
       });
       const payload = schema.parse(req.body || {});
+      // M20: refuse to activate while SMS cannot send - an "Active" campaign
+      // with no provider is inert and misleading.
+      if (payload.status === "active") {
+        try {
+          const readiness = await getProviderReadiness();
+          const smsOk = Boolean((readiness as any)?.sms?.configured && (readiness as any)?.sms?.reachable);
+          if (!smsOk) {
+            return res.status(409).json({ message: "SMS is not configured. Configure Telnyx SMS before activating this campaign.", code: "sms_not_configured" });
+          }
+        } catch {}
+      }
       const row = await storage.updateCampaign(id, payload as any);
       res.json(row);
     } catch (error: any) {

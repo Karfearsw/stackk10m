@@ -1133,6 +1133,22 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+  // M15: note lifecycle — get one, update body, delete.
+  async getLeadNoteById(id: number): Promise<LeadNote | undefined> {
+    const rows = await db.select().from(leadNotes).where(eq(leadNotes.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async updateLeadNote(id: number, body: string): Promise<LeadNote | undefined> {
+    const rows = await db.update(leadNotes).set({ body }).where(eq(leadNotes.id, id)).returning();
+    return rows[0];
+  }
+
+  async deleteLeadNote(id: number): Promise<boolean> {
+    const rows = await db.delete(leadNotes).where(eq(leadNotes.id, id)).returning({ id: leadNotes.id });
+    return rows.length > 0;
+  }
+
   async getLeadNotesAggByLeadIds(
     leadIds: number[],
   ): Promise<Array<{ leadId: number; notesCount: number; lastNoteAt: Date | null; lastNotePreview: string | null }>> {

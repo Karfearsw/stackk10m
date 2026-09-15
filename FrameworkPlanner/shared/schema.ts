@@ -29,7 +29,12 @@ export const leads = pgTable("leads", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertLeadSchema = createInsertSchema(leads).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export const insertLeadSchema = createInsertSchema(leads).omit({ id: true, createdAt: true, updatedAt: true } as any)
+  // M12/M16: drizzle-zod maps decimal columns to z.string(), but clients send
+  // numbers. Accept both and normalize to string.
+  .extend({
+    estimatedValue: z.union([z.string(), z.number()]).transform((v) => String(v)).nullable().optional(),
+  });
 export type Lead = typeof leads.$inferSelect;
 export type InsertLead = z.infer<typeof insertLeadSchema>;
 
@@ -130,7 +135,12 @@ export const crmExportFiles = pgTable("crm_export_files", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertPropertySchema = createInsertSchema(properties).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export const insertPropertySchema = createInsertSchema(properties).omit({ id: true, createdAt: true, updatedAt: true } as any)
+  // M16: drizzle-zod maps decimal columns to z.string(), but the client sends
+  // baths as a JS number (1.5). Accept both and normalize to string.
+  .extend({
+    baths: z.union([z.string(), z.number()]).transform((v) => String(v)).nullable().optional(),
+  });
 export type Property = typeof properties.$inferSelect;
 export type InsertProperty = z.infer<typeof insertPropertySchema>;
 
@@ -420,6 +430,8 @@ export const userNotifications = pgTable("user_notifications", {
   read: boolean("read").default(false),
   relatedId: integer("related_id"),
   relatedType: varchar("related_type", { length: 50 }),
+  // M26: dedup key — matches the partial unique index in 0051_phase5_ops.sql.
+  eventKey: varchar("event_key", { length: 200 }),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

@@ -7,6 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { formatDisposition } from "@/lib/dispositions";
 import { useToast } from "@/hooks/use-toast";
 import { Download, RefreshCw, ShieldAlert } from "lucide-react";
 
@@ -147,7 +148,7 @@ export function CallAuditContent() {
               <SelectTrigger className="w-48 h-9"><SelectValue placeholder="Any disposition" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Any disposition</SelectItem>
-                {DISPOSITIONS.map((d) => <SelectItem key={d} value={d}>{d}</SelectItem>)}
+                {DISPOSITIONS.map((d) => <SelectItem key={d} value={d}>{formatDisposition(d)}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -213,7 +214,7 @@ export function CallAuditContent() {
                         <TableCell className="text-xs">{c.direction}</TableCell>
                         <TableCell className="text-xs font-mono">{c.number}</TableCell>
                         <TableCell className="text-xs">{c.status}</TableCell>
-                        <TableCell className="text-xs">{c.disposition || "—"}</TableCell>
+                        <TableCell className="text-xs">{formatDisposition(c.disposition)}</TableCell>
                         <TableCell className="whitespace-nowrap text-xs">{fmtDur(c.duration_ms, null)}</TableCell>
                         <TableCell className="max-w-[180px] truncate text-xs" title={c.note || ""}>{c.note || "—"}</TableCell>
                       </TableRow>
