@@ -967,11 +967,13 @@ export default function XpAdminPage() {
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>Start</Label>
-                    <Input type="datetime-local" value={slotStart} onChange={(e) => setSlotStart(e.target.value)} />
+                    <Input type="datetime-local" step="900" value={slotStart} onChange={(e) => setSlotStart(e.target.value)} />
+                    <p className="text-xs text-muted-foreground">Times are interpreted in your browser’s local timezone.</p>
                   </div>
                   <div className="space-y-2">
                     <Label>End</Label>
-                    <Input type="datetime-local" value={slotEnd} onChange={(e) => setSlotEnd(e.target.value)} />
+                    <Input type="datetime-local" step="900" value={slotEnd} onChange={(e) => setSlotEnd(e.target.value)} />
+                    <p className="text-xs text-muted-foreground">Times are interpreted in your browser’s local timezone.</p>
                   </div>
                   <div className="space-y-2">
                     <Label>Capacity</Label>
@@ -1016,11 +1018,13 @@ export default function XpAdminPage() {
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>Start</Label>
-                    <Input type="datetime-local" value={blackoutStart} onChange={(e) => setBlackoutStart(e.target.value)} />
+                    <Input type="datetime-local" step="900" value={blackoutStart} onChange={(e) => setBlackoutStart(e.target.value)} />
+                    <p className="text-xs text-muted-foreground">Times are interpreted in your browser’s local timezone.</p>
                   </div>
                   <div className="space-y-2">
                     <Label>End</Label>
-                    <Input type="datetime-local" value={blackoutEnd} onChange={(e) => setBlackoutEnd(e.target.value)} />
+                    <Input type="datetime-local" step="900" value={blackoutEnd} onChange={(e) => setBlackoutEnd(e.target.value)} />
+                    <p className="text-xs text-muted-foreground">Times are interpreted in your browser’s local timezone.</p>
                   </div>
                   <div className="space-y-2 sm:col-span-2">
                     <Label>Reason</Label>
@@ -1105,8 +1109,12 @@ export default function XpAdminPage() {
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="resort">Resort</SelectItem>
+                            <SelectItem value="marina">Marina</SelectItem>
+                            <SelectItem value="venue">Venue</SelectItem>
+                            <SelectItem value="restaurant">Restaurant</SelectItem>
                             <SelectItem value="pickup">Pickup</SelectItem>
                             <SelectItem value="service_area">Service area</SelectItem>
+                            <SelectItem value="other">Other</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -1213,8 +1221,12 @@ export default function XpAdminPage() {
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="tesla">Tesla</SelectItem>
-                              <SelectItem value="driver">Driver</SelectItem>
+                              <SelectItem value="suv">SUV</SelectItem>
                               <SelectItem value="sprinter">Sprinter</SelectItem>
+                              <SelectItem value="boat">Boat</SelectItem>
+                              <SelectItem value="yacht">Yacht</SelectItem>
+                              <SelectItem value="driver">Driver</SelectItem>
+                              <SelectItem value="other">Other</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>

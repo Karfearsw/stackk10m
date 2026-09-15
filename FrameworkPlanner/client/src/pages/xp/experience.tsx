@@ -63,6 +63,37 @@ export default function XpExperiencePage() {
   });
 
   const experience = experienceQuery.data?.experience;
+  const experienceMissing = experienceQuery.isError || (!experienceQuery.isLoading && !experience);
+
+  if (experienceQuery.isLoading) {
+    return (
+      <XpPublicShell>
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <p className="text-sm text-muted-foreground">Loading experience…</p>
+        </div>
+      </XpPublicShell>
+    );
+  }
+
+  if (experienceMissing) {
+    return (
+      <XpPublicShell>
+        <div className="mx-auto max-w-lg space-y-4 py-16 text-center">
+          <h1 className="text-2xl font-semibold tracking-tight">Experience not found</h1>
+          <p className="text-sm text-muted-foreground">
+            We couldn't find an experience called "{slug}". It may have been removed
+            or the link is wrong.
+          </p>
+          <a
+            href="/xp"
+            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            Browse experiences
+          </a>
+        </div>
+      </XpPublicShell>
+    );
+  }
   const mode = String(experience?.mode || "");
   const paymentMode = String(experience?.paymentMode || "deposit").toLowerCase();
   const currency = String(experience?.currency || "USD").toUpperCase();

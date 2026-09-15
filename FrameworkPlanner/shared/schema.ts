@@ -29,7 +29,12 @@ export const leads = pgTable("leads", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertLeadSchema = createInsertSchema(leads).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export const insertLeadSchema = createInsertSchema(leads).omit({ id: true, createdAt: true, updatedAt: true } as any)
+  // M12/M16: drizzle-zod maps decimal columns to z.string(), but clients send
+  // numbers. Accept both and normalize to string.
+  .extend({
+    estimatedValue: z.union([z.string(), z.number()]).transform((v) => String(v)).nullable().optional(),
+  });
 export type Lead = typeof leads.$inferSelect;
 export type InsertLead = z.infer<typeof insertLeadSchema>;
 
@@ -130,7 +135,12 @@ export const crmExportFiles = pgTable("crm_export_files", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertPropertySchema = createInsertSchema(properties).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export const insertPropertySchema = createInsertSchema(properties).omit({ id: true, createdAt: true, updatedAt: true } as any)
+  // M16: drizzle-zod maps decimal columns to z.string(), but the client sends
+  // baths as a JS number (1.5). Accept both and normalize to string.
+  .extend({
+    baths: z.union([z.string(), z.number()]).transform((v) => String(v)).nullable().optional(),
+  });
 export type Property = typeof properties.$inferSelect;
 export type InsertProperty = z.infer<typeof insertPropertySchema>;
 
@@ -420,6 +430,8 @@ export const userNotifications = pgTable("user_notifications", {
   read: boolean("read").default(false),
   relatedId: integer("related_id"),
   relatedType: varchar("related_type", { length: 50 }),
+  // M26: dedup key — matches the partial unique index in 0051_phase5_ops.sql.
+  eventKey: varchar("event_key", { length: 200 }),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -721,7 +733,10 @@ export type InsertBuyerCommunication = z.infer<typeof insertBuyerCommunicationSc
 export const dealAssignments = pgTable("deal_assignments", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   propertyId: integer("property_id").notNull(),
-  buyerId: integer("buyer_id").notNull(),
+  // Nullable: a deal can close (fee collected) before an end-buyer row is
+  // linked in the CRM. Matches migration 0065 which dropped NOT NULL on the
+  // live database (the declaration below was never updated to match).
+  buyerId: integer("buyer_id"),
   contractId: integer("contract_id"),
   assignmentFee: decimal("assignment_fee", { precision: 12, scale: 2 }),
   purchasePrice: decimal("purchase_price", { precision: 12, scale: 2 }),

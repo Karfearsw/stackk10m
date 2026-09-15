@@ -48,6 +48,66 @@ function taskLink(t: Task) {
   return null;
 }
 
+// M30: related-entity picker for meetings (lead or opportunity link).
+function MeetingRelatedPicker({
+  relatedType,
+  relatedId,
+  onChange,
+}: {
+  relatedType: "" | "lead" | "opportunity";
+  relatedId: string;
+  onChange: (t: "" | "lead" | "opportunity", id: string) => void;
+}) {
+  const { data: leadsResp } = useQuery<any>({ queryKey: ["/api/leads?limit=100"], enabled: relatedType === "lead" });
+  const { data: opps } = useQuery<any[]>({ queryKey: ["/api/opportunities"], enabled: relatedType === "opportunity" });
+  const leads = Array.isArray(leadsResp?.items) ? leadsResp.items : Array.isArray(leadsResp) ? leadsResp : [];
+  const opportunities = Array.isArray(opps) ? opps : [];
+
+  return (
+    <div className="space-y-2">
+      <Label>Link to (optional)</Label>
+      <div className="flex gap-2">
+        <select
+          className="rounded-md border bg-background px-2 py-1.5 text-sm"
+          value={relatedType}
+          onChange={(e) => onChange(e.target.value as any, "")}
+        >
+          <option value="">None</option>
+          <option value="lead">Lead</option>
+          <option value="opportunity">Opportunity</option>
+        </select>
+        {relatedType === "lead" ? (
+          <select
+            className="flex-1 rounded-md border bg-background px-2 py-1.5 text-sm"
+            value={relatedId}
+            onChange={(e) => onChange("lead", e.target.value)}
+          >
+            <option value="">Select a lead…</option>
+            {leads.map((l: any) => (
+              <option key={l.id} value={String(l.id)}>
+                {l.address || l.ownerName || `Lead #${l.id}`}
+              </option>
+            ))}
+          </select>
+        ) : relatedType === "opportunity" ? (
+          <select
+            className="flex-1 rounded-md border bg-background px-2 py-1.5 text-sm"
+            value={relatedId}
+            onChange={(e) => onChange("opportunity", e.target.value)}
+          >
+            <option value="">Select an opportunity…</option>
+            {opportunities.map((o: any) => (
+              <option key={o.id} value={String(o.id)}>
+                {o.name || o.title || `Opportunity #${o.id}`}
+              </option>
+            ))}
+          </select>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export default function CalendarPage() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
@@ -62,6 +122,10 @@ export default function CalendarPage() {
     startsAt: "",
     endsAt: "",
     meetingLink: "",
+    // M30: location + related entity are accepted by POST /api/calendar-events.
+    location: "",
+    relatedType: "" as "" | "lead" | "opportunity",
+    relatedId: "",
     invitees: [] as number[],
   });
   const queryClient = useQueryClient();
@@ -78,11 +142,20 @@ export default function CalendarPage() {
 
   const createMeetingMutation = useMutation({
     mutationFn: async () => {
+      // M30: the server expects `inviteeUserIds`, not `invitees` — map it so
+      // invitees actually save instead of being silently dropped.
+      const { invitees, relatedId, relatedType, ...rest } = meetingForm;
+      const payload = {
+        ...rest,
+        inviteeUserIds: invitees,
+        relatedType: relatedType || null,
+        relatedId: relatedId ? Number(relatedId) : null,
+      };
       const res = await fetch("/api/calendar-events", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify(meetingForm),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Failed to create meeting");
@@ -91,7 +164,7 @@ export default function CalendarPage() {
     onSuccess: () => {
       toast.success("Meeting scheduled");
       setShowMeetingDialog(false);
-      setMeetingForm({ title: "", description: "", startsAt: "", endsAt: "", meetingLink: "", invitees: [] });
+      setMeetingForm({ title: "", description: "", startsAt: "", endsAt: "", meetingLink: "", location: "", relatedType: "", relatedId: "", invitees: [] });
       queryClient.invalidateQueries({ queryKey: ["/api/calendar-events"] });
       queryClient.invalidateQueries({ queryKey: ["/api/users"] });
     },
@@ -242,15 +315,18 @@ export default function CalendarPage() {
                           key={k}
                           type="button"
                           onClick={() => setSelectedDay(d)}
-                          className={`h-28 rounded-md border p-2 text-left transition-colors ${
+                          className={`h-14 sm:h-28 rounded-md border p-1 sm:p-2 text-left transition-colors ${
                             selected ? "border-primary bg-primary/5" : "border-border hover:bg-accent/40"
                           } ${outside ? "opacity-50" : ""}`}
                         >
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between gap-1">
                             <div className={`text-sm font-semibold ${isToday(d) ? "text-primary" : ""}`}>{format(d, "d")}</div>
-                            {tasks.length ? <Badge variant="secondary">{tasks.length}</Badge> : null}
+                            {tasks.length ? <Badge variant="secondary" className="px-1 text-[10px]">{tasks.length}</Badge> : null}
                           </div>
-                          <div className="mt-2 space-y-1">
+                          {/* MOB-3/4: on small screens the day cells are ~44px wide —
+                              task titles truncate to single glyphs, so hide them and
+                              rely on the "Tasks on {selectedDay}" list below. */}
+                          <div className="mt-2 hidden space-y-1 sm:block">
                             {tasks.slice(0, 3).map((t) => (
                               <div key={t.id} className="truncate text-xs text-muted-foreground">
                                 {t.title}
@@ -359,12 +435,12 @@ export default function CalendarPage() {
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
+          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3">
             <div>
               <CardTitle className="flex items-center gap-2"><Video className="h-5 w-5 text-primary" /> Meetings</CardTitle>
               <p className="text-sm text-muted-foreground mt-1">Team meetings with Telnyx Video rooms or manual links.</p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button onClick={() => setShowMeetingDialog(true)} data-testid="new-meeting">
                 <Plus className="h-4 w-4 mr-2" /> New Meeting
               </Button>
@@ -455,6 +531,20 @@ export default function CalendarPage() {
               />
               <p className="text-xs text-muted-foreground">If no video provider is configured, paste any meeting link.</p>
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="meeting-location">Location (optional)</Label>
+              <Input
+                id="meeting-location"
+                value={meetingForm.location}
+                onChange={(e) => setMeetingForm((f) => ({ ...f, location: e.target.value }))}
+                placeholder="Office, property address…"
+              />
+            </div>
+            <MeetingRelatedPicker
+              relatedType={meetingForm.relatedType}
+              relatedId={meetingForm.relatedId}
+              onChange={(relatedType, relatedId) => setMeetingForm((f) => ({ ...f, relatedType, relatedId }))}
+            />
             <div className="space-y-2">
               <Label>Invitees</Label>
               <div className="flex flex-wrap gap-2">

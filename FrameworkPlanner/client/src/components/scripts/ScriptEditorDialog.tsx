@@ -8,6 +8,16 @@ import { Badge } from "@/components/ui/badge";
 import { Save, Trash2 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const CATEGORIES = [
   { value: "general", label: "General" },
@@ -53,6 +63,9 @@ export function ScriptEditorDialog({
   const [tags, setTags] = useState<string[]>([]);
   const [isDefault, setIsDefault] = useState(false);
   const [saving, setSaving] = useState(false);
+  // DEV-008: in-app archive confirmation (replaces native confirm()).
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [archiving, setArchiving] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -103,14 +116,17 @@ export function ScriptEditorDialog({
 
   const handleDelete = async () => {
     if (!script?.id) return;
-    if (!confirm("Archive this script? It can be restored later.")) return;
+    setArchiving(true);
     try {
       await apiRequest("POST", `/api/scripts/${script.id}/archive`);
       toast.success("Script archived");
+      setConfirmArchive(false);
       onDeleted?.();
       onOpenChange(false);
     } catch (e: any) {
       toast.error(e?.message || "Failed to archive script");
+    } finally {
+      setArchiving(false);
     }
   };
 
@@ -132,6 +148,7 @@ export function ScriptEditorDialog({
   ];
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
@@ -234,7 +251,7 @@ export function ScriptEditorDialog({
               {saving ? "Saving..." : script?.id ? "Update Script" : "Create Script"}
             </Button>
             {script?.id && (
-              <Button variant="destructive" onClick={handleDelete} className="flex-1 sm:flex-none">
+              <Button variant="destructive" onClick={() => setConfirmArchive(true)} className="flex-1 sm:flex-none">
                 <Trash2 className="h-4 w-4 mr-2" /> Archive
               </Button>
             )}
@@ -242,5 +259,28 @@ export function ScriptEditorDialog({
         </div>
       </DialogContent>
     </Dialog>
+
+      {/* DEV-008: in-app archive confirmation (replaces native confirm()). */}
+      <AlertDialog open={confirmArchive} onOpenChange={setConfirmArchive}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archive this script?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Archive <span className="font-medium text-foreground">“{script?.name || "this script"}”</span>? It can be restored later.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={archiving}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={archiving}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleDelete}
+            >
+              {archiving ? "Archiving…" : "Archive"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

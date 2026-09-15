@@ -11,7 +11,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useRef, useState } from "react";
 import { useParams, useLocation } from "wouter";
-import { FileText, Download, Send, Eye, CheckCircle, AlertCircle, Users, Clock, History, Paperclip, StickyNote, ListTodo } from "lucide-react";
+import { FileText, Download, Send, Eye, CheckCircle, AlertCircle, Users, Clock, History, Paperclip, StickyNote, ListTodo, Trash2 } from "lucide-react";
 
 const STATUS_COLORS: Record<string, string> = {
   draft: "bg-gray-500",
@@ -37,6 +37,8 @@ export default function ContractDetail() {
   const [signerUrl, setSignerUrl] = useState("");
   const [voidReason, setVoidReason] = useState("");
   const [voidOpen, setVoidOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [, setLocation] = useLocation();
 
   const { data: contract, isLoading } = useQuery<any>({
     queryKey: [`/api/contracts/${contractId}`],
@@ -93,6 +95,27 @@ export default function ContractDetail() {
       setVoidReason("");
     },
     onError: (e: any) => toast({ title: e?.message || "Failed to void", variant: "destructive" }),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      if (!contractId) throw new Error("Missing contract");
+      const res = await fetch(`/api/contracts/${contractId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `Failed to delete (${res.status})`);
+      }
+      return res.json().catch(() => ({}));
+    },
+    onSuccess: () => {
+      toast({ title: "Contract deleted" });
+      setDeleteOpen(false);
+      setLocation("/contracts");
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to delete", variant: "destructive" }),
   });
 
   const executeMutation = useMutation({
@@ -385,6 +408,9 @@ export default function ContractDetail() {
                 <Button variant="outline" className="w-full justify-start" size="sm" onClick={() => setVoidOpen(true)} disabled={contract.status === "executed" || contract.status === "voided"}>
                   <AlertCircle className="w-4 h-4 mr-2" /> Void Contract
                 </Button>
+                <Button variant="outline" className="w-full justify-start text-destructive hover:text-destructive" size="sm" onClick={() => setDeleteOpen(true)} disabled={contract.status === "executed"}>
+                  <Trash2 className="w-4 h-4 mr-2" /> Delete Contract
+                </Button>
               </CardContent>
             </Card>
 
@@ -439,6 +465,24 @@ export default function ContractDetail() {
                 {sendMutation.isPending ? "Sending..." : "Send"}
               </Button>
               <Button variant="outline" onClick={() => setSendOpen(false)}>Close</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Contract</DialogTitle>
+            </DialogHeader>
+            <div className="text-sm text-muted-foreground">
+              Delete this contract permanently? This cannot be undone. Executed
+              contracts cannot be deleted — void them instead.
+            </div>
+            <DialogFooter>
+              <Button variant="destructive" onClick={() => deleteMutation.mutate()} disabled={deleteMutation.isPending}>
+                {deleteMutation.isPending ? "Deleting..." : "Delete Contract"}
+              </Button>
+              <Button variant="outline" onClick={() => setDeleteOpen(false)}>Cancel</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

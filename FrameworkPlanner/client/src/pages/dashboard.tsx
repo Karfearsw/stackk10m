@@ -114,6 +114,12 @@ export default function Dashboard() {
     queryKey: ['/api/contract-documents'],
   });
 
+  // DEV-002: the per-deal ledger is a first-class revenue source — pipeline
+  // closes (no contract document) record here.
+  const { data: dealLedger = [] } = useQuery<any[]>({
+    queryKey: ['/api/deal-assignments?status=closed'],
+  });
+
   const { data: activityLogs = [] } = useQuery<ActivityLog[]>({
     queryKey: ['/api/activity?group=true&windowMinutes=15'],
     refetchInterval: 30000,
@@ -228,7 +234,8 @@ export default function Dashboard() {
   const kpiData = useMemo(() => {
     // N1: closed-deal count and revenue come from the shared metrics helper
     // (same rule as Analytics) so the two pages can't disagree.
-    const metrics = computeDealMetrics(contracts, contractDocuments);
+    // DEV-002: the deal ledger feeds the helper too, so pipeline closes count.
+    const metrics = computeDealMetrics(contracts, contractDocuments, { ledger: dealLedger });
     const totalAssignmentFees = metrics.revenue;
     const closedDeals = metrics.dealsClosed;
 
@@ -288,7 +295,7 @@ export default function Dashboard() {
         href: "/analytics",
       }
     ];
-  }, [leads, contracts, contractDocuments, stats]);
+  }, [leads, contracts, contractDocuments, stats, dealLedger]);
 
   const groupedActivityLogs = useMemo((): ActivityLog[] => {
     const windowMs = 15 * 60 * 1000;

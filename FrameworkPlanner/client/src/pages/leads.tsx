@@ -28,6 +28,16 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
@@ -49,6 +59,7 @@ import { PipelineBoard } from "@/components/pipeline/PipelineBoard";
 import { LeadPipelineCard } from "@/components/pipeline/LeadPipelineCard";
 import { EntityActivity } from "@/components/activity/EntityActivity";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
+import { LeadNotesList } from "@/components/leads/LeadNotesList";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 import { SkipTraceJobPanel } from "@/components/skipTrace/SkipTraceJobPanel";
 import { VoiceActionDialog } from "@/components/leads/VoiceActionDialog";
@@ -231,6 +242,10 @@ export default function Leads() {
   }, [selectionSignature]);
   const [selectedLeadId, setSelectedLeadId] = useState<number | null>(null);
   const [isLeadSheetOpen, setIsLeadSheetOpen] = useState(false);
+  // DEV-007: in-app delete confirmation. Native confirm() proved unreliable
+  // (blocked/suppressed dialogs left the delete button looking inert), so the
+  // delete intent now flows through this state into an AlertDialog below.
+  const [leadToDelete, setLeadToDelete] = useState<any>(null);
   const [highlightLeadId, setHighlightLeadId] = useState<number | null>(null);
   const [didApplyQueryLead, setDidApplyQueryLead] = useState(false);
   const [forcedLead, setForcedLead] = useState<any | null>(null);
@@ -1892,6 +1907,10 @@ export default function Leads() {
                   </div>
                 )}
                 <div className="grid grid-cols-4 items-center gap-4">
+                  <Label htmlFor="estimatedValue" className="text-right">Est. Value</Label>
+                  <Input id="estimatedValue" type="number" min="0" step="1000" placeholder="250000" className="col-span-3" value={newLead.estimatedValue} onChange={(e) => setNewLead({...newLead, estimatedValue: e.target.value})} data-testid="input-lead-value" />
+                </div>
+                <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="status" className="text-right">Status</Label>
                   <Select value={newLead.status} onValueChange={(value) => setNewLead({...newLead, status: value})}>
                     <SelectTrigger className="col-span-3" data-testid="select-lead-status">
@@ -2235,9 +2254,8 @@ export default function Leads() {
                               className="text-destructive focus:text-destructive"
                               onClick={() => {
                                 // Audit M9: never delete a lead without explicit intent.
-                                if (confirm(`Delete lead "${lead.address || lead.id}"? This cannot be undone.`)) {
-                                  deleteMutation.mutate(lead.id);
-                                }
+                                // DEV-007: in-app dialog instead of native confirm().
+                                setLeadToDelete(lead);
                               }}
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
@@ -2370,10 +2388,7 @@ export default function Leads() {
               <EntityTasksWidget entityType="lead" entityId={selectedLead.id} />
 
               <div>
-                <div className="text-xs text-muted-foreground mb-1">Notes</div>
-                <div className="whitespace-pre-wrap text-sm border rounded-md p-3 bg-muted/30">
-                  {selectedLead.notes || "No notes yet."}
-                </div>
+                <LeadNotesList leadId={selectedLead.id} />
               </div>
 
               <div className="flex flex-col gap-2">
@@ -2412,14 +2427,13 @@ export default function Leads() {
               <Button
                 variant="destructive"
                 className="w-full"
+                disabled={deleteMutation.isPending}
                 onClick={() => {
-                  if (confirm("Delete this lead?")) {
-                    deleteMutation.mutate(selectedLead.id);
-                    setIsLeadSheetOpen(false);
-                  }
+                  // DEV-007: in-app dialog instead of native confirm().
+                  setLeadToDelete(selectedLead);
                 }}
               >
-                Delete Lead
+                {deleteMutation.isPending ? "Deleting…" : "Delete Lead"}
               </Button>
             </div>
           ) : (
@@ -2498,6 +2512,10 @@ export default function Leads() {
                   />
                 </div>
               )}
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="edit-estimatedValue" className="text-right">Est. Value</Label>
+                <Input id="edit-estimatedValue" type="number" min="0" step="1000" placeholder="250000" className="col-span-3" value={editingLead.estimatedValue || ""} onChange={(e) => setEditingLead({...editingLead, estimatedValue: e.target.value})} data-testid="input-edit-value" />
+              </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-status" className="text-right">Status</Label>
                 <Select value={editingLead.status} onValueChange={(value) => setEditingLead({...editingLead, status: value})}>
@@ -2702,6 +2720,44 @@ export default function Leads() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* DEV-007: in-app delete confirmation (replaces native confirm()). */}
+      <AlertDialog open={!!leadToDelete} onOpenChange={(open) => { if (!open) setLeadToDelete(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this lead?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {leadToDelete ? (
+                <>Delete lead <span className="font-medium text-foreground">“{leadToDelete.address || `#${leadToDelete.id}`}”</span>? This cannot be undone.</>
+              ) : (
+                "This cannot be undone."
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleteMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (!leadToDelete) return;
+                deleteMutation.mutate(leadToDelete.id, {
+                  onSuccess: () => {
+                    setLeadToDelete(null);
+                    setIsLeadSheetOpen(false);
+                  },
+                  onError: () => {
+                    // Keep the dialog open on failure so the error toast is
+                    // seen in context; the user can retry or cancel.
+                  },
+                });
+              }}
+            >
+              {deleteMutation.isPending ? "Deleting…" : "Delete Lead"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Layout>
   );
 }

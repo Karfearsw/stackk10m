@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useTelephonyEvents, type TelephonySessionStateEvent } from "@/hooks/useTelephonyEvents";
 import { apiRequest } from "@/lib/queryClient";
+import { formatDisposition } from "@/lib/dispositions";
 
 type CallMode = "human_first" | "ai_screen" | "ai_screen_handoff";
 
@@ -263,7 +264,7 @@ export function TwoLegCallPanel({ leadId }: { leadId?: number | null }) {
           <div className="text-sm">
             <span className="font-medium">{statusLabel}</span>
             {session?.finalDisposition ? (
-              <span className="text-muted-foreground"> • {session.finalDisposition}</span>
+              <span className="text-muted-foreground"> • {formatDisposition(session.finalDisposition)}</span>
             ) : null}
           </div>
           <Badge variant={active ? "default" : "secondary"}>
@@ -307,7 +308,7 @@ export function TwoLegCallPanel({ leadId }: { leadId?: number | null }) {
                 <option value="">— select —</option>
                 {DISPOSITIONS.map((d) => (
                   <option key={d} value={d}>
-                    {d}
+                    {formatDisposition(d)}
                   </option>
                 ))}
               </select>

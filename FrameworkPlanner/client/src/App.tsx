@@ -122,15 +122,37 @@ function Router() {
         </Suspense>
       )} />
 
-      {/* XP Routes — static slugs first so /xp/:slug never shadows them */}
-      <Route path="/xp" component={() => <ProtectedRoute component={XpLandingPage} />} />
-      <Route path="/xp/experience" component={() => <ProtectedRoute component={XpExperiencePage} />} />
+      {/* XP Routes — static slugs first so /xp/:slug never shadows them.
+          DEV-003: the customer storefront is public (the XP APIs are too);
+          only /xp/admin requires a CRM login. */}
+      <Route path="/xp" component={() => (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+          <XpLandingPage />
+        </Suspense>
+      )} />
+      <Route path="/xp/experience" component={() => (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+          <XpExperiencePage />
+        </Suspense>
+      )} />
       <Route path="/xp/admin" component={() => <ProtectedRoute component={XpAdminPage} />} />
-      <Route path="/xp/checkout-success" component={() => <ProtectedRoute component={XpCheckoutSuccessPage} />} />
-      <Route path="/xp/checkout-cancel" component={() => <ProtectedRoute component={XpCheckoutCancelPage} />} />
+      <Route path="/xp/checkout-success" component={() => (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+          <XpCheckoutSuccessPage />
+        </Suspense>
+      )} />
+      <Route path="/xp/checkout-cancel" component={() => (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+          <XpCheckoutCancelPage />
+        </Suspense>
+      )} />
       {/* XP-CRIT-1: the storefront links to /xp/<slug>; without this route the
           entire customer booking flow 404s. */}
-      <Route path="/xp/:slug" component={() => <ProtectedRoute component={XpExperiencePage} />} />
+      <Route path="/xp/:slug" component={() => (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+          <XpExperiencePage />
+        </Suspense>
+      )} />
 
       {/* Core Protected Routes */}
       <Route path="/" component={() => (isAuthenticated ? <ProtectedRoute component={Dashboard} /> : <Redirect to="/login" />)} />

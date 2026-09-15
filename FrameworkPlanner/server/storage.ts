@@ -614,6 +614,7 @@ export interface IStorage {
   getDealAssignmentById(id: number): Promise<DealAssignment | undefined>;
   getDealAssignmentsByPropertyId(propertyId: number): Promise<DealAssignment[]>;
   getDealAssignmentsByBuyerId(buyerId: number): Promise<DealAssignment[]>;
+  getDealAssignmentsByStatus(status: string, limit?: number, offset?: number): Promise<DealAssignment[]>;
   createDealAssignment(assignment: InsertDealAssignment): Promise<DealAssignment>;
   updateDealAssignment(id: number, assignment: Partial<InsertDealAssignment>): Promise<DealAssignment>;
   deleteDealAssignment(id: number): Promise<void>;
@@ -1130,6 +1131,22 @@ export class DatabaseStorage implements IStorage {
   async createLeadNote(input: InsertLeadNote): Promise<LeadNote> {
     const result = await db.insert(leadNotes).values(input as any).returning();
     return result[0];
+  }
+
+  // M15: note lifecycle — get one, update body, delete.
+  async getLeadNoteById(id: number): Promise<LeadNote | undefined> {
+    const rows = await db.select().from(leadNotes).where(eq(leadNotes.id, id)).limit(1);
+    return rows[0];
+  }
+
+  async updateLeadNote(id: number, body: string): Promise<LeadNote | undefined> {
+    const rows = await db.update(leadNotes).set({ body }).where(eq(leadNotes.id, id)).returning();
+    return rows[0];
+  }
+
+  async deleteLeadNote(id: number): Promise<boolean> {
+    const rows = await db.delete(leadNotes).where(eq(leadNotes.id, id)).returning({ id: leadNotes.id });
+    return rows.length > 0;
   }
 
   async getLeadNotesAggByLeadIds(
@@ -3403,6 +3420,12 @@ export class DatabaseStorage implements IStorage {
 
   async getDealAssignmentsByBuyerId(buyerId: number, limit?: number, offset: number = 0): Promise<DealAssignment[]> {
     let q: any = db.select().from(dealAssignments).where(eq(dealAssignments.buyerId, buyerId));
+    if (typeof limit === "number") q = q.limit(limit).offset(offset);
+    return q as unknown as Promise<DealAssignment[]>;
+  }
+
+  async getDealAssignmentsByStatus(status: string, limit?: number, offset: number = 0): Promise<DealAssignment[]> {
+    let q: any = db.select().from(dealAssignments).where(eq(dealAssignments.status, status));
     if (typeof limit === "number") q = q.limit(limit).offset(offset);
     return q as unknown as Promise<DealAssignment[]>;
   }

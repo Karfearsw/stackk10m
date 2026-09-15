@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { DealCalculator, type DealCalculatorValues } from "@/components/deals/DealCalculator";
 import { CommissionCalculator } from "@/components/deals/CommissionCalculator";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
@@ -45,6 +46,7 @@ import {
   Trash2,
   ChevronDown,
   StickyNote,
+  BadgeDollarSign,
 } from "lucide-react";
 import { Link, useLocation, useRoute } from "wouter";
 
@@ -251,6 +253,19 @@ export default function PropertyDetail() {
     },
   });
 
+  // DEV-002: linked contract documents for the Close Deal prefill (fee/costs
+  // come from the contract's own values, never hardcoded defaults).
+  const { data: closeLinkedContracts = [] } = useQuery<any[]>({
+    queryKey: ["/api/opportunities", id, "contract-documents"],
+    enabled: !!id,
+    queryFn: async () => {
+      const res = await fetch(`/api/contract-documents?limit=200`, { credentials: "include" });
+      if (!res.ok) return [];
+      const items = await res.json();
+      return (Array.isArray(items) ? items : []).filter((d: any) => String(d.propertyId) === String(id));
+    },
+  });
+
   const recomputeMatchesMutation = useMutation({
     mutationFn: async () => {
       const res = await fetch(`/api/opportunities/${id}/buyer-matches/recompute`, { method: "POST", credentials: "include" });
@@ -309,6 +324,57 @@ export default function PropertyDetail() {
       });
     },
     onError: (e: any) => toast({ title: e?.message || "Failed to change stage", variant: "destructive" }),
+  });
+
+  // DEV-002: close the deal and record revenue from the opportunity page.
+  // Prefills fee/costs from the linked contract document's own values.
+  const openCloseDeal = () => {
+    let fee = "";
+    let costs = "";
+    try {
+      const docs = (closeLinkedContracts || [])
+        .filter((d: any) => ["executed", "closed"].includes(String(d.status || "")))
+        .sort((a: any, b: any) => Number(b.id) - Number(a.id));
+      const md = docs[0]?.mergeData
+        ? typeof docs[0].mergeData === "string"
+          ? JSON.parse(docs[0].mergeData)
+          : docs[0].mergeData
+        : {};
+      fee = String(md?.closingData?.assignmentFee ?? md?.assignmentFee ?? "");
+      costs = String(md?.closingData?.closingCosts ?? md?.closingCosts ?? "");
+    } catch {}
+    setCloseDealForm({
+      assignmentFee: fee,
+      closingCosts: costs,
+      buyerPaid: false,
+      titleReceived: false,
+      fundsWired: false,
+      docsRecorded: false,
+      notes: "",
+    });
+    setCloseDealOpen(true);
+  };
+
+  const closeDealMutation = useMutation({
+    mutationFn: async (data: typeof closeDealForm) => {
+      const res = await fetch(`/api/opportunities/${id}/close`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((json as any).message || "Failed to close deal");
+      return json;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "contract-documents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deal-assignments"] });
+      setCloseDealOpen(false);
+      toast({ title: "Deal closed & revenue recorded" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to close deal", variant: "destructive" }),
   });
 
   const inquiryStatusMutation = useMutation({
@@ -374,6 +440,17 @@ export default function PropertyDetail() {
   const [stageDialogOpen, setStageDialogOpen] = React.useState(false);
   const [stageDialogStage, setStageDialogStage] = React.useState("");
   const [stageDialogNotes, setStageDialogNotes] = React.useState("");
+  // DEV-002: "Close Deal & Record Revenue" from the opportunity.
+  const [closeDealOpen, setCloseDealOpen] = React.useState(false);
+  const [closeDealForm, setCloseDealForm] = React.useState({
+    assignmentFee: "",
+    closingCosts: "",
+    buyerPaid: false,
+    titleReceived: false,
+    fundsWired: false,
+    docsRecorded: false,
+    notes: "",
+  });
   const [listingCreateOpen, setListingCreateOpen] = React.useState(false);
   const [listingForm, setListingForm] = React.useState({
     title: "",
@@ -738,6 +815,12 @@ export default function PropertyDetail() {
               <Tag className="mr-2 h-4 w-4" />
               Move Stage
             </Button>
+            {["under_contract", "in_disposition", "reserved"].includes(String(property?.stage || "")) && (
+              <Button onClick={openCloseDeal} disabled={!property?.id || closeDealMutation.isPending} data-testid="button-close-deal-record-revenue">
+                <BadgeDollarSign className="mr-2 h-4 w-4" />
+                {closeDealMutation.isPending ? "Closing..." : "Close Deal & Record Revenue"}
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setListingCreateOpen(true)} disabled={!property?.id}>
               <Share2 className="mr-2 h-4 w-4" />
               Create Public Listing
@@ -1639,6 +1722,108 @@ export default function PropertyDetail() {
               disabled={stageChangeMutation.isPending || !stageDialogStage || (REASON_REQUIRED_STAGES.has(stageDialogStage) && !stageDialogNotes.trim())}
             >
               {stageChangeMutation.isPending ? "Changing..." : "Change Stage"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* DEV-002: Close Deal & Record Revenue dialog */}
+      <Dialog open={closeDealOpen} onOpenChange={setCloseDealOpen}>
+        <DialogContent className="sm:max-w-md max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Close Deal &amp; Record Revenue</DialogTitle>
+            <DialogDescription>
+              {property?.address || `Opportunity #${id}`} — the closing is recorded on the per-deal ledger and the opportunity moves to Sold.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="cd-fee">Assignment fee *</Label>
+                <Input
+                  id="cd-fee"
+                  inputMode="decimal"
+                  placeholder="e.g. 10000"
+                  value={closeDealForm.assignmentFee}
+                  onChange={(e) => setCloseDealForm({ ...closeDealForm, assignmentFee: e.target.value })}
+                  data-testid="input-close-deal-fee"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="cd-costs">Closing costs</Label>
+                <Input
+                  id="cd-costs"
+                  inputMode="decimal"
+                  placeholder="e.g. 500"
+                  value={closeDealForm.closingCosts}
+                  onChange={(e) => setCloseDealForm({ ...closeDealForm, closingCosts: e.target.value })}
+                  data-testid="input-close-deal-costs"
+                />
+              </div>
+            </div>
+            {(() => {
+              const fee = parseFloat(String(closeDealForm.assignmentFee || "").replace(/[$,]/g, ""));
+              const costs = parseFloat(String(closeDealForm.closingCosts || "").replace(/[$,]/g, ""));
+              if (!Number.isFinite(fee)) return null;
+              const net = fee - (Number.isFinite(costs) ? costs : 0);
+              return (
+                <p className="text-sm text-muted-foreground" data-testid="text-close-deal-net">
+                  Net payout: <strong className="text-foreground">${net.toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong>
+                </p>
+              );
+            })()}
+            <div className="space-y-3 rounded-lg bg-accent/5 p-4">
+              <p className="text-sm font-semibold">Closing checklist</p>
+              {([
+                ["buyerPaid", "Buyer has submitted payment"],
+                ["titleReceived", "Title documents received"],
+                ["fundsWired", "Funds wired to escrow/title company"],
+                ["docsRecorded", "Documents recorded with county"],
+              ] as const).map(([key, label]) => (
+                <div className="flex items-center gap-3" key={key}>
+                  <Checkbox
+                    id={`cd-${key}`}
+                    checked={closeDealForm[key]}
+                    onCheckedChange={(checked) => setCloseDealForm({ ...closeDealForm, [key]: !!checked })}
+                    data-testid={`checkbox-close-deal-${key}`}
+                  />
+                  <label htmlFor={`cd-${key}`} className="text-sm cursor-pointer">{label}</label>
+                </div>
+              ))}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="cd-notes">Closing notes</Label>
+              <Textarea
+                id="cd-notes"
+                rows={2}
+                placeholder="Any additional notes about this closing..."
+                value={closeDealForm.notes}
+                onChange={(e) => setCloseDealForm({ ...closeDealForm, notes: e.target.value })}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCloseDealOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                const fee = parseFloat(String(closeDealForm.assignmentFee || "").replace(/[$,]/g, ""));
+                if (!Number.isFinite(fee) || fee < 0) {
+                  toast({ title: "Enter the assignment fee collected", variant: "destructive" });
+                  return;
+                }
+                const allChecked = closeDealForm.buyerPaid && closeDealForm.titleReceived && closeDealForm.fundsWired && closeDealForm.docsRecorded;
+                if (!allChecked) {
+                  toast({ title: "Please complete all checklist items", variant: "destructive" });
+                  return;
+                }
+                closeDealMutation.mutate(closeDealForm);
+              }}
+              disabled={closeDealMutation.isPending}
+              data-testid="button-confirm-close-deal"
+            >
+              {closeDealMutation.isPending ? "Closing..." : "Close Deal & Record Revenue"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2624,6 +2809,51 @@ function DealRoomSection({ propertyId, userId }: { propertyId?: number; userId?:
           )}
         </CardContent>
       </Card>
+
+      {/* DEV-002: per-deal financial close summary from the ledger */}
+      {(() => {
+        const closed = (assignments || []).find((a: any) => String(a.status) === "closed");
+        if (!closed) return null;
+        const fee = parseFloat(String(closed.assignmentFee ?? ""));
+        const costMatch = String(closed.notes || "").match(/Closing costs:\s*\$([\d,]+(?:\.\d+)?)/);
+        const costs = costMatch ? parseFloat(costMatch[1].replace(/,/g, "")) : NaN;
+        const net = Number.isFinite(fee) ? fee - (Number.isFinite(costs) ? costs : 0) : NaN;
+        const closedAt = closed.closingDate ? new Date(closed.closingDate).toLocaleDateString() : null;
+        return (
+          <Card data-testid="card-close-summary">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <BadgeDollarSign className="h-5 w-5 text-primary" />
+                Financial Close Summary
+              </CardTitle>
+              <CardDescription>Recorded on the per-deal ledger{closedAt ? ` · closed ${closedAt}` : ""}</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                <div>
+                  <p className="text-xs text-muted-foreground">Assignment fee</p>
+                  <p className="text-lg font-semibold">{Number.isFinite(fee) ? `$${fee.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Closing costs</p>
+                  <p className="text-lg font-semibold">{Number.isFinite(costs) ? `$${costs.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Net payout</p>
+                  <p className="text-lg font-semibold">{Number.isFinite(net) ? `$${net.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Payout</p>
+                  <p className="text-lg font-semibold">{closed.payoutReceived ? "Received" : "Pending"}</p>
+                </div>
+              </div>
+              {closed.notes && (
+                <p className="mt-3 text-xs text-muted-foreground">{String(closed.notes)}</p>
+              )}
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       <Card>
         <CardHeader>

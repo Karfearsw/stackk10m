@@ -6,10 +6,11 @@ import { useLocation } from "wouter";
 export function PipelineBar() {
   const [, setLocation] = useLocation();
 
-  // M24: keep this definition identical to the dashboard "Active Leads" KPI
-  // (new + contacted + qualified) so the strip and the KPI can't disagree.
-  const { data: leadsResp } = useQuery<any>({
-    queryKey: ['/api/leads?limit=1&statusIn=new,contacted,qualified'],
+  // M24: use the same "Active Leads" definition as the dashboard KPI
+  // (/api/dashboard/stats -> archived_at is null and status not in
+  // ('dead','voided','closed')) so the strip and the KPI can't disagree.
+  const { data: stats } = useQuery<any>({
+    queryKey: ['/api/dashboard/stats'],
   });
 
   const { data: opportunities = [] } = useQuery<any[]>({
@@ -21,7 +22,7 @@ export function PipelineBar() {
   });
 
   // Calculate counts for each stage
-  const leadCount = Number(leadsResp?.total || 0);
+  const leadCount = Number(stats?.activeLeads || 0);
   const negotiationCount = opportunities.filter((o: any) => o.status === 'active' || o.status === 'negotiation').length;
   const contractCount = contractDocuments.filter((c: any) => c.status === 'draft' || c.status === 'sent' || c.status === 'executed').length;
   const closedCount = contractDocuments.filter((c: any) => c.status === 'closed').length;
