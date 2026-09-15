@@ -509,6 +509,21 @@ async function handleMessageEvent(event: any) {
 
     const effectiveLeadId = fromLeadId || leadId;
 
+    // Try to match the source number to a buyer (inbound from a known buyer)
+    let buyerId: number | null = null;
+    try {
+      const fromDigits = String(from || "").replace(/\D/g, "");
+      if (fromDigits.length >= 7) {
+        const last10 = fromDigits.slice(-10);
+        const buyerResult = await pool.query(
+          "SELECT id FROM buyers WHERE regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') LIKE $1 ORDER BY id DESC LIMIT 1",
+          [`%${last10}`],
+        );
+        const buyerRow = (buyerResult as any).rows?.[0];
+        if (buyerRow?.id) buyerId = Number(buyerRow.id);
+      }
+    } catch {}
+
     await pool.query(
       `INSERT INTO global_activity_logs (user_id, action, description, metadata, created_at)
        VALUES ($1, $2, $3, $4, NOW())`,
@@ -538,20 +553,46 @@ async function handleMessageEvent(event: any) {
         if (!(existing as any).rows?.length) {
           await pool.query(
             `INSERT INTO crm_sms_messages
-               (user_id, lead_id, direction, from_number, to_number, body, status, provider_message_id, metadata, created_at)
-             VALUES (0, $1, 'inbound', $2, $3, $4, 'received', $5, $6, NOW())`,
+               (user_id, lead_id, buyer_id, direction, from_number, to_number, body, status, provider_message_id, metadata, created_at)
+             VALUES (0, $1, $2, 'inbound', $3, $4, $5, 'received', $6, $7, NOW())`,
             [
               effectiveLeadId,
+              buyerId,
               String(from),
               String(to),
               String(body || ""),
               messageId,
-              JSON.stringify({ eventType, from, to, messageId, leadId: effectiveLeadId || undefined }),
+              JSON.stringify({ eventType, from, to, messageId, leadId: effectiveLeadId || undefined, buyerId: buyerId || undefined }),
             ],
           );
         }
       } catch (e) {
         console.error("Failed to persist inbound SMS message:", e);
+      }
+    }
+
+    // STOP/START keyword handling: inbound opt-out keywords flip the buyer's DNC flag.
+    if (direction === "inbound" && buyerId) {
+      const keyword = String(body || "").trim().toUpperCase();
+      const optOuts = ["STOP", "END", "CANCEL", "UNSUBSCRIBE", "QUIT"];
+      const optIns = ["START", "UNSTOP"];
+      if (optOuts.includes(keyword) || optIns.includes(keyword)) {
+        const optingOut = optOuts.includes(keyword);
+        try {
+          await storage.setBuyerDnc(buyerId, optingOut);
+          await pool.query(
+            `INSERT INTO global_activity_logs (user_id, action, description, metadata, created_at)
+             VALUES ($1, $2, $3, $4, NOW())`,
+            [
+              0,
+              optingOut ? "sms_opt_out" : "sms_opt_in",
+              `Buyer ${buyerId} ${optingOut ? "opted out" : "opted back in"} via SMS keyword "${keyword}"`,
+              JSON.stringify({ buyerId, keyword, from, to, messageId }),
+            ],
+          );
+        } catch (e) {
+          console.error("Failed to apply buyer SMS opt-out/opt-in:", e);
+        }
       }
     }
   } catch (e) {

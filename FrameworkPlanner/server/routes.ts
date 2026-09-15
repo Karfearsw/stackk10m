@@ -8210,6 +8210,20 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
         return res.status(400).json({ error: "SMS body cannot be empty", code: "EMPTY_BODY" });
       }
 
+      // ── Buyer DNC gate: never text a buyer that opted out ──
+      const metaBuyerId = (metadata as any)?.buyerId ? Number((metadata as any).buyerId) : null;
+      const buyerId = metaBuyerId && Number.isFinite(metaBuyerId) && metaBuyerId > 0 ? metaBuyerId : null;
+      if (buyerId) {
+        try {
+          const dncBuyer = await storage.getBuyerById(buyerId);
+          if (dncBuyer?.doNotCall) {
+            return res.status(403).json({ error: "Buyer is marked do-not-call", code: "DNC_BLOCKED" });
+          }
+        } catch (e) {
+          console.error("Buyer DNC check failed (non-blocking):", e);
+        }
+      }
+
       // ── Media attachments: MMS when carrier-safe, secure-link otherwise ──
       const rawMediaIds = Array.isArray((req.body as any)?.mediaIds) ? (req.body as any).mediaIds : [];
       const mediaIds = rawMediaIds
@@ -8284,6 +8298,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
           status: smsStatus,
           providerMessageId: sid || null,
           leadId: metaLeadId && Number.isFinite(metaLeadId) && metaLeadId > 0 ? metaLeadId : null,
+          buyerId: buyerId,
           metadata: JSON.stringify(metaObj),
         } as any);
         persistedMsgId = msg?.id ?? null;
@@ -8310,13 +8325,13 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       if (metadata && typeof metadata === "object") {
         const leadId = (metadata as any).leadId ? Number((metadata as any).leadId) : null;
         const propertyId = (metadata as any).propertyId ? Number((metadata as any).propertyId) : null;
-        if (leadId || propertyId) {
+        if (leadId || propertyId || buyerId) {
           try {
             await storage.createGlobalActivity({
               userId: user.id,
               action: "sms_sent",
               description: `Sent SMS to ${String(to || "")}`,
-              metadata: JSON.stringify({ leadId: leadId || undefined, propertyId: propertyId || undefined, to: String(to || ""), sid, status: smsStatus, body: finalBody, deliveryMode: deliveryMode || undefined }),
+              metadata: JSON.stringify({ leadId: leadId || undefined, propertyId: propertyId || undefined, buyerId: buyerId || undefined, to: String(to || ""), sid, status: smsStatus, body: finalBody, deliveryMode: deliveryMode || undefined }),
             } as any);
           } catch {}
         }
@@ -9308,6 +9323,22 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.json(assignments);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/buyers/:id/sms-thread"); app.get("/api/buyers/:id/sms-thread", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid buyer id", code: "INVALID_BUYER_ID" });
+      }
+      const messages = await storage.getSmsThreadByBuyer(id);
+      res.json({ messages });
+    } catch (error: any) {
+      console.error("Buyer SMS thread error:", error);
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
     }
   });
 

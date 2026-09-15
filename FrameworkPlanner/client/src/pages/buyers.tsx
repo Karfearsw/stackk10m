@@ -58,6 +58,8 @@ interface Buyer {
   notes: string | null;
   tags: string[] | null;
   lastContactDate: string | null;
+  doNotCall: boolean | null;
+  dncUpdatedAt: string | null;
   createdAt: string;
 }
 
@@ -305,6 +307,136 @@ function BuyerForm({
       <Button className="w-full" onClick={onSubmit} disabled={!formData.name || isPending} data-testid="button-save-buyer">
         {isEdit ? "Update Buyer" : "Add Buyer"}
       </Button>
+    </div>
+  );
+}
+
+interface BuyerSmsMessage {
+  id: number;
+  direction: string | null;
+  fromNumber: string | null;
+  toNumber: string | null;
+  body: string | null;
+  status: string | null;
+  createdAt: string;
+}
+
+function BuyerSmsPanel({ buyer, onBuyerChange }: { buyer: Buyer; onBuyerChange: (b: Buyer) => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState("");
+
+  const { data, isLoading } = useQuery({
+    queryKey: [`/api/buyers/${buyer.id}/sms-thread`],
+    enabled: !!buyer?.id,
+  });
+  const messages: BuyerSmsMessage[] = (data as any)?.messages ?? [];
+  const isDnc = !!buyer.doNotCall;
+
+  const sendMutation = useMutation({
+    mutationFn: (body: string) =>
+      apiRequest("POST", "/api/telephony/sms", {
+        to: buyer.phone,
+        body,
+        metadata: { buyerId: buyer.id },
+      }),
+    onSuccess: () => {
+      setDraft("");
+      queryClient.invalidateQueries({ queryKey: [`/api/buyers/${buyer.id}/sms-thread`] });
+      toast({ title: "SMS sent" });
+    },
+    onError: (err: any) => {
+      const description =
+        err?.status === 403
+          ? "This buyer is marked do-not-call. Opt them back in to text again."
+          : err?.message || "Failed to send SMS";
+      toast({ title: "SMS failed", description, variant: "destructive" });
+    },
+  });
+
+  const optInMutation = useMutation({
+    mutationFn: () => apiRequest("PATCH", `/api/buyers/${buyer.id}`, { doNotCall: false }),
+    onSuccess: async (res) => {
+      const updated = (await res.json().catch(() => null)) as Buyer | null;
+      if (updated) onBuyerChange(updated);
+      queryClient.invalidateQueries({ queryKey: ["/api/buyers"] });
+      toast({ title: "Buyer opted back in to SMS" });
+    },
+    onError: () => toast({ title: "Could not update DNC status", variant: "destructive" }),
+  });
+
+  return (
+    <div className="space-y-3">
+      {isDnc && (
+        <div className="flex items-center justify-between rounded-lg border border-destructive/40 bg-destructive/10 p-3">
+          <div className="flex items-center gap-2">
+            <Badge variant="destructive" data-testid="badge-buyer-dnc">DNC</Badge>
+            <p className="text-xs text-muted-foreground">
+              This buyer opted out of SMS{buyer.dncUpdatedAt ? ` on ${new Date(buyer.dncUpdatedAt).toLocaleDateString()}` : ""}.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => optInMutation.mutate()}
+            disabled={optInMutation.isPending}
+            data-testid="button-buyer-opt-in"
+          >
+            Opt back in
+          </Button>
+        </div>
+      )}
+
+      <ScrollArea className="h-[220px] border rounded-md p-3">
+        <div className="space-y-2">
+          {isLoading ? (
+            <p className="text-center text-sm text-muted-foreground py-4">Loading messages…</p>
+          ) : messages.length === 0 ? (
+            <p className="text-center text-sm text-muted-foreground py-4">No SMS yet with this buyer</p>
+          ) : (
+            messages.map((m) => (
+              <div key={m.id} className={`flex ${m.direction === "outbound" ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                    m.direction === "outbound" ? "bg-primary text-primary-foreground" : "bg-muted"
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap break-words">{m.body}</p>
+                  <p className={`text-[10px] mt-1 ${m.direction === "outbound" ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
+                    {new Date(m.createdAt).toLocaleString()}
+                    {m.status && m.status !== "received" ? ` · ${m.status}` : ""}
+                  </p>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </ScrollArea>
+
+      {!buyer.phone ? (
+        <p className="text-sm text-muted-foreground">Add a phone number to this buyer to send SMS.</p>
+      ) : (
+        <div className="flex gap-2">
+          <Input
+            placeholder={isDnc ? "Buyer opted out — opt them back in to text" : `Text ${buyer.phone}…`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            disabled={isDnc || sendMutation.isPending}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && draft.trim() && !isDnc) sendMutation.mutate(draft.trim());
+            }}
+            data-testid="input-buyer-sms"
+          />
+          <Button
+            size="icon"
+            onClick={() => draft.trim() && sendMutation.mutate(draft.trim())}
+            disabled={isDnc || !draft.trim() || sendMutation.isPending}
+            data-testid="button-send-buyer-sms"
+          >
+            <Send className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -767,6 +899,12 @@ export default function Buyers() {
                   <TabsList className="w-full">
                     <TabsTrigger value="info" className="flex-1">Info</TabsTrigger>
                     <TabsTrigger value="comms" className="flex-1">Communications</TabsTrigger>
+                    <TabsTrigger value="sms" className="flex-1">
+                      SMS
+                      {selectedBuyer.doNotCall ? (
+                        <Badge variant="destructive" className="ml-1 text-[10px] px-1 py-0">DNC</Badge>
+                      ) : null}
+                    </TabsTrigger>
                     <TabsTrigger value="tasks" className="flex-1">Tasks</TabsTrigger>
                   </TabsList>
 
@@ -918,6 +1056,10 @@ export default function Buyers() {
                         </div>
                       </ScrollArea>
                     </div>
+                  </TabsContent>
+
+                  <TabsContent value="sms" className="mt-4">
+                    <BuyerSmsPanel buyer={selectedBuyer} onBuyerChange={setSelectedBuyer} />
                   </TabsContent>
 
                   <TabsContent value="tasks" className="mt-4">
