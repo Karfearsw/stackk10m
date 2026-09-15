@@ -39,6 +39,81 @@ function validateFile(file: File): { ok: true } | { ok: false; error: string } {
   return { ok: true };
 }
 
+/**
+ * Files at or above this size use the presigned direct-to-S3 flow
+ * (/api/media/upload-url + PUT + /api/media/upload-complete) so they never
+ * pass through the serverless request body (capped ~4.5 MB on Vercel).
+ */
+const PRESIGN_THRESHOLD = 4 * 1024 * 1024;
+
+async function presignUpload(
+  item: PendingUpload,
+  opts: { entityType: string; entityId?: number | null; deferAttach: boolean },
+  update: (patch: Partial<PendingUpload>) => void,
+  onUploaded?: (asset: MediaAsset) => void,
+  onError?: (message: string) => void,
+): Promise<void> {
+  const kind = fileKind(item.file);
+  const mime = kind === "image" ? (item.file.type || "image/jpeg") : (item.file.type || "video/mp4");
+  try {
+    const presignRes = await fetch("/api/media/upload-url", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: item.file.name,
+        mimeType: mime,
+        fileSizeBytes: item.file.size,
+      }),
+    });
+    if (!presignRes.ok) {
+      let message = "Could not start the upload";
+      try { message = (await presignRes.json())?.message || message; } catch {}
+      throw new Error(message);
+    }
+    const { uploadUrl, storageKey } = await presignRes.json();
+
+    await new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", uploadUrl);
+      xhr.setRequestHeader("Content-Type", mime);
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) update({ status: "uploading", progress: Math.round((e.loaded / e.total) * 95) });
+      };
+      xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve() : reject(new Error("Storage rejected the upload (" + xhr.status + ")")));
+      xhr.onerror = () => reject(new Error("Network error during upload"));
+      xhr.send(item.file);
+    });
+
+    update({ status: "uploading", progress: 97 });
+    const completeRes = await fetch("/api/media/upload-complete", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        filename: item.file.name,
+        mimeType: mime,
+        fileSizeBytes: item.file.size,
+        storageKey,
+        entityType: opts.deferAttach ? undefined : opts.entityType,
+        entityId: opts.deferAttach ? undefined : opts.entityId ?? undefined,
+      }),
+    });
+    if (!completeRes.ok) {
+      let message = "Upload could not be finalized";
+      try { message = (await completeRes.json())?.message || message; } catch {}
+      throw new Error(message);
+    }
+    const { asset } = await completeRes.json();
+    if (!asset) throw new Error("Upload finalized without an asset");
+    update({ status: "done", progress: 100, asset });
+    onUploaded?.(asset);
+  } catch (e: any) {
+    const message = e?.message || "Upload failed";
+    update({ status: "error", error: message });
+    onError?.(message);
+  }
+}
 let uidCounter = 0;
 function nextKey() {
   uidCounter += 1;
@@ -86,7 +161,7 @@ export function MediaUploader({
 
   const doUpload = useCallback(
     (item: PendingUpload) => {
-      if (entityId === undefined || entityId === null) {
+      if (!deferAttach && (entityId === undefined || entityId === null)) {
         updatePending(item.key, { status: "error", error: "No record selected to attach to." });
         onError?.("No record selected to attach to.");
         return;
@@ -128,7 +203,7 @@ export function MediaUploader({
       };
       const form = new FormData();
       form.append("file", item.file);
-      if (!deferAttach) {
+      if (!deferAttach && entityId != null) {
         form.append("entityType", entityType);
         form.append("entityId", String(entityId));
         if (role) form.append("role", role);
@@ -136,7 +211,7 @@ export function MediaUploader({
       updatePending(item.key, { status: "uploading", progress: 0 });
       xhr.send(form);
     },
-    [entityType, entityId, role, onUploaded, onError],
+    [entityType, entityId, role, deferAttach, onUploaded, onError],
   );
 
   const addFiles = (files: FileList | File[]) => {
@@ -160,7 +235,12 @@ export function MediaUploader({
       }
       queueMicrotask(() => {
         for (const item of newItems) {
-          if (item.status === "queued" && autoUpload) doUpload(item);
+          if (item.status !== "queued" || !autoUpload) continue;
+          if (item.file.size >= PRESIGN_THRESHOLD) {
+            void presignUpload(item, { entityType, entityId, deferAttach }, (patch) => updatePending(item.key, patch), onUploaded, onError);
+          } else {
+            doUpload(item);
+          }
         }
       });
       return merged;

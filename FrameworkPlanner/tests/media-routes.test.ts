@@ -49,6 +49,29 @@ vi.mock("../server/media/mediaVault", async () => {
     attachMedia: vi.fn(async () => {}),
     softDeleteMedia: vi.fn(async () => {}),
     setMediaDeliveryMode: vi.fn(async () => {}),
+    presignMediaUpload: vi.fn(async (input: any) => ({
+      storageKey: `teams/${input.teamId}/media/presigned-abc-${input.originalFilename}`,
+      uploadUrl: "https://s3.test/bucket/presigned-put",
+      expiresInSeconds: 900,
+    })),
+    verifyMediaObject: vi.fn(async () => ({ sizeBytes: 9, contentType: "video/mp4" })),
+    finalizePresignedMedia: vi.fn(async (input: any) => ({
+      id: 201,
+      teamId: input.teamId,
+      uploadedByUserId: input.uploadedByUserId,
+      storageMode: "s3",
+      storageKey: input.storageKey,
+      originalFilename: input.originalFilename,
+      mimeType: input.mimeType,
+      fileSizeBytes: input.fileSizeBytes,
+      sha256: null,
+      width: null,
+      height: null,
+      durationSeconds: null,
+      processingStatus: "ready",
+      deliveryMode: null,
+      createdAt: new Date().toISOString(),
+    })),
   };
 });
 
@@ -92,6 +115,9 @@ describe("media routes", () => {
     vi.mocked(mediaVault.getMediaAssetById).mockClear();
     vi.mocked(mediaVault.attachMedia).mockClear();
     vi.mocked(mediaVault.softDeleteMedia).mockClear();
+    vi.mocked(mediaVault.presignMediaUpload).mockClear();
+    vi.mocked(mediaVault.verifyMediaObject).mockClear();
+    vi.mocked(mediaVault.finalizePresignedMedia).mockClear();
     vi.mocked(mediaVault.getMediaContent).mockClear();
     mockGetLeadById.mockReset();
     mockGetLeadById.mockResolvedValue({ id: 55, fullName: "Jane Buyer" });
@@ -179,9 +205,104 @@ describe("media routes", () => {
     expect(res.status).toBe(410);
   });
 
+  it("uploads with no entity fields (deferAttach flow) without attaching", async () => {
+    const res = await request(makeApp())
+      .post("/api/media/upload")
+      .attach("file", PNG, { filename: "chat-photo.png", contentType: "image/png" });
+    expect(res.status).toBe(201);
+    expect(res.body.asset.id).toBe(101);
+    expect(mediaVault.attachMedia).not.toHaveBeenCalled();
+  });
+
+  it("serves a byte range for video seeking (206 + Content-Range)", async () => {
+    const res = await request(makeApp())
+      .get("/api/media/101/preview")
+      .set("Range", "bytes=3-5");
+    expect(res.status).toBe(206);
+    expect(res.headers["content-range"]).toBe("bytes 3-5/9");
+    expect(Buffer.from(res.body).toString()).toBe("-by");
+  });
+
+  it("serves an open-ended range from offset to end", async () => {
+    const res = await request(makeApp())
+      .get("/api/media/101/preview")
+      .set("Range", "bytes=4-");
+    expect(res.status).toBe(206);
+    expect(res.headers["content-range"]).toBe("bytes 4-8/9");
+  });
+
+  it("rejects an unsatisfiable range with 416", async () => {
+    const res = await request(makeApp())
+      .get("/api/media/101/preview")
+      .set("Range", "bytes=100-200");
+    expect(res.status).toBe(416);
+    expect(res.headers["content-range"]).toBe("bytes */9");
+  });
+
+  it("returns the full body when no Range header is present", async () => {
+    const res = await request(makeApp()).get("/api/media/101/preview");
+    expect(res.status).toBe(200);
+    expect(res.headers["accept-ranges"]).toBe("bytes");
+    expect(Buffer.from(res.body).toString()).toBe("img-bytes");
+  });
   it("soft-deletes owned media", async () => {
     const res = await request(makeApp()).delete("/api/media/101");
     expect(res.status).toBe(200);
     expect(mediaVault.softDeleteMedia).toHaveBeenCalledWith(101);
+  });
+
+  it("presigns a large video for direct-to-S3 upload", async () => {
+    const res = await request(makeApp())
+      .post("/api/media/upload-url")
+      .send({ filename: "walkthrough.mp4", mimeType: "video/mp4", fileSizeBytes: 52428800 });
+    expect(res.status).toBe(201);
+    expect(res.body.uploadUrl).toContain("https://");
+    expect(res.body.storageKey).toContain("teams/18/media/");
+    expect(mediaVault.presignMediaUpload).toHaveBeenCalledWith(
+      expect.objectContaining({ teamId: 18, mimeType: "video/mp4" }),
+    );
+  });
+
+  it("rejects presign for unsupported types and oversized files", async () => {
+    const bad = await request(makeApp())
+      .post("/api/media/upload-url")
+      .send({ filename: "evil.exe", mimeType: "application/x-msdownload", fileSizeBytes: 100 });
+    expect(bad.status).toBe(400);
+    const big = await request(makeApp())
+      .post("/api/media/upload-url")
+      .send({ filename: "huge.mp4", mimeType: "video/mp4", fileSizeBytes: 251 * 1024 * 1024 });
+    expect(big.status).toBe(400);
+    expect(big.body.code).toBe("FILE_TOO_LARGE");
+  });
+
+  it("rejects finalize for another team's storage key", async () => {
+    const res = await request(makeApp())
+      .post("/api/media/upload-complete")
+      .send({ filename: "clip.mp4", mimeType: "video/mp4", fileSizeBytes: 1024, storageKey: "teams/99/media/other.mp4" });
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("KEY_FORBIDDEN");
+    expect(mediaVault.finalizePresignedMedia).not.toHaveBeenCalled();
+  });
+
+  it("rejects finalize when the object never landed in storage", async () => {
+    vi.mocked(mediaVault.verifyMediaObject).mockResolvedValueOnce(null);
+    const res = await request(makeApp())
+      .post("/api/media/upload-complete")
+      .send({ filename: "clip.mp4", mimeType: "video/mp4", fileSizeBytes: 1024, storageKey: "teams/18/media/missing.mp4" });
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe("UPLOAD_NOT_FOUND");
+    expect(mediaVault.finalizePresignedMedia).not.toHaveBeenCalled();
+  });
+
+  it("finalizes a completed presigned upload and attaches to an entity", async () => {
+    const res = await request(makeApp())
+      .post("/api/media/upload-complete")
+      .send({ filename: "clip.mp4", mimeType: "video/mp4", fileSizeBytes: 1048576, storageKey: "teams/18/media/clip.mp4", entityType: "lead", entityId: 55 });
+    expect(res.status).toBe(201);
+    expect(res.body.asset.id).toBe(201);
+    expect(res.body.asset.storageMode).toBe("s3");
+    expect(mediaVault.attachMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ mediaId: 201, entityType: "lead", entityId: 55 }),
+    );
   });
 });

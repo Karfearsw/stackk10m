@@ -1,4 +1,4 @@
-import { S3Client, GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, GetObjectCommand, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { sql } from "drizzle-orm";
 import crypto from "node:crypto";
@@ -43,6 +43,92 @@ function safeBasename(name: string) {
 export function makeMediaStorageKey(input: { teamId: number; originalName: string }) {
   const filePart = safeBasename(input.originalName);
   return `teams/${input.teamId}/media/${crypto.randomUUID()}-${filePart}`;
+}
+
+/**
+ * Presign a direct browser PUT to S3 for one media asset. Used by the
+ * /api/media/upload-url + /api/media/upload-complete pair so large files
+ * bypass the serverless request-body cap (~4.5 MB on Vercel).
+ */
+export async function presignMediaUpload(input: {
+  teamId: number;
+  originalFilename: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  expiresInSeconds?: number;
+}): Promise<{ storageKey: string; uploadUrl: string; expiresInSeconds: number }> {
+  if (!useS3()) {
+    throw new Error("Presigned media uploads require S3 storage (DOCUMENTS_BUCKET/DOCUMENTS_REGION).");
+  }
+  const { cfg, client } = s3Client();
+  const storageKey = makeMediaStorageKey({ teamId: input.teamId, originalName: input.originalFilename });
+  const command = new PutObjectCommand({
+    Bucket: cfg.bucket,
+    Key: storageKey,
+    ContentType: input.mimeType,
+    ContentLength: input.fileSizeBytes,
+  });
+  const expiresInSeconds = Math.min(Math.max(input.expiresInSeconds ?? 900, 60), 3600);
+  const uploadUrl = await getSignedUrl(client, command, { expiresIn: expiresInSeconds });
+  return { storageKey, uploadUrl, expiresInSeconds };
+}
+
+/**
+ * Create the media asset row for a completed presigned upload. The caller
+ * (route) is responsible for auth, team checks, and validating declared
+ * metadata before calling this.
+ */
+export async function finalizePresignedMedia(input: {
+  teamId: number;
+  uploadedByUserId: number;
+  originalFilename: string;
+  mimeType: string;
+  kind: MediaKind;
+  fileSizeBytes: number;
+  storageKey: string;
+  width?: number | null;
+  height?: number | null;
+  durationSeconds?: number | null;
+  processingStatus?: string;
+}): Promise<MediaAsset> {
+  const storageMode = mediaStorageMode();
+  const inserted: any = await db.execute(sql`
+    INSERT INTO media_assets (
+      team_id, uploaded_by_user_id, storage_mode, storage_key, original_filename,
+      normalized_filename, mime_type, file_size_bytes, sha256, width, height,
+      duration_seconds, processing_status
+    ) VALUES (
+      ${input.teamId}, ${input.uploadedByUserId}, ${storageMode}, ${input.storageKey},
+      ${input.originalFilename}, ${safeBasename(input.originalFilename)}, ${input.mimeType},
+      ${input.fileSizeBytes}, ${null}, ${input.width ?? null}, ${input.height ?? null},
+      ${input.durationSeconds ?? null}, ${input.processingStatus ?? "ready"}
+    )
+    RETURNING *
+  `);
+  const row = inserted?.rows?.[0];
+  if (!row) throw new Error("Failed to create media asset");
+  return mapAssetRow(row);
+}
+
+/**
+ * HEAD the object in S3 to confirm a presigned upload actually landed.
+ * Returns size + content type, or null when missing/unreachable.
+ */
+export async function verifyMediaObject(storageKey: string): Promise<{ sizeBytes: number; contentType: string | null } | null> {
+  if (!storageKey) return null;
+  try {
+    const { cfg, client } = s3Client();
+    const out = await client.send(new HeadObjectCommand({ Bucket: cfg.bucket, Key: storageKey }));
+    return {
+      sizeBytes: Number(out.ContentLength ?? 0),
+      contentType: out.ContentType || null,
+    };
+  } catch (e: any) {
+    const name = String(e?.name || e?.code || "");
+    if (name === "NotFound" || name === "NoSuchKey" || name === "404") return null;
+    console.error(`[mediaVault] HEAD failed for ${storageKey}: ${e?.message || e}`);
+    return null;
+  }
 }
 
 function s3Client() {
@@ -180,6 +266,38 @@ export async function listMediaForEntity(input: {
     ORDER BY a.created_at DESC, m.id DESC
   `);
   return (result?.rows || []).map(mapAssetRow);
+}
+
+/**
+ * Batched hydration: fetch full assets for many entities of one type in a
+ * single team-scoped query. Returns a map keyed by entityId (only entities
+ * that actually have media appear as keys).
+ */
+export async function listMediaByAttachments(input: {
+  teamId: number;
+  entityType: string;
+  entityIds: number[];
+}): Promise<Record<number, MediaAsset[]>> {
+  const ids = (input.entityIds || []).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0);
+  if (!ids.length) return {};
+  const result: any = await db.execute(sql`
+    SELECT a.entity_id, m.*
+    FROM media_attachments a
+    JOIN media_assets m ON m.id = a.media_asset_id
+    WHERE m.team_id = ${input.teamId}
+      AND m.deleted_at IS NULL
+      AND a.entity_type = ${input.entityType}
+      AND a.entity_id = ANY(${ids})
+    ORDER BY a.created_at ASC, m.id ASC
+  `);
+  const out: Record<number, MediaAsset[]> = {};
+  for (const row of (result?.rows || []) as any[]) {
+    const entityId = Number(row.entity_id);
+    if (!Number.isInteger(entityId)) continue;
+    const { entity_id: _ignored, ...assetRow } = row;
+    (out[entityId] = out[entityId] || []).push(mapAssetRow(assetRow));
+  }
+  return out;
 }
 
 export async function attachMedia(input: {

@@ -6,7 +6,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { MessageSquare, Send, Loader2, Users, Paperclip, X } from "lucide-react";
 import { MediaUploader } from "@/components/media/MediaUploader";
-import { formatBytes, isImageAsset, isVideoAsset, mediaPreviewUrl, type MediaAsset } from "@/lib/media";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { formatBytes, isVideoAsset, mediaPreviewUrl, type MediaAsset } from "@/lib/media";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -16,6 +17,7 @@ import { useMemo, useState } from "react";
 interface Message {
   id: number;
   mediaIds?: number[];
+  media?: MediaAsset[];
   senderUserId: number;
   recipientUserId: number;
   body: string;
@@ -38,10 +40,12 @@ export default function MessagesPage() {
   const [withUserId, setWithUserId] = useState<number | null>(null);
   const [body, setBody] = useState("");
   const [pendingMedia, setPendingMedia] = useState<MediaAsset[]>([]);
+  const [lightboxAsset, setLightboxAsset] = useState<MediaAsset | null>(null);
 
   const { data: conversations = [], isLoading: convLoading, isError: convError, refetch: refetchConvs } = useQuery<Conversation[]>({
     queryKey: ["/api/messages/conversations"],
     enabled: !!user?.id,
+    refetchInterval: 10000,
   });
 
   const { data: users = [] } = useQuery<any[]>({
@@ -57,6 +61,7 @@ export default function MessagesPage() {
       return res.json();
     },
     enabled: !!user?.id && withUserId != null,
+    refetchInterval: 5000,
   });
 
   const sendMutation = useMutation({
@@ -198,18 +203,37 @@ export default function MessagesPage() {
                       return (
                         <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                           <div className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${mine ? "bg-primary text-primary-foreground" : "bg-card border"}`}>
-                            {Array.isArray(m.mediaIds) && m.mediaIds.length > 0 && (
+                            {Array.isArray(m.media) && m.media.length > 0 && (
                               <div className="mb-1.5 flex flex-wrap gap-1.5">
-                                {m.mediaIds.map((mid: number) => (
-                                  <a
-                                    key={mid}
-                                    href={`/api/media/${mid}/download`}
-                                    download
-                                    className="block h-16 w-16 overflow-hidden rounded-md border bg-muted"
-                                    title="Download attachment"
-                                  >
-                                    <img src={mediaPreviewUrl(mid)} alt="attachment" className="h-full w-full object-cover" />
-                                  </a>
+                                {m.media.map((asset) => (
+                                  isVideoAsset(asset) ? (
+                                    <div key={asset.id} className="w-[240px] max-w-full">
+                                      <video
+                                        controls
+                                        preload="metadata"
+                                        src={mediaPreviewUrl(asset.id)}
+                                        className="w-full rounded-md border bg-black"
+                                      />
+                                      <div className="mt-0.5 flex items-center justify-between text-[10px] text-muted-foreground">
+                                        <span className="truncate" title={asset.originalFilename}>{asset.originalFilename}</span>
+                                        {asset.durationSeconds != null && (
+                                          <span className="shrink-0">{Math.round(asset.durationSeconds)}s</span>
+                                        )}
+                                      </div>
+                                      <a href={`/api/media/${asset.id}/download`} download className="text-[10px] underline">Download</a>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      key={asset.id}
+                                      type="button"
+                                      onClick={() => setLightboxAsset(asset)}
+                                      className="block h-20 w-20 overflow-hidden rounded-md border bg-muted transition-opacity hover:opacity-90"
+                                      title={asset.originalFilename}
+                                      aria-label="Open image"
+                                    >
+                                      <img src={mediaPreviewUrl(asset.id)} alt={asset.originalFilename} className="h-full w-full object-cover" />
+                                    </button>
+                                  )
                                 ))}
                               </div>
                             )}
@@ -273,6 +297,18 @@ export default function MessagesPage() {
           </CardContent>
         </Card>
       </div>
+      <Dialog open={lightboxAsset != null} onOpenChange={(open) => { if (!open) setLightboxAsset(null); }}>
+        <DialogContent className="max-w-3xl p-2">
+          <DialogTitle className="sr-only">Image preview</DialogTitle>
+          {lightboxAsset && (
+            <img
+              src={mediaPreviewUrl(lightboxAsset.id)}
+              alt={lightboxAsset.originalFilename}
+              className="max-h-[80vh] w-full rounded-md object-contain"
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

@@ -6,6 +6,7 @@ vi.mock("../server/db", () => ({ db: { execute: mockDbExecute } }));
 
 import {
   createMediaAsset,
+  listMediaByAttachments,
   getMediaAssetById,
   listMediaForEntity,
   softDeleteMedia,
@@ -105,5 +106,43 @@ describe("mediaVault storage (mocked db)", () => {
     const asset = { teamId: 18 } as any;
     expect(assertMediaTeam(asset, 18)).toBe(true);
     expect(assertMediaTeam(asset, 99)).toBe(false);
+  });
+});
+
+describe("listMediaByAttachments", () => {
+  beforeEach(() => {
+    mockDbExecute.mockReset();
+    mockDbExecute.mockImplementation(async () => ({ rows: [] }));
+  });
+
+  it("returns {} for empty input without querying", async () => {
+    const out = await listMediaByAttachments({ teamId: 18, entityType: "internal_message", entityIds: [] });
+    expect(out).toEqual({});
+    expect(mockDbExecute).not.toHaveBeenCalled();
+  });
+
+  it("groups assets by entity id from joined rows", async () => {
+    mockDbExecute.mockResolvedValueOnce({
+      rows: [
+        { entity_id: 11, id: 1, team_id: 18, uploaded_by_user_id: 2, storage_mode: "db", storage_key: "k1", original_filename: "pic.png", mime_type: "image/png", file_size_bytes: 10, sha256: "s1", width: 3, height: 4, duration_seconds: null, processing_status: "ready", delivery_mode: null, created_at: "2026-09-01T00:00:00Z" },
+        { entity_id: 11, id: 2, team_id: 18, uploaded_by_user_id: 2, storage_mode: "db", storage_key: "k2", original_filename: "clip.mp4", mime_type: "video/mp4", file_size_bytes: 999, sha256: "s2", width: null, height: null, duration_seconds: 12.5, processing_status: "ready", delivery_mode: null, created_at: "2026-09-01T00:00:01Z" },
+        { entity_id: 12, id: 3, team_id: 18, uploaded_by_user_id: 2, storage_mode: "db", storage_key: "k3", original_filename: "other.png", mime_type: "image/png", file_size_bytes: 5, sha256: "s3", width: 1, height: 1, duration_seconds: null, processing_status: "ready", delivery_mode: null, created_at: "2026-09-01T00:00:02Z" },
+      ],
+    });
+    const out = await listMediaByAttachments({ teamId: 18, entityType: "internal_message", entityIds: [11, 12] });
+    expect(Object.keys(out).sort()).toEqual(["11", "12"]);
+    expect(out[11].length).toBe(2);
+    expect(out[11][0].id).toBe(1);
+    expect(out[11][1].mimeType).toBe("video/mp4");
+    expect(out[11][1].durationSeconds).toBe(12.5);
+    expect(out[12][0].id).toBe(3);
+  });
+
+  it("scopes the query to the caller team and excludes deleted assets", async () => {
+    await listMediaByAttachments({ teamId: 18, entityType: "internal_message", entityIds: [11] });
+    const q = JSON.stringify(mockDbExecute.mock.calls[0][0]);
+    expect(q).toContain("18");
+    expect(q).toContain("deleted_at IS NULL");
+    expect(q).toContain("entity_type = ");
   });
 });
