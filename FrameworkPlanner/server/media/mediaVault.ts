@@ -182,6 +182,38 @@ export async function listMediaForEntity(input: {
   return (result?.rows || []).map(mapAssetRow);
 }
 
+// Batch variant: hydrate media assets for many entities of one type in a
+// single query. Returns a map of entityId -> assets (empty array when none).
+// Added to satisfy the /api/messages hydration call site in server/routes.ts.
+export async function listMediaByAttachments(input: {
+  teamId: number;
+  entityType: string;
+  entityIds: number[];
+  role?: string | null;
+}): Promise<Record<number, MediaAsset[]>> {
+  const ids = (input.entityIds || []).map(Number).filter((n) => Number.isFinite(n));
+  const out: Record<number, MediaAsset[]> = {};
+  for (const id of ids) out[id] = [];
+  if (ids.length === 0) return out;
+  const result: any = await db.execute(sql`
+    SELECT m.*, a.entity_id AS attachment_entity_id
+    FROM media_assets m
+    JOIN media_attachments a ON a.media_asset_id = m.id
+    WHERE m.team_id = ${input.teamId}
+      AND m.deleted_at IS NULL
+      AND a.entity_type = ${input.entityType}
+      AND a.entity_id = ANY(${ids})
+      ${input.role ? sql`AND a.attachment_role = ${input.role}` : sql``}
+    ORDER BY a.created_at DESC, m.id DESC
+  `);
+  for (const row of result?.rows || []) {
+    const eid = Number((row as any).attachment_entity_id);
+    if (!out[eid]) out[eid] = [];
+    out[eid].push(mapAssetRow(row));
+  }
+  return out;
+}
+
 export async function attachMedia(input: {
   mediaId: number;
   entityType: string;
