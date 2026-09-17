@@ -249,7 +249,7 @@ export default function CalendarPage() {
 
   return (
     <Layout>
-      <div className="p-6 space-y-6">
+      <div className="p-4 sm:p-6 space-y-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <CalendarDays className="h-5 w-5 text-primary" />
@@ -288,7 +288,7 @@ export default function CalendarPage() {
               </TabsList>
             </Tabs>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
             {isLoading ? (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -297,14 +297,14 @@ export default function CalendarPage() {
             ) : (
               <Tabs value={view} onValueChange={(v) => setView(v as any)}>
                 <TabsContent value="month">
-                  <div className="grid grid-cols-7 gap-2 text-xs text-muted-foreground mb-2">
+                  <div className="grid grid-cols-7 gap-1 sm:gap-2 text-xs text-muted-foreground mb-2">
                     {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-                      <div key={d} className="px-2">
+                      <div key={d} className="px-0 sm:px-2 text-center">
                         {d}
                       </div>
                     ))}
                   </div>
-                  <div className="grid grid-cols-7 gap-2">
+                  <div className="grid grid-cols-7 gap-1 sm:gap-2">
                     {monthDays.map((d) => {
                       const k = dayKey(d);
                       const tasks = tasksByDay.get(k) || [];
@@ -319,13 +319,19 @@ export default function CalendarPage() {
                             selected ? "border-primary bg-primary/5" : "border-border hover:bg-accent/40"
                           } ${outside ? "opacity-50" : ""}`}
                         >
-                          <div className="flex items-center justify-between gap-1">
-                            <div className={`text-sm font-semibold ${isToday(d) ? "text-primary" : ""}`}>{format(d, "d")}</div>
-                            {tasks.length ? <Badge variant="secondary" className="px-1 text-[10px]">{tasks.length}</Badge> : null}
+                          <div className="flex min-w-0 items-center justify-between gap-1">
+                            <div className={`min-w-0 text-sm font-semibold ${isToday(d) ? "text-primary" : ""}`}>{format(d, "d")}</div>
+                            {tasks.length ? <Badge variant="secondary" className="shrink-0 px-1 text-[10px]">{tasks.length}</Badge> : null}
                           </div>
-                          {/* MOB-3/4: on small screens the day cells are ~44px wide —
-                              task titles truncate to single glyphs, so hide them and
-                              rely on the "Tasks on {selectedDay}" list below. */}
+                          {/* Mobile: compact dot indicators (one per task, up to 3) so days
+                              with tasks don't look empty; the count badge shows the total.
+                              sm and up: full task titles. Tapping a day still opens the
+                              "Tasks on {selectedDay}" list below. */}
+                          <div className="mt-1 flex gap-1 overflow-hidden sm:hidden" aria-hidden="true">
+                            {tasks.slice(0, 3).map((t) => (
+                              <span key={t.id} className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                            ))}
+                          </div>
                           <div className="mt-2 hidden space-y-1 sm:block">
                             {tasks.slice(0, 3).map((t) => (
                               <div key={t.id} className="truncate text-xs text-muted-foreground">
