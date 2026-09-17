@@ -1,7 +1,31 @@
+import { Component } from "react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+
+// Error boundary for the public XP pages (2026-09-16 audit, item 4): a render
+// error must never blank the whole booking page — show a branded retry panel.
+class XpErrorBoundary extends Component<{ children: React.ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="mx-auto max-w-lg space-y-4 py-16 text-center">
+          <h1 className="text-2xl font-semibold tracking-tight">Something went wrong</h1>
+          <p className="text-sm text-muted-foreground">
+            {this.state.error.message || "An unexpected error occurred. Please try again."}
+          </p>
+          <Button onClick={() => window.location.reload()}>Try again</Button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export function XpPublicShell({
   children,
@@ -60,7 +84,9 @@ export function XpPublicShell({
       </header>
 
       <main className="px-4 py-10">
-        <div className="mx-auto w-full max-w-6xl">{children}</div>
+        <div className="mx-auto w-full max-w-6xl">
+          <XpErrorBoundary>{children}</XpErrorBoundary>
+        </div>
       </main>
 
       <footer className="border-t border-border/50 px-4 py-10">

@@ -32,10 +32,21 @@ export default function Analytics() {
   });
   const docRevenue = useMemo(() => {
     // N1: kept as a queryable shape but computed by the shared helper so the
-    // dashboard and this page always agree on closed deals and revenue.
+    // dashboard and this page always agree on revenue.
     const metrics = computeDealMetrics(contracts, contractDocuments as any[], { ledger: dealLedger });
     return { total: metrics.revenue, closed: metrics.dealsClosed };
   }, [contracts, contractDocuments, dealLedger]);
+
+  // F1 (2026-09-16 audit): closed-deal COUNT is canonical from opportunities
+  // (stage === 'closed') — the same rows the pipeline board and the dashboard
+  // KPI count. Revenue stays ledger/helper-derived above.
+  const { data: opportunities = [] } = useQuery<any[]>({
+    queryKey: ["/api/opportunities"],
+  });
+  const closedDealsCount = useMemo(
+    () => (opportunities as any[]).filter((o) => String(o.stage || "") === "closed").length,
+    [opportunities],
+  );
 
   const { data: sourceReport } = useQuery<any>({
     queryKey: ["/api/reports/source"],
@@ -61,14 +72,14 @@ export default function Analytics() {
   const ytdMetrics = useMemo(() => {
     // N1: docRevenue now comes from the shared helper (Store B closed docs +
     // wet-ink Store A executed contracts), counted once — no double-mixing.
-    const conversionRate = leads.length > 0 ? (docRevenue.closed / leads.length) * 100 : 0;
+    const conversionRate = leads.length > 0 ? (closedDealsCount / leads.length) * 100 : 0;
     return {
       revenue: docRevenue.total,
-      closedDeals: docRevenue.closed,
-      avgDealSize: docRevenue.closed > 0 ? docRevenue.total / docRevenue.closed : 0,
+      closedDeals: closedDealsCount,
+      avgDealSize: closedDealsCount > 0 ? docRevenue.total / closedDealsCount : 0,
       conversionRate
     };
-  }, [leads.length, docRevenue]);
+  }, [leads.length, docRevenue, closedDealsCount]);
 
   // Monthly performance data
   const monthlyData = useMemo(() => {

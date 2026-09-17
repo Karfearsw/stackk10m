@@ -2,13 +2,26 @@ import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useEffect, useState } from "react";
-import { Search, UserPlus, Pencil, Trash2 } from "lucide-react";
+import { Search, UserPlus, Pencil, Trash2, PhoneOff } from "lucide-react";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 import { useToast } from "@/hooks/use-toast";
 
-interface ContactItem { id: number; name: string; email?: string; phone?: string; }
+// Item 2 (2026-09-16 audit): do-not-contact is a first-class contact flag.
+// Toggling it here flags the phone number wherever it appears and blocks
+// outbound calls/SMS to it at the API layer.
+interface ContactItem {
+  id: number;
+  name: string;
+  email?: string;
+  phone?: string;
+  doNotCall?: boolean;
+  doNotText?: boolean;
+}
 
 export default function Contacts() {
   const { toast } = useToast();
@@ -17,6 +30,7 @@ export default function Contacts() {
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
   const [editing, setEditing] = useState<ContactItem | null>(null);
+  const [dncOnly, setDncOnly] = useState(false);
 
   const load = async () => {
     try {
@@ -73,10 +87,33 @@ export default function Contacts() {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ name: editing.name, phone: editing.phone || null, email: editing.email || null }),
+      body: JSON.stringify({
+        name: editing.name,
+        phone: editing.phone || null,
+        email: editing.email || null,
+        doNotCall: !!editing.doNotCall,
+        doNotText: !!editing.doNotText,
+      }),
     });
     if (res.ok) {
       setEditing(null);
+      toast({ title: "Contact updated" });
+      load();
+    } else {
+      let msg = "Failed to update contact";
+      try { msg = (await res.json())?.message || msg; } catch {}
+      toast({ title: "Contacts error", description: msg, variant: "destructive" });
+    }
+  };
+
+  const setDnc = async (c: ContactItem, patch: { doNotCall?: boolean; doNotText?: boolean }) => {
+    const res = await fetch(`/api/contacts/${c.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(patch),
+    });
+    if (res.ok) {
       toast({ title: "Contact updated" });
       load();
     } else {
@@ -101,7 +138,12 @@ export default function Contacts() {
 
   useEffect(() => { load(); }, []);
 
-  const filtered = contacts.filter(c => (c.name || "").toLowerCase().includes(q.toLowerCase()) || (c.phone || "").includes(q));
+  const isDnc = (c: ContactItem) => !!c.doNotCall || !!c.doNotText;
+  const filtered = contacts.filter(
+    (c) =>
+      ((c.name || "").toLowerCase().includes(q.toLowerCase()) || (c.phone || "").includes(q)) &&
+      (!dncOnly || isDnc(c)),
+  );
 
   return (
     <Layout>
@@ -117,6 +159,16 @@ export default function Contacts() {
           <div className="flex items-center gap-2 mb-4">
             <Search className="h-4 w-4 text-muted-foreground" />
             <Input placeholder="Search name or number" value={q} onChange={(e) => setQ(e.target.value)} />
+            <Button
+              variant={dncOnly ? "secondary" : "outline"}
+              size="sm"
+              className="shrink-0"
+              onClick={() => setDncOnly((v) => !v)}
+              data-testid="button-filter-dnc-contacts"
+              title="Show only contacts flagged Do Not Contact"
+            >
+              <PhoneOff className="h-4 w-4 mr-1" /> DNC only
+            </Button>
           </div>
           <div className="flex items-center gap-2 mb-3">
             <Input placeholder="Name" value={newName} onChange={(e) => setNewName(e.target.value)} />
@@ -127,7 +179,14 @@ export default function Contacts() {
             {filtered.map(c => (
               <div key={c.id} className="flex items-center justify-between py-2 gap-2">
                 <div className="min-w-0">
-                  <div className="font-medium">{c.name}</div>
+                  <div className="font-medium flex items-center gap-2">
+                    {c.name}
+                    {isDnc(c) && (
+                      <Badge variant="destructive" className="text-[10px] px-1 py-0" data-testid={`badge-contact-dnc-${c.id}`}>
+                        DNC
+                      </Badge>
+                    )}
+                  </div>
                   <div className="text-sm text-muted-foreground">
                     {c.phone ? (
                       <a className="underline underline-offset-2" href={`tel:${c.phone}`}>
@@ -146,6 +205,16 @@ export default function Contacts() {
                   ) : null}
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    title={c.doNotCall ? "Allow calls (remove Do Not Call flag)" : "Mark Do Not Call"}
+                    data-testid={`contact-dnc-toggle-${c.id}`}
+                    onClick={() => setDnc(c, { doNotCall: !c.doNotCall })}
+                  >
+                    <PhoneOff className={`h-4 w-4 ${c.doNotCall ? "text-destructive" : ""}`} />
+                  </Button>
                   <Button
                     variant="ghost"
                     size="icon"
@@ -200,6 +269,28 @@ export default function Contacts() {
                 data-testid="contact-edit-email"
                 onChange={(e) => setEditing({ ...editing, email: e.target.value })}
               />
+              <div className="flex items-center gap-2 pt-1">
+                <Checkbox
+                  id="contact-dnc-calls"
+                  checked={!!editing.doNotCall}
+                  onCheckedChange={(checked) => setEditing({ ...editing, doNotCall: !!checked })}
+                  data-testid="contact-edit-dnc-calls"
+                />
+                <Label htmlFor="contact-dnc-calls" className="text-sm cursor-pointer">
+                  Do Not Call
+                </Label>
+              </div>
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  id="contact-dnc-texts"
+                  checked={!!editing.doNotText}
+                  onCheckedChange={(checked) => setEditing({ ...editing, doNotText: !!checked })}
+                  data-testid="contact-edit-dnc-texts"
+                />
+                <Label htmlFor="contact-dnc-texts" className="text-sm cursor-pointer">
+                  Do Not Text
+                </Label>
+              </div>
             </div>
             <div className="flex justify-end gap-2 mt-4">
               <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>

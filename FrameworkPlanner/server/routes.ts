@@ -168,7 +168,10 @@ function reg(method: string, path: string) {
 const BOOT_TIME = new Date();
 // C6: minimum number of API routes this build registers. If /api/system/routes
 // reports fewer, the route bootstrap partially failed (the 09-11 outage mode).
-const EXPECTED_ROUTE_COUNT = 450;
+// Item 9 (2026-09-16 audit): this build registers 474 routes statically (470
+// at runtime); the floor must sit below runtime counts so healthy boots don't
+// warn with "470/450".
+const EXPECTED_ROUTE_COUNT = 465;
 
 function parseLimitOffset(query: any): { limit: number; offset: number } {
   const DEFAULT_LIMIT = 50;
@@ -6551,6 +6554,22 @@ export async function registerRoutes(
     }
   });
 
+  reg("get", "/api/buyers/:id/sms-thread"); app.get("/api/buyers/:id/sms-thread", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid buyer id", code: "INVALID_BUYER_ID" });
+      }
+      const messages = await storage.getSmsThreadByBuyer(id);
+      res.json({ messages });
+    } catch (error: any) {
+      console.error("Buyer SMS thread error:", error);
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
+
   reg("post", "/api/deal-assignments"); app.post("/api/deal-assignments", async (req, res) => {
     try {
       const actor = await requireAuth(req, res);
@@ -7643,11 +7662,17 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
         }
       }
       if ((patch.disposition || patch.note) && (effectiveLeadId || propertyId)) {
+        // Item 6 (2026-09-16 audit): the note was saved to the call log but the
+        // timeline card only ever showed the disposition — include the note text
+        // in the description so it actually renders.
+        const noteText = typeof patch.note === "string" ? patch.note.trim() : "";
         await storage.createGlobalActivity({
           userId: user.id,
           action: "call_dispositioned",
-          description: patch.disposition ? `Disposition: ${String(patch.disposition)}` : "Disposition updated",
-          metadata: JSON.stringify({ leadId: effectiveLeadId || undefined, propertyId: propertyId || undefined, callLogId: updated.id, disposition: patch.disposition || undefined }),
+          description: patch.disposition
+            ? `Disposition: ${String(patch.disposition)}${noteText ? ` — ${noteText}` : ""}`
+            : (noteText || "Disposition updated"),
+          metadata: JSON.stringify({ leadId: effectiveLeadId || undefined, propertyId: propertyId || undefined, callLogId: updated.id, disposition: patch.disposition || undefined, note: noteText || undefined }),
         } as any);
       }
       if (followUpAtRaw && effectiveLeadId) {
@@ -8242,7 +8267,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
         { key: "jobs", label: "Background jobs / queues", state: has("CRON_SECRET") || has("JOBS_ENABLED") ? "healthy" : "unconfigured", detail: "No background job runner configured — reminders/digests run on-demand", lastChecked: checkedAt },
         { key: "email", label: "Email provider", state: has("RESEND_API_KEY") || has("SMTP_HOST") || has("EMAIL_FROM") ? "healthy" : "unconfigured", detail: has("RESEND_API_KEY") || has("SMTP_HOST") ? "Email provider configured" : "No email provider configured — email notifications are disabled", lastChecked: checkedAt },
         { key: "telnyx_voice", label: "Telnyx Voice", state: telnyxReady ? "healthy" : telnyxResult.status === "unconfigured" ? "unconfigured" : "unavailable", detail: telnyxResult.message || "Unknown", hint: (telnyxResult as any).hint || null, lastChecked: checkedAt },
-        { key: "telnyx_sms", label: "Telnyx SMS", state: telnyxReady && has("TELNYX_MESSAGING_PROFILE_ID") ? "healthy" : !has("TELNYX_MESSAGING_PROFILE_ID") ? "unconfigured" : "unavailable", detail: !has("TELNYX_MESSAGING_PROFILE_ID") ? "TELNYX_MESSAGING_PROFILE_ID missing" : "SMS requires valid Telnyx credentials", lastChecked: checkedAt },
+        { key: "telnyx_sms", label: "Telnyx SMS", state: telnyxReady && has("TELNYX_MESSAGING_PROFILE_ID") ? "healthy" : !has("TELNYX_MESSAGING_PROFILE_ID") ? "unconfigured" : telnyxResult.httpStatus === 401 || telnyxResult.httpStatus === 403 ? "unavailable" : !telnyxReady ? "unavailable" : "healthy", detail: !has("TELNYX_MESSAGING_PROFILE_ID") ? "TELNYX_MESSAGING_PROFILE_ID missing" : telnyxResult.httpStatus === 401 || telnyxResult.httpStatus === 403 ? `Telnyx rejected the API key (HTTP ${telnyxResult.httpStatus}) — rotate the key in the Telnyx portal` : !telnyxReady ? (telnyxResult.message || "Telnyx API unreachable") : "SMS provider reachable and profile configured", lastChecked: checkedAt },
         { key: "telnyx_webhook", label: "Telnyx webhook", state: has("TELNYX_WEBHOOK_URL") ? "healthy" : "unconfigured", detail: has("TELNYX_WEBHOOK_URL") ? "Webhook URL configured" : "TELNYX_WEBHOOK_URL missing — call events / inbound SMS not received", lastChecked: checkedAt },
         { key: "skip_trace", label: "Skip trace provider", state: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") || process.env.SKIP_TRACE_PROVIDER === "free-web" ? "healthy" : "unconfigured", detail: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") ? "Skip trace provider configured" : process.env.SKIP_TRACE_PROVIDER === "free-web" ? "Free public-web research provider active (no API keys required)" : "No skip trace provider configured — set SKIP_TRACE_PROVIDER=free-web for free lookups", lastChecked: checkedAt },
         { key: "calendar", label: "Calendar / meetings", state: "healthy", detail: "Internal CRM calendar active; external calendar sync requires an opt-in connector", lastChecked: checkedAt },
@@ -8285,6 +8310,50 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       }
       if (!String(body).trim()) {
         return res.status(400).json({ error: "SMS body cannot be empty", code: "EMPTY_BODY" });
+      }
+
+      // ── Buyer DNC gate: never text a buyer that opted out ──
+      const metaBuyerId = (metadata as any)?.buyerId ? Number((metadata as any).buyerId) : null;
+      const buyerId = metaBuyerId && Number.isFinite(metaBuyerId) && metaBuyerId > 0 ? metaBuyerId : null;
+      if (buyerId) {
+        try {
+          const dncBuyer = await storage.getBuyerById(buyerId);
+          if (dncBuyer?.doNotCall) {
+            return res.status(403).json({ error: "Buyer is marked do-not-call", code: "DNC_BLOCKED" });
+          }
+        } catch (e) {
+          console.error("Buyer DNC check failed (non-blocking):", e);
+        }
+      }
+
+      // ── Lead & contact DNC gate (item 2, 2026-09-16 audit): a DNC flag on
+      // the lead or the contact record blocks outbound SMS to that number ──
+      try {
+        const digits = String(to).replace(/\D/g, "");
+        const last10 = digits.slice(-10);
+        if (last10.length >= 7) {
+          const like = `%${last10}`;
+          const leadRows: any = await db.execute(sql`
+            SELECT id, do_not_call, do_not_text FROM leads
+            WHERE regexp_replace(COALESCE(owner_phone, ''), '\\D', '', 'g') LIKE ${like}
+            ORDER BY id DESC LIMIT 1
+          `);
+          const leadHit = (leadRows as any).rows?.[0];
+          if (leadHit && (leadHit.do_not_call || leadHit.do_not_text)) {
+            return res.status(403).json({ error: "This lead is marked Do Not Contact and cannot be texted.", code: "DNC_BLOCKED" });
+          }
+          const contactRows: any = await db.execute(sql`
+            SELECT id, do_not_call, do_not_text FROM contacts
+            WHERE regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') LIKE ${like}
+            ORDER BY id DESC LIMIT 1
+          `);
+          const contactHit = (contactRows as any).rows?.[0];
+          if (contactHit && (contactHit.do_not_call || contactHit.do_not_text)) {
+            return res.status(403).json({ error: "This contact is marked Do Not Contact and cannot be texted.", code: "DNC_BLOCKED" });
+          }
+        }
+      } catch (e) {
+        console.error("Lead/contact DNC check failed (non-blocking):", e);
       }
 
       // ── Media attachments: MMS when carrier-safe, secure-link otherwise ──
@@ -8361,6 +8430,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
           status: smsStatus,
           providerMessageId: sid || null,
           leadId: metaLeadId && Number.isFinite(metaLeadId) && metaLeadId > 0 ? metaLeadId : null,
+          buyerId: buyerId,
           metadata: JSON.stringify(metaObj),
         } as any);
         persistedMsgId = msg?.id ?? null;
@@ -8387,13 +8457,13 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       if (metadata && typeof metadata === "object") {
         const leadId = (metadata as any).leadId ? Number((metadata as any).leadId) : null;
         const propertyId = (metadata as any).propertyId ? Number((metadata as any).propertyId) : null;
-        if (leadId || propertyId) {
+        if (leadId || propertyId || buyerId) {
           try {
             await storage.createGlobalActivity({
               userId: user.id,
               action: "sms_sent",
               description: `Sent SMS to ${String(to || "")}`,
-              metadata: JSON.stringify({ leadId: leadId || undefined, propertyId: propertyId || undefined, to: String(to || ""), sid, status: smsStatus, body: finalBody, deliveryMode: deliveryMode || undefined }),
+              metadata: JSON.stringify({ leadId: leadId || undefined, propertyId: propertyId || undefined, buyerId: buyerId || undefined, to: String(to || ""), sid, status: smsStatus, body: finalBody, deliveryMode: deliveryMode || undefined }),
             } as any);
           } catch {}
         }
@@ -8488,6 +8558,30 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
           code: "DO_NOT_CALL",
           leadId: effectiveLeadId,
         });
+      }
+      // Item 2 (2026-09-16 audit): a contact record flagged DNC blocks calls
+      // to that number too — DNC must hold wherever the phone number appears.
+      if (!dncBlocked) {
+        try {
+          const digits = String(toNumber).replace(/\D/g, "");
+          const last10 = digits.slice(-10);
+          if (last10.length >= 7) {
+            const contactRows: any = await db.execute(sql`
+              SELECT id FROM contacts
+              WHERE do_not_call = true
+                AND regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') LIKE ${`%${last10}`}
+              ORDER BY id DESC LIMIT 1
+            `);
+            if ((contactRows as any).rows?.[0]) {
+              return res.status(403).json({
+                error: "This contact is marked Do Not Call and cannot be dialed.",
+                code: "DO_NOT_CALL",
+              });
+            }
+          }
+        } catch (e) {
+          console.error("Dispatch contact DNC lookup failed (non-blocking):", e);
+        }
       }
 
       // Reject a second simultaneous outbound call for the same user.
@@ -9374,15 +9468,18 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       const opportunityId = req.query.opportunityId ? parseInt(req.query.opportunityId as string) : undefined;
       const effPropertyId = propertyId ?? opportunityId;
       const { limit, offset } = parseLimitOffset(req.query);
+      // Item 7 (2026-09-16 audit): archived contracts are excluded unless the
+      // caller explicitly asks for them.
+      const includeArchived = req.query.includeArchived === "true" || req.query.includeArchived === "1";
       if (effPropertyId) {
-        const byProp = await storage.getContractsByPropertyId(effPropertyId, limit, offset);
+        const byProp = await storage.getContractsByPropertyId(effPropertyId, limit, offset, { includeArchived });
         if (opportunityId && !propertyId) {
           const items = (byProp as any[]).filter((c: any) => !c.opportunityId || Number(c.opportunityId) === opportunityId);
           return res.json(items);
         }
         return res.json(byProp);
       }
-      const items = await storage.getContracts(limit, offset);
+      const items = await storage.getContracts(limit, offset, { includeArchived });
       res.json(items);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -9445,6 +9542,29 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       if (!actor) return;
       await storage.deleteContract(parseInt(req.params.id));
       res.json({ message: "Contract deleted" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // Item 7 (2026-09-16 audit): genuine archive state with a restore path.
+  reg("post", "/api/contracts/:id/archive"); app.post("/api/contracts/:id/archive", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const contract = await storage.archiveContract(parseInt(req.params.id), true);
+      if (!contract) return res.status(404).json({ message: "Contract not found" });
+      res.json(contract);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/contracts/:id/unarchive"); app.post("/api/contracts/:id/unarchive", async (req, res) => {
+    try {
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const contract = await storage.archiveContract(parseInt(req.params.id), false);
+      if (!contract) return res.status(404).json({ message: "Contract not found" });
+      res.json(contract);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -9937,6 +10057,16 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       const titleReceived = !!closingData.titleReceived;
       const fundsWired = !!closingData.fundsWired;
       const docsRecorded = !!closingData.docsRecorded;
+
+      // Item 3 (2026-09-16 audit): the close must fail LOUDLY, not silently.
+      // Enforce the same rules the client dialog shows — a real fee and a
+      // completed checklist — so an incomplete close can never be accepted.
+      if (assignmentFee === null) {
+        return res.status(400).json({ message: "Enter the assignment fee collected (0 or more).", code: "FEE_REQUIRED" });
+      }
+      if (!buyerPaid || !titleReceived || !fundsWired || !docsRecorded) {
+        return res.status(400).json({ message: "Complete all closing checklist items before closing the deal.", code: "CHECKLIST_INCOMPLETE" });
+      }
 
       // M47: persist the closing record into mergeData so Dashboard revenue
       // (which reads mergeData.closingData.assignmentFee) reflects the close.

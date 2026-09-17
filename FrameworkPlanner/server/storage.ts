@@ -330,11 +330,12 @@ export interface IStorage {
   >;
 
   // Contracts
-  getContracts(limit?: number, offset?: number): Promise<Contract[]>;
-  getContractsByPropertyId(propertyId: number, limit?: number, offset?: number): Promise<Contract[]>;
+  getContracts(limit?: number, offset?: number, opts?: { includeArchived?: boolean }): Promise<Contract[]>;
+  getContractsByPropertyId(propertyId: number, limit?: number, offset?: number, opts?: { includeArchived?: boolean }): Promise<Contract[]>;
   getContractById(id: number): Promise<Contract | undefined>;
   createContract(contract: InsertContract): Promise<Contract>;
   updateContract(id: number, contract: Partial<InsertContract>): Promise<Contract>;
+  archiveContract(id: number, archived: boolean): Promise<Contract | undefined>;
   deleteContract(id: number): Promise<void>;
 
   // Contract Templates
@@ -2063,16 +2064,30 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Contracts
-  async getContracts(limit?: number, offset: number = 0): Promise<Contract[]> {
+  async getContracts(limit?: number, offset: number = 0, opts?: { includeArchived?: boolean }): Promise<Contract[]> {
+    // Item 7 (2026-09-16 audit): archived contracts are excluded by default;
+    // callers opt in explicitly.
     let q: any = db.select().from(contracts);
+    if (!opts?.includeArchived) q = q.where(isNull(contracts.archivedAt));
     if (typeof limit === "number") q = q.limit(limit).offset(offset);
     return q as unknown as Promise<Contract[]>;
   }
 
-  async getContractsByPropertyId(propertyId: number, limit?: number, offset: number = 0): Promise<Contract[]> {
+  async getContractsByPropertyId(propertyId: number, limit?: number, offset: number = 0, opts?: { includeArchived?: boolean }): Promise<Contract[]> {
     let q: any = db.select().from(contracts).where(eq(contracts.propertyId, propertyId));
+    if (!opts?.includeArchived) q = q.where(and(eq(contracts.propertyId, propertyId), isNull(contracts.archivedAt)));
     if (typeof limit === "number") q = q.limit(limit).offset(offset);
     return q as unknown as Promise<Contract[]>;
+  }
+
+  async archiveContract(id: number, archived: boolean): Promise<Contract | undefined> {
+    // Item 7: genuine archive/unarchive — the list endpoints exclude archived.
+    const result = await db
+      .update(contracts)
+      .set({ archivedAt: archived ? new Date() : null } as any)
+      .where(eq(contracts.id, id))
+      .returning();
+    return result[0];
   }
 
   async getContractById(id: number): Promise<Contract | undefined> {

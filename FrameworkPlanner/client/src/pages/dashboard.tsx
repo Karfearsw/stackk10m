@@ -232,12 +232,16 @@ export default function Dashboard() {
   }, [leads, tasks, contractDocuments, contracts, stats]);
 
   const kpiData = useMemo(() => {
-    // N1: closed-deal count and revenue come from the shared metrics helper
-    // (same rule as Analytics) so the two pages can't disagree.
+    // N1: revenue comes from the shared metrics helper (same rule as Analytics)
+    // so the two pages can't disagree on dollars.
     // DEV-002: the deal ledger feeds the helper too, so pipeline closes count.
     const metrics = computeDealMetrics(contracts, contractDocuments, { ledger: dealLedger });
     const totalAssignmentFees = metrics.revenue;
-    const closedDeals = metrics.dealsClosed;
+    // F1 (2026-09-16 audit): the closed-deal COUNT comes from the same
+    // opportunities rows the pipeline board counts (stage === 'closed') —
+    // the KPI and /opportunities can no longer disagree. Revenue stays
+    // ledger-derived above.
+    const closedDeals = properties.filter((p: any) => String(p.stage || "") === "closed").length;
 
     const activeLeads = typeof stats?.activeLeads === "number"
       ? stats.activeLeads
@@ -295,7 +299,7 @@ export default function Dashboard() {
         href: "/analytics",
       }
     ];
-  }, [leads, contracts, contractDocuments, stats, dealLedger]);
+  }, [leads, properties, contracts, contractDocuments, stats, dealLedger]);
 
   const groupedActivityLogs = useMemo((): ActivityLog[] => {
     const windowMs = 15 * 60 * 1000;

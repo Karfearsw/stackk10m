@@ -543,6 +543,10 @@ export const contacts = pgTable("contacts", {
   company: varchar("company", { length: 255 }),
   notes: text("notes"),
   dedupeKey: varchar("dedupe_key", { length: 400 }),
+  // Item 2 (2026-09-16 audit): do-not-contact flags surfaced on the contacts
+  // page and enforced on outbound sends.
+  doNotCall: boolean("do_not_call").notNull().default(false),
+  doNotText: boolean("do_not_text").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -573,6 +577,8 @@ export const contracts = pgTable("contracts", {
   templateId: integer("template_id"),
   templateVersion: integer("template_version"),
   generatedDocumentId: integer("generated_document_id"),
+  // Item 7 (2026-09-16 audit): genuine archive state — non-null means archived.
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
   executedDocumentId: integer("executed_document_id"),
   mergeDataSnapshot: jsonb("merge_data_snapshot").default(sql`'{}'::jsonb`),
   purchasePrice: decimal("purchase_price", { precision: 12, scale: 2 }),

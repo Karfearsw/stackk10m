@@ -65,35 +65,13 @@ export default function XpExperiencePage() {
   const experience = experienceQuery.data?.experience;
   const experienceMissing = experienceQuery.isError || (!experienceQuery.isLoading && !experience);
 
-  if (experienceQuery.isLoading) {
-    return (
-      <XpPublicShell>
-        <div className="flex min-h-[40vh] items-center justify-center">
-          <p className="text-sm text-muted-foreground">Loading experience…</p>
-        </div>
-      </XpPublicShell>
-    );
-  }
-
-  if (experienceMissing) {
-    return (
-      <XpPublicShell>
-        <div className="mx-auto max-w-lg space-y-4 py-16 text-center">
-          <h1 className="text-2xl font-semibold tracking-tight">Experience not found</h1>
-          <p className="text-sm text-muted-foreground">
-            We couldn't find an experience called "{slug}". It may have been removed
-            or the link is wrong.
-          </p>
-          <a
-            href="/xp"
-            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-          >
-            Browse experiences
-          </a>
-        </div>
-      </XpPublicShell>
-    );
-  }
+  // Hooks-order fix (2026-09-16 audit, item 4): every hook must run on every
+  // render. The loading/not-found early returns used to sit ABOVE the state,
+  // effects, and queries below, so the first render (loading) ran fewer hooks
+  // than the data render — React threw "Rendered more hooks..." and the page
+  // crashed on first visit, recovering only after Try again (cached query,
+  // no loading state). All hooks now run unconditionally; the early returns
+  // live below them, just before the JSX.
   const mode = String(experience?.mode || "");
   const paymentMode = String(experience?.paymentMode || "deposit").toLowerCase();
   const currency = String(experience?.currency || "USD").toUpperCase();
@@ -211,14 +189,6 @@ export default function XpExperiencePage() {
     },
   });
 
-  const allowTimeSlot = mode === "time_slot" || mode === "both";
-  const allowDateRange = mode === "date_range" || mode === "both";
-
-  const ready = !!experience && ((kind === "time_slot" && !!selectedSlot) || (kind === "date_range" && !!range?.from && !!range?.to));
-
-  const dueNow = paymentMode === "full" ? experience?.priceTotal : experience?.depositAmount;
-  const total = experience?.priceTotal;
-
   const groupedSlots = useMemo(() => {
     const groups = new Map<string, XpAvailabilityTimeSlot[]>();
     for (const s of timeSlots.filter((x) => Number(x.remaining || 0) > 0)) {
@@ -230,6 +200,44 @@ export default function XpExperiencePage() {
     }
     return Array.from(groups.entries()).map(([k, v]) => ({ key: k, date: new Date(k), slots: v.sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime()) }));
   }, [timeSlots]);
+
+  if (experienceQuery.isLoading) {
+    return (
+      <XpPublicShell>
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <p className="text-sm text-muted-foreground">Loading experience…</p>
+        </div>
+      </XpPublicShell>
+    );
+  }
+
+  if (experienceMissing) {
+    return (
+      <XpPublicShell>
+        <div className="mx-auto max-w-lg space-y-4 py-16 text-center">
+          <h1 className="text-2xl font-semibold tracking-tight">Experience not found</h1>
+          <p className="text-sm text-muted-foreground">
+            We couldn't find an experience called "{slug}". It may have been removed
+            or the link is wrong.
+          </p>
+          <a
+            href="/xp"
+            className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            Browse experiences
+          </a>
+        </div>
+      </XpPublicShell>
+    );
+  }
+
+  const allowTimeSlot = mode === "time_slot" || mode === "both";
+  const allowDateRange = mode === "date_range" || mode === "both";
+
+  const ready = !!experience && ((kind === "time_slot" && !!selectedSlot) || (kind === "date_range" && !!range?.from && !!range?.to));
+
+  const dueNow = paymentMode === "full" ? experience?.priceTotal : experience?.depositAmount;
+  const total = experience?.priceTotal;
 
   return (
     <XpPublicShell>

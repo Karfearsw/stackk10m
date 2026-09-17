@@ -1420,6 +1420,11 @@ function ClosingModule({ contracts, properties }: { contracts: any[], properties
       }
       return response.json();
     },
+    // Item 3 (2026-09-16 audit): failures must be visible — this used to have
+    // no onError, so a rejected close silently did nothing.
+    onError: (e: any) => {
+      toast({ title: e?.message || "Failed to close deal", variant: "destructive" });
+    },
     onSuccess: () => {
       toast({ title: "Deal closed successfully!", description: "Revenue recorded on the deal ledger; opportunity moved to Sold." });
       queryClient.invalidateQueries({ queryKey: ['/api/contract-documents'] });
@@ -1447,7 +1452,7 @@ function ClosingModule({ contracts, properties }: { contracts: any[], properties
       return;
     }
     if (!allChecked) {
-      toast({ title: "Please complete all checklist items", variant: "destructive" });
+      toast({ title: "Complete all checklist items to close the deal", description: "Tick every box in the Closing Checklist above, then save.", variant: "destructive" });
       return;
     }
     closeContractMutation.mutate({

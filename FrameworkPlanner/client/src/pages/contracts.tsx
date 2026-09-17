@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { Plus, Filter, FileText, Download, Eye, AlertCircle, ChevronRight, Trash2 } from "lucide-react";
+import { Plus, Filter, FileText, Download, Eye, AlertCircle, ChevronRight, Trash2, Archive, ArchiveRestore } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { toast } from "sonner";
@@ -58,6 +58,7 @@ type Contract = {
   earnestMoney?: string;
   sentAt?: string;
   executedAt?: string;
+  archivedAt?: string | null;
   signedAt?: string;
   expiresAt?: string;
 };
@@ -90,13 +91,18 @@ export default function Contracts() {
     };
   }, [location]);
 
+  // Item 7 (2026-09-16 audit): genuine archive — archived contracts are hidden
+  // by default; this toggle brings them back with an Unarchive action.
+  const [showArchived, setShowArchived] = useState(false);
+
   const { data: contracts = [], isLoading } = useQuery({
-    queryKey: ["/api/contracts", urlParams.statusIn],
+    queryKey: ["/api/contracts", urlParams.statusIn, showArchived],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (urlParams.statusIn.length > 0) {
         params.set("statusIn", urlParams.statusIn.join(","));
       }
+      if (showArchived) params.set("includeArchived", "true");
       const url = `/api/contracts${params.toString() ? `?${params.toString()}` : ""}`;
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error(`Failed to fetch contracts (${res.status})`);
@@ -140,6 +146,20 @@ export default function Contracts() {
 
   // M18: contracts previously could not be deleted from this page (test
   // clutter was permanent without DB access). Executed contracts are protected.
+  // Item 7: real archive with a restore path — archived contracts disappear
+  // from the default list instead of cluttering it.
+  const archiveMutation = useMutation({
+    mutationFn: async ({ id, archived }: { id: number; archived: boolean }) => {
+      const res = await apiRequest("POST", `/api/contracts/${id}/${archived ? "unarchive" : "archive"}`);
+      return res.json();
+    },
+    onSuccess: (_data: any, vars: any) => {
+      toast.success(vars?.archived ? "Contract unarchived" : "Contract archived");
+      queryClient.invalidateQueries({ queryKey: ["/api/contracts"] });
+    },
+    onError: (e: any) => toast.error(e?.message || "Failed to update contract"),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
       const res = await apiRequest("DELETE", `/api/contracts/${id}`);
@@ -241,6 +261,15 @@ export default function Contracts() {
               <CardDescription>View and manage all contracts</CardDescription>
             </div>
             <div className="flex gap-2">
+              <Button
+                variant={showArchived ? "secondary" : "outline"}
+                size="sm"
+                onClick={() => setShowArchived((v) => !v)}
+                data-testid="button-toggle-archived-contracts"
+              >
+                <Archive className="w-4 h-4 mr-2" />
+                {showArchived ? "Hide archived" : "Show archived"}
+              </Button>
               <Select value={urlParams.statusIn[0] || "__all__"} onValueChange={(v) => {
                 const params = new URLSearchParams(window.location.search);
                 if (v && v !== "__all__") params.set("statusIn", v); else params.delete("statusIn");
@@ -306,6 +335,29 @@ export default function Contracts() {
                     <Button variant="outline" size="sm" asChild>
                       <a href={`/contracts/${contract.id}`}><Eye className="w-4 h-4 mr-2" /> View</a>
                     </Button>
+                    {contract.archivedAt ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={archiveMutation.isPending}
+                        title="Restore this contract to the active list"
+                        onClick={() => archiveMutation.mutate({ id: contract.id, archived: true })}
+                        data-testid={`button-unarchive-contract-${contract.id}`}
+                      >
+                        <ArchiveRestore className="w-4 h-4 mr-2" /> Unarchive
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={archiveMutation.isPending}
+                        title="Move this contract out of the active list (recoverable)"
+                        onClick={() => archiveMutation.mutate({ id: contract.id, archived: false })}
+                        data-testid={`button-archive-contract-${contract.id}`}
+                      >
+                        <Archive className="w-4 h-4 mr-2" /> Archive
+                      </Button>
+                    )}
                     {confirmDeleteId === contract.id ? (
                       <>
                         <Button

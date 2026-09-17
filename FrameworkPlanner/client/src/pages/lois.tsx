@@ -14,6 +14,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -41,6 +51,10 @@ export default function LoisPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  // Item 5 (2026-09-16 audit): the delete icon opened a native window.confirm
+  // that never rendered in-context — the button looked dead. Delete intent now
+  // flows through this state into an AlertDialog, same as lead delete.
+  const [loiToDelete, setLoiToDelete] = useState<any>(null);
   const [form, setForm] = useState({
     propertyId: "",
     buyerName: "",
@@ -206,11 +220,9 @@ export default function LoisPage() {
                         size="sm"
                         variant="ghost"
                         className="text-destructive hover:text-destructive"
-                        onClick={() => {
-                          if (window.confirm(`Delete this LOI (${loi.buyerName} → ${loi.sellerName})? This cannot be undone.`)) {
-                            deleteMutation.mutate(loi.id);
-                          }
-                        }}
+                        title="Delete LOI"
+                        aria-label={`Delete LOI ${loi.buyerName} to ${loi.sellerName}`}
+                        onClick={() => setLoiToDelete(loi)}
                         disabled={deleteMutation.isPending}
                         data-testid={`button-loi-delete-${loi.id}`}
                       >
@@ -276,6 +288,36 @@ export default function LoisPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <AlertDialog open={!!loiToDelete} onOpenChange={(open) => { if (!open) setLoiToDelete(null); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete this LOI?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {loiToDelete ? (
+                  <>Delete the LOI from <span className="font-medium text-foreground">{loiToDelete.buyerName}</span> to <span className="font-medium text-foreground">{loiToDelete.sellerName}</span>? This cannot be undone.</>
+                ) : (
+                  "This cannot be undone."
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={deleteMutation.isPending}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={() => {
+                  if (!loiToDelete) return;
+                  deleteMutation.mutate(loiToDelete.id, {
+                    onSuccess: () => setLoiToDelete(null),
+                  });
+                }}
+              >
+                {deleteMutation.isPending ? "Deleting…" : "Delete LOI"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </Layout>
   );

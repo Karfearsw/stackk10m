@@ -648,9 +648,15 @@ export default function CommunicationsWorkspace() {
                       )}
                       <div className="flex items-center justify-between">
                         <span className="text-xs text-muted-foreground">{smsBody.length} / 160 chars</span>
-                        <Button onClick={() => sendSms.mutate({ to: effectivePhone, body: smsBody })} disabled={!effectivePhone || !smsBody.trim() || sendSms.isPending}>
-                          {sendSms.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />} Send
-                        </Button>
+                        {lead?.doNotCall || lead?.doNotText ? (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-destructive" data-testid="sms-dnc-blocked">
+                            <PhoneOff className="w-3.5 h-3.5" /> Lead is Do Not Contact — sending blocked
+                          </span>
+                        ) : (
+                          <Button onClick={() => sendSms.mutate({ to: effectivePhone, body: smsBody })} disabled={!effectivePhone || !smsBody.trim() || sendSms.isPending}>
+                            {sendSms.isPending ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Send className="w-4 h-4 mr-2" />} Send
+                          </Button>
+                        )}
                       </div>
                     </div>
                   </TabsContent>

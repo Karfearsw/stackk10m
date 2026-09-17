@@ -1815,7 +1815,7 @@ export default function PropertyDetail() {
                 }
                 const allChecked = closeDealForm.buyerPaid && closeDealForm.titleReceived && closeDealForm.fundsWired && closeDealForm.docsRecorded;
                 if (!allChecked) {
-                  toast({ title: "Please complete all checklist items", variant: "destructive" });
+                  toast({ title: "Complete all checklist items to close the deal", description: "Tick every box in the Closing Checklist above, then save.", variant: "destructive" });
                   return;
                 }
                 closeDealMutation.mutate(closeDealForm);
