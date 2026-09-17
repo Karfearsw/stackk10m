@@ -356,6 +356,7 @@ export default async function runApp(
         id serial PRIMARY KEY,
         user_id integer,
         lead_id integer,
+        buyer_id integer,
         direction varchar(10) NOT NULL DEFAULT 'outbound',
         from_number varchar(20),
         to_number varchar(20),
@@ -366,6 +367,11 @@ export default async function runApp(
         created_at timestamptz NOT NULL DEFAULT now()
       );
     `);
+    // Buyer SMS columns (migration 0069) — idempotent for DBs created before it.
+    await pool.query(`ALTER TABLE crm_sms_messages ADD COLUMN IF NOT EXISTS buyer_id integer;`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_crm_sms_messages_buyer ON crm_sms_messages (buyer_id, created_at);`);
+    await pool.query(`ALTER TABLE buyers ADD COLUMN IF NOT EXISTS do_not_call boolean NOT NULL DEFAULT false;`);
+    await pool.query(`ALTER TABLE buyers ADD COLUMN IF NOT EXISTS dnc_updated_at timestamptz;`);
     // Two-legged call sessions (migration 0056 fallback)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS crm_call_sessions (

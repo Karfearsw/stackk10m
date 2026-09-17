@@ -271,12 +271,14 @@ export async function listMediaForEntity(input: {
 /**
  * Batched hydration: fetch full assets for many entities of one type in a
  * single team-scoped query. Returns a map keyed by entityId (only entities
- * that actually have media appear as keys).
+ * that actually have media appear as keys). Optional role filters by
+ * attachment_role.
  */
 export async function listMediaByAttachments(input: {
   teamId: number;
   entityType: string;
   entityIds: number[];
+  role?: string | null;
 }): Promise<Record<number, MediaAsset[]>> {
   const ids = (input.entityIds || []).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0);
   if (!ids.length) return {};
@@ -288,6 +290,7 @@ export async function listMediaByAttachments(input: {
       AND m.deleted_at IS NULL
       AND a.entity_type = ${input.entityType}
       AND a.entity_id = ANY(${ids})
+    ${input.role ? sql`AND a.attachment_role = ${input.role}` : sql``}
     ORDER BY a.created_at ASC, m.id ASC
   `);
   const out: Record<number, MediaAsset[]> = {};

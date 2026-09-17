@@ -1620,6 +1620,8 @@ export const buyers = pgTable("buyers", {
   tags: text("tags").array(),
   lastContactDate: timestamp("last_contact_date"),
   dedupeKey: varchar("dedupe_key", { length: 400 }),
+  doNotCall: boolean("do_not_call").notNull().default(false),
+  dncUpdatedAt: timestamp("dnc_updated_at", { withTimezone: true }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -2167,6 +2169,7 @@ export const smsMessages = pgTable("crm_sms_messages", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   userId: integer("user_id"),
   leadId: integer("lead_id"),
+  buyerId: integer("buyer_id"),
   direction: varchar("direction", { length: 10 }).notNull().default("outbound"),
   fromNumber: varchar("from_number", { length: 20 }),
   toNumber: varchar("to_number", { length: 20 }),

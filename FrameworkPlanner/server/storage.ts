@@ -700,6 +700,8 @@ export interface IStorage {
   createSmsMessage(input: InsertSmsMessage): Promise<SmsMessage>;
   getSmsThreads(userId: number, limit?: number): Promise<Array<SmsMessage & { messageCount: number; lastAt?: string }>>;
   getSmsThreadMessages(phone: string, userId: number, limit?: number): Promise<SmsMessage[]>;
+  getSmsThreadByBuyer(buyerId: number): Promise<SmsMessage[]>;
+  setBuyerDnc(buyerId: number, dnc: boolean): Promise<Buyer>;
 
   // Call sessions — two-legged click-to-dial + AI screening/handoff
   createCallSession(input: InsertCallSession): Promise<CallSession>;
@@ -3624,6 +3626,23 @@ export class DatabaseStorage implements IStorage {
       LIMIT ${cap}
     `);
     return (result as any).rows || [];
+  }
+
+  async getSmsThreadByBuyer(buyerId: number): Promise<SmsMessage[]> {
+    return db
+      .select()
+      .from(smsMessages)
+      .where(eq(smsMessages.buyerId, buyerId))
+      .orderBy(asc(smsMessages.createdAt)) as unknown as Promise<SmsMessage[]>;
+  }
+
+  async setBuyerDnc(buyerId: number, dnc: boolean): Promise<Buyer> {
+    const result = await db
+      .update(buyers)
+      .set({ doNotCall: dnc, dncUpdatedAt: new Date(), updatedAt: new Date() } as any)
+      .where(eq(buyers.id, buyerId))
+      .returning();
+    return result[0];
   }
 
   private mapCallSessionRow(row: any): CallSession {
