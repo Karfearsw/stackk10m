@@ -7154,12 +7154,13 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     ]);
   });
   reg("get", "/api/dialer/scripts"); app.get("/api/dialer/scripts", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
+    const teamCtx = await requireActiveTeam(req, res);
+    if (!teamCtx) return;
+    const user = teamCtx.user;
     try {
       const listIdRaw = typeof req.query.listId === "string" ? req.query.listId : "";
       const listId = String(listIdRaw || "").trim() || null;
-      let where = sql`user_id = ${user.id}`;
+      let where = sql`team_id = ${teamCtx.teamId}`;
       if (listId) where = sql`${where} AND (list_id IS NULL OR list_id = ${listId})`;
       else where = sql`${where} AND list_id IS NULL`;
       const result: any = await db.execute(sql`
@@ -7174,8 +7175,9 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     }
   });
   reg("post", "/api/dialer/scripts"); app.post("/api/dialer/scripts", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
+    const teamCtx = await requireActiveTeam(req, res, { minRole: "admin" });
+    if (!teamCtx) return;
+    const user = teamCtx.user;
     try {
       const name = String(req.body?.name || "").trim();
       const content = String(req.body?.content || "");
@@ -7189,12 +7191,12 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
         await db.execute(sql`
           UPDATE dialer_scripts
           SET is_default = false, updated_at = now()
-          WHERE user_id = ${user.id} AND COALESCE(list_id, '') = ${listKey}
+          WHERE team_id = ${teamCtx.teamId} AND COALESCE(list_id, '') = ${listKey}
         `);
       }
       const result: any = await db.execute(sql`
-        INSERT INTO dialer_scripts (user_id, list_id, name, content, is_default, created_at, updated_at)
-        VALUES (${user.id}, ${listId}, ${name}, ${content}, ${isDefault}, now(), now())
+        INSERT INTO dialer_scripts (team_id, created_by, user_id, list_id, name, content, is_default, created_at, updated_at)
+        VALUES (${teamCtx.teamId}, ${user.id}, ${teamCtx.teamId}, ${listId}, ${name}, ${content}, ${isDefault}, now(), now())
         RETURNING id, list_id as "listId", name, content, is_default as "isDefault", created_at as "createdAt", updated_at as "updatedAt"
       `);
       res.status(201).json((result.rows || [])[0] || null);
@@ -7203,15 +7205,16 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     }
   });
   reg("patch", "/api/dialer/scripts/:id"); app.patch("/api/dialer/scripts/:id", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
+    const teamCtx = await requireActiveTeam(req, res, { minRole: "admin" });
+    if (!teamCtx) return;
+    const user = teamCtx.user;
     try {
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
       const before: any = await db.execute(sql`
         SELECT id, user_id as "userId", list_id as "listId", name, content, is_default as "isDefault"
         FROM dialer_scripts
-        WHERE id = ${id} AND user_id = ${user.id}
+        WHERE id = ${id} AND team_id = ${teamCtx.teamId}
         LIMIT 1
       `);
       const existing = (before.rows || [])[0];
@@ -7228,7 +7231,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
         await db.execute(sql`
           UPDATE dialer_scripts
           SET is_default = false, updated_at = now()
-          WHERE user_id = ${user.id} AND COALESCE(list_id, '') = ${listKey}
+          WHERE team_id = ${teamCtx.teamId} AND COALESCE(list_id, '') = ${listKey}
         `);
       }
       const result: any = await db.execute(sql`
@@ -7239,7 +7242,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
           content = ${contentNext},
           is_default = ${isDefaultNext},
           updated_at = now()
-        WHERE id = ${id} AND user_id = ${user.id}
+        WHERE id = ${id} AND team_id = ${teamCtx.teamId}
         RETURNING id, list_id as "listId", name, content, is_default as "isDefault", created_at as "createdAt", updated_at as "updatedAt"
       `);
       res.json((result.rows || [])[0] || null);
@@ -7248,12 +7251,12 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     }
   });
   reg("delete", "/api/dialer/scripts/:id"); app.delete("/api/dialer/scripts/:id", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
+    const teamCtx = await requireActiveTeam(req, res, { minRole: "admin" });
+    if (!teamCtx) return;
     try {
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-      await db.execute(sql`DELETE FROM dialer_scripts WHERE id = ${id} AND user_id = ${user.id}`);
+      await db.execute(sql`DELETE FROM dialer_scripts WHERE id = ${id} AND team_id = ${teamCtx.teamId}`);
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -7262,13 +7265,14 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   // ========================= SCRIPT LIBRARY ROUTES =========================
 
   reg("get", "/api/scripts"); app.get("/api/scripts", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
+    const teamCtx = await requireActiveTeam(req, res);
+    if (!teamCtx) return;
+    const user = teamCtx.user;
     try {
       const category = typeof req.query.category === "string" ? req.query.category.trim() : "";
       const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
       const showArchived = req.query.archived === "true";
-      let where = sql`user_id = ${user.id}`;
+      let where = sql`team_id = ${teamCtx.teamId}`;
       if (!showArchived) where = sql`${where} AND (is_archived IS NULL OR is_archived = false)`;
       if (category) where = sql`${where} AND category = ${category}`;
       if (search) where = sql`${where} AND (name ILIKE ${"%" + search + "%"} OR description ILIKE ${"%" + search + "%"} OR content ILIKE ${"%" + search + "%"})`;
@@ -7285,7 +7289,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       `);
       const cats: any = await db.execute(sql`
         SELECT DISTINCT category FROM dialer_scripts
-        WHERE user_id = ${user.id} AND (is_archived IS NULL OR is_archived = false)
+        WHERE team_id = ${teamCtx.teamId} AND (is_archived IS NULL OR is_archived = false)
         ORDER BY category
       `);
       res.json({ items: result.rows || [], categories: (cats.rows || []).map((r: any) => r.category) });
@@ -7295,8 +7299,9 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
 
   reg("post", "/api/scripts"); app.post("/api/scripts", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
+    const teamCtx = await requireActiveTeam(req, res, { minRole: "admin" });
+    if (!teamCtx) return;
+    const user = teamCtx.user;
     try {
       const name = String(req.body?.name || "").trim();
       const content = String(req.body?.content || "");
@@ -7308,14 +7313,14 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       if (name.length > 120) return res.status(400).json({ message: "Name too long" });
       if (content.length > 50_000) return res.status(400).json({ message: "Content too long" });
       if (isDefault) {
-        await db.execute(sql`UPDATE dialer_scripts SET is_default = false, updated_at = now() WHERE user_id = ${user.id} AND is_default = true`);
+        await db.execute(sql`UPDATE dialer_scripts SET is_default = false, updated_at = now() WHERE team_id = ${teamCtx.teamId} AND is_default = true`);
       }
       // drizzle expands JS arrays into parameter lists, so an empty tags array
       // produced `VALUES (..., )` — pass a Postgres array literal instead.
       const tagsLiteral = sql.raw(`ARRAY[${tags.map((t: string) => "'" + String(t).replace(/'/g, "''") + "'").join(",")}]::text[]`);
       const ins: any = await db.execute(sql`
-        INSERT INTO dialer_scripts (user_id, name, content, description, category, tags, is_default)
-        VALUES (${user.id}, ${name}, ${content}, ${description}, ${category}, ${tagsLiteral}, ${isDefault})
+        INSERT INTO dialer_scripts (team_id, created_by, user_id, name, content, description, category, tags, is_default)
+        VALUES (${teamCtx.teamId}, ${user.id}, ${teamCtx.teamId}, ${name}, ${content}, ${description}, ${category}, ${tagsLiteral}, ${isDefault})
         RETURNING id, name, content, description, category, tags, is_default as "isDefault", created_at as "createdAt"
       `);
       res.json({ item: (ins.rows || [])[0] });
@@ -7325,12 +7330,13 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
 
   reg("patch", "/api/scripts/:id"); app.patch("/api/scripts/:id", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
+    const teamCtx = await requireActiveTeam(req, res, { minRole: "admin" });
+    if (!teamCtx) return;
+    const user = teamCtx.user;
     try {
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-      const before: any = await db.execute(sql`SELECT id, name, content, description, category, tags, is_default as "isDefault" FROM dialer_scripts WHERE id = ${id} AND user_id = ${user.id} LIMIT 1`);
+      const before: any = await db.execute(sql`SELECT id, name, content, description, category, tags, is_default as "isDefault" FROM dialer_scripts WHERE id = ${id} AND team_id = ${teamCtx.teamId} LIMIT 1`);
       const existing = (before.rows || [])[0];
       if (!existing) return res.status(404).json({ message: "Not found" });
       const nameNext = typeof req.body?.name === "string" ? String(req.body.name).trim() : existing.name;
@@ -7341,9 +7347,9 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       const isDefaultNext = typeof req.body?.isDefault === "boolean" ? req.body.isDefault : existing.isDefault;
       if (!nameNext) return res.status(400).json({ message: "Script name is required" });
       if (isDefaultNext && !existing.isDefault) {
-        await db.execute(sql`UPDATE dialer_scripts SET is_default = false, updated_at = now() WHERE user_id = ${user.id} AND is_default = true AND id != ${id}`);
+        await db.execute(sql`UPDATE dialer_scripts SET is_default = false, updated_at = now() WHERE team_id = ${teamCtx.teamId} AND is_default = true AND id != ${id}`);
       }
-      await db.execute(sql`UPDATE dialer_scripts SET name = ${nameNext}, content = ${contentNext}, description = ${descNext}, category = ${catNext}, tags = ${tagsNext}, is_default = ${isDefaultNext}, updated_at = now() WHERE id = ${id} AND user_id = ${user.id}`);
+      await db.execute(sql`UPDATE dialer_scripts SET name = ${nameNext}, content = ${contentNext}, description = ${descNext}, category = ${catNext}, tags = ${tagsNext}, is_default = ${isDefaultNext}, updated_at = now() WHERE id = ${id} AND team_id = ${teamCtx.teamId}`);
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -7353,12 +7359,12 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   // M6: hard delete for scripts (archive alone left stale scripts stuck in
   // the library when the audit trail matters less than removal).
   reg("delete", "/api/scripts/:id"); app.delete("/api/scripts/:id", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
+    const teamCtx = await requireActiveTeam(req, res, { minRole: "admin" });
+    if (!teamCtx) return;
     try {
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-      await db.execute(sql`DELETE FROM dialer_scripts WHERE id = ${id} AND user_id = ${user.id}`);
+      await db.execute(sql`DELETE FROM dialer_scripts WHERE id = ${id} AND team_id = ${teamCtx.teamId}`);
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -7366,12 +7372,12 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
 
   reg("post", "/api/scripts/:id/archive"); app.post("/api/scripts/:id/archive", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
+    const teamCtx = await requireActiveTeam(req, res, { minRole: "admin" });
+    if (!teamCtx) return;
     try {
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
-      await db.execute(sql`UPDATE dialer_scripts SET is_archived = true, updated_at = now() WHERE id = ${id} AND user_id = ${user.id}`);
+      await db.execute(sql`UPDATE dialer_scripts SET is_archived = true, updated_at = now() WHERE id = ${id} AND team_id = ${teamCtx.teamId}`);
       res.json({ ok: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -7379,8 +7385,9 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
 
   reg("post", "/api/scripts/:id/practice"); app.post("/api/scripts/:id/practice", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
+    const teamCtx = await requireActiveTeam(req, res);
+    if (!teamCtx) return;
+    const user = teamCtx.user;
     try {
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
@@ -7388,7 +7395,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       if (!Number.isFinite(durationSeconds) || durationSeconds < 0) return res.status(400).json({ message: "Invalid duration" });
       const notes = String(req.body?.notes || "").slice(0, 2000);
       const leadId = req.body?.leadId ? parseInt(String(req.body.leadId), 10) : null;
-      const scriptCheck: any = await db.execute(sql`SELECT id FROM dialer_scripts WHERE id = ${id} AND user_id = ${user.id} LIMIT 1`);
+      const scriptCheck: any = await db.execute(sql`SELECT id FROM dialer_scripts WHERE id = ${id} AND team_id = ${teamCtx.teamId} LIMIT 1`);
       if (!(scriptCheck.rows || [])[0]) return res.status(404).json({ message: "Script not found" });
       await db.execute(sql`
         INSERT INTO script_practice_sessions (user_id, script_id, duration_seconds, notes, lead_id)
@@ -7397,11 +7404,11 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       // Update aggregate stats on the script
       const stats: any = await db.execute(sql`
         SELECT COUNT(*) as cnt, COALESCE(AVG(duration_seconds), 0) as avg_sec
-        FROM script_practice_sessions WHERE script_id = ${id} AND user_id = ${user.id}
+        FROM script_practice_sessions WHERE script_id = ${id}
       `);
       const row = (stats.rows || [])[0];
       if (row) {
-        await db.execute(sql`UPDATE dialer_scripts SET total_practice_count = ${parseInt(row.cnt)}, avg_practice_seconds = ${Math.round(parseFloat(row.avg_sec))}, last_practiced_at = now(), updated_at = now() WHERE id = ${id} AND user_id = ${user.id}`);
+        await db.execute(sql`UPDATE dialer_scripts SET total_practice_count = ${parseInt(row.cnt)}, avg_practice_seconds = ${Math.round(parseFloat(row.avg_sec))}, last_practiced_at = now(), updated_at = now() WHERE id = ${id} AND team_id = ${teamCtx.teamId}`);
       }
       res.json({ ok: true });
     } catch (error: any) {
@@ -7410,8 +7417,9 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
 
   reg("get", "/api/scripts/:id/practice"); app.get("/api/scripts/:id/practice", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
+    const teamCtx = await requireActiveTeam(req, res);
+    if (!teamCtx) return;
+    const user = teamCtx.user;
     try {
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
@@ -7419,7 +7427,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       const result: any = await db.execute(sql`
         SELECT id, duration_seconds as "durationSeconds", notes, lead_id as "leadId", created_at as "createdAt"
         FROM script_practice_sessions
-        WHERE script_id = ${id} AND user_id = ${user.id}
+        WHERE script_id = ${id}
         ORDER BY created_at DESC
         LIMIT ${limit}
       `);
@@ -7430,8 +7438,9 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
 
   reg("post", "/api/scripts/import"); app.post("/api/scripts/import", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
+    const teamCtx = await requireActiveTeam(req, res, { minRole: "admin" });
+    if (!teamCtx) return;
+    const user = teamCtx.user;
     try {
       const scripts = Array.isArray(req.body?.scripts) ? req.body.scripts : [];
       let created = 0;
@@ -7442,8 +7451,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
         const category = String(s?.category || "general").trim();
         const tags = Array.isArray(s?.tags) ? s.tags.filter((t: any) => typeof t === "string").slice(0, 10) : [];
         await db.execute(sql`
-          INSERT INTO dialer_scripts (user_id, name, content, description, category, tags)
-          VALUES (${user.id}, ${name}, ${content}, ${String(s?.description || "")}, ${category}, ${tags})
+          INSERT INTO dialer_scripts (team_id, created_by, user_id, name, content, description, category, tags)
+          VALUES (${teamCtx.teamId}, ${user.id}, ${teamCtx.teamId}, ${name}, ${content}, ${String(s?.description || "")}, ${category}, ${tags})
         `);
         created++;
       }
