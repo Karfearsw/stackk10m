@@ -485,12 +485,12 @@ export default function ContractWizard() {
             <div className="p-4 bg-accent/5 rounded-lg space-y-2">
               <h4 className="font-semibold">Contract Details</h4>
               <div className="grid grid-cols-2 gap-2 text-sm">
-                <div><span className="text-muted-foreground">Title:</span> {form.title || "—"}</div>
-                <div><span className="text-muted-foreground">Type:</span> {form.contractType || "—"}</div>
-                <div><span className="text-muted-foreground">Property:</span> {selectedProperty?.address || "—"}</div>
-                <div><span className="text-muted-foreground">Lead:</span> {selectedLead?.address || "—"}</div>
-                <div><span className="text-muted-foreground">Buyer:</span> {selectedBuyer?.name || "—"}</div>
-                <div><span className="text-muted-foreground">Seller:</span> {selectedSeller?.name || "—"}</div>
+                <div className="min-w-0"><span className="text-muted-foreground">Title:</span> <span className="break-words">{form.title || "—"}</span></div>
+                <div className="min-w-0"><span className="text-muted-foreground">Type:</span> {form.contractType || "—"}</div>
+                <div className="min-w-0"><span className="text-muted-foreground">Property:</span> <span className="break-words">{selectedProperty?.address || "—"}</span></div>
+                <div className="min-w-0"><span className="text-muted-foreground">Lead:</span> <span className="break-words">{selectedLead?.address || "—"}</span></div>
+                <div className="min-w-0"><span className="text-muted-foreground">Buyer:</span> <span className="break-words">{selectedBuyer?.name || "—"}</span></div>
+                <div className="min-w-0"><span className="text-muted-foreground">Seller:</span> <span className="break-words">{selectedSeller?.name || "—"}</span></div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-4">

@@ -4,9 +4,10 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const badgeVariants = cva(
-  // @replit
-  // Whitespace-nowrap: Badges should never wrap.
-  "whitespace-nowrap inline-flex items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2" +
+  // @replit note: base whitespace-nowrap removed (2026-09-18 punch list R2) —
+  // long dynamic badge text now wraps instead of overflowing. Add
+  // whitespace-nowrap per instance where a badge must stay one line.
+  "inline-flex max-w-full items-center rounded-md border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2" +
   " hover-elevate ",
   {
     variants: {

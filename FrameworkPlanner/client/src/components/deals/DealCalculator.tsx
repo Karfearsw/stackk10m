@@ -897,39 +897,39 @@ export function DealCalculator({
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs text-muted-foreground">Estimated value (NOI ÷ cap rate)</div>
-                <div className="text-3xl font-bold">${money(incomeMath.valuation)}</div>
+                <div className="text-3xl font-bold break-all">${money(incomeMath.valuation)}</div>
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
+                <div className="min-w-0">
                   <div className="text-xs text-muted-foreground">NOI (annual)</div>
                   <div className="font-medium">${money(n("noiAnnual"))}</div>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <div className="text-xs text-muted-foreground">Cap rate</div>
                   <div className="font-medium">{n("capRatePct") ? `${money(n("capRatePct"), 2)}%` : "—"}</div>
                 </div>
                 {n("unitCount") > 0 && (
                   <>
-                    <div>
+                    <div className="min-w-0">
                       <div className="text-xs text-muted-foreground">NOI / door</div>
                       <div className="font-medium">${money(incomeMath.noiPerDoor)}</div>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className="text-xs text-muted-foreground">Value / door</div>
                       <div className="font-medium">${money(incomeMath.valuePerDoor)}</div>
                     </div>
                   </>
                 )}
                 {incomeMath.capAtPricePct != null && (
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-xs text-muted-foreground">Cap at asking price</div>
                     <div className="font-medium">{money(incomeMath.capAtPricePct, 2)}%</div>
                   </div>
                 )}
                 {incomeMath.priceVsValuePct != null && (
-                  <div>
+                  <div className="min-w-0">
                     <div className="text-xs text-muted-foreground">Price vs value</div>
                     <div className={`font-medium ${incomeMath.priceVsValuePct <= 0 ? "text-green-600" : "text-destructive"}`}>
                       {incomeMath.priceVsValuePct > 0 ? "+" : ""}
@@ -960,13 +960,13 @@ export function DealCalculator({
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-3">
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs text-muted-foreground">MAO</div>
-                <div className="text-2xl font-bold">${money(dealMath.mao ?? 0)}</div>
+                <div className="text-xl font-bold truncate" title={`$${money(dealMath.mao ?? 0)}`}>${money(dealMath.mao ?? 0)}</div>
               </div>
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs text-muted-foreground">Offer range</div>
-                <div className="text-sm font-medium">
+                <div className="text-sm font-medium break-words">
                   ${money(dealMath.offerMin ?? 0)}–${money(dealMath.offerMax ?? 0)}
                 </div>
               </div>

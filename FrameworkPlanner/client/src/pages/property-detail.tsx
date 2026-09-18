@@ -1189,15 +1189,15 @@ export default function PropertyDetail() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-2 gap-3">
-                      <div className="border rounded-md p-3">
+                      <div className="border rounded-md p-3 min-w-0">
                         <div className="text-xs text-muted-foreground">ARV (Avg Sold)</div>
-                        <div className="text-xl font-semibold">
+                        <div className="text-xl font-semibold truncate" title={typeof internalComps?.avgArv === "number" ? `$${Math.round(internalComps.avgArv).toLocaleString()}` : undefined}>
                           {typeof internalComps?.avgArv === "number" ? `$${Math.round(internalComps.avgArv).toLocaleString()}` : "—"}
                         </div>
                       </div>
-                      <div className="border rounded-md p-3">
+                      <div className="border rounded-md p-3 min-w-0">
                         <div className="text-xs text-muted-foreground">Expected Rent (Avg)</div>
-                        <div className="text-xl font-semibold">
+                        <div className="text-xl font-semibold truncate" title={typeof internalComps?.avgRent === "number" ? `$${Math.round(internalComps.avgRent).toLocaleString()}/mo` : undefined}>
                           {typeof internalComps?.avgRent === "number" ? `$${Math.round(internalComps.avgRent).toLocaleString()}/mo` : "—"}
                         </div>
                       </div>
@@ -3595,10 +3595,10 @@ function PublicListingSection({ propertyId, listings, inquiries, onUpdated, onLi
                       </Select>
                     </div>
                     <div className="grid grid-cols-2 gap-4 text-sm">
-                      {inquiry.email && <div><p className="text-muted-foreground">Email</p><p className="font-medium">{inquiry.email}</p></div>}
-                      {inquiry.phone && <div><p className="text-muted-foreground">Phone</p><p className="font-medium">{inquiry.phone}</p></div>}
-                      {inquiry.offerAmount && <div><p className="text-muted-foreground">Offer Amount</p><p className="font-medium text-green-600">${Number(inquiry.offerAmount).toLocaleString()}</p></div>}
-                      {inquiry.company && <div><p className="text-muted-foreground">Company</p><p className="font-medium">{inquiry.company}</p></div>}
+                      {inquiry.email && <div className="min-w-0"><p className="text-muted-foreground">Email</p><p className="font-medium break-all">{inquiry.email}</p></div>}
+                      {inquiry.phone && <div className="min-w-0"><p className="text-muted-foreground">Phone</p><p className="font-medium">{inquiry.phone}</p></div>}
+                      {inquiry.offerAmount && <div className="min-w-0"><p className="text-muted-foreground">Offer Amount</p><p className="font-medium text-green-600">${Number(inquiry.offerAmount).toLocaleString()}</p></div>}
+                      {inquiry.company && <div className="min-w-0"><p className="text-muted-foreground">Company</p><p className="font-medium break-words">{inquiry.company}</p></div>}
                     </div>
                     {inquiry.message && <div><p className="text-muted-foreground text-xs mb-1">Message</p><p className="text-sm">{inquiry.message}</p></div>}
                     {inquiry.proofOfFundsUrl && (

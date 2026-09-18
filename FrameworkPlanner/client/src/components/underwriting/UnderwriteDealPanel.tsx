@@ -450,17 +450,17 @@ export function UnderwriteDealPanel(props: {
                 {props.underwriting.repairs.mode === "lite" ? (
                   <div className="space-y-2">
                     <div className="grid grid-cols-2 gap-2">
-                      <Button variant="outline" onClick={() => setLiteRepair(templateConfig.repairLitePresets.low)}>
-                        ${money(templateConfig.repairLitePresets.low)}
+                      <Button variant="outline" className="min-w-0" onClick={() => setLiteRepair(templateConfig.repairLitePresets.low)}>
+                        <span className="truncate min-w-0">${money(templateConfig.repairLitePresets.low)}</span>
                       </Button>
-                      <Button variant="outline" onClick={() => setLiteRepair(templateConfig.repairLitePresets.med)}>
-                        ${money(templateConfig.repairLitePresets.med)}
+                      <Button variant="outline" className="min-w-0" onClick={() => setLiteRepair(templateConfig.repairLitePresets.med)}>
+                        <span className="truncate min-w-0">${money(templateConfig.repairLitePresets.med)}</span>
                       </Button>
-                      <Button variant="outline" onClick={() => setLiteRepair(templateConfig.repairLitePresets.high)}>
-                        ${money(templateConfig.repairLitePresets.high)}
+                      <Button variant="outline" className="min-w-0" onClick={() => setLiteRepair(templateConfig.repairLitePresets.high)}>
+                        <span className="truncate min-w-0">${money(templateConfig.repairLitePresets.high)}</span>
                       </Button>
-                      <Button variant="outline" onClick={() => setLiteRepair(templateConfig.repairLitePresets.heavy)}>
-                        ${money(templateConfig.repairLitePresets.heavy)}
+                      <Button variant="outline" className="min-w-0" onClick={() => setLiteRepair(templateConfig.repairLitePresets.heavy)}>
+                        <span className="truncate min-w-0">${money(templateConfig.repairLitePresets.heavy)}</span>
                       </Button>
                     </div>
                     <div className="space-y-1">
@@ -572,21 +572,21 @@ export function UnderwriteDealPanel(props: {
 
                 <div className="rounded-md border p-3 bg-muted/30 space-y-2">
                   <div className="grid grid-cols-2 gap-2 text-sm">
-                    <div>
+                    <div className="min-w-0">
                       <div className="text-xs text-muted-foreground">MAO</div>
-                      <div className="font-bold">${money(computedDealMath.mao ?? null)}</div>
+                      <div className="font-bold truncate" title={`$${money(computedDealMath.mao ?? null)}`}>${money(computedDealMath.mao ?? null)}</div>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className="text-xs text-muted-foreground">Offer range</div>
-                      <div className="font-medium">
+                      <div className="font-medium break-words">
                         ${money(computedDealMath.offerMin ?? null)}–${money(computedDealMath.offerMax ?? null)}
                       </div>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className="text-xs text-muted-foreground">Assignment fee</div>
                       <div className="font-medium">${money(computedDealMath.assignmentFee ?? null)}</div>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className="text-xs text-muted-foreground">Projected spread</div>
                       <div className="font-medium">${money(computedDealMath.projectedSpread ?? null)}</div>
                     </div>

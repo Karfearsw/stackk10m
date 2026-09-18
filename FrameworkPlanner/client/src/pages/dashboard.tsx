@@ -865,24 +865,24 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 gap-4">
-              <div className="text-center p-4 bg-muted/30 rounded-lg">
-                <p className="text-3xl font-bold">{properties.length}</p>
+              <div className="text-center p-4 bg-muted/30 rounded-lg min-w-0">
+                <p className="text-3xl font-bold break-words">{properties.length}</p>
                 <p className="text-sm text-muted-foreground">Total Properties</p>
               </div>
-              <div className="text-center p-4 bg-green-500/10 rounded-lg">
-                <p className="text-3xl font-bold text-green-600">
+              <div className="text-center p-4 bg-green-500/10 rounded-lg min-w-0">
+                <p className="text-3xl font-bold text-green-600 break-words">
                   {properties.filter((p: any) => p.status === 'active').length}
                 </p>
                 <p className="text-sm text-muted-foreground">Active</p>
               </div>
-              <div className="text-center p-4 bg-blue-500/10 rounded-lg">
-                <p className="text-3xl font-bold text-blue-600">
+              <div className="text-center p-4 bg-blue-500/10 rounded-lg min-w-0">
+                <p className="text-3xl font-bold text-blue-600 break-words">
                   {properties.filter((p: any) => p.status === 'under_contract').length}
                 </p>
                 <p className="text-sm text-muted-foreground">Under Contract</p>
               </div>
-              <div className="text-center p-4 bg-purple-500/10 rounded-lg">
-                <p className="text-3xl font-bold text-purple-600">
+              <div className="text-center p-4 bg-purple-500/10 rounded-lg min-w-0">
+                <p className="text-3xl font-bold text-purple-600 break-words">
                   {properties.filter((p: any) => p.status === 'sold').length}
                 </p>
                 <p className="text-sm text-muted-foreground">Sold</p>

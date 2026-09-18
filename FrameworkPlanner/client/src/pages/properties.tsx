@@ -1132,12 +1132,12 @@ export default function Opportunities() {
                   <p className="text-sm text-muted-foreground">{prop.city}, {prop.state} {prop.zipCode}</p>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="flex justify-between items-center">
-                    <div className="text-2xl font-bold text-primary">
+                  <div className="flex justify-between items-center gap-3 min-w-0">
+                    <div className="text-2xl font-bold text-primary min-w-0 truncate" title={prop.price ? `$${parseInt(prop.price).toLocaleString()}` : undefined}>
                       ${prop.price ? parseInt(prop.price).toLocaleString() : "—"}
                     </div>
                     {prop.arv && (
-                      <div className="text-right">
+                      <div className="text-right shrink-0">
                         <p className="text-xs text-muted-foreground">ARV</p>
                         <p className="text-sm font-semibold text-green-600">
                           ${parseInt(prop.arv).toLocaleString()}

@@ -264,15 +264,14 @@ export function CommissionCalculator({ opportunityId, presetSalePrice }: { oppor
               Your Take-Home
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <div className="text-xs text-muted-foreground">Net commission (before tax)</div>
-              <div className="text-3xl font-bold">${money(math.agentNet)}</div>
-            </div>
+          <CardContent className="space-y-4">              <div className="min-w-0">
+                <div className="text-xs text-muted-foreground">Net commission (before tax)</div>
+                <div className="text-3xl font-bold break-all">${money(math.agentNet)}</div>
+              </div>
             {num(f.taxReservePct) > 0 && (
-              <div>
+              <div className="min-w-0">
                 <div className="text-xs text-muted-foreground">After {money(num(f.taxReservePct))}% tax reserve</div>
-                <div className="text-xl font-semibold">${money(math.afterTax)}</div>
+                <div className="text-xl font-semibold break-all">${money(math.afterTax)}</div>
               </div>
             )}
             <div className="flex flex-wrap gap-2">
@@ -350,9 +349,9 @@ export function CommissionCalculator({ opportunityId, presetSalePrice }: { oppor
                 <Label htmlFor="cc-snap-notes">Notes (optional)</Label>
                 <Textarea id="cc-snap-notes" rows={2} placeholder="Context for this projection…" value={notes} onChange={(e) => setNotes(e.target.value)} />
               </div>
-              <Button className="w-full" disabled={saveSnapshot.isPending} onClick={() => saveSnapshot.mutate()} data-testid="button-save-commission-snapshot">
-                {saveSnapshot.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                Save snapshot (net ${money(math.agentNet)})
+              <Button className="w-full h-auto whitespace-normal py-2 min-w-0" disabled={saveSnapshot.isPending} onClick={() => saveSnapshot.mutate()} data-testid="button-save-commission-snapshot">
+                {saveSnapshot.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" /> : <Save className="mr-2 h-4 w-4 shrink-0" />}
+                <span className="break-words">Save snapshot (net ${money(math.agentNet)})</span>
               </Button>
             </CardContent>
           </Card>

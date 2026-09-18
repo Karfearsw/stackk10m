@@ -263,12 +263,20 @@ export function Sidebar() {
                 <p className="px-3 text-xs font-medium text-sidebar-foreground/50 uppercase tracking-wider mb-2">More</p>
 {menuGroups.map((group) => {
                   const isOpen = openGroups.includes(group.name);
+                  const groupActive = group.items.some(
+                    (item) => location === item.href || (item.href !== "/" && location.startsWith(item.href))
+                  );
                   return (
                     <div key={group.name} className="mb-1">
                       <button
                         type="button"
                         onClick={() => toggleGroup(group.name)}
-                        className="flex w-full items-center justify-between rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-white transition-colors"
+                        className={cn(
+                          "flex w-full items-center justify-between rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                          groupActive
+                            ? "text-white"
+                            : "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-white"
+                        )}
                         data-testid={`group-trigger-${group.name.toLowerCase()}`}
                       >
                         <div className="flex items-center gap-3">

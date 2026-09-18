@@ -639,48 +639,48 @@ function SettingsContent() {
         }}
         className="w-full"
       >
-        <TabsList className="border-b rounded-none bg-transparent p-0 h-auto flex-wrap">
-          <TabsTrigger value="account" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+        <TabsList className="border-b rounded-none bg-transparent p-0 h-auto flex-wrap overflow-x-auto min-w-0">
+          <TabsTrigger value="account" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <User className="w-4 h-4 mr-2" />
             Account
           </TabsTrigger>
-          <TabsTrigger value="security" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+          <TabsTrigger value="security" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <Shield className="w-4 h-4 mr-2" />
             Security
           </TabsTrigger>
-          <TabsTrigger value="notifications" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+          <TabsTrigger value="notifications" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <Bell className="w-4 h-4 mr-2" />
             Notifications
           </TabsTrigger>
-          <TabsTrigger value="team" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+          <TabsTrigger value="team" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <Users className="w-4 h-4 mr-2" />
             Team
           </TabsTrigger>
-          <TabsTrigger value="goals" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+          <TabsTrigger value="goals" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <Target className="w-4 h-4 mr-2" />
             Goals
           </TabsTrigger>
-          <TabsTrigger value="pipeline" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+          <TabsTrigger value="pipeline" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <Database className="w-4 h-4 mr-2" />
             Pipeline
           </TabsTrigger>
-          <TabsTrigger value="appearance" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+          <TabsTrigger value="appearance" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <ImageIcon className="w-4 h-4 mr-2" />
             Appearance
           </TabsTrigger>
-          <TabsTrigger value="system" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+          <TabsTrigger value="system" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <Server className="w-4 h-4 mr-2" />
             System
           </TabsTrigger>
-          <TabsTrigger value="automation" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+          <TabsTrigger value="automation" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <Bot className="w-4 h-4 mr-2" />
             Automation
           </TabsTrigger>
-          <TabsTrigger value="audit" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+          <TabsTrigger value="audit" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <Clock className="w-4 h-4 mr-2" />
             Audit Logs
           </TabsTrigger>
-          <TabsTrigger value="callaudit" className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+          <TabsTrigger value="callaudit" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
             <Phone className="w-4 h-4 mr-2" />
             Call Audit
           </TabsTrigger>

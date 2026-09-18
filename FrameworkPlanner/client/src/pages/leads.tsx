@@ -1206,7 +1206,7 @@ export default function Leads() {
 
   return (
     <Layout>
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 min-w-0">
         <div className="space-y-1">
           <h1 className="text-3xl font-bold tracking-tight">Leads Pipeline</h1>
           <p className="text-muted-foreground">Manage and track your active property leads.</p>
@@ -2114,7 +2114,7 @@ export default function Leads() {
                   {visibleColumns.value ? <TableHead>Value</TableHead> : null}
                   {visibleColumns.contact ? <TableHead>Contact</TableHead> : null}
                   {visibleColumns.notes ? <TableHead>Notes</TableHead> : null}
-                  <TableHead className="text-right">Actions</TableHead>
+                  <TableHead className="text-right sticky right-0 bg-card shadow-[-1px_0_0_rgba(0,0,0,0.05)] z-10">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -2166,7 +2166,7 @@ export default function Leads() {
                         {lead.lastNotePreview ? <div className="text-xs text-muted-foreground truncate max-w-[240px]" title={String(lead.lastNotePreview)}>{String(lead.lastNotePreview)}</div> : null}
                       </TableCell>
                     ) : null}
-                    <TableCell className="text-right">
+                    <TableCell className="text-right sticky right-0 bg-card z-10">
                       <div className="flex items-center justify-end gap-2">
                         {lead.linkedPropertyId ? (
                           <Button
@@ -2345,7 +2345,7 @@ export default function Leads() {
               </div>
 
               <div className="grid grid-cols-2 gap-3 text-sm">
-                <div>
+                <div className="min-w-0">
                   <div className="text-xs text-muted-foreground">Phone</div>
                   <div className="font-medium">
                     {selectedLead.ownerPhone ? (
@@ -2357,11 +2357,11 @@ export default function Leads() {
                     )}
                   </div>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <div className="text-xs text-muted-foreground">Email</div>
                   <div className="font-medium">
                     {selectedLead.ownerEmail ? (
-                      <a className="underline underline-offset-2" href={`mailto:${selectedLead.ownerEmail}`}>
+                      <a className="underline underline-offset-2 break-all" href={`mailto:${selectedLead.ownerEmail}`}>
                         {selectedLead.ownerEmail}
                       </a>
                     ) : (
