@@ -16,6 +16,27 @@ export type SessionStatus =
   | "bridging" | "connected" | "completed" | "failed" | "cancelled";
 
 const TERMINAL = new Set<string>(["completed", "failed", "cancelled", "validation_failed"]);
+
+// ── client_state correlation ───────────────────────────────────────────────
+// Telnyx echoes the base64 `client_state` blob on every webhook for a call.
+// Dialer legs tag it with the CRM session id + leg so events can be correlated
+// even when the call_control_id lookup misses (a webhook racing the DB patch
+// that persists the new leg's control id).
+function encodeDialerClientState(sessionId: number, leg: "agent" | "lead"): string {
+  return Buffer.from(JSON.stringify({ kind: "dialer", callSessionId: sessionId, leg })).toString("base64");
+}
+
+export function decodeDialerClientState(raw: unknown): { callSessionId: number; leg?: string } | null {
+  try {
+    if (typeof raw !== "string" || !raw) return null;
+    const json = Buffer.from(raw.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8");
+    const parsed = JSON.parse(json);
+    if (parsed?.kind !== "dialer" || !Number.isFinite(Number(parsed.callSessionId))) return null;
+    return { callSessionId: Number(parsed.callSessionId), leg: typeof parsed.leg === "string" ? parsed.leg : undefined };
+  } catch {
+    return null;
+  }
+}
 const E164 = /^\+[1-9]\d{1,14}$/;
 
 export const ALLOWED_DISPOSITIONS = new Set<string>([
@@ -103,7 +124,7 @@ export function canAccessSession(user: any, session: any): boolean {
 // ── Session creation ───────────────────────────────────────────────────────
 
 export async function createCallSession(input: {
-  leadId: number; mode: CallMode; userId: number; agentUserId?: number; campaignId?: number;
+  leadId: number; mode: CallMode; userId: number; agentUserId?: number; campaignId?: number; record?: boolean;
 }): Promise<{ ok: true; session: any } | { ok: false; status: number; code: string; error: string }> {
   const mode = input.mode;
   if (!["human_first", "ai_screen", "ai_screen_handoff"].includes(mode)) {
@@ -153,6 +174,7 @@ export async function createCallSession(input: {
     leadPhoneE164: leadPhone,
     providerName: "telnyx",
     idempotencyKey: `crm_${lead.id}_${mode}_${input.userId}_${Date.now()}`,
+    recordRequested: Boolean(input.record),
   } as any);
 
   await recordEvent(session.id, "session_created", null, "queued", { mode, leadId: lead.id }, input.userId);
@@ -171,7 +193,7 @@ export async function startCallSession(
   const to = needsAgent ? s.agentPhoneE164 : s.leadPhoneE164;
   const connectionId = String(process.env.TELNYX_CONNECTION_ID || "");
   try {
-    const { callControlId, callSessionId } = await telnyx.dial({ to: String(to || ""), from: defaultFrom(), connectionId, timeoutSecs: DIAL_TIMEOUT_SECS, timeLimitSecs: DIAL_TIME_LIMIT_SECS });
+    const { callControlId, callSessionId } = await telnyx.dial({ to: String(to || ""), from: defaultFrom(), connectionId, timeoutSecs: DIAL_TIMEOUT_SECS, timeLimitSecs: DIAL_TIME_LIMIT_SECS, clientState: encodeDialerClientState(s.id, needsAgent ? "agent" : "lead") });
     const patch: any = needsAgent
       ? { status: "agent_dialing", agentLegCallControlId: callControlId, startedAt: new Date(), providerConnectionId: connectionId }
       : { status: "lead_dialing", leadLegCallControlId: callControlId, startedAt: new Date(), providerConnectionId: connectionId, providerCallSessionId: callSessionId };
@@ -208,11 +230,16 @@ export async function handleWebhookEvent(event: any): Promise<void> {
   } catch {
     session = null;
   }
+  const dialerState = decodeDialerClientState((payload as any).client_state);
+  if (!session && dialerState) {
+    try { session = await storage.getCallSessionById(dialerState.callSessionId); } catch { session = null; }
+  }
   if (!session || TERMINAL.has(session.status)) return;
 
   const leg =
     session.agentLegCallControlId === callControlId ? "agent"
     : session.leadLegCallControlId === callControlId ? "lead"
+    : dialerState?.leg === "agent" || dialerState?.leg === "lead" ? dialerState.leg
     : null;
   if (!leg) return;
 
@@ -221,6 +248,7 @@ export async function handleWebhookEvent(event: any): Promise<void> {
     else if (eventType === "call.answered") await onLegAnswered(session, leg);
     else if (eventType === "call.bridged") await onLegBridged(session, leg);
     else if (eventType === "call.hangup") await onLegHangup(session, leg, payload);
+    else if (eventType === "call.recording.saved") await onRecordingSaved(session, payload);
   } catch (e) {
     console.error("call-session webhook error:", e);
   }
@@ -261,6 +289,7 @@ async function onLegAnswered(session: any, leg: string) {
       const { callControlId } = await telnyx.dial({
         to: String(session.leadPhoneE164 || ""), from: defaultFrom(), connectionId,
         timeoutSecs: DIAL_TIMEOUT_SECS, timeLimitSecs: DIAL_TIME_LIMIT_SECS,
+        clientState: encodeDialerClientState(session.id, "lead"),
         ...(useAutoBridge ? { bridgeOnAnswer: true, linkTo: agentSessionId } : {}),
       });
       await storage.updateCallSession(session.id, { leadLegCallControlId: callControlId, status: "lead_dialing", providerLastEventAt: new Date() });
@@ -306,6 +335,45 @@ async function onLegBridged(session: any, leg: string) {
   if (session.status !== "bridging") return;
   await patchStatus(session, "connected", "connected", { bridgedAt: new Date() });
   await createActivity(session, "call_connected", `Call connected (${leg} leg bridged)`, { leg });
+  // Recording starts only after the bridge: one record_start on the bridged
+  // leg with channels "both" captures the full call. Requires the account
+  // master switch AND the agent's per-call opt-in (consent beep plays).
+  if (session.recordRequested && (await isCallRecordingEnabled())) {
+    await startRecording(session);
+  }
+}
+
+// ── Call recording (master switch in app_settings; per-call opt-in) ─────
+
+export async function isCallRecordingEnabled(): Promise<boolean> {
+  try {
+    return String((await storage.getAppSetting("telnyx_call_recording_enabled")) ?? "") === "true";
+  } catch {
+    return false;
+  }
+}
+
+async function startRecording(session: any): Promise<void> {
+  const target = session.leadLegCallControlId || session.agentLegCallControlId;
+  if (!target || session.providerRecordingId) return; // exactly one recording per session
+  try {
+    const { recordingId } = await telnyx.recordStart(target, { playBeep: true, channels: "both", format: "mp3" });
+    await storage.updateCallSession(session.id, { providerRecordingId: recordingId ?? null });
+    await recordEvent(session.id, "recording_started", "connected", "connected", { recordingId });
+  } catch (e: any) {
+    await recordEvent(session.id, "recording_start_failed", "connected", "connected", { error: String(e?.message || e) });
+  }
+}
+
+async function onRecordingSaved(session: any, payload: any): Promise<void> {
+  const recordingId = String(payload.recording_id || "");
+  if (!recordingId) return;
+  const urls: Record<string, string> = payload.recording_urls || {};
+  await storage.updateCallSession(session.id, {
+    providerRecordingId: recordingId,
+    providerRecordingUrl: urls.mp3 || Object.values(urls)[0] || null,
+  });
+  await recordEvent(session.id, "recording_saved", session.status, session.status, { recordingId });
 }
 
 async function onLegHangup(session: any, leg: string, payload: any) {
@@ -480,7 +548,7 @@ export async function requestHumanHandoff(
   await createActivity(s, "handoff_requested", "AI screening requested human handoff", {});
   const connectionId = String(process.env.TELNYX_CONNECTION_ID || "");
   try {
-    const { callControlId } = await telnyx.dial({ to: agentPhone, from: defaultFrom(), connectionId, timeoutSecs: DIAL_TIMEOUT_SECS, timeLimitSecs: DIAL_TIME_LIMIT_SECS });
+    const { callControlId } = await telnyx.dial({ to: agentPhone, from: defaultFrom(), connectionId, timeoutSecs: DIAL_TIMEOUT_SECS, timeLimitSecs: DIAL_TIME_LIMIT_SECS, clientState: encodeDialerClientState(s.id, "agent") });
     await storage.updateCallSession(s.id, { agentLegCallControlId: callControlId, status: "handoff_agent_dialing" });
     await recordEvent(s.id, "handoff_agent_dialed", "handoff_requested", "handoff_agent_dialing", { callControlId });
     emitSession(await storage.getCallSessionById(s.id));

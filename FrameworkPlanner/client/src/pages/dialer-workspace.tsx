@@ -128,6 +128,7 @@ function DialerWorkspaceInner() {
   const [session, setSession] = useState<any>(null);
   const [sessionBusy, setSessionBusy] = useState(false);
   const [sessionError, setSessionError] = useState("");
+  const [recordCall, setRecordCall] = useState(false);
   const [sessionMuted, setSessionMuted] = useState(false);
   const [sessionHeld, setSessionHeld] = useState(false);
   const [sessionAiActive, setSessionAiActive] = useState(false);
@@ -355,6 +356,7 @@ function DialerWorkspaceInner() {
         const res = await apiRequest("POST", "/api/v1/telecom/call-sessions", {
           leadId: effectiveLeadId,
           mode: "human_first",
+          record: recordCall,
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to start call");
@@ -714,15 +716,25 @@ function DialerWorkspaceInner() {
               <Label htmlFor="dialer-number">Phone Number</Label>
               <Input id="dialer-number" value={number} onChange={(e) => setNumber(e.target.value)} placeholder="Enter number" />
               <div className="grid grid-cols-3 gap-2" role="group" aria-label="Dialer keypad">
-                {KEYS.map((k) => (
-                  <Button key={k} variant="outline" className="h-10 sm:h-12 text-lg sm:text-xl" onClick={() => { if (sessionActive) { void sendSessionDtmf(k); } else { setNumber((prev) => prev + k); } }} aria-label={sessionActive ? `Send ${k}` : `Key ${k}`}>
-                    {k}
-                  </Button>
+                {KEYS.map((k) => (
+                  <Button key={k} variant="outline" className="h-10 sm:h-12 text-lg sm:text-xl" onClick={() => { if (sessionActive) { void sendSessionDtmf(k); } else { setNumber((prev) => prev + k); } }} aria-label={sessionActive ? `Send ${k}` : `Key ${k}`}>
+                    {k}
+                  </Button>
                 ))}
               </div>
             </div>
 
             <div className="flex flex-wrap gap-2">
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground" title="Record this call (account master switch must be on; consent beep plays)">
+                <input
+                  type="checkbox"
+                  className="accent-primary"
+                  checked={recordCall}
+                  disabled={sessionBusy || status === "dialing" || status === "ringing" || status === "connected"}
+                  onChange={(e) => setRecordCall(e.target.checked)}
+                />
+                Record
+              </label>
               <Button
                 onClick={async () => {
                   try {

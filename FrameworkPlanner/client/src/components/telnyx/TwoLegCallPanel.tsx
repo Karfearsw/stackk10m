@@ -68,6 +68,8 @@ export function TwoLegCallPanel({ leadId }: { leadId?: number | null }) {
   const [error, setError] = useState("");
   const [disposition, setDisposition] = useState("");
   const [note, setNote] = useState("");
+  const [record, setRecord] = useState(false);
+  const [recordingEnabled, setRecordingEnabled] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useTelephonyEvents({
@@ -89,6 +91,13 @@ export function TwoLegCallPanel({ leadId }: { leadId?: number | null }) {
       const p = await pRes.json();
       setFeatures(f);
       setAgentPhone(p.phoneE164 || "");
+      try {
+        const rRes = await apiRequest("GET", "/api/settings/telecom/call-recording");
+        const r = await rRes.json();
+        setRecordingEnabled(Boolean(r.enabled));
+      } catch {
+        // Recording stays hidden when the setting can't be read.
+      }
     } catch {
       // Non-fatal: panel still usable; agent phone will be requested at dial time.
     }
@@ -142,7 +151,7 @@ export function TwoLegCallPanel({ leadId }: { leadId?: number | null }) {
   const start = () =>
     run(async () => {
       if (!leadId) throw new Error("Select a lead first");
-      const res = await apiRequest("POST", "/api/v1/telecom/call-sessions", { leadId, mode });
+      const res = await apiRequest("POST", "/api/v1/telecom/call-sessions", { leadId, mode, record });
       const data = await res.json();
       setSession(data.session);
       setDisposition("");
@@ -260,6 +269,19 @@ export function TwoLegCallPanel({ leadId }: { leadId?: number | null }) {
           <p className="text-xs text-muted-foreground">{MODES.find((m) => m.value === mode)?.hint}</p>
         </div>
 
+        {recordingEnabled ? (
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="accent-primary"
+              checked={record}
+              disabled={active}
+              onChange={(e) => setRecord(e.target.checked)}
+            />
+            Record call <span className="text-xs text-muted-foreground">(consent beep plays)</span>
+          </label>
+        ) : null}
+
         <div className="flex items-center justify-between rounded-md border p-2">
           <div className="text-sm">
             <span className="font-medium">{statusLabel}</span>
@@ -298,6 +320,16 @@ export function TwoLegCallPanel({ leadId }: { leadId?: number | null }) {
 
         {session ? (
           <div className="space-y-2 border-t pt-2">
+            {session.status === "completed" && session.providerRecordingId ? (
+              <a
+                className="inline-flex items-center gap-1 text-xs text-primary underline"
+                href={`/api/v1/telecom/call-sessions/${session.id}/recording`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                ▶ Listen to recording
+              </a>
+            ) : null}
             <Label className="text-xs">Disposition</Label>
             <div className="flex gap-2">
               <select

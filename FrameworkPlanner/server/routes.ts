@@ -9088,9 +9088,58 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     const agentUserId = req.body?.agentUserId ? Number(req.body.agentUserId) : user.id;
     const campaignId = req.body?.campaignId ? Number(req.body.campaignId) : undefined;
     if (!leadId) return res.status(400).json({ error: "leadId required", code: "MISSING_LEAD_ID" });
-    const result = await callSessions.createCallSession({ leadId, mode: mode as any, userId: user.id, agentUserId, campaignId });
+    const result = await callSessions.createCallSession({ leadId, mode: mode as any, userId: user.id, agentUserId, campaignId, record: Boolean(req.body?.record) });
     if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
     res.json({ ok: true, session: result.session });
+  });
+
+  // Recording master switch (Settings → System, admin-editable, default off).
+  reg("get", "/api/settings/telecom/call-recording"); app.get("/api/settings/telecom/call-recording", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const enabled = await callSessions.isCallRecordingEnabled();
+    res.json({ enabled });
+  });
+
+  reg("put", "/api/settings/telecom/call-recording"); app.put("/api/settings/telecom/call-recording", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!(user.isSuperAdmin || String(user.role || "").trim().toLowerCase() === "admin")) {
+      return res.status(403).json({ error: "Only admins can change telecom configuration", code: "ADMIN_REQUIRED" });
+    }
+    const enabledRaw = req.body?.enabled;
+    if (typeof enabledRaw !== "boolean") {
+      return res.status(400).json({ error: "enabled must be a boolean", code: "INVALID_ENABLED" });
+    }
+    await storage.setAppSetting("telnyx_call_recording_enabled", enabledRaw ? "true" : "false", user.id);
+    await storage.createGlobalActivity({
+      userId: user.id,
+      action: "call_recording_setting_updated",
+      description: enabledRaw ? "Call recording enabled (consent beep on)" : "Call recording disabled",
+      metadata: JSON.stringify({ enabled: enabledRaw }),
+    } as any);
+    res.json({ ok: true, enabled: enabledRaw });
+  });
+
+  // Streams (redirects to) a session's recording MP3. Telnyx recording URLs
+  // are short-lived signed URLs, so this re-mints a fresh one per request via
+  // GET /v2/recordings/{id}.
+  reg("get", "/api/v1/telecom/call-sessions/:id/recording"); app.get("/api/v1/telecom/call-sessions/:id/recording", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.getSessionDetail(Number(req.params.id), user);
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    const session: any = result.session;
+    const recordingId = String(session.providerRecordingId || "");
+    if (!recordingId) return res.status(404).json({ error: "No recording for this call", code: "NO_RECORDING" });
+    try {
+      const rec = await telnyx.getRecording(recordingId);
+      const url = rec.recordingUrls?.mp3 || (rec.recordingUrls ? Object.values(rec.recordingUrls)[0] : null);
+      if (!url) return res.status(404).json({ error: "Recording not yet available", code: "RECORDING_PENDING" });
+      return res.redirect(url);
+    } catch (e: any) {
+      return res.status(502).json({ error: String(e?.message || e), code: "RECORDING_FETCH_FAILED" });
+    }
   });
 
   reg("get", "/api/v1/telecom/call-sessions/:id"); app.get("/api/v1/telecom/call-sessions/:id", async (req, res) => {

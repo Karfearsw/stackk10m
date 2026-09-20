@@ -576,6 +576,77 @@ export class TelnyxClient {
     }
   }
 
+  // Start recording a controlled call. POST /v2/calls/{call_control_id}/
+  // actions/record_start. For bridged two-leg sessions, issuing this on one
+  // leg with channels "both" captures the full bridge audio. Returns the
+  // provider recording_id for later retrieval.
+  async recordStart(
+    callControlId: string,
+    opts: { playBeep?: boolean; channels?: "single" | "both"; format?: "wav" | "mp3" } = {},
+  ): Promise<{ recordingId: string | null }> {
+    this.requireReady();
+    const res = await fetch(
+      `${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/record_start`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({
+          play_beep: opts.playBeep ?? true,
+          channels: opts.channels ?? "both",
+          format: opts.format ?? "mp3",
+        }),
+        signal: AbortSignal.timeout(15000),
+      },
+    );
+    const data: any = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const title = data?.errors?.[0]?.title || data?.message || `Telnyx record_start failed (${res.status})`;
+      const err = new Error(title) as any;
+      err.status = res.status;
+      throw err;
+    }
+    return { recordingId: data?.data?.recording_id ?? null };
+  }
+
+  // Stop an in-progress recording. POST .../actions/record_stop.
+  async recordStop(callControlId: string): Promise<void> {
+    this.requireReady();
+    const res = await fetch(
+      `${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/record_stop`,
+      { method: "POST", headers: this.headers(), body: JSON.stringify({}), signal: AbortSignal.timeout(15000) },
+    );
+    if (!res.ok) {
+      const data: any = await res.json().catch(() => ({}));
+      const title = data?.errors?.[0]?.title || data?.message || `Telnyx record_stop failed (${res.status})`;
+      const err = new Error(title) as any;
+      err.status = res.status;
+      throw err;
+    }
+  }
+
+  // Fetch recording metadata + fresh signed download URLs (the URLs from
+  // call.recording.saved expire). GET /v2/recordings/{recording_id}.
+  async getRecording(recordingId: string): Promise<{ recordingUrls: Record<string, string> | null; status: string | null; durationSeconds: number | null }> {
+    this.requireReady();
+    const res = await fetch(`${this.baseUrl}/recordings/${encodeURIComponent(recordingId)}`, {
+      headers: this.headers(),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data: any = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const title = data?.errors?.[0]?.title || data?.message || `Telnyx recording fetch failed (${res.status})`;
+      const err = new Error(title) as any;
+      err.status = res.status;
+      throw err;
+    }
+    const rec = data?.data || {};
+    return {
+      recordingUrls: rec.recording_urls ?? null,
+      status: rec.status ?? null,
+      durationSeconds: rec.duration_secs ?? rec.duration_seconds ?? null,
+    };
+  }
+
   // ── Webhook Signature Verification ────────────────────────────────────
   // Telnyx signs webhooks with Ed25519 using TELNYX_PUBLIC_KEY (the account
   // public key from Mission Control). Header name: Telnyx-Signature-Ed25519,

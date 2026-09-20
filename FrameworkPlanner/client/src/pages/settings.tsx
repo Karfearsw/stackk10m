@@ -273,6 +273,28 @@ function SettingsContent() {
     onError: (e: any) => toast.error(e?.message || "Failed to save AI assistant config"),
   });
 
+  // Call recording master switch (Settings → System, admin-only).
+  const { data: recordingSettings } = useQuery({
+    queryKey: ["/api/settings/telecom/call-recording"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", "/api/settings/telecom/call-recording");
+      return await res.json();
+    },
+  });
+  const toggleRecordingMutation = useMutation({
+    mutationFn: async (enabled: boolean) => {
+      const res = await apiRequest("PUT", "/api/settings/telecom/call-recording", { enabled });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to save recording setting");
+      return json;
+    },
+    onSuccess: (json: any) => {
+      toast.success(json?.enabled ? "Call recording enabled" : "Call recording disabled");
+      queryClient.invalidateQueries({ queryKey: ["/api/settings/telecom/call-recording"] });
+    },
+    onError: (e: any) => toast.error(e?.message || "Failed to save recording setting"),
+  });
+
   // Update user mutation
   const updateUserMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -2182,6 +2204,34 @@ function SettingsContent() {
                   </Button>
                   {providerReadiness?.aiAssistant?.blocker && <span className="text-xs text-amber-600">{providerReadiness.aiAssistant.blocker}</span>}
                 </div>
+              </CardContent>
+            </Card>
+
+            {/* Call Recording */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Bot className="h-4 w-4" /> Call Recording
+                  <span className={`ml-auto text-xs font-semibold px-2 py-0.5 rounded-full ${recordingSettings?.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                    {recordingSettings?.enabled ? 'Enabled' : 'Disabled'}
+                  </span>
+                </CardTitle>
+                <CardDescription>Two-leg dialer calls only. A consent beep plays when recording starts.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-muted-foreground">Enable call recording</span>
+                  <Switch
+                    checked={recordingSettings?.enabled === true}
+                    onCheckedChange={(v) => toggleRecordingMutation.mutate(v)}
+                    disabled={toggleRecordingMutation.isPending}
+                    aria-label="Enable call recording"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Agents choose per call in the dialer. Recordings appear on the call panel after the call ends.
+                  Check your jurisdiction's two-party consent requirements before enabling.
+                </p>
               </CardContent>
             </Card>
           </div>
