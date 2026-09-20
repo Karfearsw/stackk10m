@@ -18,6 +18,16 @@ vi.mock('../server/media/documentVault', () => ({
   documentStorageMode: () => 'db',
 }));
 
+vi.mock('../server/services/messaging/telnyx-email', () => ({
+  telnyxEmailReadiness: async () => ({
+    capability: Boolean((process.env.TELNYX_API_KEY || '').trim()),
+    domains: [],
+    customVerified: false,
+    sharedDomain: null,
+    ownerEmailConfigured: Boolean((process.env.TELNYX_ACCOUNT_EMAIL || '').trim()),
+  }),
+}));
+
 vi.mock('../server/services/telecom/ai-config', () => {
   const parseBool = (v: string | undefined) =>
     ['1', 'true', 'yes', 'on'].includes(String(v || '').trim().toLowerCase());
@@ -148,6 +158,7 @@ describe('Provider Readiness Service', () => {
     process.env.RESEND_API_KEY = 'test-resend-key';
     process.env.RESEND_FROM = 'test@example.com';
     process.env.TELNYX_EMAIL_ENABLED = 'true';
+    process.env.TELNYX_API_KEY = 'test-key';
     const result = await getProviderReadiness();
 
     expect(result.email.activeProvider).toBe('telnyx');

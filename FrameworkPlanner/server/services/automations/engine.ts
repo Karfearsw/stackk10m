@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { storage } from "../../storage.js";
 import { createTask } from "../tasks/task-service.js";
-import { sendResendEmail } from "../messaging/resend.js";
+import { sendEmail } from "../messaging/email-router.js";
 import { telnyx } from "../telecom/telnyx-client.js";
 
 type AutomationEvent = {
@@ -174,7 +174,7 @@ async function executeAction(event: AutomationEvent, automationName: string, act
         const u = await storage.getUserById(toUserId);
         const email = String((u as any)?.email || "").trim();
         if (email) {
-          const sent = await sendResendEmail({ to: email, subject: title, text: description || "" });
+          const sent = await sendEmail({ to: email, subject: title, text: description || "" });
           delivery.email = { ok: true, id: sent.id };
         } else {
           delivery.email = { ok: false, skipped: true, error: "Missing email" };

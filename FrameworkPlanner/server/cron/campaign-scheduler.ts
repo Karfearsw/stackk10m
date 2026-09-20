@@ -1,7 +1,7 @@
 import { db } from "../db.js";
 import { sql } from "drizzle-orm";
 import { telnyx } from "../services/telecom/telnyx-client.js";
-import { sendResendEmail } from "../services/messaging/resend.js";
+import { sendEmail } from "../services/messaging/email-router.js";
 import { storage } from "../storage.js";
 import { onCampaignCompleted } from "../services/tasks/task-service.js";
 
@@ -180,7 +180,7 @@ export function startCampaignScheduler(intervalMs = 60_000) {
             try {
               const campaignName = String(r.campaign_name || "").trim();
               const subject = campaignName ? `Campaign: ${campaignName}` : "Campaign email";
-              const out = await sendResendEmail({ to, subject, text: templateText });
+              const out = await sendEmail({ to, subject, text: templateText });
               deliveryStatus = "sent";
               providerId = out.id || null;
             } catch (e: any) {

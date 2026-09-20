@@ -32,14 +32,21 @@ export type VideoReadiness = {
   blocker?: string;
 };
 
-export type EmailReadiness = {
-  configured: boolean;
-  activeProvider: "resend" | "telnyx" | null;
-  fromAddress: string | null;
-  fromName: string | null;
-  telnyxEssionEnabled: boolean;
-  telnyxEmailReachable: boolean;
-  blocker?: string;
+export type EmailReadiness = {
+  configured: boolean;
+  activeProvider: "resend" | "telnyx" | null;
+  fromAddress: string | null;
+  fromName: string | null;
+  telnyxEssionEnabled: boolean;
+  telnyxEmailReachable: boolean;
+  /** live probe: telnyx email capability present on the account */
+  telnyxCapability: boolean;
+  /** live probe: a verified custom sending domain exists (arbitrary recipients OK) */
+  customDomainVerified: boolean;
+  /** live probe: shared domain id (recipient-restricted mode) */
+  sharedDomain: string | null;
+  domains: { domain: string; status: string; type: string }[];
+  blocker?: string;
 };
 
 export type DocumentStorageReadiness = {
@@ -197,38 +204,61 @@ async function checkVideo(): Promise<VideoReadiness> {
   return telnyxVideo.healthCheck();
 }
 
-function checkEmail(): EmailReadiness {
-  const resendKey = has("RESEND_API_KEY");
-  const resendFrom = envStr("RESEND_FROM");
-  const telnyxEmailEnabled = parseBoolFlag(process.env.TELNYX_EMAIL_ENABLED);
-  const telnyxApiKey = has("TELNYX_API_KEY");
-  const emailFromAddress = envStr("EMAIL_FROM_ADDRESS");
-  const emailFromName = envStr("EMAIL_FROM_NAME");
-
-  const activeProvider: "resend" | "telnyx" | null =
-    telnyxEmailEnabled && telnyxApiKey ? "telnyx" : resendKey ? "resend" : null;
-
-  const configured = activeProvider !== null;
-  const fromAddress = emailFromAddress || resendFrom || null;
-
-  let blocker: string | undefined;
-  if (!configured) {
-    blocker =
-      "No email provider configured. Set RESEND_API_KEY + RESEND_FROM for Resend, " +
-      "or TELNYX_EMAIL_ENABLED=true for Telnyx Email API.";
-  } else if (!fromAddress) {
-    blocker = "Email from address not configured. Set RESEND_FROM or EMAIL_FROM_ADDRESS.";
-  }
-
-  return {
-    configured,
-    activeProvider,
-    fromAddress,
-    fromName: emailFromName || null,
-    telnyxEssionEnabled: telnyxEmailEnabled,
-    telnyxEmailReachable: false, // requires actual probe in future
-    blocker,
-  };
+async function checkEmail(): Promise<EmailReadiness> {
+  const resendKey = has("RESEND_API_KEY");
+  const resendFrom = envStr("RESEND_FROM");
+  const telnyxEmailEnabled = parseBoolFlag(process.env.TELNYX_EMAIL_ENABLED);
+  const telnyxApiKey = has("TELNYX_API_KEY");
+  const emailFromAddress = envStr("EMAIL_FROM_ADDRESS");
+  const emailFromName = envStr("EMAIL_FROM_NAME");
+
+  // Live probe of the Telnyx Email API capability + sending domains.
+  const { telnyxEmailReadiness } = await import("../messaging/telnyx-email.js");
+  let probe: Awaited<ReturnType<typeof telnyxEmailReadiness>> = {
+    capability: false, domains: [], customVerified: false, sharedDomain: null,
+    ownerEmailConfigured: Boolean(envStr("TELNYX_ACCOUNT_EMAIL")),
+  };
+  if (telnyxEmailEnabled && telnyxApiKey) {
+    probe = await telnyxEmailReadiness();
+  }
+
+  const activeProvider: "resend" | "telnyx" | null =
+    telnyxEmailEnabled && telnyxApiKey && probe.capability ? "telnyx"
+    : telnyxEmailEnabled && telnyxApiKey && (probe.domains.length >= 0 && telnyxApiKey && probe.capability === false && resendKey === false) ? "telnyx"
+    : resendKey ? "resend" : null;
+
+  const configured = activeProvider !== null;
+  const fromAddress = emailFromAddress || resendFrom || (activeProvider === "telnyx" && probe.sharedDomain ? `onboarding@${probe.sharedDomain}` : null);
+
+  let blocker: string | undefined;
+  if (!configured) {
+    blocker =
+      "No email provider configured. Set RESEND_API_KEY + RESEND_FROM for Resend, " +
+      "or TELNYX_EMAIL_ENABLED=true for Telnyx Email API.";
+  } else if (activeProvider === "telnyx" && probe.capability && !probe.customVerified) {
+    // The honest operational blocker: shared domain cannot email leads.
+    blocker = probe.ownerEmailConfigured
+      ? `Telnyx email is in shared-domain mode (onboarding@${probe.sharedDomain || "msgtelnyx.com"}): can only send to the account owner\u2019s verified email. Verify a custom domain (DNS DKIM + ownership) to email leads.`
+      : `Telnyx email is in shared-domain mode and TELNYX_ACCOUNT_EMAIL is not set. Verify a custom domain (DNS DKIM + ownership) to email leads.`;
+  } else if (activeProvider === "telnyx" && probe.capability && probe.customVerified && !fromAddress) {
+    blocker = "Custom sending domain is verified — set EMAIL_FROM_ADDRESS (e.g. notifications@oceanluxe.org) to enable sends.";
+  } else if (!fromAddress) {
+    blocker = "Email from address not configured. Set RESEND_FROM or EMAIL_FROM_ADDRESS.";
+  }
+
+  return {
+    configured,
+    activeProvider,
+    fromAddress,
+    fromName: emailFromName || null,
+    telnyxEssionEnabled: telnyxEmailEnabled,
+    telnyxEmailReachable: probe.capability,
+    telnyxCapability: probe.capability,
+    customDomainVerified: probe.customVerified,
+    sharedDomain: probe.sharedDomain,
+    domains: probe.domains,
+    blocker,
+  };
 }
 
 function checkDocumentStorage(): DocumentStorageReadiness {
@@ -305,7 +335,7 @@ export async function getProviderReadiness(): Promise<ProviderReadiness> {
     checkVoice(),
     Promise.resolve(checkSms()),
     Promise.resolve(checkVideo()),
-    Promise.resolve(checkEmail()),
+    checkEmail(),
     Promise.resolve(checkDocumentStorage()),
     Promise.resolve(checkWebhook()),
     checkAiAssistant(),

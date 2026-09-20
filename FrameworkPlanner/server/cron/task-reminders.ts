@@ -1,7 +1,7 @@
 import { db } from "../db.js";
 import { sql } from "drizzle-orm";
 import { storage } from "../storage.js";
-import { sendResendEmail } from "../services/messaging/resend.js";
+import { sendEmail } from "../services/messaging/email-router.js";
 import { dispatchAutomationEvent } from "../services/automations/engine.js";
 
 function parseEnvBool(v: unknown): boolean | null {
@@ -80,7 +80,7 @@ export function startTaskReminders(intervalMs = 60_000) {
             const user = await storage.getUserById(userId);
             const to = String((user as any)?.email || "").trim();
             if (to) {
-              await sendResendEmail({
+              await sendEmail({
                 to,
                 subject: "Task due soon",
                 text: dueAt ? `${title}\nDue: ${dueAt.toISOString()}` : title,
@@ -142,7 +142,7 @@ export function startTaskReminders(intervalMs = 60_000) {
             const user = await storage.getUserById(userId);
             const to = String((user as any)?.email || "").trim();
             if (to) {
-              await sendResendEmail({
+              await sendEmail({
                 to,
                 subject: "Task overdue",
                 text: dueAt ? `${title}\nDue: ${dueAt.toISOString()}` : title,

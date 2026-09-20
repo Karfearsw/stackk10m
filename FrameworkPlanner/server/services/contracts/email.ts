@@ -1,4 +1,4 @@
-import { sendResendEmail } from "../messaging/resend.js";
+import { sendEmail } from "../messaging/email-router.js";
 
 export type SendContractEmailInput = {
   to: string;
@@ -31,7 +31,7 @@ export async function sendContractSigningEmail(input: SendContractEmailInput) {
     </div>
   `;
 
-  return sendResendEmail({
+  return sendEmail({
     to: input.to,
     subject,
     html,
@@ -58,7 +58,7 @@ export async function sendContractReminderEmail(input: SendContractEmailInput) {
     </div>
   `;
 
-  return sendResendEmail({
+  return sendEmail({
     to: input.to,
     subject,
     html,

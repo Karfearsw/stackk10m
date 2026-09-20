@@ -96,7 +96,7 @@ import { createSkipTraceJob, isHttpError, runProviderSkipTraceForEntity, runSkip
 import { hydrateSkipTraceResultForApi, mergeSkipTraceResult } from "./services/skipTrace/merge.js";
 import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
 import { telnyx, TelnyxConfigError, createTelnyxWebhookRouter } from "./services/telecom/telnyx-client.js";
-import { sendResendEmail } from "./services/messaging/resend.js";
+import { sendEmail } from "./services/messaging/email-router.js";
 import { getAuthStatusSnapshot, getEmailProviderMissing } from "./auth/config.js";
 import { isEmailNotConfiguredError, sendAuthError } from "./auth/errors.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
@@ -1320,7 +1320,7 @@ export async function registerRoutes(
           } catch {}
           const xpWhen = `${new Date((confirmed as any).startAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}`;
           try {
-            await sendResendEmail({
+            await sendEmail({
               to: String((confirmed as any).customerEmail || ""),
               subject: `Your Ocean Luxe Experiences booking is confirmed${xpRef ? ` — ${xpRef}` : ""}`,
               text: [
@@ -2234,7 +2234,7 @@ export async function registerRoutes(
       const text = baseUrl
         ? `Use this link to reset your password (expires in 1 hour):\n\n${resetLink}\n\nIf you did not request this, you can ignore this email.`
         : `Your password reset token (expires in 1 hour):\n\n${resetLink}\n\nIf you did not request this, you can ignore this email.`;
-      await sendResendEmail({
+      await sendEmail({
         to: user.email,
         subject,
         text,
@@ -2349,7 +2349,7 @@ export async function registerRoutes(
       const host = String(req.headers.host || "").trim();
       const baseUrl = baseUrlFromEnv || (host ? `${proto}://${host}` : "");
       const signInLink = baseUrl ? `${baseUrl}/magic-link?token=${encodeURIComponent(token)}` : token;
-      await sendResendEmail({
+      await sendEmail({
         to: user.email,
         subject: "Your Ocean Luxe CRM sign-in link",
         text: baseUrl
@@ -10315,7 +10315,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
         const subject = `Signature requested: ${String(doc.title || "Document")}`;
         const text = `You have a document to sign.\n\n${signerUrl}\n\nThis link expires on ${expiresAt.toISOString()}.`;
         const html = `<p>You have a document to sign.</p><p><a href="${signerUrl}">${signerUrl}</a></p><p>This link expires on ${expiresAt.toISOString()}.</p>`;
-        await sendResendEmail({ to: payload.signerEmail, subject, text, html });
+        await sendEmail({ to: payload.signerEmail, subject, text, html });
         emailSent = true;
       } catch (e: any) {
         emailError = String(e?.message || e);
