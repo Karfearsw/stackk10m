@@ -439,6 +439,24 @@ function DialerWorkspaceInner() {
     }
   };
 
+  // Keypad: during an active two-leg session, digits go out as real DTMF on
+  // the agent leg (IVR navigation). Otherwise they type into the number field
+  // like a desk phone.
+  const [dtmfBusy, setDtmfBusy] = useState(false);
+  const sendSessionDtmf = async (digit: string) => {
+    if (!session || !sessionActive || !sessionLeadLeg) return;
+    setDtmfBusy(true);
+    try {
+      const res = await apiRequest("POST", `/api/v1/telecom/call-sessions/${session.id}/dtmf`, { digits: digit });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "DTMF failed");
+    } catch (e: any) {
+      toast.error(String(e?.message || e || "DTMF failed"));
+    } finally {
+      setDtmfBusy(false);
+    }
+  };
+
   // Poll the active session so the UI stays truthful even if the WS drops.
   useEffect(() => {
     if (!session?.id || !ACTIVE_SESSION.has(session.status)) return;
@@ -696,10 +714,10 @@ function DialerWorkspaceInner() {
               <Label htmlFor="dialer-number">Phone Number</Label>
               <Input id="dialer-number" value={number} onChange={(e) => setNumber(e.target.value)} placeholder="Enter number" />
               <div className="grid grid-cols-3 gap-2" role="group" aria-label="Dialer keypad">
-                {KEYS.map((k) => (
-                  <Button key={k} variant="outline" className="h-10 sm:h-12 text-lg sm:text-xl" onClick={() => setNumber((prev) => prev + k)} aria-label={`Key ${k}`}>
-                    {k}
-                  </Button>
+                {KEYS.map((k) => (
+                  <Button key={k} variant="outline" className="h-10 sm:h-12 text-lg sm:text-xl" onClick={() => { if (sessionActive) { void sendSessionDtmf(k); } else { setNumber((prev) => prev + k); } }} aria-label={sessionActive ? `Send ${k}` : `Key ${k}`}>
+                    {k}
+                  </Button>
                 ))}
               </div>
             </div>
