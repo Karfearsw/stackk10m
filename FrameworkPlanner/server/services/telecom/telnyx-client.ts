@@ -24,6 +24,12 @@ export type TelnyxDialInput = {
   answeringMachineDetection?: { advanced?: boolean } | false;
   /** Timeout in seconds —Telnyx hangs up if unanswered. */
   timeoutSecs?: number;
+  /** Hard cap on total call duration in seconds (default 0 = unlimited). */
+  timeLimitSecs?: number;
+  /** Auto-bridge the answered call to the call referenced by linkTo. */
+  bridgeOnAnswer?: boolean;
+  /** Telnyx call_session_id of the first leg — required when bridgeOnAnswer is true. */
+  linkTo?: string;
 };
 
 export type TelnyxSmsInput = {
@@ -83,7 +89,7 @@ export class TelnyxClient {
     };
   }
 
-  async dial(input: TelnyxDialInput): Promise<{ callControlId: string }> {
+  async dial(input: TelnyxDialInput): Promise<{ callControlId: string; callSessionId: string | null }> {
     this.requireReady();
     const from = input.from || this.defaultFrom;
     if (!from) throw new Error("Missing from number for outbound call");
@@ -95,6 +101,9 @@ export class TelnyxClient {
     };
     if (input.clientState) body.client_state = input.clientState;
     if (input.timeoutSecs) body.timeout_secs = input.timeoutSecs;
+    if (input.timeLimitSecs) body.time_limit_secs = input.timeLimitSecs;
+    if (input.bridgeOnAnswer) body.bridge_on_answer = true;
+    if (input.linkTo) body.link_to = input.linkTo;
     if (input.answeringMachineDetection) {
       body.answering_machine_detection = input.answeringMachineDetection.advanced ? "advanced" : "disabled";
       body.answering_machine_detection_config = {
@@ -131,7 +140,8 @@ export class TelnyxClient {
 
     const callControlId = data?.data?.id || data?.call_control_id;
     if (!callControlId) throw new Error("Telnyx dial response missing call id");
-    return { callControlId: String(callControlId) };
+    const callSessionId = data?.data?.call_session_id || data?.call_session_id || null;
+    return { callControlId: String(callControlId), callSessionId: callSessionId ? String(callSessionId) : null };
   }
 
   // RVM: play the voicemail audio into the answered call (voicemail box).
@@ -482,6 +492,31 @@ export class TelnyxClient {
     if (!res.ok) {
       const data: any = await res.json().catch(() => ({}));
       const title = data?.errors?.[0]?.title || data?.message || `Telnyx unhold failed (${res.status})`;
+      const err = new Error(title) as any;
+      err.status = res.status;
+      throw err;
+    }
+  }
+
+  // Send DTMF digits from this leg (POST /v2/calls/{id}/actions/send_dtmf).
+  // Digits are heard by the other end — used for IVR navigation on bridged calls.
+  async sendDtmf(callControlId: string, digits: string, opts: { durationMillis?: number; commandId?: string } = {}): Promise<void> {
+    this.requireReady();
+    const body: Record<string, unknown> = { digits };
+    if (opts.durationMillis) body.duration_millis = opts.durationMillis;
+    if (opts.commandId) body.command_id = opts.commandId;
+    const res = await fetch(
+      `${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/send_dtmf`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10000),
+      },
+    );
+    if (!res.ok) {
+      const data: any = await res.json().catch(() => ({}));
+      const title = data?.errors?.[0]?.title || data?.message || `Telnyx send_dtmf failed (${res.status})`;
       const err = new Error(title) as any;
       err.status = res.status;
       throw err;

@@ -42,6 +42,10 @@ export type WebRtcClientConfig = {
   login?: string;
   /** SIP password (mode === "credentials"). */
   password?: string;
+  /** STUN/TURN servers handed to the SDK so media can traverse NATs. */
+  iceServers?: RTCIceServer[];
+  /** True when the outbound dialer's SIP connection is expected to have Park Outbound Calls enabled. */
+  parkOutboundEnabled: boolean;
   /** Human-facing explanation for the provider/setup blocker. */
   message?: string;
 };
@@ -166,10 +170,12 @@ export async function getWebRtcClientConfig(): Promise<WebRtcClientConfig> {
     enabled: readiness.enabled,
     mode: readiness.mode,
     defaultFromNumber: readiness.defaultFromNumber,
+    parkOutboundEnabled: isParkOutboundEnabled(),
     message: readiness.blocker,
   };
 
   if (!readiness.enabled || !readiness.mode) {
+    base.parkOutboundEnabled = isParkOutboundEnabled();
     return base;
   }
 
@@ -177,6 +183,8 @@ export async function getWebRtcClientConfig(): Promise<WebRtcClientConfig> {
     const staticToken = readEnv("TELNYX_WEBRTC_LOGIN_TOKEN");
     if (staticToken) {
       base.loginToken = staticToken;
+      base.iceServers = getWebRtcIceServers();
+      base.parkOutboundEnabled = isParkOutboundEnabled();
       return base;
     }
     try {
@@ -189,10 +197,41 @@ export async function getWebRtcClientConfig(): Promise<WebRtcClientConfig> {
       base.enabled = false;
       base.mode = null;
     }
+    base.iceServers = getWebRtcIceServers();
+    base.parkOutboundEnabled = isParkOutboundEnabled();
     return base;
   }
 
   base.login = readEnv("TELNYX_WEBRTC_SIP_USER");
   base.password = readEnv("TELNYX_WEBRTC_SIP_PASSWORD");
+  base.iceServers = getWebRtcIceServers();
+  base.parkOutboundEnabled = isParkOutboundEnabled();
   return base;
+}
+
+/**
+ * ICE servers for the browser peer connection. Telnyx provides its own default
+ * STUN/TURN infrastructure, so this only needs overriding for restrictive
+ * networks: set TELNYX_TURN_URLS (comma-separated) plus TELNYX_TURN_USERNAME /
+ * TELNYX_TURN_CREDENTIAL. The SDK's defaults remain in place otherwise.
+ */
+export function getWebRtcIceServers(): RTCIceServer[] {
+  const urls = readEnv("TELNYX_TURN_URLS")
+    .split(",")
+    .map((u) => u.trim())
+    .filter(Boolean);
+  if (!urls.length) return [];
+  const server: RTCIceServer = { urls };
+  const username = readEnv("TELNYX_TURN_USERNAME");
+  const credential = readEnv("TELNYX_TURN_CREDENTIAL");
+  if (username) server.username = username;
+  if (credential) server.credential = credential;
+  return [server];
+}
+
+/** Park Outbound Calls is a SIP-connection portal setting; env declares it so
+ *  the dialer can warn when a no-audio symptom matches its absence. */
+export function isParkOutboundEnabled(): boolean {
+  const v = readEnv("TELNYX_WEBRTC_PARK_OUTBOUND");
+  return v === "" ? true : isTruthy(v);
 }

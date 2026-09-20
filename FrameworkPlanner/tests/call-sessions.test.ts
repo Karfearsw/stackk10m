@@ -11,6 +11,7 @@ const m = vi.hoisted(() => ({
     createCallDisposition: vi.fn(), getCallDispositionBySession: vi.fn(),
     createAiCallQualification: vi.fn(), getAiCallQualificationBySession: vi.fn(),
     createGlobalActivity: vi.fn(), updateLead: vi.fn(),
+    getStaleCallSessions: vi.fn(),
   },
   createTask: vi.fn(),
   aiConfig: { getAiAssistantConfig: vi.fn() },
@@ -53,7 +54,9 @@ function wireSessionMocks(initial: any) {
   });
   m.storage.getCallSessionById.mockImplementation(async () => sess);
   m.storage.updateCallSession.mockImplementation(async (_id: number, patch: any) => {
-    sess = { ...sess, ...patch };
+    // Mutate in place so callers holding the original session reference
+    // (e.g. sweep tests asserting on `stale`) observe the update.
+    Object.assign(sess, patch);
     return sess;
   });
   m.storage.getCallSessionByLegCallControlId.mockImplementation(async (cc: string) => {
@@ -67,12 +70,19 @@ function wireSessionMocks(initial: any) {
   m.storage.getCallDispositionBySession.mockResolvedValue(undefined);
   m.storage.getAiCallQualificationBySession.mockResolvedValue(undefined);
   m.storage.updateLead.mockResolvedValue({});
+  m.storage.getStaleCallSessions.mockResolvedValue([]);
+  if (!m.telnyx.sendDtmf) m.telnyx.sendDtmf = vi.fn();
+  m.telnyx.sendDtmf.mockReset();
+  m.telnyx.sendDtmf.mockResolvedValue(undefined);
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   m.telnyx.dial.mockImplementation(async (input: any) => {
-    return { callControlId: input.to === '+15550002222' ? 'leg-agent-1' : 'leg-lead-1' };
+    return {
+      callControlId: input.to === '+15550002222' ? 'leg-agent-1' : 'leg-lead-1',
+      callSessionId: input.to === '+15550002222' ? 'cs-agent-1' : 'cs-lead-1',
+    };
   });
   m.telnyx.bridge.mockResolvedValue(undefined);
   m.telnyx.hangup.mockResolvedValue(undefined);
@@ -277,5 +287,112 @@ describe('Validation, permissions, dispositions', () => {
     wireSessionMocks(makeSession({ status: 'completed' }));
     const r = await cs.setDisposition(7, 2, { disposition: 'made_up' });
     expect((r as any).code).toBe('INVALID_DISPOSITION');
+  });
+});
+
+
+// ── Dial hardening: timeouts · bridge_on_answer · DTMF · stale sweep ──
+
+describe('Dial hardening', () => {
+  it('dials use timeout_secs + time_limit_secs on every leg', async () => {
+    wireSessionMocks(makeSession());
+    await cs.createCallSession({ leadId: 1, mode: 'human_first', userId: 2 });
+    expect(m.telnyx.dial.mock.calls[0][0]).toMatchObject({
+      timeoutSecs: 45,
+      timeLimitSecs: 10800,
+    });
+    await cs.handleWebhookEvent(answered('leg-agent-1'));
+    const leadDial = m.telnyx.dial.mock.calls[1][0];
+    expect(leadDial).toMatchObject({ timeoutSecs: 45, timeLimitSecs: 10800 });
+  });
+
+  it('lead dial uses bridge_on_answer with the agent call_session_id as link_to', async () => {
+    wireSessionMocks(makeSession({ providerCallSessionId: 'cs-agent-1' }));
+    await cs.createCallSession({ leadId: 1, mode: 'human_first', userId: 2 });
+    await cs.handleWebhookEvent(answered('leg-agent-1'));
+    const leadDial = m.telnyx.dial.mock.calls[1][0];
+    expect(leadDial).toMatchObject({ bridgeOnAnswer: true, linkTo: 'cs-agent-1' });
+  });
+
+  it('lead dial omits bridge_on_answer when no provider call_session_id exists (fallback)', async () => {
+    wireSessionMocks(makeSession({ providerCallSessionId: null }));
+    m.telnyx.dial.mockImplementationOnce(async () => ({ callControlId: 'leg-agent-1', callSessionId: null }));
+    await cs.createCallSession({ leadId: 1, mode: 'human_first', userId: 2 });
+    await cs.handleWebhookEvent(answered('leg-agent-1'));
+    const leadDial = m.telnyx.dial.mock.calls[1][0];
+    expect(leadDial.bridgeOnAnswer).toBeUndefined();
+    expect(leadDial.linkTo).toBeUndefined();
+  });
+
+  describe('sendSessionDtmf', () => {
+    it('rejects invalid digits', async () => {
+      wireSessionMocks(makeSession({ status: 'connected', agentLegCallControlId: 'leg-agent-1' }));
+      const r = await cs.sendSessionDtmf(7, 2, '1x9');
+      expect(r.ok).toBe(false);
+      expect((r as any).code).toBe('INVALID_DTMF');
+      expect(m.telnyx.sendDtmf).not.toHaveBeenCalled();
+    });
+
+    it('requires a connected/bridging session', async () => {
+      wireSessionMocks(makeSession({ status: 'lead_ringing', agentLegCallControlId: 'leg-agent-1' }));
+      const r = await cs.sendSessionDtmf(7, 2, '123');
+      expect(r.ok).toBe(false);
+      expect((r as any).code).toBe('NOT_CONNECTED');
+    });
+
+    it('sends digits on the agent leg and records the event', async () => {
+      wireSessionMocks(makeSession({ status: 'connected', agentLegCallControlId: 'leg-agent-1', leadLegCallControlId: 'leg-lead-1' }));
+      const r = await cs.sendSessionDtmf(7, 2, 'w201#');
+      expect(r.ok).toBe(true);
+      expect(m.telnyx.sendDtmf).toHaveBeenCalledWith('leg-agent-1', 'w201#');
+    });
+
+    it('blocks another user from sending DTMF', async () => {
+      wireSessionMocks(makeSession({ status: 'connected', agentLegCallControlId: 'leg-agent-1' }));
+      const r = await cs.sendSessionDtmf(7, 99, '1');
+      expect(r.ok).toBe(false);
+      expect((r as any).code).toBe('FORBIDDEN');
+    });
+  });
+
+  describe('sweepStaleCallSessions', () => {
+    it('hangs up both legs and completes a stale ringing session as no_answer', async () => {
+      const stale = makeSession({ status: 'lead_ringing', agentLegCallControlId: 'leg-agent-1', leadLegCallControlId: 'leg-lead-1' });
+      wireSessionMocks(stale);
+      m.storage.getStaleCallSessions.mockResolvedValue([stale]);
+      const res = await cs.sweepStaleCallSessions({ maxAgeSecs: 600 });
+      expect(res.swept).toBe(1);
+      expect(res.sessions).toContain(7);
+      expect(m.telnyx.hangup).toHaveBeenCalledWith('leg-agent-1');
+      expect(m.telnyx.hangup).toHaveBeenCalledWith('leg-lead-1');
+      expect(sess.status).toBe('completed');
+      expect(sess.finalDisposition).toBe('no_answer');
+      expect(sess.providerHangupCause).toBe('sweep-timeout');
+    });
+
+    it('dispositions a stale bridging session as bridge_failed', async () => {
+      const stale = makeSession({ status: 'bridging', agentLegCallControlId: 'leg-agent-1', leadLegCallControlId: 'leg-lead-1' });
+      wireSessionMocks(stale);
+      m.storage.getStaleCallSessions.mockResolvedValue([stale]);
+      await cs.sweepStaleCallSessions({ maxAgeSecs: 600 });
+      expect(sess.finalDisposition).toBe('bridge_failed');
+    });
+
+    it('does nothing when no sessions are stale', async () => {
+      m.storage.getStaleCallSessions.mockResolvedValue([]);
+      const res = await cs.sweepStaleCallSessions({ maxAgeSecs: 600 });
+      expect(res.swept).toBe(0);
+      expect(m.telnyx.hangup).not.toHaveBeenCalled();
+    });
+
+    it('continues past a session whose hangup throws', async () => {
+      const stale = makeSession({ status: 'agent_dialing', agentLegCallControlId: 'leg-agent-1' });
+      wireSessionMocks(stale);
+      m.storage.getStaleCallSessions.mockResolvedValue([stale]);
+      m.telnyx.hangup.mockRejectedValueOnce(new Error('boom'));
+      const res = await cs.sweepStaleCallSessions({ maxAgeSecs: 600 });
+      expect(res.swept).toBe(1);
+      expect(sess.finalDisposition).toBe('agent_unavailable');
+    });
   });
 });

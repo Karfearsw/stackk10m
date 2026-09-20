@@ -41,6 +41,13 @@ export async function getCallFeatures() {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+// ── Dial constants (Telnyx best practice) ────────────────────────────
+// timeout_secs: Telnyx itself hangs up an unanswered dial instead of ringing
+// until the carrier gives up. time_limit_secs: hard cap on total call duration
+// so a lost hangup webhook can never leave an expensive live leg running.
+const DIAL_TIMEOUT_SECS = Number(process.env.TELNYX_DIAL_TIMEOUT_SECS || "45");
+const DIAL_TIME_LIMIT_SECS = Number(process.env.TELNYX_CALL_TIME_LIMIT_SECS || "10800");
+
 function defaultFrom(): string { return String(process.env.TELNYX_DEFAULT_FROM_NUMBER || "").trim(); }
 
 async function recordEvent(
@@ -164,10 +171,11 @@ export async function startCallSession(
   const to = needsAgent ? s.agentPhoneE164 : s.leadPhoneE164;
   const connectionId = String(process.env.TELNYX_CONNECTION_ID || "");
   try {
-    const { callControlId } = await telnyx.dial({ to: String(to || ""), from: defaultFrom(), connectionId });
+    const { callControlId, callSessionId } = await telnyx.dial({ to: String(to || ""), from: defaultFrom(), connectionId, timeoutSecs: DIAL_TIMEOUT_SECS, timeLimitSecs: DIAL_TIME_LIMIT_SECS });
     const patch: any = needsAgent
       ? { status: "agent_dialing", agentLegCallControlId: callControlId, startedAt: new Date(), providerConnectionId: connectionId }
-      : { status: "lead_dialing", leadLegCallControlId: callControlId, startedAt: new Date(), providerConnectionId: connectionId };
+      : { status: "lead_dialing", leadLegCallControlId: callControlId, startedAt: new Date(), providerConnectionId: connectionId, providerCallSessionId: callSessionId };
+    if (callSessionId) patch.providerCallSessionId = callSessionId; // needed as link_to for bridge_on_answer
     await storage.updateCallSession(s.id, patch);
     await recordEvent(s.id, "session_started", "queued", patch.status, { leg: needsAgent ? "agent" : "lead", callControlId }, s.initiatingUserId ?? undefined);
     const updated = await storage.getCallSessionById(s.id);
@@ -219,7 +227,7 @@ export async function handleWebhookEvent(event: any): Promise<void> {
 }
 
 async function patchStatus(session: any, status: string, eventType: string, extra: any = {}) {
-  await storage.updateCallSession(session.id, { status, ...extra });
+  await storage.updateCallSession(session.id, { status, ...extra, providerLastEventAt: new Date() });
   await recordEvent(session.id, eventType, session.status, status);
   emitSession(await storage.getCallSessionById(session.id));
 }
@@ -245,10 +253,17 @@ async function onLegAnswered(session: any, leg: string) {
     await patchStatus(session, "agent_answered", "agent_answered", { agentAnsweredAt: new Date() });
     const connectionId = String(process.env.TELNYX_CONNECTION_ID || "");
     try {
+      // bridge_on_answer: Telnyx auto-bridges the lead leg the moment it is
+      // answered, using the agent leg’s call_session_id as link_to. This
+      // removes the answer→webhook→bridge round-trip (dead air + race window).
+      const agentSessionId = String((session as any).providerCallSessionId || "");
+      const useAutoBridge = Boolean(agentSessionId);
       const { callControlId } = await telnyx.dial({
         to: String(session.leadPhoneE164 || ""), from: defaultFrom(), connectionId,
+        timeoutSecs: DIAL_TIMEOUT_SECS, timeLimitSecs: DIAL_TIME_LIMIT_SECS,
+        ...(useAutoBridge ? { bridgeOnAnswer: true, linkTo: agentSessionId } : {}),
       });
-      await storage.updateCallSession(session.id, { leadLegCallControlId: callControlId, status: "lead_dialing" });
+      await storage.updateCallSession(session.id, { leadLegCallControlId: callControlId, status: "lead_dialing", providerLastEventAt: new Date() });
       await recordEvent(session.id, "lead_leg_dialed", "agent_answered", "lead_dialing", { callControlId });
       emitSession(await storage.getCallSessionById(session.id));
     } catch (e: any) {
@@ -319,6 +334,7 @@ async function completeSession(session: any, cause: string | null, disposition: 
   await storage.updateCallSession(session.id, {
     status: "completed", endedAt, durationSeconds,
     finalDisposition: disposition, providerHangupCause: cause,
+    providerLastEventAt: new Date(),
   });
   await recordEvent(session.id, "session_completed", session.status, "completed", { cause, disposition, durationSeconds });
   await createActivity(session, "call_completed", `Call ${disposition} (${cause || "hangup"})`, { disposition, cause, durationSeconds });
@@ -326,7 +342,7 @@ async function completeSession(session: any, cause: string | null, disposition: 
 }
 
 async function failSession(session: any, code: string, error: string) {
-  await storage.updateCallSession(session.id, { status: "failed", endedAt: new Date(), finalDisposition: "failed", providerHangupCause: code });
+  await storage.updateCallSession(session.id, { status: "failed", endedAt: new Date(), finalDisposition: "failed", providerHangupCause: code, providerLastEventAt: new Date() });
   await recordEvent(session.id, "session_failed", session.status, "failed", { code, error });
   await createActivity(session, "call_failed", error, { code });
   emitSession(await storage.getCallSessionById(session.id));
@@ -377,6 +393,70 @@ export async function cancelOrHangupSession(
   return { ok: true, session: await storage.getCallSessionById(s.id) };
 }
 
+// ── DTMF (IVR navigation on bridged calls) ──────────────────────────────
+// Valid per Telnyx send_dtmf: 0-9, A-D, *, #, plus w (0.5s) / W (1s) pauses.
+const DTMF_RE = /^[0-9A-D*#wW]{1,32}$/;
+
+export async function sendSessionDtmf(
+  sessionId: number, userId: number, digits: string,
+): Promise<{ ok: true } | { ok: false; status: number; code: string; error: string }> {
+  const s = await storage.getCallSessionById(sessionId);
+  if (!s) return { ok: false, status: 404, code: "SESSION_NOT_FOUND", error: "Call session not found" };
+  if (!canAccessSession({ id: userId, isSuperAdmin: false }, s)) {
+    return { ok: false, status: 403, code: "FORBIDDEN", error: "You do not have access to this call session" };
+  }
+  const clean = String(digits || "").trim();
+  if (!clean || !DTMF_RE.test(clean)) {
+    return { ok: false, status: 400, code: "INVALID_DTMF", error: "digits must be 1–32 of 0-9 A-D * # w W" };
+  }
+  if (s.status !== "connected" && s.status !== "bridging") {
+    return { ok: false, status: 409, code: "NOT_CONNECTED", error: `DTMF requires a connected call (status: ${s.status})` };
+  }
+  // Digits go out on the agent leg — the same audio path the agent’s own
+  // keypresses would take, so the lead/IVR hears them.
+  const leg = s.agentLegCallControlId;
+  if (!leg) return { ok: false, status: 409, code: "NO_AGENT_LEG", error: "No agent leg on this session" };
+  try {
+    await telnyx.sendDtmf(leg, clean);
+  } catch (e: any) {
+    return { ok: false, status: 502, code: "DTMF_ERROR", error: String(e?.message || e) };
+  }
+  await recordEvent(s.id, "dtmf_sent", s.status, s.status, { digits: clean }, userId);
+  return { ok: true };
+}
+
+// ── Stale-session watchdog ─────────────────────────────────────────────
+// If signed webhooks are lost (provider outage, network partition), sessions
+// would otherwise sit in lead_ringing/bridging forever. This sweep hangs up
+// both legs and closes the session with an honest disposition. Safe to run
+// repeatedly: terminal sessions are never selected.
+export async function sweepStaleCallSessions(
+  opts: { maxAgeSecs?: number; limit?: number } = {},
+): Promise<{ swept: number; sessions: number[] }> {
+  const maxAgeSecs = Math.max(60, Math.min(3600, opts.maxAgeSecs ?? Number(process.env.TELNYX_STALE_SESSION_SECS || "600")));
+  const limit = Math.max(1, Math.min(50, opts.limit ?? 25));
+  const stale = await storage.getStaleCallSessions(maxAgeSecs, limit);
+  const swept: number[] = [];
+  for (const s of stale) {
+    try {
+      for (const legId of [s.agentLegCallControlId, s.leadLegCallControlId]) {
+        if (legId) { try { await telnyx.hangup(legId); } catch { /* best effort */ } }
+      }
+      const disposition =
+        s.status === "bridging" || s.status === "connected" ? "bridge_failed"
+        : s.status === "agent_dialing" || s.status === "agent_ringing" ? "agent_unavailable"
+        : s.status === "queued" ? "abandoned"
+        : "no_answer";
+      await completeSession(s, "sweep-timeout", disposition);
+      await recordEvent(s.id, "sweep_timeout", s.status, "completed", { maxAgeSecs, disposition });
+      swept.push(s.id);
+    } catch (e) {
+      console.error("sweep session failed:", s.id, e);
+    }
+  }
+  return { swept: swept.length, sessions: swept };
+}
+
 export async function requestHumanHandoff(
   sessionId: number, userId: number,
 ): Promise<{ ok: true; session: any } | { ok: false; status: number; code: string; error: string }> {
@@ -400,7 +480,7 @@ export async function requestHumanHandoff(
   await createActivity(s, "handoff_requested", "AI screening requested human handoff", {});
   const connectionId = String(process.env.TELNYX_CONNECTION_ID || "");
   try {
-    const { callControlId } = await telnyx.dial({ to: agentPhone, from: defaultFrom(), connectionId });
+    const { callControlId } = await telnyx.dial({ to: agentPhone, from: defaultFrom(), connectionId, timeoutSecs: DIAL_TIMEOUT_SECS, timeLimitSecs: DIAL_TIME_LIMIT_SECS });
     await storage.updateCallSession(s.id, { agentLegCallControlId: callControlId, status: "handoff_agent_dialing" });
     await recordEvent(s.id, "handoff_agent_dialed", "handoff_requested", "handoff_agent_dialing", { callControlId });
     emitSession(await storage.getCallSessionById(s.id));

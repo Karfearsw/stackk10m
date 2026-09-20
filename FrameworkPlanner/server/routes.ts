@@ -8034,6 +8034,86 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     }
   });
 
+  // WebRTC dialer: the browser registers its intent right before client.newCall()
+  // so the parked-leg webhook can correlate, DNC-gate, and bind the PSTN leg.
+  reg("post", "/api/telephony/webrtc/calls"); app.post("/api/telephony/webrtc/calls", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const toNumber = String(req.body?.toNumber || "").trim();
+      const e164Re = /^\+[1-9]\d{1,14}$/;
+      if (!e164Re.test(toNumber)) {
+        return res.status(400).json({ error: "Invalid E.164 destination number", code: "INVALID_TO" });
+      }
+      try {
+        const active = await storage.getActiveOutboundCallForUser(user.id);
+        if (active) {
+          return res.status(409).json({
+            error: "An outbound call is already in progress. End it before dialing again.",
+            code: "CALL_ACTIVE",
+            callControlId: (active as any).call_control_id || null,
+          });
+        }
+      } catch (e) {
+        console.error("Active call check failed (non-blocking):", e);
+      }
+
+      // Same DNC gates as PSTN dispatch: leads and contacts flagged do-not-call
+      // must hold in the WebRTC path too.
+      let leadId: number | null = req.body?.leadId ? Number(req.body.leadId) : null;
+      const digits = toNumber.replace(/\D/g, "");
+      const last10 = digits.slice(-10);
+      if (last10.length >= 7) {
+        try {
+          if (leadId) {
+            const lead = await storage.getLeadById(leadId);
+            if (lead?.doNotCall) {
+              return res.status(403).json({ error: "This lead is marked Do Not Call and cannot be dialed.", code: "DO_NOT_CALL", leadId });
+            }
+          } else {
+            const rows: any = await db.execute(sql`
+              SELECT id, do_not_call FROM leads
+              WHERE regexp_replace(COALESCE(owner_phone, ''), '\\D', '', 'g') LIKE ${`%${last10}`}
+              ORDER BY id DESC LIMIT 1
+            `);
+            const row = (rows as any).rows?.[0];
+            if (row?.id) {
+              leadId = Number(row.id);
+              if (row.do_not_call) {
+                return res.status(403).json({ error: "This lead is marked Do Not Call and cannot be dialed.", code: "DO_NOT_CALL", leadId });
+              }
+            }
+          }
+          const contactRows: any = await db.execute(sql`
+            SELECT id FROM contacts
+            WHERE do_not_call = true
+              AND regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') LIKE ${`%${last10}`}
+            ORDER BY id DESC LIMIT 1
+          `);
+          if ((contactRows as any).rows?.[0]) {
+            return res.status(403).json({ error: "This contact is marked Do Not Call and cannot be dialed.", code: "DO_NOT_CALL" });
+          }
+        } catch (e) {
+          console.error("WebRTC dial DNC lookup failed (non-blocking):", e);
+        }
+      }
+
+      const callLog = await storage.createCallLog({
+        userId: user.id,
+        direction: "outbound",
+        number: toNumber,
+        status: "dialing",
+        startedAt: new Date(),
+        leadId,
+        metadata: JSON.stringify({ webrtcPending: true, destinationNumber: toNumber }),
+      } as any);
+      res.status(201).json({ callLogId: callLog?.id || null });
+    } catch (error: any) {
+      console.error("WebRTC call registration failed:", error);
+      res.status(500).json({ error: error?.message || "Internal error", code: "INTERNAL_ERROR" });
+    }
+  });
+
   // Telnyx Onboarding Wizard: Live Validation
   reg("post", "/api/telnyx/validate/api-key"); app.post("/api/telnyx/validate/api-key", async (req, res) => {
     try {
@@ -9073,12 +9153,33 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     res.json(result);
   });
 
-  reg("post", "/api/v1/telecom/call-sessions/:id/callback"); app.post("/api/v1/telecom/call-sessions/:id/callback", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
-    const result = await callSessions.scheduleCallback(Number(req.params.id), user.id, { dueAt: String(req.body?.dueAt || ""), note: req.body?.note ? String(req.body.note) : undefined });
-    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
-    res.json(result);
+  reg("post", "/api/v1/telecom/call-sessions/:id/callback"); app.post("/api/v1/telecom/call-sessions/:id/callback", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.scheduleCallback(Number(req.params.id), user.id, { dueAt: String(req.body?.dueAt || ""), note: req.body?.note ? String(req.body.note) : undefined });
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json(result);
+  });
+
+  reg("post", "/api/v1/telecom/call-sessions/:id/dtmf"); app.post("/api/v1/telecom/call-sessions/:id/dtmf", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.sendSessionDtmf(Number(req.params.id), user.id, String(req.body?.digits || ""));
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json(result);
+  });
+
+  // Stale-session watchdog sweep — admin-only, also safe to call from a cron.
+  reg("post", "/api/v1/telecom/call-sessions/sweep"); app.post("/api/v1/telecom/call-sessions/sweep", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!(user.isSuperAdmin || String(user.role || "").trim().toLowerCase() === "admin")) {
+      return res.status(403).json({ error: "Only admins can run the sweep", code: "ADMIN_REQUIRED" });
+    }
+    const maxAgeSecs = req.body?.maxAgeSecs ? Number(req.body.maxAgeSecs) : undefined;
+    const limit = req.body?.limit ? Number(req.body.limit) : undefined;
+    const result = await callSessions.sweepStaleCallSessions({ maxAgeSecs, limit });
+    res.json({ ok: true, ...result });
   });
 
 

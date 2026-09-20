@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
+import { useTelnyxRTCCall } from "./useTelnyxRTCCall";
 
 export interface SignalWireCall {
   id: string;
@@ -26,6 +27,9 @@ function mapExternalState(raw: string): SignalWireCall["state"] | null {
 }
 
 export function useSignalWire() {
+  // WebRTC-first: real browser audio (mic → Telnyx parked leg → PSTN bridge).
+  // The PSTN click-to-dial below is the fallback when WebRTC isn't connected.
+  const rtc = useTelnyxRTCCall();
   const [connectionState, setConnectionState] = useState<"idle" | "connecting" | "ready" | "error">("idle");
   const [error, setError] = useState<string | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -54,6 +58,27 @@ export function useSignalWire() {
     async (number: string, opts?: MakeCallOptions) => {
       setError(null);
       setLastError(null);
+
+      // ── WebRTC path (preferred): mic audio + parked-outbound bridge. ──
+      // The server-side DNC/active-call gates inside rtc.makeCall surface
+      // blocked dials here as a thrown error.
+      if (rtc.connState === "ready") {
+        const started = await rtc.makeCall(number);
+        if (started?.call) {
+          setConnectionState("ready");
+          setCallBoth(() => ({
+            id: String((started.call as any).id || Date.now()),
+            remoteNumber: number,
+            state: "ringing",
+            muted: false,
+          }));
+          return { callControlId: null, callLogId: started.callLogId || null, transport: "webrtc" };
+        }
+        // WebRTC dial failed to start — fall through to PSTN so the call
+        // still happens (click-to-dial to the agent's configured phone).
+      }
+
+      // ── PSTN fallback: click-to-dial via Call Control. ──
       setConnectionState("connecting");
       clearRingTimer();
 
@@ -109,11 +134,12 @@ export function useSignalWire() {
         throw e;
       }
     },
-    [clearRingTimer, setCallBoth],
+    [clearRingTimer, setCallBoth, rtc],
   );
 
   const endCall = useCallback(async () => {
     clearRingTimer();
+    if (rtc.call) { await rtc.hangup().catch(() => {}); }
     const callControlId = callControlIdRef.current;
     callControlIdRef.current = null;
     setCallBoth((prev) => (prev ? { ...prev, state: "finished" } : null));
@@ -142,7 +168,9 @@ export function useSignalWire() {
 
   // Server-confirmed mute: flip local state only after the provider accepts
   // the command, so the UI never shows a mute that Telnyx rejected.
+  // On the WebRTC path mute runs locally on the Call object (checklist #5).
   const toggleMute = useCallback(async () => {
+    if (rtc.call) { await rtc.toggleMute(); setCallBoth((prev) => (prev ? { ...prev, muted: !prev.muted } : prev)); return; }
     const ccId = callControlIdRef.current;
     if (!ccId) return;
     const target = !(callRef.current?.muted ?? false);
@@ -159,6 +187,7 @@ export function useSignalWire() {
 
   // Server-confirmed hold/unhold.
   const toggleHold = useCallback(async () => {
+    if (rtc.call) { await rtc.toggleHold(); setCallBoth((prev) => (prev ? { ...prev, state: prev.state === "held" ? "active" : "held" } : prev)); return; }
     const ccId = callControlIdRef.current;
     if (!ccId) return;
     const next = callRef.current?.state === "held" ? "active" : "held";
@@ -223,6 +252,8 @@ export function useSignalWire() {
   }, [clearRingTimer]);
 
   return {
+    rtcConnState: rtc.connState,
+    rtcError: rtc.connError,
     ready: connectionState === "ready",
     connectionState,
     error,

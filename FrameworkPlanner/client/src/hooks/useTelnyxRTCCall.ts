@@ -84,6 +84,7 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
   const clientRef = useRef<any>(null);
   const callRef = useRef<any>(null);
   const defaultFromRef = useRef<string | null>(null);
+  const webrtcCallLogIdRef = useRef<number | null>(null);
   const onIncomingRef = useRef(opts?.onIncoming);
   onIncomingRef.current = opts?.onIncoming;
 
@@ -171,9 +172,19 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
       copts.autoReconnect = true;
       copts.hangupOnBeforeUnload = true;
       if (config.defaultFromNumber) copts.callerNumber = config.defaultFromNumber;
+      // Media must traverse NATs — pass TURN/STUN overrides when configured.
+      // The SDK keeps its own Telnyx defaults when none are provided.
+      if (Array.isArray(config.iceServers) && config.iceServers.length) copts.iceServers = config.iceServers;
 
       const client = new mod.TelnyxRTC(copts);
       clientRef.current = client;
+
+      // Checklist (Telnyx outbound-dialer guide): enable the microphone BEFORE
+      // any call is placed, otherwise the browser leg negotiates without mic
+      // audio and the bridge carries one-way/no audio.
+      try { client.enableMicrophone(); } catch (e) {
+        console.warn("enableMicrophone failed (will retry before dialing):", e);
+      }
 
       client.on("telnyx.ready", () => {
         setConnState("ready");
@@ -197,7 +208,7 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
         }
         if (callRef.current && sdkCall.id === callRef.current.id) {
           syncFromSdkCall(sdkCall);
-          if (mapSdkState(sdkCall.state) === "ended") callRef.current = null;
+          if (mapSdkState(sdkCall.state) === "ended") { callRef.current = null; webrtcCallLogIdRef.current = null; }
         } else if (!callRef.current) {
           callRef.current = sdkCall;
           syncFromSdkCall(sdkCall);
@@ -232,16 +243,41 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
     setBusy(true);
     setIncoming(null);
     try {
+      // Register the dial server-side first: DNC gates + active-call check run
+      // here, and the parked-leg webhook correlates via the returned log id.
+      try {
+        const regRes = await apiRequest("POST", "/api/telephony/webrtc/calls", { toNumber: destinationNumber });
+        const reg = await regRes.json().catch(() => ({}));
+        webrtcCallLogIdRef.current = reg?.callLogId ? Number(reg.callLogId) : null;
+      } catch (e: any) {
+        const msg = String(e?.message || e || "Call blocked");
+        setConnError(msg);
+        setBusy(false);
+        return null;
+      }
+      // Mic permission must be granted (and enabled on the client) before the
+      // call — retry here in case the connect-time attempt was blocked.
+      try { client.enableMicrophone(); } catch { /* browser may still be prompting */ }
       const sdkCall = client.newCall({
         destinationNumber,
         audio: true,
+        video: false,
+        // Parked-outbound flow: the SIP connection (Park Outbound Calls ON)
+        // parks this leg; our webhook handler decodes this state, dials the
+        // PSTN leg, and bridges on answer. Also bound to the call log row the
+        // server created via POST /api/telephony/webrtc/calls.
+        clientState: btoa(JSON.stringify({
+          kind: "webrtc_dial",
+          destinationNumber,
+          ...(webrtcCallLogIdRef.current ? { callLogId: webrtcCallLogIdRef.current } : {}),
+        })),
         ...(defaultFromRef.current ? { callerNumber: defaultFromRef.current } : {}),
       });
       callRef.current = sdkCall;
       const remote = String(destinationNumber || "") || "";
       setCall({ id: String(sdkCall.id || Date.now()), remoteNumber: remote, state: "dialing", muted: sdkCall.isAudioMuted ?? false });
       sdkCall.playRingback?.();
-      return sdkCall;
+      return { call: sdkCall, callLogId: webrtcCallLogIdRef.current };
     } catch (e: any) {
       setConnError(String(e?.message || e || "Failed to place call"));
       return null;
@@ -251,6 +287,7 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
   const hangup = useCallback(async () => {
     const sdkCall = callRef.current;
     callRef.current = null;
+    webrtcCallLogIdRef.current = null;
     setCall((prev) => (prev ? { ...prev, state: "ended" } : null));
     if (sdkCall) { try { await sdkCall.hangup(); } catch (e) { console.error("Softphone hangup failed:", e); } }
   }, []);

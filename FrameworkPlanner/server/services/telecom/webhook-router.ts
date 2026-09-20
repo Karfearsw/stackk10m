@@ -241,6 +241,134 @@ async function findInboundByAgentLeg(agentLegCc: string): Promise<any | null> {
     return null;
   }
 }
+// ── Parked-outbound WebRTC dialer (WebRTC browser leg → PSTN leg) ─────────
+
+// The browser softphone attaches this client_state to newCall(); the SIP
+// credential connection must have "Park Outbound Calls" enabled so the parked
+// leg arrives here with the same client_state, and we dial + bridge the PSTN
+// leg (https://developers.telnyx.com/docs/voice/webrtc/use-cases/outbound-dialer).
+function decodeWebrtcDialClientState(raw: unknown): { destinationNumber: string | null; userId: number | null } {
+  try {
+    const b64 = String(raw || "");
+    if (!b64) return { destinationNumber: null, userId: null };
+    const json = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+    if (json?.kind !== "webrtc_dial") return { destinationNumber: null, userId: null };
+    const dest = String(json.destinationNumber || "").trim() || null;
+    const uid = Number(json.userId);
+    return { destinationNumber: dest, userId: Number.isFinite(uid) && uid > 0 ? uid : null };
+  } catch {
+    return { destinationNumber: null, userId: null };
+  }
+}
+
+function parseCallLogMeta(raw: unknown): Record<string, any> {
+  if (!raw) return {};
+  if (typeof raw === "object") return raw as Record<string, any>;
+  try { return JSON.parse(String(raw)) || {}; } catch { return {}; }
+}
+
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (m) => `\\${m}`);
+}
+
+function eventTypeIs(expected: string, event: any): boolean {
+  return String(event?.data?.event_type || event?.event_type || "") === expected;
+}
+
+// Most recent dialer-registered call log not yet bound to a call leg.
+async function findPendingWebrtcDialLog(userId: number | null, destination: string): Promise<any | null> {
+  try {
+    const result = await pool.query(
+      `SELECT id, user_id, metadata FROM call_logs
+       WHERE call_control_id IS NULL
+         AND metadata::text LIKE '%"webrtcPending":true%'
+         AND metadata::text LIKE $1
+       ORDER BY id DESC
+       LIMIT 1`,
+      [`%${escapeLike(destination)}%`],
+    );
+    return (result as any).rows?.[0] || null;
+  } catch (e) {
+    console.error("findPendingWebrtcDialLog failed:", e);
+    return null;
+  }
+}
+
+// Compliance: re-verify do-not-call at the webhook, independent of the UI.
+async function isDncBlockedDestination(destination: string): Promise<boolean> {
+  try {
+    const digits = String(destination).replace(/\D/g, "");
+    const last10 = digits.slice(-10);
+    if (last10.length < 7) return false;
+    const leads = await pool.query(
+      `SELECT 1 FROM leads
+       WHERE do_not_call = true
+         AND regexp_replace(COALESCE(owner_phone, ''), '\\D', '', 'g') LIKE $1
+       LIMIT 1`,
+      [`%${last10}%`],
+    );
+    if ((leads as any).rows?.length) return true;
+    const contacts = await pool.query(
+      `SELECT 1 FROM contacts
+       WHERE do_not_call = true
+         AND regexp_replace(COALESCE(phone, ''), '\\D', '', 'g') LIKE $1
+       LIMIT 1`,
+      [`%${last10}%`],
+    );
+    return Boolean((contacts as any).rows?.length);
+  } catch (e) {
+    console.error("isDncBlockedDestination failed (non-blocking):", e);
+    return false;
+  }
+}
+
+async function handleParkedWebrtcLeg(payload: any, browserLegCc: string) {
+  const { destinationNumber, userId } = decodeWebrtcDialClientState(payload.client_state);
+  if (!destinationNumber) return; // not a dialer-initiated parked leg
+  const log = await findPendingWebrtcDialLog(userId, destinationNumber);
+  try {
+    if (await isDncBlockedDestination(destinationNumber)) {
+      await telnyx.hangup(browserLegCc).catch(() => {});
+      if (log?.id) {
+        await pool.query(
+          `UPDATE call_logs SET status = 'failed', ended_at = NOW(),
+             metadata = $1 WHERE id = $2`,
+          [JSON.stringify({ ...parseCallLogMeta(log.metadata), webrtcPending: false, error: "do_not_call" }), log.id],
+        );
+      }
+      return;
+    }
+    const dial = await telnyx.dial({ to: destinationNumber, from: String(process.env.TELNYX_DEFAULT_FROM_NUMBER || "") });
+    if (log?.id) {
+      const meta = parseCallLogMeta(log.metadata);
+      await pool.query(
+        `UPDATE call_logs
+         SET call_control_id = $1, status = 'ringing', metadata = $2
+         WHERE id = $3`,
+        [
+          browserLegCc,
+          JSON.stringify({ ...meta, webrtcPending: false, webrtcCallControlId: browserLegCc, pstnCallControlId: dial.callControlId }),
+          log.id,
+        ],
+      );
+    }
+    emitTelephonyEventToAll({
+      type: "call_state_changed",
+      payload: { callControlId: browserLegCc, state: "ringing", direction: "outbound" },
+    } as any);
+  } catch (e: any) {
+    console.error("Parked WebRTC → PSTN dial failed:", e);
+    await telnyx.hangup(browserLegCc).catch(() => {});
+    if (log?.id) {
+      await pool.query(
+        `UPDATE call_logs SET status = 'failed', ended_at = NOW(),
+           metadata = $1 WHERE id = $2`,
+        [JSON.stringify({ ...parseCallLogMeta(log.metadata), webrtcPending: false, error: String(e?.message || e) }), log.id],
+      ).catch(() => {});
+    }
+  }
+}
+
 // ── Call Events ────────────────────────────────────────────────────────────
 
 async function handleCallEvent(event: any) {
@@ -263,6 +391,35 @@ async function handleCallEvent(event: any) {
   const direction = payload.direction || "outbound";
 
   if (!callControlId) return;
+
+  // Parked-outbound WebRTC dialer: when the parked browser leg arrives, dial
+  // the PSTN leg now; bridge the two when the PSTN leg answers (below).
+  if (eventTypeIs("call.initiated", event) && String(state || "").toLowerCase() === "parked") {
+    await handleParkedWebrtcLeg(payload, callControlId);
+    return;
+  }
+
+  // PSTN leg answered: bridge it to the parked WebRTC leg — this is where
+  // audio starts flowing both ways.
+  if (eventTypeIs("call.answered", event) && String(state || "").toLowerCase() === "answered") {
+    const exact = await findCallLogByControlId(callControlId);
+    const meta = parseCallLogMeta(exact?.metadata);
+    if (meta.webrtcCallControlId) {
+      try {
+        await telnyx.bridge(meta.webrtcCallControlId, callControlId, { preventDoubleBridge: true });
+        await pool.query(
+          `UPDATE call_logs SET metadata = $1 WHERE id = $2`,
+          [JSON.stringify({ ...meta, bridged: true, bridgedAt: new Date().toISOString() }), exact.id],
+        );
+        emitTelephonyEventToAll({
+          type: "call_state_changed",
+          payload: { callControlId: meta.webrtcCallControlId, state: "active", direction: "outbound", bridgedTo: callControlId },
+        } as any);
+      } catch (e) {
+        console.error("PSTN → WebRTC bridge failed:", e);
+      }
+    }
+  }
 
   const statusMap: Record<string, string> = {
     ringing: "ringing",

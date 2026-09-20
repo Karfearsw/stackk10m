@@ -709,6 +709,7 @@ export interface IStorage {
   getCallSessionById(id: number): Promise<CallSession | undefined>;
   getCallSessionByLegCallControlId(callControlId: string): Promise<CallSession | undefined>;
   updateCallSession(id: number, patch: Partial<InsertCallSession>): Promise<CallSession>;
+  getStaleCallSessions(maxAgeSecs: number, limit?: number): Promise<CallSession[]>;
   createCallSessionEvent(input: InsertCallSessionEvent): Promise<CallSessionEvent>;
   getCallSessionEvents(sessionId: number, limit?: number): Promise<CallSessionEvent[]>;
   getAgentPhoneSetting(userId: number): Promise<AgentPhoneSetting | undefined>;
@@ -3675,7 +3676,8 @@ export class DatabaseStorage implements IStorage {
       agentLegCallControlId: row.agent_leg_call_control_id ?? null,
       leadLegCallControlId: row.lead_leg_call_control_id ?? null,
       aiLegCallControlId: row.ai_leg_call_control_id ?? null,
-      bridgeRequestId: row.bridge_request_id ?? null,
+      bridgeRequestId: row.bridge_request_id ?? null,
+      providerCallSessionId: row.provider_call_session_id ?? null,
       providerConnectionId: row.provider_connection_id ?? null,
       providerName: row.provider_name || 'telnyx',
       startedAt: row.started_at ?? null,
@@ -3688,8 +3690,9 @@ export class DatabaseStorage implements IStorage {
       providerHangupCause: row.provider_hangup_cause ?? null,
       aiSummary: row.ai_summary ?? null,
       aiQualificationScore: row.ai_qualification_score ?? null,
-      aiConfidence: row.ai_confidence ?? null,
-      idempotencyKey: row.idempotency_key ?? null,
+      aiConfidence: row.ai_confidence ?? null,
+      idempotencyKey: row.idempotency_key ?? null,
+      providerLastEventAt: row.provider_last_event_at ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     } as any;
@@ -3723,6 +3726,19 @@ export class DatabaseStorage implements IStorage {
       .where(eq(callSessions.id, id))
       .returning();
     return result[0];
+  }
+
+  async getStaleCallSessions(maxAgeSecs: number, limit: number = 25): Promise<CallSession[]> {
+    const age = Math.max(30, Math.min(7200, Math.floor(maxAgeSecs)));
+    const lim = Math.max(1, Math.min(100, Math.floor(limit)));
+    const result: any = await db.execute(sql`
+      SELECT * FROM crm_call_sessions
+      WHERE status NOT IN ('completed', 'failed', 'cancelled', 'validation_failed')
+        AND COALESCE(provider_last_event_at, updated_at, created_at) < NOW() - ('' || ${age} || ' seconds')::interval
+      ORDER BY COALESCE(provider_last_event_at, updated_at, created_at) ASC
+      LIMIT ${lim}
+    `);
+    return ((result as any).rows || []).map((r: any) => this.mapCallSessionRow(r));
   }
 
   async createCallSessionEvent(input: InsertCallSessionEvent): Promise<CallSessionEvent> {

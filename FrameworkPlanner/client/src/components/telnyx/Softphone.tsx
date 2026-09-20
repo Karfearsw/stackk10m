@@ -62,7 +62,7 @@ export function Softphone() {
     if (!formatted || active) return;
     // Timer + audio feedback driven by local transitions from the hook.
     const started = await rtc.makeCall(formatted);
-    if (started) {
+    if (started?.call) {
       setTimer(window.setInterval(() => setElapsedMs((v) => v + 250), 250));
       startRingback();
     }

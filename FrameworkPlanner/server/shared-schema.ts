@@ -2203,7 +2203,8 @@ export const callSessions = pgTable("crm_call_sessions", {
   agentLegCallControlId: varchar("agent_leg_call_control_id", { length: 255 }),
   leadLegCallControlId: varchar("lead_leg_call_control_id", { length: 255 }),
   aiLegCallControlId: varchar("ai_leg_call_control_id", { length: 255 }),
-  bridgeRequestId: varchar("bridge_request_id", { length: 128 }),
+  bridgeRequestId: varchar("bridge_request_id", { length: 128 }),
+  providerCallSessionId: varchar("provider_call_session_id", { length: 64 }),
   providerConnectionId: varchar("provider_connection_id", { length: 100 }),
   providerName: varchar("provider_name", { length: 20 }).notNull().default("telnyx"),
   startedAt: timestamp("started_at", { withTimezone: true }),
@@ -2218,9 +2219,10 @@ export const callSessions = pgTable("crm_call_sessions", {
   aiQualificationScore: integer("ai_qualification_score"),
   aiConfidence: numeric("ai_confidence"),
   idempotencyKey: varchar("idempotency_key", { length: 128 }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+  providerLastEventAt: timestamp("provider_last_event_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 export type CallSession = typeof callSessions.$inferSelect;
 export type InsertCallSession = typeof callSessions.$inferInsert;
 

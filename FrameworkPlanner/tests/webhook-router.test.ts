@@ -26,6 +26,12 @@ function signBody(body: string): string {
 
 // ── Mutable pool behavior per test ────────────────────────────────────────
 let callRow: any = null; // row returned by the exact call_control_id lookup
+let pendingDialRow: any = null; // row returned by the pending WebRTC-dial lookup
+let insertCallLogCalls = 0;
+let updateCallLogMetaCalls = 0;
+const dialCalls: any[] = [];
+const bridgeCalls: any[] = [];
+const hangupCcCalls: string[] = [];
 let dedupeHit = false;   // when true, the event has already been processed
 let updateCallLogCalls = 0;
 let smsInsertCalls = 0;
@@ -43,13 +49,15 @@ function routePoolQuery(sqlText: string, params?: any[]) {
     return { rows: [] }; // SELECT dedupe check → assume not present
   }
   if (s.includes('SELECT') && (s.includes('call_control_id') || s.includes('metadata::text LIKE'))) {
+    if (s.includes('webrtcPending')) return { rows: pendingDialRow ? [pendingDialRow] : [] };
     return { rows: callRow ? [callRow] : [] };
   }
   if (s.trim().startsWith('UPDATE call_logs')) {
+    if (s.includes('metadata = $1')) updateCallLogMetaCalls += 1;
     updateCallLogCalls += 1;
     return { rows: [] };
   }
-  if (s.includes('INSERT INTO call_logs')) return { rows: [{ id: 500, created_at: new Date().toISOString() }] };
+  if (s.includes('INSERT INTO call_logs')) { insertCallLogCalls += 1; return { rows: [{ id: 500, created_at: new Date().toISOString() }] }; }
   if (s.includes('global_activity_logs')) return { rows: [] };
   if (s.includes('leads')) return { rows: [] };
   return { rows: [] };
@@ -70,6 +78,18 @@ describe('Telnyx Webhook Router', () => {
     storage.createTask = vi.fn(async (input: any) => ({ id: 777, ...input } as any));
     storage.createGlobalActivity = async (input: any) => ({ id: 1, ...input } as any);
 
+    // Stub the Telnyx API surface the parked-outbound flow calls.
+    (telnyx as any).dial = vi.fn(async (input: any) => {
+      dialCalls.push(input);
+      return { callControlId: 'pstn-cc-1', callSessionId: null };
+    });
+    (telnyx as any).bridge = vi.fn(async (from: string, to: string) => {
+      bridgeCalls.push({ from, to });
+    });
+    (telnyx as any).hangup = vi.fn(async (cc: string) => {
+      hangupCcCalls.push(cc);
+    });
+
     process.env.TELNYX_PUBLIC_KEY = publicKeyDer;
     process.env.TELNYX_WEBHOOK_SIGNING_TOLERANCE_SECONDS = '300';
 
@@ -86,8 +106,14 @@ describe('Telnyx Webhook Router', () => {
 
   beforeEach(() => {
     callRow = null;
+    pendingDialRow = null;
     dedupeHit = false;
     updateCallLogCalls = 0;
+    insertCallLogCalls = 0;
+    updateCallLogMetaCalls = 0;
+    dialCalls.length = 0;
+    bridgeCalls.length = 0;
+    hangupCcCalls.length = 0;
     smsInsertCalls = 0;
     smsUpdateCalls = 0;
     poolQuery.mockClear();
@@ -250,5 +276,102 @@ describe('Telnyx Webhook Router', () => {
     const taskInput = (storage.createTask as any).mock.calls[0][0];
     expect(taskInput.title).toBe('AI Screener follow-up');
     expect(taskInput.relatedEntityId).toBe(3);
+  });
+
+  // ── Parked-outbound WebRTC dialer (WebRTC browser leg → PSTN leg) ──────
+
+  function parkedLegBody(overrides: Record<string, unknown> = {}): string {
+    const clientState = Buffer.from(JSON.stringify({
+      kind: 'webrtc_dial',
+      destinationNumber: '+15551230000',
+      userId: 7,
+    })).toString('base64');
+    return JSON.stringify({
+      data: {
+        event_type: 'call.initiated',
+        id: 'evt-parked-1',
+        payload: {
+          call_control_id: 'browser-cc-1',
+          call_state: 'parked',
+          direction: 'incoming',
+          client_state: clientState,
+          ...overrides,
+        },
+      },
+    });
+  }
+
+  it('dials the PSTN leg and binds the call log when a parked WebRTC leg arrives', async () => {
+    pendingDialRow = { id: 900, user_id: 7, metadata: JSON.stringify({ webrtcPending: true, destinationNumber: '+15551230000' }) };
+    const body = parkedLegBody();
+    const res = await request(app).post('/').set('Content-Type', 'application/json').set('Telnyx-Signature-Ed25519', signBody(body)).send(body);
+    expect(res.status).toBe(200);
+    await waitForAsync();
+
+    expect(dialCalls.length).toBe(1);
+    expect(dialCalls[0].to).toBe('+15551230000');
+
+    // The browser leg's cc is bound to the pending log; status → ringing.
+    const updates = poolQuery.mock.calls.filter((c: any[]) => String(c[0]).trim().startsWith('UPDATE call_logs'));
+    expect(updates.length).toBe(1);
+    expect(String(updates[0][0])).toContain('call_control_id = $1');
+    expect(updates[0][1][0]).toBe('browser-cc-1');
+  });
+
+  it('hangs up the parked leg without dialing when the destination is do-not-call', async () => {
+    // Queue responses in call order: claim → pending lookup → leads DNC probe.
+    poolQuery.mockImplementationOnce(async () => ({ rows: [{ event_id: 'evt-parked-1' }] }));
+    poolQuery.mockImplementationOnce(async () => ({ rows: [{ id: 900, user_id: 7, metadata: '{}' }] }));
+    poolQuery.mockImplementationOnce(async () => ({ rows: [{ id: 1 }] })); // DNC hit
+    const body = parkedLegBody();
+    const res = await request(app).post('/').set('Content-Type', 'application/json').set('Telnyx-Signature-Ed25519', signBody(body)).send(body);
+    expect(res.status).toBe(200);
+    await waitForAsync();
+
+    expect(dialCalls.length).toBe(0);
+    expect(hangupCcCalls).toEqual(['browser-cc-1']);
+  });
+
+  it('bridges the WebRTC and PSTN legs when the PSTN leg answers', async () => {
+    callRow = {
+      id: 900,
+      started_at: new Date().toISOString(),
+      user_id: 7,
+      status: 'ringing',
+      lead_id: null,
+      metadata: JSON.stringify({ webrtcCallControlId: 'browser-cc-1', pstnCallControlId: 'pstn-cc-1' }),
+      transcript: null,
+    };
+    const body = JSON.stringify({
+      data: {
+        event_type: 'call.answered',
+        id: 'evt-answered-1',
+        payload: { call_control_id: 'pstn-cc-1', call_state: 'answered', direction: 'outbound' },
+      },
+    });
+    const res = await request(app).post('/').set('Content-Type', 'application/json').set('Telnyx-Signature-Ed25519', signBody(body)).send(body);
+    expect(res.status).toBe(200);
+    await waitForAsync();
+
+    expect(bridgeCalls.length).toBe(1);
+    expect(bridgeCalls[0]).toEqual({ from: 'browser-cc-1', to: 'pstn-cc-1' });
+    expect(updateCallLogMetaCalls).toBe(1);
+  });
+
+  it('ignores answered legs with no WebRTC correlation (regular PSTN calls unaffected)', async () => {
+    callRow = null;
+    const body = JSON.stringify({
+      data: {
+        event_type: 'call.answered',
+        id: 'evt-answered-2',
+        payload: { call_control_id: 'pstn-plain-1', call_state: 'answered', direction: 'outbound' },
+      },
+    });
+    const res = await request(app).post('/').set('Content-Type', 'application/json').set('Telnyx-Signature-Ed25519', signBody(body)).send(body);
+    expect(res.status).toBe(200);
+    await waitForAsync();
+
+    expect(bridgeCalls.length).toBe(0);
+    expect(dialCalls.length).toBe(0);
   });
 });
