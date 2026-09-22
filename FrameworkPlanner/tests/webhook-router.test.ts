@@ -24,6 +24,13 @@ function signBody(body: string): string {
   return `t=${ts},v1=${sig}`;
 }
 
+function signStandardWebhook(id: string, body: string): { id: string; ts: string; sig: string } {
+  const ts = Math.floor(Date.now() / 1000);
+  const sig = crypto.sign(null, Buffer.from(`${id}.${ts}.${body}`), privateKey)
+    .toString('base64url');
+  return { id, ts: String(ts), sig: `v1,${sig}` };
+}
+
 // ── Mutable pool behavior per test ────────────────────────────────────────
 let callRow: any = null; // row returned by the exact call_control_id lookup
 let pendingDialRow: any = null; // row returned by the pending WebRTC-dial lookup
@@ -131,6 +138,49 @@ describe('Telnyx Webhook Router', () => {
     const body = JSON.stringify({ data: { event_type: 'call.initiated' } });
     const header = signBody(body);
     expect(telnyx.verifyWebhookSignature(Buffer.from(JSON.stringify({ data: { event_type: 'call.hangup' } })), header)).toBe(false);
+  });
+
+  it('verifyStandardWebhookSignature accepts a valid v1 signature', () => {
+    const body = JSON.stringify({ data: { event_type: 'call.initiated' } });
+    const w = signStandardWebhook('msg_test_1', body);
+    expect(telnyx.verifyStandardWebhookSignature(Buffer.from(body), w.id, w.ts, w.sig)).toBe(true);
+  });
+
+  it('verifyStandardWebhookSignature rejects a tampered payload', () => {
+    const body = JSON.stringify({ data: { event_type: 'call.initiated' } });
+    const w = signStandardWebhook('msg_test_2', body);
+    expect(telnyx.verifyStandardWebhookSignature(Buffer.from(JSON.stringify({ data: { event_type: 'call.hangup' } })), w.id, w.ts, w.sig)).toBe(false);
+  });
+
+  it('verifyStandardWebhookSignature rejects an expired timestamp', () => {
+    const body = JSON.stringify({ data: { event_type: 'call.initiated' } });
+    const w = signStandardWebhook('msg_test_3', body);
+    const oldTs = String(Math.floor(Date.now() / 1000) - 100000);
+    expect(telnyx.verifyStandardWebhookSignature(Buffer.from(body), w.id, oldTs, w.sig)).toBe(false);
+  });
+
+  it('webhook route accepts Standard Webhooks signed deliveries', async () => {
+    const body = JSON.stringify({ data: { id: 'evt_sw_1', event_type: 'message.delivery', payload: {} } });
+    const w = signStandardWebhook('msg_test_4', body);
+    const res = await request(app)
+      .post('/')
+      .set('Content-Type', 'application/json')
+      .set('webhook-id', w.id)
+      .set('webhook-timestamp', w.ts)
+      .set('webhook-signature', w.sig)
+      .send(body);
+    expect(res.status).toBe(200);
+  });
+
+  it('webhook route still rejects invalid signatures under either scheme', async () => {
+    const res = await request(app)
+      .post('/')
+      .set('Content-Type', 'application/json')
+      .set('webhook-id', 'msg_bad')
+      .set('webhook-timestamp', String(Math.floor(Date.now() / 1000)))
+      .set('webhook-signature', 'v1,AAAA')
+      .send({ data: { event_type: 'call.initiated' } });
+    expect(res.status).toBe(401);
   });
 
   it('rejects unsigned webhooks with 401 when a public key is configured', async () => {

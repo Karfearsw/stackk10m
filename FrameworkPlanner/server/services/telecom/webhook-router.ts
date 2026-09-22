@@ -21,9 +21,20 @@ export function createTelnyxWebhookRouter() {
         : Buffer.from(JSON.stringify(req.body || {}));
 
       // When a public key is configured, reject unsigned/invalid webhooks so
-      // forged events never mutate call logs or leads.
+      // forged events never mutate call logs or leads. Two schemes are
+      // accepted: Telnyx's own header and the Standard Webhooks headers.
       if (process.env.TELNYX_PUBLIC_KEY) {
-        if (!signatureHeader || !telnyx.verifyWebhookSignature(rawBody, signatureHeader)) {
+        const whId = String(req.headers["webhook-id"] || "");
+        const whTs = String(req.headers["webhook-timestamp"] || "");
+        const whSig = String(req.headers["webhook-signature"] || "");
+        const okStandard = Boolean(whId && whTs && whSig) && telnyx.verifyStandardWebhookSignature(rawBody, whId, whTs, whSig);
+        const okTelnyx = Boolean(signatureHeader) && telnyx.verifyWebhookSignature(rawBody, signatureHeader);
+        if (!okStandard && !okTelnyx) {
+          console.error("Telnyx webhook signature rejected", {
+            hasTelnyxHeader: Boolean(signatureHeader),
+            hasStandardHeaders: Boolean(whId && whTs && whSig),
+            bodyLength: rawBody.length,
+          });
           return res.status(401).json({ error: "Invalid webhook signature" });
         }
       }

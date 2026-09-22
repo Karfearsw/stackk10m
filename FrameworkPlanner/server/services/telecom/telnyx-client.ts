@@ -708,6 +708,60 @@ export class TelnyxClient {
     }
   }
 
+  // Standard Webhooks signing scheme (svix-style): headers webhook-id,
+  // webhook-timestamp, webhook-signature. Signed content is
+  // `{id}.{timestamp}.{body}`; the signature is base64url Ed25519 and the
+  // header is `v1,<signature>` (v0 = HMAC, ignored here). Telnyx has been
+  // observed delivering this scheme alongside/instead of its own header.
+  verifyStandardWebhookSignature(
+    payload: string | Buffer,
+    webhookId: string,
+    timestampStr: string,
+    signatureHeader: string,
+    toleranceSeconds?: number,
+  ): boolean {
+    const publicKey = process.env.TELNYX_PUBLIC_KEY;
+    if (!publicKey || !webhookId || !timestampStr || !signatureHeader) return false;
+    if (!payload) return false;
+
+    try {
+      const timestamp = parseInt(String(timestampStr), 10);
+      if (Number.isNaN(timestamp)) return false;
+      const tolerance = toleranceSeconds ?? Number(process.env.TELNYX_WEBHOOK_SIGNING_TOLERANCE_SECONDS || "300");
+      const now = Math.floor(Date.now() / 1000);
+      if (Math.abs(now - timestamp) > tolerance) return false;
+
+      const body = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload));
+      const sigs = String(signatureHeader)
+        .split(" ")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const signedContent = Buffer.concat([
+        Buffer.from(`${webhookId}.${timestamp}.`),
+        body,
+      ]);
+
+      const raw = Buffer.from(publicKey, "base64");
+      const der =
+        raw.length === 32
+          ? Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), raw])
+          : raw;
+      const key = crypto.createPublicKey({ key: der, format: "der", type: "spki" });
+
+      for (const sig of sigs) {
+        const value = sig.startsWith("v1,") || sig.startsWith("v1=") ? sig.slice(3) : sig;
+        const sigBuf = Buffer.from(value, "base64url");
+        if (sigBuf.length !== 64) continue;
+        try {
+          if (crypto.verify(null, signedContent, key, sigBuf)) return true;
+        } catch { /* try next */ }
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   // ── AI Assistant (Telnyx Inference) ───────────────────────────────────
   // Starts an AI assistant on an active call. The assistant must exist in the
   // Telnyx account; transcripts arrive as ai_assistant.* webhook events.
