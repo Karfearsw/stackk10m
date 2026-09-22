@@ -138,7 +138,9 @@ export class TelnyxClient {
       throw err;
     }
 
-    const callControlId = data?.data?.id || data?.call_control_id;
+    // Telnyx POST /v2/calls returns { data: { call_control_id, call_leg_id,
+    // call_session_id, ... } } — some older payloads used data.id.
+    const callControlId = data?.data?.call_control_id || data?.data?.id || data?.call_control_id;
     if (!callControlId) throw new Error("Telnyx dial response missing call id");
     const callSessionId = data?.data?.call_session_id || data?.call_session_id || null;
     return { callControlId: String(callControlId), callSessionId: callSessionId ? String(callSessionId) : null };
