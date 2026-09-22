@@ -3474,8 +3474,12 @@ export class DatabaseStorage implements IStorage {
     return q as unknown as Promise<CallLog[]>;
   }
 
-  async getActiveOutboundCallForUser(userId: number, windowMs: number = 15 * 60 * 1000): Promise<CallLog | undefined> {
+  async getActiveOutboundCallForUser(userId: number, windowMs: number = 15 * 60 * 1000, graceMs: number = 3 * 60 * 1000): Promise<CallLog | undefined> {
     const since = new Date(Date.now() - windowMs);
+    // Calls that started before (now - grace) and never progressed past
+    // 'dialing' are stale (webhook lost, provider rejected pre-bridge, browser
+    // crashed) — exclude them so one bad attempt can't wedge the dialer.
+    const staleBefore = new Date(Date.now() - graceMs);
     const rows: any = await db.execute(sql`
       SELECT * FROM call_logs
       WHERE user_id = ${userId}
@@ -3483,6 +3487,7 @@ export class DatabaseStorage implements IStorage {
         AND status IN ('dialing','ringing','answered')
         AND ended_at IS NULL
         AND started_at >= ${since}
+        AND NOT (status = 'dialing' AND started_at < ${staleBefore})
       ORDER BY id DESC
       LIMIT 1
     `);

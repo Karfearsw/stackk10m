@@ -8114,6 +8114,41 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     }
   });
 
+  // Mark a registered WebRTC call as failed when the SDK reports the call
+  // ended without ever reaching the PSTN leg (no webhook will close it).
+  reg("post", "/api/telephony/webrtc/calls/:callLogId/fail");
+  app.post("/api/telephony/webrtc/calls/:callLogId/fail", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const callLogId = Number(req.params.callLogId);
+      if (!Number.isInteger(callLogId) || callLogId <= 0) {
+        return res.status(400).json({ error: "Invalid callLogId" });
+      }
+      const owned: any = await db.execute(sql`
+        SELECT id, ended_at FROM call_logs
+        WHERE id = ${callLogId} AND user_id = ${user.id} AND direction = 'outbound'
+        LIMIT 1
+      `);
+      const log = owned?.rows?.[0];
+      if (!log) {
+        return res.status(404).json({ error: "Call log not found" });
+      }
+      if (log.ended_at == null) {
+        await db.execute(sql`
+          UPDATE call_logs
+          SET status = 'failed', ended_at = NOW(),
+              note = COALESCE(note, '') || ${` [auto-fail${req.body?.sipCode ? ` SIP ${String(req.body.sipCode).slice(0, 12)}` : ""}${req.body?.cause ? `: ${String(req.body.cause).slice(0, 60)}` : ""}]`}
+          WHERE id = ${callLogId}
+        `);
+      }
+      res.json({ ok: true });
+    } catch (error: any) {
+      console.error("WebRTC call fail-marker failed:", error);
+      res.status(500).json({ error: error?.message || "Internal error" });
+    }
+  });
+
   // Telnyx Onboarding Wizard: Live Validation
   reg("post", "/api/telnyx/validate/api-key"); app.post("/api/telnyx/validate/api-key", async (req, res) => {
     try {

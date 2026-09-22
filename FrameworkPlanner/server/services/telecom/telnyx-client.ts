@@ -683,17 +683,23 @@ export class TelnyxClient {
       const body = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload));
       const signedContent = Buffer.concat([Buffer.from(`${timestamp}.`), body]);
 
-      // TELNYX_PUBLIC_KEY is the base64-encoded DER SPKI key from the portal.
+      // TELNYX_PUBLIC_KEY from the portal is the RAW 32-byte Ed25519 public
+      // key (base64). Wrap it in the fixed RFC 8410 SPKI prefix so crypto can
+      // use it; a full DER SPKI (44+ bytes, 0x30 header) is used as-is.
       try {
+        const raw = Buffer.from(publicKey, "base64");
+        const der =
+          raw.length === 32
+            ? Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), raw])
+            : raw;
         const key = crypto.createPublicKey({
-          key: Buffer.from(publicKey, "base64"),
+          key: der,
           format: "der",
           type: "spki",
         });
         return crypto.verify(null, signedContent, key, signature);
       } catch {
-        // Fallback: accept a PEM/raw string key.
-        return crypto.verify(null, signedContent, publicKey, signature);
+        return false;
       }
     } catch {
       return false;

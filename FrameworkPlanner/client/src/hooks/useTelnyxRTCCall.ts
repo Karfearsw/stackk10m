@@ -208,7 +208,21 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
         }
         if (callRef.current && sdkCall.id === callRef.current.id) {
           syncFromSdkCall(sdkCall);
-          if (mapSdkState(sdkCall.state) === "ended") { callRef.current = null; webrtcCallLogIdRef.current = null; }
+          if (mapSdkState(sdkCall.state) === "ended") {
+            // If this attempt never reached the PSTN leg (media failure, SIP
+            // rejection, provider error), no webhook will end the call log we
+            // registered — mark it failed so it can't wedge the dialer (409s).
+            const failId = webrtcCallLogIdRef.current;
+            webrtcCallLogIdRef.current = null;
+            if (failId) {
+              fetch(`/api/telephony/webrtc/calls/${failId}/fail`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ sipCode: (sdkCall as any)?.sipCode ?? null, cause: (sdkCall as any)?.cause ?? null }),
+              }).catch(() => {});
+            }
+            callRef.current = null;
+          }
         } else if (!callRef.current) {
           callRef.current = sdkCall;
           syncFromSdkCall(sdkCall);
