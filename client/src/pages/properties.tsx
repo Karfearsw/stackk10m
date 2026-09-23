@@ -138,8 +138,7 @@ function PropertyForm({
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = (data: any) => {
     onSubmit({
       address: formData.address,
       city: formData.city,
@@ -393,7 +392,7 @@ function PropertyForm({
   );
 }
 
-export default function Opportunities() {
+export default function Properties() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -402,71 +401,71 @@ export default function Opportunities() {
   const [statusFilter, setStatusFilter] = useState("all");
 
   const { data: properties = [], isLoading } = useQuery<Property[]>({
-    queryKey: ["/api/opportunities"],
+    queryKey: ["/api/properties"],
     queryFn: async () => {
-      const res = await fetch("/api/opportunities");
-      if (!res.ok) throw new Error("Failed to fetch opportunities");
+      const res = await fetch("/api/properties");
+      if (!res.ok) throw new Error("Failed to fetch properties");
       return res.json();
     }
   });
 
   const createPropertyMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch("/api/opportunities", {
+      const res = await fetch("/api/properties", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error("Failed to create opportunity");
+      if (!res.ok) throw new Error("Failed to create property");
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/opportunities"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
       queryClient.invalidateQueries({ queryKey: ["team-activity"] });
       setIsDialogOpen(false);
-      toast.success("Opportunity added successfully!");
+      toast.success("Property added successfully!");
     },
     onError: () => {
-      toast.error("Failed to add opportunity");
+      toast.error("Failed to add property");
     },
   });
 
   const updatePropertyMutation = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: any }) => {
-      const res = await fetch(`/api/opportunities/${id}`, {
+      const res = await fetch(`/api/properties/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!res.ok) throw new Error("Failed to update opportunity");
+      if (!res.ok) throw new Error("Failed to update property");
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/opportunities"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
       queryClient.invalidateQueries({ queryKey: ["team-activity"] });
       setIsDialogOpen(false);
       setEditingProperty(null);
-      toast.success("Opportunity updated successfully!");
+      toast.success("Property updated successfully!");
     },
     onError: () => {
-      toast.error("Failed to update opportunity");
+      toast.error("Failed to update property");
     },
   });
 
   const deletePropertyMutation = useMutation({
     mutationFn: async (id: number) => {
-      const res = await fetch(`/api/opportunities/${id}`, {
+      const res = await fetch(`/api/properties/${id}`, {
         method: "DELETE",
       });
-      if (!res.ok) throw new Error("Failed to delete opportunity");
+      if (!res.ok) throw new Error("Failed to delete property");
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/opportunities"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/properties"] });
       queryClient.invalidateQueries({ queryKey: ["team-activity"] });
-      toast.success("Opportunity deleted");
+      toast.success("Property deleted");
     },
     onError: () => {
-      toast.error("Failed to delete opportunity");
+      toast.error("Failed to delete property");
     },
   });
 
@@ -511,7 +510,7 @@ export default function Opportunities() {
   if (isLoading) {
     return (
       <Layout>
-        <div className="text-center py-12">Loading opportunities...</div>
+        <div className="text-center py-12">Loading properties...</div>
       </Layout>
     );
   }
@@ -520,18 +519,18 @@ export default function Opportunities() {
     <Layout>
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
-          <h1 className="text-3xl font-bold tracking-tight">Opportunities</h1>
-          <p className="text-muted-foreground">Browse and manage all opportunities in your pipeline.</p>
+          <h1 className="text-3xl font-bold tracking-tight">Properties</h1>
+          <p className="text-muted-foreground">Browse and manage all properties in your portfolio.</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative hidden md:block">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input 
-              placeholder="Search opportunities..." 
+              placeholder="Search properties..." 
               className="w-[200px] pl-9"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              data-testid="input-search-opportunities"
+              data-testid="input-search-properties"
             />
           </div>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -553,13 +552,13 @@ export default function Opportunities() {
             if (!open) setEditingProperty(null);
           }}>
             <DialogTrigger asChild>
-              <Button size="sm" onClick={openNewDialog} data-testid="button-add-opportunity">
-                <Plus className="mr-2 h-4 w-4" /> Add Opportunity
+              <Button size="sm" onClick={openNewDialog} data-testid="button-add-property">
+                <Plus className="mr-2 h-4 w-4" /> Add Property
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
-                <DialogTitle>{editingProperty ? "Edit Opportunity" : "Add New Opportunity"}</DialogTitle>
+                <DialogTitle>{editingProperty ? "Edit Property" : "Add New Property"}</DialogTitle>
               </DialogHeader>
               <PropertyForm
                 property={editingProperty || undefined}
@@ -576,7 +575,7 @@ export default function Opportunities() {
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 mt-6">
         {filteredProperties.map((prop) => (
-          <Card key={prop.id} className="overflow-hidden hover:shadow-lg transition-shadow group" data-testid={`card-opportunity-${prop.id}`}>
+          <Card key={prop.id} className="overflow-hidden hover:shadow-lg transition-shadow group" data-testid={`card-property-${prop.id}`}>
             <div className="relative h-40 bg-muted overflow-hidden">
               <PropertyImageCarousel images={prop.images || []} />
               <div className="absolute top-2 right-2">
@@ -593,7 +592,7 @@ export default function Opportunities() {
                     e.stopPropagation();
                     openEditDialog(prop);
                   }}
-                  data-testid={`button-edit-opportunity-${prop.id}`}
+                  data-testid={`button-edit-property-${prop.id}`}
                 >
                   <Edit className="h-3 w-3" />
                 </Button>
@@ -603,11 +602,11 @@ export default function Opportunities() {
                   className="h-7 w-7"
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (confirm("Delete this opportunity?")) {
+                    if (confirm("Delete this property?")) {
                       deletePropertyMutation.mutate(prop.id);
                     }
                   }}
-                  data-testid={`button-delete-opportunity-${prop.id}`}
+                  data-testid={`button-delete-property-${prop.id}`}
                 >
                   <Trash2 className="h-3 w-3" />
                 </Button>
@@ -675,7 +674,7 @@ export default function Opportunities() {
               <Button 
                 className="w-full bg-primary hover:bg-primary/90 text-white"
                 onClick={() => openEditDialog(prop)}
-                data-testid={`button-view-opportunity-${prop.id}`}
+                data-testid={`button-view-property-${prop.id}`}
               >
                 View Details
               </Button>
@@ -687,15 +686,15 @@ export default function Opportunities() {
       {filteredProperties.length === 0 && (
         <div className="text-center py-12">
           <Home className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-          <h3 className="text-lg font-semibold mb-2">No opportunities found</h3>
+          <h3 className="text-lg font-semibold mb-2">No properties found</h3>
           <p className="text-muted-foreground mb-4">
             {searchQuery || statusFilter !== "all" 
               ? "Try adjusting your search or filter criteria."
-              : "Get started by adding your first opportunity."}
+              : "Get started by adding your first property."}
           </p>
           {!searchQuery && statusFilter === "all" && (
-            <Button onClick={openNewDialog} data-testid="button-add-first-opportunity">
-              <Plus className="mr-2 h-4 w-4" /> Add Opportunity
+            <Button onClick={openNewDialog} data-testid="button-add-first-property">
+              <Plus className="mr-2 h-4 w-4" /> Add Property
             </Button>
           )}
         </div>
