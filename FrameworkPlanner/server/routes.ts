@@ -87,7 +87,8 @@ import {
   insertPropertyUnitSchema,
   insertBuyerInquirySchema,
   insertOpportunityEventSchema,
-  globalActivityLogs,  opportunityParties, publicListings, buyerInquiries, opportunityEvents,
+  globalActivityLogs,
+  opportunityParties, publicListings, buyerInquiries, opportunityEvents,
   defaultNotificationCategories, insertInternalMessageSchema, insertCalendarEventSchema
 } from "./shared-schema.js";
 import { z } from "zod";
@@ -9115,6 +9116,21 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     res.json({ ok: true, phoneE164: phone, defaultCallMode: mode });
   });
 
+  // Buyer calling: dial a buyer through the same two-leg Telnyx state machine
+  // used for leads. DNC is enforced from the buyer record server-side.
+  reg("post", "/api/v1/telecom/buyers/:buyerId/call-sessions"); app.post("/api/v1/telecom/buyers/:buyerId/call-sessions", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.createBuyerCallSession({
+      buyerId: Number(req.params.buyerId),
+      userId: user.id,
+      agentUserId: req.body?.agentUserId ? Number(req.body.agentUserId) : undefined,
+      record: Boolean(req.body?.record),
+    });
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json({ ok: true, session: result.session });
+  });
+
   reg("post", "/api/v1/telecom/call-sessions"); app.post("/api/v1/telecom/call-sessions", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -9224,6 +9240,10 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       disposition: String(req.body?.disposition || ""),
       note: req.body?.note ? String(req.body.note) : undefined,
       confidence: req.body?.confidence ? String(req.body.confidence) : undefined,
+      // Buyer-session extras: drive pipeline next actions and interest level.
+      nextAction: req.body?.nextAction ? String(req.body.nextAction) : undefined,
+      nextActionAt: req.body?.nextActionAt ? String(req.body.nextActionAt) : undefined,
+      interestLevel: req.body?.interestLevel ? String(req.body.interestLevel) : undefined,
     });
     if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
     res.json(result);
@@ -9237,33 +9257,33 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     res.json(result);
   });
 
-  reg("post", "/api/v1/telecom/call-sessions/:id/callback"); app.post("/api/v1/telecom/call-sessions/:id/callback", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
-    const result = await callSessions.scheduleCallback(Number(req.params.id), user.id, { dueAt: String(req.body?.dueAt || ""), note: req.body?.note ? String(req.body.note) : undefined });
-    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
-    res.json(result);
-  });
-
-  reg("post", "/api/v1/telecom/call-sessions/:id/dtmf"); app.post("/api/v1/telecom/call-sessions/:id/dtmf", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
-    const result = await callSessions.sendSessionDtmf(Number(req.params.id), user.id, String(req.body?.digits || ""));
-    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
-    res.json(result);
-  });
-
-  // Stale-session watchdog sweep — admin-only, also safe to call from a cron.
-  reg("post", "/api/v1/telecom/call-sessions/sweep"); app.post("/api/v1/telecom/call-sessions/sweep", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
-    if (!(user.isSuperAdmin || String(user.role || "").trim().toLowerCase() === "admin")) {
-      return res.status(403).json({ error: "Only admins can run the sweep", code: "ADMIN_REQUIRED" });
-    }
-    const maxAgeSecs = req.body?.maxAgeSecs ? Number(req.body.maxAgeSecs) : undefined;
-    const limit = req.body?.limit ? Number(req.body.limit) : undefined;
-    const result = await callSessions.sweepStaleCallSessions({ maxAgeSecs, limit });
-    res.json({ ok: true, ...result });
+  reg("post", "/api/v1/telecom/call-sessions/:id/callback"); app.post("/api/v1/telecom/call-sessions/:id/callback", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.scheduleCallback(Number(req.params.id), user.id, { dueAt: String(req.body?.dueAt || ""), note: req.body?.note ? String(req.body.note) : undefined });
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json(result);
+  });
+
+  reg("post", "/api/v1/telecom/call-sessions/:id/dtmf"); app.post("/api/v1/telecom/call-sessions/:id/dtmf", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const result = await callSessions.sendSessionDtmf(Number(req.params.id), user.id, String(req.body?.digits || ""));
+    if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+    res.json(result);
+  });
+
+  // Stale-session watchdog sweep — admin-only, also safe to call from a cron.
+  reg("post", "/api/v1/telecom/call-sessions/sweep"); app.post("/api/v1/telecom/call-sessions/sweep", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!(user.isSuperAdmin || String(user.role || "").trim().toLowerCase() === "admin")) {
+      return res.status(403).json({ error: "Only admins can run the sweep", code: "ADMIN_REQUIRED" });
+    }
+    const maxAgeSecs = req.body?.maxAgeSecs ? Number(req.body.maxAgeSecs) : undefined;
+    const limit = req.body?.limit ? Number(req.body.limit) : undefined;
+    const result = await callSessions.sweepStaleCallSessions({ maxAgeSecs, limit });
+    res.json({ ok: true, ...result });
   });
 
 
@@ -12455,6 +12475,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.status(500).json({ message: error.message });
     }
   });
+
   reg("get", "/api/activity"); app.get("/api/activity", async (req, res) => {
     try {
       const authCtx = await requireAuth(req, res);
@@ -14402,6 +14423,125 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
       res.status(500).json({ message: error.message });
     }
   });
+  // ── BUYER PIPELINE STATUS ───────────────────────────────────────────
+  // Validated pipeline transitions (BUYER_PIPELINE) with an audit trail.
+  // DNC lock: do_not_contact cannot be lifted by a bare PATCH — use the
+  // dedicated opt-in endpoint (manager-only), mirroring lead DNC policy.
+  const VALID_BUYER_STATUSES = new Set<string>([
+    "new", "attempting_contact", "contacted", "qualified", "active_buyer",
+    "offer_submitted", "under_contract", "closed", "nurture", "do_not_contact",
+  ]);
+  const BUYER_STATUS_LABELS: Record<string, string> = {
+    new: "New", attempting_contact: "Attempting Contact", contacted: "Contacted",
+    qualified: "Qualified", active_buyer: "Active Buyer", offer_submitted: "Offer Submitted",
+    under_contract: "Under Contract", closed: "Closed", nurture: "Nurture",
+    do_not_contact: "Do Not Contact",
+  };
+
+  app.post("/api/buyers/:id/status", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const buyerId = parseInt(req.params.id);
+      const to = String(req.body?.status || "").trim();
+      if (!VALID_BUYER_STATUSES.has(to)) {
+        return res.status(400).json({ message: `status must be one of: ${[...VALID_BUYER_STATUSES].join(", ")}` });
+      }
+      const buyer = await storage.getBuyerById(buyerId);
+      if (!buyer) return res.status(404).json({ message: "Buyer not found" });
+      const from = buyer.buyerStatus || "new";
+      if (from !== "do_not_contact" && to === "do_not_contact") {
+        // Entering DNC goes through the same lock as the disposition path.
+        await storage.setBuyerDnc(buyerId, true);
+      }
+      if (from === "do_not_contact" && to !== "do_not_contact") {
+        return res.status(403).json({ message: "Buyer is marked Do Not Contact — use the opt-in endpoint with a manager reason to re-enable contact.", code: "DNC_LOCKED" });
+      }
+      const updated = await storage.updateBuyer(buyerId, {
+        buyerStatus: to,
+        doNotCall: to === "do_not_contact" ? true : buyer.doNotCall,
+        dncUpdatedAt: to === "do_not_contact" ? new Date() : buyer.dncUpdatedAt,
+        updatedAt: new Date(),
+      } as any);
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "buyer_status_changed",
+        description: `Buyer ${buyer.name}: ${BUYER_STATUS_LABELS[from] || from} → ${BUYER_STATUS_LABELS[to] || to}`,
+        metadata: JSON.stringify({ buyerId, from, to }),
+      } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // Manager-only DNC opt-in: the only path out of do_not_contact, requires a
+  // written reason which is stored in the audit log.
+  app.post("/api/buyers/:id/dnc-opt-in", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const isAdmin = Boolean(user.isSuperAdmin) || String(user.role || "").trim().toLowerCase() === "admin";
+      if (!isAdmin) {
+        return res.status(403).json({ message: "Only admins can re-enable contact for a Do-Not-Contact buyer.", code: "ADMIN_REQUIRED" });
+      }
+      const reason = String(req.body?.reason || "").trim();
+      if (!reason) return res.status(400).json({ message: "A reason is required to opt a buyer back in." });
+      const buyerId = parseInt(req.params.id);
+      const buyer = await storage.getBuyerById(buyerId);
+      if (!buyer) return res.status(404).json({ message: "Buyer not found" });
+      await storage.setBuyerDnc(buyerId, false);
+      const updated = await storage.updateBuyer(buyerId, { buyerStatus: "nurture", updatedAt: new Date() } as any);
+      await storage.createGlobalActivity({
+        userId: user.id,
+        action: "buyer_dnc_opt_in",
+        description: `Buyer ${buyer.name} opted back in by manager. Reason: ${reason}`,
+        metadata: JSON.stringify({ buyerId, reason }),
+      } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // ── QUICK LOG CALL (manual, provider-tagged — e.g. company Google Voice) ──
+  reg("post", "/api/buyers/:id/call-logs"); app.post("/api/buyers/:id/call-logs", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const result = await callSessions.logManualBuyerCall({
+        buyerId: Number(req.params.id),
+        userId: user.id,
+        direction: String(req.body?.direction || "outbound") as "inbound" | "outbound",
+        occurredAt: req.body?.occurredAt ? String(req.body.occurredAt) : undefined,
+        durationSeconds: req.body?.durationSeconds != null ? Number(req.body.durationSeconds) : undefined,
+        sessionProvider: req.body?.sessionProvider ? String(req.body.sessionProvider) : undefined,
+        disposition: String(req.body?.disposition || ""),
+        note: req.body?.note ? String(req.body.note) : undefined,
+        interestLevel: req.body?.interestLevel ? String(req.body.interestLevel) : undefined,
+        nextAction: req.body?.nextAction ? String(req.body.nextAction) : undefined,
+        nextActionAt: req.body?.nextActionAt ? String(req.body.nextActionAt) : undefined,
+        propertyId: req.body?.propertyId ? Number(req.body.propertyId) : undefined,
+      });
+      if (!result.ok) return res.status(result.status).json({ error: result.error, code: result.code });
+      res.status(201).json({ ok: true, session: result.session });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/buyers/:id/call-logs"); app.get("/api/buyers/:id/call-logs", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const buyerId = parseInt(req.params.id);
+      const rows = await storage.listCallSessionsByBuyer(buyerId);
+      res.json(rows);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   reg("get", "/api/reports/source"); app.get("/api/reports/source", async (req, res) => {
     try {
       const user = await requireAuth(req, res);

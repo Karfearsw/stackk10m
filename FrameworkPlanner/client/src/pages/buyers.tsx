@@ -36,6 +36,9 @@ import {
 import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { apiRequest } from "@/lib/queryClient";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
+import { QuickLogCallDialog } from "@/components/buyers/QuickLogCallDialog";
+import { BUYER_PIPELINE, formatBuyerStatus, buyerStatusColor, formatDisposition } from "@/lib/dispositions";
+import { useLocation } from "wouter";
 
 interface Buyer {
   id: number;
@@ -60,6 +63,12 @@ interface Buyer {
   lastContactDate: string | null;
   doNotCall: boolean | null;
   dncUpdatedAt: string | null;
+  buyerStatus: string | null;
+  ownerUserId: number | null;
+  nextAction: string | null;
+  nextActionAt: string | null;
+  lastCallDisposition: string | null;
+  interestLevel: string | null;
   createdAt: string;
 }
 
@@ -445,11 +454,13 @@ export default function Buyers() {
   const { toast } = useToast();
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const [, setLocation] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedBuyer, setSelectedBuyer] = useState<Buyer | null>(null);
   const [isBuyerSheetOpen, setIsBuyerSheetOpen] = useState(false);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isQuickLogOpen, setIsQuickLogOpen] = useState(false);
   const [commType, setCommType] = useState("call");
   const [commSubject, setCommSubject] = useState("");
   const [commContent, setCommContent] = useState("");
@@ -572,6 +583,35 @@ export default function Buyers() {
       toast({ title: "Error logging communication", description: error.message, variant: "destructive" });
     }
   });
+
+  // Buyer pipeline status change (validated transitions + audit server-side).
+  const statusMutation = useMutation({
+    mutationFn: async ({ id, status }: { id: number; status: string }) => {
+      return apiRequest("POST", `/api/buyers/${id}/status`, { status });
+    },
+    onSuccess: async (res: any) => {
+      const updated = await res.json().catch(() => null);
+      if (updated?.id) setSelectedBuyer((prev) => (prev && prev.id === updated.id ? { ...prev, ...updated } : prev));
+      queryClient.invalidateQueries({ queryKey: ["/api/buyers"] });
+      toast({ title: "Buyer status updated" });
+    },
+    onError: async (error: any) => {
+      let message = error?.message || "Failed to update status";
+      try {
+        const body = typeof error?.response?.text === "string" ? JSON.parse(error.response.text) : null;
+        if (body?.message) message = body.message;
+      } catch { /* keep default */ }
+      toast({ title: "Status change blocked", description: message, variant: "destructive" });
+    },
+  });
+
+  const startDialerCall = (buyer: Buyer) => {
+    if (buyer.doNotCall || buyer.buyerStatus === "do_not_contact") {
+      toast({ title: "Buyer is Do-Not-Contact", description: "Dialing is blocked until an admin opts them back in.", variant: "destructive" });
+      return;
+    }
+    setLocation(`/dialer?buyer=${buyer.id}`);
+  };
 
   const resetForm = () => {
     setFormData({
@@ -808,6 +848,9 @@ export default function Buyers() {
                           <div className="flex-1">
                             <div className="flex items-center gap-2">
                               <span className="font-semibold">{buyer.name}</span>
+                              <Badge className={buyerStatusColor(buyer.buyerStatus)} data-testid={`badge-buyer-status-${buyer.id}`}>
+                                {formatBuyerStatus(buyer.buyerStatus)}
+                              </Badge>
                               {buyer.isVip && (
                                 <Badge variant="secondary" className="bg-yellow-100 text-yellow-800">
                                   <Star className="h-3 w-3 mr-1" /> VIP
@@ -948,6 +991,49 @@ export default function Buyers() {
                           </a>
                         </div>
                       )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Pipeline Status</Label>
+                        <select
+                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                          value={selectedBuyer.buyerStatus || "new"}
+                          onChange={(e) => statusMutation.mutate({ id: selectedBuyer.id, status: e.target.value })}
+                          disabled={statusMutation.isPending}
+                          data-testid="select-buyer-status"
+                        >
+                          {BUYER_PIPELINE.map((s) => (
+                            <option key={s.value} value={s.value}>{s.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Last Call Disposition</Label>
+                        <p className="text-sm font-medium pt-2">{formatDisposition(selectedBuyer.lastCallDisposition)}</p>
+                      </div>
+                    </div>
+
+                    {selectedBuyer.nextAction ? (
+                      <div className="rounded-md border border-border p-2 text-sm">
+                        <p className="text-xs text-muted-foreground">Next action</p>
+                        <p className="font-medium">{selectedBuyer.nextAction}</p>
+                        {selectedBuyer.nextActionAt ? (
+                          <p className="text-xs text-muted-foreground">Due {new Date(selectedBuyer.nextActionAt).toLocaleString()}</p>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" onClick={() => startDialerCall(selectedBuyer)} data-testid="button-call-buyer">
+                        <Phone className="h-4 w-4 mr-1" /> Call (CRM Dialer)
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => setIsQuickLogOpen(true)} data-testid="button-quick-log-call">
+                        <MessageSquare className="h-4 w-4 mr-1" /> Quick Log Call
+                      </Button>
+                      {selectedBuyer.interestLevel ? (
+                        <Badge variant="secondary" className="ml-auto">Interest: {selectedBuyer.interestLevel}</Badge>
+                      ) : null}
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
@@ -1194,6 +1280,8 @@ export default function Buyers() {
           <BuyerForm formData={formData} setFormData={setFormData} isEdit onSubmit={() => handleSubmit(true)} isPending={createBuyerMutation.isPending || updateBuyerMutation.isPending} />
         </DialogContent>
       </Dialog>
+
+      <QuickLogCallDialog buyer={selectedBuyer} open={isQuickLogOpen} onOpenChange={setIsQuickLogOpen} />
     </Layout>
   );
 }

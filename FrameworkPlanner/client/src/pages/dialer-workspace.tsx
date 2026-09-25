@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,9 +19,20 @@ import { TelnyxHealthStatus } from "@/components/telephony/TelnyxHealthStatus";
 import { EntityActivity } from "@/components/activity/EntityActivity";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
-import { formatDisposition } from "@/lib/dispositions";
+import { formatDisposition, formatBuyerStatus, buyerStatusColor, BUYER_DISPOSITIONS_REQUIRE_NEXT_ACTION } from "@/lib/dispositions";
 import { toast } from "sonner";
 import type { DialerQueueItem } from "@/lib/dialerTypes";
+
+function formatCurrencyRange(min: any, max: any): string {
+  const fmt = (v: any) => {
+    const n = parseFloat(String(v ?? ""));
+    return Number.isFinite(n) ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n) : null;
+  };
+  const a = fmt(min);
+  const b = fmt(max);
+  if (!a && !b) return "—";
+  return `${a || "?"} – ${b || "?"}`;
+}
 
 function formatE164(raw: string) {
   const digits = raw.replace(/[^\d+]/g, "");
@@ -104,6 +116,8 @@ function DialerWorkspaceInner() {
   const [disposition, setDisposition] = useState<string>("");
   const [note, setNote] = useState("");
   const [followUpAt, setFollowUpAt] = useState<string>("");
+  const [nextAction, setNextAction] = useState("");
+  const [nextActionAt, setNextActionAt] = useState("");
   const [tagInput, setTagInput] = useState("");
   const [powerMode, setPowerMode] = useState(false);
   // M38: Settings → System is the single source of truth for the AI Screener.
@@ -155,15 +169,18 @@ function DialerWorkspaceInner() {
   };
 
   const initial = useMemo(() => {
-    if (typeof window === "undefined") return { leadId: null as number | null, propertyId: null as number | null, number: "" };
+    if (typeof window === "undefined") return { leadId: null as number | null, buyerId: null as number | null, propertyId: null as number | null, number: "" };
     const params = new URLSearchParams(window.location.search);
     const leadIdRaw = params.get("leadId");
+    const buyerIdRaw = params.get("buyer") || params.get("buyerId");
     const propertyIdRaw = params.get("propertyId") || params.get("opportunityId");
     const n = params.get("number") || params.get("to") || "";
     const leadId = leadIdRaw ? parseInt(leadIdRaw, 10) : NaN;
+    const buyerId = buyerIdRaw ? parseInt(buyerIdRaw, 10) : NaN;
     const propertyId = propertyIdRaw ? parseInt(propertyIdRaw, 10) : NaN;
     return {
       leadId: Number.isFinite(leadId) && leadId > 0 ? leadId : null,
+      buyerId: Number.isFinite(buyerId) && buyerId > 0 ? buyerId : null,
       propertyId: Number.isFinite(propertyId) && propertyId > 0 ? propertyId : null,
       number: n,
     };
@@ -207,11 +224,33 @@ function DialerWorkspaceInner() {
     if (activeItem?.ownerPhone) setNumber(activeItem.ownerPhone);
   }, [activeItem?.ownerPhone]);
 
+  // Buyer mode: opened from the buyer page (/dialer?buyer=<id>). Loads the
+  // buyer as a single-item queue; the two-leg dialer and wrap-up then target
+  // the buyer record instead of a lead.
+  const { data: buyerCtx } = useQuery<any>({
+    queryKey: initial.buyerId ? [`/api/buyers/${initial.buyerId}`] : ["buyer-none"],
+    queryFn: async () => {
+      const res = await apiRequest("GET", `/api/buyers/${initial.buyerId}`);
+      return res.json();
+    },
+    enabled: Boolean(initial.buyerId),
+  });
+  const buyerMode = Boolean(initial.buyerId && buyerCtx?.id);
+  const buyerDnc = Boolean(buyerCtx?.doNotCall || buyerCtx?.buyerStatus === "do_not_contact");
+
+  useEffect(() => {
+    if (!buyerMode) return;
+    const phone = String(buyerCtx?.phone || "").trim();
+    if (phone) setNumber(phone);
+  }, [buyerMode, buyerCtx?.phone]);
+
   useEffect(() => {
     setSmsBody("");
     setDisposition("");
     setNote("");
     setFollowUpAt("");
+    setNextAction("");
+    setNextActionAt("");
     setTagInput("");
     setCallId(null);
     setStatus("idle");
@@ -235,8 +274,13 @@ function DialerWorkspaceInner() {
     "connected", "qualified", "qualified_handoff", "callback_requested", "voicemail",
     "no_answer", "busy", "wrong_number_confirmed", "wrong_number_review", "not_interested",
     "do_not_call", "invalid_number", "failed", "abandoned", "agent_unavailable", "bridge_failed",
-  ] as const;
-  const wrapUpValid = Boolean(disposition) && (disposition !== "callback_requested" || Boolean(followUpAt));
+    // Buyer outcomes — available when the session targets a buyer record.
+    ...(buyerMode ? (["send_deal", "offer_expected", "offer_submitted", "criteria_mismatch", "qualified_buyer", "needs_info"] as const) : []),
+  ];
+  const needsNextAction = buyerMode && BUYER_DISPOSITIONS_REQUIRE_NEXT_ACTION.has(disposition);
+  const wrapUpValid = Boolean(disposition)
+    && (disposition !== "callback_requested" || Boolean(followUpAt))
+    && (!needsNextAction || Boolean(nextAction && nextActionAt));
 
   const { data: lead } = useQuery<any>({
     queryKey: activeItem?.leadId ? [`/api/leads/${activeItem.leadId}`] : ["lead-none"],
@@ -345,6 +389,32 @@ function DialerWorkspaceInner() {
   const formatted = useMemo(() => formatE164(number), [number]);
 
   const startOutboundCall = useCallback(async () => {
+    // Buyer two-leg session: same Telnyx state machine, buyer-targeted.
+    if (buyerMode && initial.buyerId) {
+      setSessionBusy(true);
+      setSessionError("");
+      try {
+        const res = await apiRequest("POST", `/api/v1/telecom/buyers/${initial.buyerId}/call-sessions`, {
+          mode: "human_first",
+          record: recordCall,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to start call");
+        setSession(data.session);
+        setStatus(sessionStatusToLegacy(data.session.status));
+        setCallId(null);
+        setStartTs(null);
+      } catch (e: any) {
+        const msg = String(e?.message || e || "Failed to start call");
+        setSessionError(msg);
+        setStatus("failed");
+        setCallId(null);
+        setStartTs(null);
+      } finally {
+        setSessionBusy(false);
+      }
+      return;
+    }
     const effectiveLeadId = activeItem?.leadId ?? initial.leadId;
     if (effectiveLeadId) {
       // Two-legged click-to-dial: ring the agent's configured phone first, then
@@ -385,7 +455,7 @@ function DialerWorkspaceInner() {
     wasConnectedRef.current = false;
     callFailedRef.current = false;
     lastPatchedStatusRef.current = "dialing";
-  }, [activeItem?.leadId, formatted, initial.leadId, initial.propertyId, lastPatchedStatusRef, makeCall]);
+  }, [activeItem?.leadId, buyerMode, initial.leadId, initial.buyerId, formatted, initial.propertyId, lastPatchedStatusRef, makeCall]);
 
   // Session controls (two-leg). Mute/hold/transfer run against the agent leg;
   // the AI Screener runs against the lead leg so it talks to the lead.
@@ -905,14 +975,57 @@ function DialerWorkspaceInner() {
           </CardContent>
         </Card>
 
-        <TwoLegCallPanel leadId={activeItem?.leadId} />
+        {buyerMode ? null : <TwoLegCallPanel leadId={activeItem?.leadId} />}
 
         <Card>
           <CardHeader>
-            <CardTitle>Lead</CardTitle>
+            <CardTitle>{buyerMode ? "Buyer" : "Lead"}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {!activeItem ? (
+            {buyerMode ? (
+              <div className="space-y-3">
+                <div>
+                  <div className="text-lg font-semibold">{buyerCtx?.name}</div>
+                  <div className="text-sm text-muted-foreground">{buyerCtx?.company || ""}</div>
+                  <div className="text-sm text-muted-foreground">{buyerCtx?.phone}</div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <Badge className={buyerStatusColor(buyerCtx?.buyerStatus)}>{formatBuyerStatus(buyerCtx?.buyerStatus)}</Badge>
+                  {buyerDnc ? <Badge variant="destructive">DNC</Badge> : null}
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Budget</p>
+                    <p className="font-medium">{formatCurrencyRange(buyerCtx?.minPrice || buyerCtx?.minBudget, buyerCtx?.maxPrice || buyerCtx?.maxBudget)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Deals/Month</p>
+                    <p className="font-medium">{buyerCtx?.dealsPerMonth || "—"}</p>
+                  </div>
+                </div>
+                {(buyerCtx?.preferredAreas || []).length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {buyerCtx.preferredAreas.map((a: string, i: number) => (
+                      <Badge key={i} variant="outline" className="text-xs">{a}</Badge>
+                    ))}
+                  </div>
+                )}
+                {buyerCtx?.nextAction ? (
+                  <div className="rounded-md border border-border p-2 text-sm">
+                    <p className="text-xs text-muted-foreground">Next action</p>
+                    <p className="font-medium">{buyerCtx.nextAction}</p>
+                    {buyerCtx?.nextActionAt ? (
+                      <p className="text-xs text-muted-foreground">Due {new Date(buyerCtx.nextActionAt).toLocaleString()}</p>
+                    ) : null}
+                  </div>
+                ) : null}
+                {buyerDnc ? (
+                  <div className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+                    Do-Not-Contact buyer — dialing is blocked until an admin opts them back in.
+                  </div>
+                ) : null}
+              </div>
+            ) : !activeItem ? (
               <div className="space-y-4">
                 <div className="text-sm text-muted-foreground">Select a lead from the queue</div>
                 <div className="grid gap-2 opacity-50 pointer-events-none">
@@ -1193,6 +1306,18 @@ function DialerWorkspaceInner() {
                       ))}
                     </select>
                     <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Notes (optional)" />
+                    {needsNextAction ? (
+                      <div className="grid gap-1 rounded-md border border-border p-2">
+                        <Label>Next action (required for this disposition)</Label>
+                        <Input
+                          value={nextAction}
+                          onChange={(e) => setNextAction(e.target.value)}
+                          placeholder={disposition === "send_deal" ? "e.g. Email deal package + rent roll" : "What happens next?"}
+                        />
+                        <Label>Next-action date</Label>
+                        <Input type="date" value={nextActionAt} onChange={(e) => setNextActionAt(e.target.value)} />
+                      </div>
+                    ) : null}
                     <div className="grid gap-1">
                       <Label>Follow-up date</Label>
                       <Input type="date" value={followUpAt} onChange={(e) => setFollowUpAt(e.target.value)} />
@@ -1202,6 +1327,29 @@ function DialerWorkspaceInner() {
                       onClick={async () => {
                         if (saveLogPending) return;
                         if (!wrapUpValid) return;
+                        // Buyer two-leg session: the disposition endpoint drives
+                        // buyer pipeline automations (next-action task, status,
+                        // DNC). No separate call-log row exists.
+                        if (session && buyerMode && initial.buyerId) {
+                          setSaveLogPending(true);
+                          try {
+                            const res = await apiRequest("POST", `/api/v1/telecom/call-sessions/${session.id}/disposition`, {
+                              disposition,
+                              note: note || undefined,
+                              nextAction: nextAction || undefined,
+                              nextActionAt: nextActionAt ? new Date(nextActionAt).toISOString() : undefined,
+                            });
+                            const data = await res.json().catch(() => ({}));
+                            if (!res.ok) throw new Error(data.error || "Failed to save disposition");
+                            setLogSaved(true);
+                            if (powerMode) next();
+                          } catch (e: any) {
+                            toast.error(e?.message || "Failed to save disposition");
+                          } finally {
+                            setSaveLogPending(false);
+                          }
+                          return;
+                        }
                         const leadId = activeItem?.leadId ?? null;
                         if (!callId && !leadId) return;
                         setSaveLogPending(true);
@@ -1234,13 +1382,17 @@ function DialerWorkspaceInner() {
                           setSaveLogPending(false);
                         }
                       }}
-                      disabled={saveLogPending || !wrapUpValid || (!callId && !activeItem?.leadId)}
+                      disabled={saveLogPending || !wrapUpValid || (!callId && !activeItem?.leadId && !(session && buyerMode))}
                     >
                       Save Log
                     </Button>
                     {!wrapUpValid ? (
                       <div className="text-xs text-muted-foreground">
-                        {disposition ? "Follow-up date required for callback_requested." : "Select a disposition to save the log."}
+                        {disposition
+                          ? needsNextAction && (!nextAction || !nextActionAt)
+                            ? "Next action + date required for this disposition."
+                            : "Follow-up date required for callback_requested."
+                          : "Select a disposition to save the log."}
                       </div>
                     ) : null}
                     {callId && !logSaved ? (

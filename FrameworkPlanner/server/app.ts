@@ -372,6 +372,32 @@ export default async function runApp(
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_crm_sms_messages_buyer ON crm_sms_messages (buyer_id, created_at);`);
     await pool.query(`ALTER TABLE buyers ADD COLUMN IF NOT EXISTS do_not_call boolean NOT NULL DEFAULT false;`);
     await pool.query(`ALTER TABLE buyers ADD COLUMN IF NOT EXISTS dnc_updated_at timestamptz;`);
+    // Buyer pipeline + calling (migration 0074) — idempotent fallback.
+    await pool.query(`
+      ALTER TABLE buyers
+        ADD COLUMN IF NOT EXISTS buyer_status varchar(32) NOT NULL DEFAULT 'new',
+        ADD COLUMN IF NOT EXISTS owner_user_id integer,
+        ADD COLUMN IF NOT EXISTS next_action text,
+        ADD COLUMN IF NOT EXISTS next_action_at timestamptz,
+        ADD COLUMN IF NOT EXISTS last_call_disposition varchar(50),
+        ADD COLUMN IF NOT EXISTS interest_level varchar(20),
+        ADD COLUMN IF NOT EXISTS call_consent boolean,
+        ADD COLUMN IF NOT EXISTS sms_consent boolean,
+        ADD COLUMN IF NOT EXISTS email_consent boolean,
+        ADD COLUMN IF NOT EXISTS consent_source varchar(120),
+        ADD COLUMN IF NOT EXISTS consent_at timestamptz;
+    `);
+    await pool.query(`UPDATE buyers SET buyer_status = 'do_not_contact' WHERE do_not_call IS TRUE;`);
+    await pool.query(`UPDATE buyers SET buyer_status = 'qualified' WHERE buyer_status = 'new' AND proof_of_funds IS TRUE;`);
+    await pool.query(`UPDATE buyers SET buyer_status = 'contacted' WHERE buyer_status = 'new' AND last_contact_date IS NOT NULL;`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_buyers_buyer_status ON buyers (buyer_status);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_buyers_owner ON buyers (owner_user_id);`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_buyers_next_action ON buyers (next_action_at);`);
+    await pool.query(`ALTER TABLE crm_call_sessions ADD COLUMN IF NOT EXISTS buyer_id integer;`);
+    await pool.query(`ALTER TABLE crm_call_sessions ADD COLUMN IF NOT EXISTS session_source varchar(24) NOT NULL DEFAULT 'crm_dialer';`);
+    await pool.query(`ALTER TABLE crm_call_sessions ADD COLUMN IF NOT EXISTS session_provider varchar(24);`);
+    await pool.query(`ALTER TABLE crm_call_sessions ADD COLUMN IF NOT EXISTS occurred_at timestamptz;`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_crm_call_sessions_buyer ON crm_call_sessions (buyer_id, created_at);`);
     // Two-legged call sessions (migration 0056 fallback)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS crm_call_sessions (

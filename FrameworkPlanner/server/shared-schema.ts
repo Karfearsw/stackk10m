@@ -1598,6 +1598,20 @@ export type AuthAuditLog = typeof authAuditLogs.$inferSelect;
 export type InsertAuthAuditLog = z.infer<typeof insertAuthAuditLogSchema>;
 
 // BUYERS TABLE (Cash Buyers CRM)
+//
+// BUYER_PIPELINE: relationship stages distinct from the legacy `status`
+// string. Pipeline drives deal-matching eligibility and calling automations;
+// do_not_contact is enforced server-side on the dialer, quick-log, and
+// messaging paths.
+export const BUYER_PIPELINE = [
+  "new", "attempting_contact", "contacted", "qualified", "active_buyer",
+  "offer_submitted", "under_contract", "closed", "nurture", "do_not_contact",
+] as const;
+export type BuyerPipelineStage = (typeof BUYER_PIPELINE)[number];
+
+export const INTEREST_LEVELS = ["hot", "warm", "cold", "not_a_fit"] as const;
+export type InterestLevel = (typeof INTEREST_LEVELS)[number];
+
 export const buyers = pgTable("buyers", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   name: varchar("name", { length: 255 }).notNull(),
@@ -1620,6 +1634,18 @@ export const buyers = pgTable("buyers", {
   proofOfFundsNotes: text("proof_of_funds_notes"),
   isVip: boolean("is_vip").default(false),
   status: varchar("status", { length: 50 }).default("active"),
+  // Buyer pipeline (migration 0074)
+  buyerStatus: varchar("buyer_status", { length: 32 }).notNull().default("new"),
+  ownerUserId: integer("owner_user_id"),
+  nextAction: text("next_action"),
+  nextActionAt: timestamp("next_action_at", { withTimezone: true }),
+  lastCallDisposition: varchar("last_call_disposition", { length: 50 }),
+  interestLevel: varchar("interest_level", { length: 20 }),
+  callConsent: boolean("call_consent"),
+  smsConsent: boolean("sms_consent"),
+  emailConsent: boolean("email_consent"),
+  consentSource: varchar("consent_source", { length: 120 }),
+  consentAt: timestamp("consent_at", { withTimezone: true }),
   totalDeals: integer("total_deals").default(0),
   totalRevenue: decimal("total_revenue", { precision: 12, scale: 2 }).default("0"),
   notes: text("notes"),
@@ -2188,10 +2214,18 @@ export const smsMessages = pgTable("crm_sms_messages", {
 export type SmsMessage = typeof smsMessages.$inferSelect;
 export type InsertSmsMessage = typeof smsMessages.$inferInsert;
 
-// CALL SESSIONS — two-legged click-to-dial + AI screening/handoff
+// CALL SESSIONS — two-legged click-to-dial + AI screening/handoff.
+// Buyer rows (buyerId + sessionSource='crm_dialer') go through the same
+// two-leg Telnyx state machine as lead rows; sessionSource='manual' rows are
+// provider-tagged completed logs created by the Quick Log Call flow (e.g.
+// calls made from the company Google Voice number).
 export const callSessions = pgTable("crm_call_sessions", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   leadId: integer("lead_id"),
+  buyerId: integer("buyer_id"),
+  sessionSource: varchar("session_source", { length: 24 }).notNull().default("crm_dialer"),
+  sessionProvider: varchar("session_provider", { length: 24 }),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }),
   contactId: integer("contact_id"),
   campaignId: integer("campaign_id"),
   initiatingUserId: integer("initiating_user_id"),
@@ -2203,8 +2237,8 @@ export const callSessions = pgTable("crm_call_sessions", {
   agentLegCallControlId: varchar("agent_leg_call_control_id", { length: 255 }),
   leadLegCallControlId: varchar("lead_leg_call_control_id", { length: 255 }),
   aiLegCallControlId: varchar("ai_leg_call_control_id", { length: 255 }),
-  bridgeRequestId: varchar("bridge_request_id", { length: 128 }),
-  providerCallSessionId: varchar("provider_call_session_id", { length: 64 }),
+  bridgeRequestId: varchar("bridge_request_id", { length: 128 }),
+  providerCallSessionId: varchar("provider_call_session_id", { length: 64 }),
   providerConnectionId: varchar("provider_connection_id", { length: 100 }),
   providerName: varchar("provider_name", { length: 20 }).notNull().default("telnyx"),
   startedAt: timestamp("started_at", { withTimezone: true }),
@@ -2222,10 +2256,10 @@ export const callSessions = pgTable("crm_call_sessions", {
   recordRequested: boolean("record_requested").notNull().default(false),
   providerRecordingId: varchar("provider_recording_id", { length: 64 }),
   providerRecordingUrl: text("provider_recording_url"),
-  providerLastEventAt: timestamp("provider_last_event_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+  providerLastEventAt: timestamp("provider_last_event_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 export type CallSession = typeof callSessions.$inferSelect;
 export type InsertCallSession = typeof callSessions.$inferInsert;
 

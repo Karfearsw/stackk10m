@@ -463,27 +463,7 @@ export interface IStorage {
 
   // Team Pulse (simplified daily standup aggregated from global_activity_logs)
   getTeamPulseWindow(hours: number): Promise<Array<{ userId: number; action: string; count: number; lastAt: Date | string | null }>>;
-  createTeamActivityLog(log: InsertTeamActivityLog): Promise<TeamActivityLog>;
 
-
-  // Team Pulse: per-user × per-action counts since a rolling window.
-  // One GROUP BY over the global activity log — the whole result set is tiny
-  // (users × action-buckets), so the standup page stays a single cheap query.
-  async getTeamPulseWindow(hours: number): Promise<Array<{ userId: number; action: string; count: number; lastAt: Date | string | null }>> {
-    const since = new Date(Date.now() - Math.max(1, Math.min(hours, 24 * 30)) * 60 * 60 * 1000);
-    const rows = await db
-      .select({
-        userId: globalActivityLogs.userId,
-        action: globalActivityLogs.action,
-        count: sql<number>`count(*)::int`,
-        lastAt: sql<Date | null>`max(${globalActivityLogs.createdAt})`,
-      })
-      .from(globalActivityLogs)
-      .where(gte(globalActivityLogs.createdAt, since))
-      .groupBy(globalActivityLogs.userId, globalActivityLogs.action);
-    return rows as any;
-  }
-
   // Notification Preferences
   getNotificationPreferencesByUserId(userId: number): Promise<NotificationPreference | undefined>;
   createNotificationPreferences(prefs: InsertNotificationPreference): Promise<NotificationPreference>;
@@ -2666,6 +2646,24 @@ export class DatabaseStorage implements IStorage {
     return result[0];
   }
 
+  // Team Pulse: per-user × per-action counts since a rolling window.
+  // One GROUP BY over the global activity log — the whole result set is tiny
+  // (users × action-buckets), so the standup page stays a single cheap query.
+  async getTeamPulseWindow(hours: number): Promise<Array<{ userId: number; action: string; count: number; lastAt: Date | string | null }>> {
+    const since = new Date(Date.now() - Math.max(1, Math.min(hours, 24 * 30)) * 60 * 60 * 1000);
+    const rows = await db
+      .select({
+        userId: globalActivityLogs.userId,
+        action: globalActivityLogs.action,
+        count: sql<number>`count(*)::int`,
+        lastAt: sql<Date | null>`max(${globalActivityLogs.createdAt})`,
+      })
+      .from(globalActivityLogs)
+      .where(gte(globalActivityLogs.createdAt, since))
+      .groupBy(globalActivityLogs.userId, globalActivityLogs.action);
+    return rows as any;
+  }
+
   // Notification Preferences
   async getNotificationPreferencesByUserId(userId: number): Promise<NotificationPreference | undefined> {
     const result = await db.select().from(notificationPreferences).where(eq(notificationPreferences.userId, userId)).limit(1);
@@ -3567,6 +3565,19 @@ export class DatabaseStorage implements IStorage {
     `);
     return ((result as any).rows || []) as any[];
   }
+  // Call sessions for one buyer (dialed + manual quick-log rows), newest first.
+  async listCallSessionsByBuyer(buyerId: number, limit: number = 50): Promise<any[]> {
+    const cap = Math.max(1, Math.min(200, Number(limit) || 50));
+    const result: any = await db.execute(sql`
+      SELECT s.*, u.first_name AS agent_first_name, u.last_name AS agent_last_name, u.email AS agent_email
+      FROM crm_call_sessions s
+      LEFT JOIN users u ON u.id = COALESCE(s.assigned_agent_user_id, s.initiating_user_id)
+      WHERE s.buyer_id = ${buyerId}
+      ORDER BY COALESCE(s.occurred_at, s.created_at) DESC
+      LIMIT ${cap}
+    `);
+    return ((result as any).rows || []) as any[];
+  }
   async updateCallLog(id: number, patch: Partial<InsertCallLog & { status?: string; endedAt?: Date; durationMs?: number; errorCode?: string; errorMessage?: string }>): Promise<CallLog> {
     const result = await db.update(callLogs).set(patch as any).where(eq(callLogs.id, id)).returning();
     return result[0];
@@ -3704,8 +3715,8 @@ export class DatabaseStorage implements IStorage {
       agentLegCallControlId: row.agent_leg_call_control_id ?? null,
       leadLegCallControlId: row.lead_leg_call_control_id ?? null,
       aiLegCallControlId: row.ai_leg_call_control_id ?? null,
-      bridgeRequestId: row.bridge_request_id ?? null,
-      providerCallSessionId: row.provider_call_session_id ?? null,
+      bridgeRequestId: row.bridge_request_id ?? null,
+      providerCallSessionId: row.provider_call_session_id ?? null,
       providerConnectionId: row.provider_connection_id ?? null,
       providerName: row.provider_name || 'telnyx',
       startedAt: row.started_at ?? null,
@@ -3718,8 +3729,8 @@ export class DatabaseStorage implements IStorage {
       providerHangupCause: row.provider_hangup_cause ?? null,
       aiSummary: row.ai_summary ?? null,
       aiQualificationScore: row.ai_qualification_score ?? null,
-      aiConfidence: row.ai_confidence ?? null,
-      idempotencyKey: row.idempotency_key ?? null,
+      aiConfidence: row.ai_confidence ?? null,
+      idempotencyKey: row.idempotency_key ?? null,
       providerLastEventAt: row.provider_last_event_at ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,

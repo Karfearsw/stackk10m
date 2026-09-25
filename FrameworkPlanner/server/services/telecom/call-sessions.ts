@@ -3,6 +3,7 @@ import { storage } from "../../storage.js";
 import { createTask } from "../tasks/task-service.js";
 import { getAiAssistantConfig } from "./ai-config.js";
 import { emitTelephonyEventToAll } from "../../telephony/ws.js";
+import { INTEREST_LEVELS } from "../../shared-schema.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -43,7 +44,27 @@ export const ALLOWED_DISPOSITIONS = new Set<string>([
   "connected", "qualified", "qualified_handoff", "callback_requested", "voicemail",
   "no_answer", "busy", "wrong_number_confirmed", "wrong_number_review", "not_interested",
   "do_not_call", "invalid_number", "failed", "abandoned", "agent_unavailable", "bridge_failed",
+  // Buyer-specific outcomes (buyer workflow): the lead list stays untouched so
+  // existing lead reporting and filters keep working.
+  "send_deal", "offer_expected", "offer_submitted", "criteria_mismatch", "qualified_buyer", "needs_info",
 ]);
+
+// Dispositions that require a dated follow-up task when the session targets a
+// buyer. Kept here so the client can mirror the same rule.
+export const BUYER_DISPOSITIONS_REQUIRE_NEXT_ACTION = new Set<string>([
+  "callback_requested", "send_deal", "offer_expected", "needs_info", "qualified_buyer",
+]);
+
+// Buy-box completeness gate for the qualified_buyer disposition: these buyer
+// fields must be present before a buyer can be auto-promoted to Qualified.
+export function buyerBuyBoxComplete(buyer: any): boolean {
+  const hasRange = Boolean(buyer?.minPrice || buyer?.minBudget) && Boolean(buyer?.maxPrice || buyer?.maxBudget);
+  const areas = Array.isArray(buyer?.preferredAreas) ? buyer.preferredAreas : [];
+  const zips = Array.isArray(buyer?.zipCodes) ? buyer.zipCodes : [];
+  const types = Array.isArray(buyer?.propertyTypes) ? buyer.propertyTypes
+    : Array.isArray(buyer?.preferredPropertyTypes) ? buyer.preferredPropertyTypes : [];
+  return hasRange && (areas.length > 0 || zips.length > 0) && types.length > 0;
+}
 
 // ── Feature flags (default ON unless explicitly disabled) ─────────────────
 
@@ -165,6 +186,7 @@ export async function createCallSession(input: {
 
   const session = await storage.createCallSession({
     leadId: lead.id,
+    buyerId: null,
     campaignId: input.campaignId || null,
     initiatingUserId: input.userId,
     assignedAgentUserId: agentUserId,
@@ -180,7 +202,156 @@ export async function createCallSession(input: {
   await recordEvent(session.id, "session_created", null, "queued", { mode, leadId: lead.id }, input.userId);
   return startCallSession(session.id);
 }
-// ── Start (dial the first leg) ─────────────────────────────────────────────
+
+// ── Buyer sessions ─────────────────────────────────────────────────────────
+// Buyer outreach runs the same two-leg human-first state machine as leads, but
+// the session targets the buyer record, DNC is enforced from buyers.do_not_call,
+// and the disposition flow drives the buyer pipeline (status, next action,
+// interest level) instead of lead stages.
+export async function createBuyerCallSession(input: {
+  buyerId: number; userId: number; agentUserId?: number; record?: boolean;
+}): Promise<{ ok: true; session: any } | { ok: false; status: number; code: string; error: string }> {
+  if (!twoLegEnabled()) {
+    return { ok: false, status: 403, code: "TWO_LEG_DISABLED", error: "Two-legged click-to-dial is disabled." };
+  }
+  const buyer = await storage.getBuyerById(input.buyerId);
+  if (!buyer) return { ok: false, status: 404, code: "BUYER_NOT_FOUND", error: "Buyer not found" };
+  const buyerPhone = String(buyer.phone || "").trim();
+  if (!E164.test(buyerPhone)) {
+    return { ok: false, status: 400, code: "INVALID_BUYER_PHONE", error: "Buyer phone must be E.164 (e.g. +13215550123)." };
+  }
+  if (buyer.doNotCall || buyer.buyerStatus === "do_not_contact") {
+    return { ok: false, status: 403, code: "DO_NOT_CALL", error: "This buyer is marked Do Not Call." };
+  }
+
+  const agentUserId = input.agentUserId || input.userId;
+  let agentPhone = "";
+  try {
+    const setting = await storage.getAgentPhoneSetting(agentUserId);
+    agentPhone = String(setting?.phoneE164 || "").trim();
+  } catch {
+    agentPhone = "";
+  }
+  if (!agentPhone) agentPhone = String(process.env.TELNYX_AGENT_PHONE || "").trim();
+  if (!E164.test(agentPhone)) {
+    return { ok: false, status: 400, code: "AGENT_PHONE_REQUIRED", error: "Your agent phone number must be set (E.164) before dialing." };
+  }
+
+  const session = await storage.createCallSession({
+    leadId: null,
+    buyerId: buyer.id,
+    campaignId: null,
+    initiatingUserId: input.userId,
+    assignedAgentUserId: agentUserId,
+    mode: "human_first" as CallMode,
+    status: "queued",
+    agentPhoneE164: agentPhone || null,
+    leadPhoneE164: buyerPhone,
+    providerName: "telnyx",
+    sessionSource: "crm_dialer",
+    idempotencyKey: `buyer_${buyer.id}_${input.userId}_${Date.now()}`,
+    recordRequested: Boolean(input.record),
+  } as any);
+
+  await recordEvent(session.id, "session_created", null, "queued", { buyerId: buyer.id }, input.userId);
+  return startCallSession(session.id);
+}
+
+// ── Quick Log Call (manual, provider-tagged) ─────────────────────────────
+// For calls placed outside the CRM dialer — company Google Voice, office line,
+// mobile. Creates a completed, auditable session row in the same table dialed
+// calls use, so timelines, call audit, and reporting see one history. The
+// disposition is required and flows through the same automations as dialed
+// calls; Google Voice itself has no API/webhooks, so this is the reliable
+// path into the CRM for external calls.
+const MANUAL_PROVIDERS = new Set<string>(["google_voice", "office_line", "mobile", "other"]);
+
+export async function logManualBuyerCall(input: {
+  buyerId: number; userId: number;
+  direction: "inbound" | "outbound";
+  occurredAt?: string;
+  durationSeconds?: number;
+  sessionProvider?: string;
+  disposition: string;
+  note?: string;
+  interestLevel?: string;
+  nextAction?: string;
+  nextActionAt?: string;
+  propertyId?: number;
+}): Promise<{ ok: true; session: any } | { ok: false; status: number; code: string; error: string }> {
+  const buyer = await storage.getBuyerById(input.buyerId);
+  if (!buyer) return { ok: false, status: 404, code: "BUYER_NOT_FOUND", error: "Buyer not found" };
+  if (!ALLOWED_DISPOSITIONS.has(input.disposition)) {
+    return { ok: false, status: 400, code: "INVALID_DISPOSITION", error: `disposition must be one of: ${[...ALLOWED_DISPOSITIONS].join(", ")}` };
+  }
+  if (input.direction !== "inbound" && input.direction !== "outbound") {
+    return { ok: false, status: 400, code: "INVALID_DIRECTION", error: "direction must be inbound or outbound" };
+  }
+  const provider = String(input.sessionProvider || "google_voice").trim();
+  if (!MANUAL_PROVIDERS.has(provider)) {
+    return { ok: false, status: 400, code: "INVALID_PROVIDER", error: `sessionProvider must be one of: ${[...MANUAL_PROVIDERS].join(", ")}` };
+  }
+  if (input.interestLevel && !INTEREST_LEVELS.includes(input.interestLevel as any)) {
+    return { ok: false, status: 400, code: "INVALID_INTEREST", error: "interestLevel must be hot | warm | cold | not_a_fit" };
+  }
+  if ((BUYER_DISPOSITIONS_REQUIRE_NEXT_ACTION as Set<string>).has(input.disposition) && !(input.nextAction && input.nextActionAt)) {
+    return { ok: false, status: 400, code: "NEXT_ACTION_REQUIRED", error: "This disposition requires a next action and date." };
+  }
+  const occurredAt = input.occurredAt ? new Date(input.occurredAt) : new Date();
+  if (Number.isNaN(occurredAt.getTime())) {
+    return { ok: false, status: 400, code: "INVALID_OCCURRED_AT", error: "occurredAt must be a valid ISO timestamp" };
+  }
+  if (occurredAt.getTime() > Date.now() + 60_000) {
+    return { ok: false, status: 400, code: "OCCURRED_AT_FUTURE", error: "occurredAt cannot be in the future" };
+  }
+  const duration = Number.isFinite(input.durationSeconds) ? Math.max(0, Math.round(Number(input.durationSeconds))) : null;
+
+  const session = await storage.createCallSession({
+    leadId: null,
+    buyerId: buyer.id,
+    campaignId: null,
+    initiatingUserId: input.userId,
+    assignedAgentUserId: input.userId,
+    mode: "human_first" as CallMode,
+    status: "completed",
+    agentPhoneE164: null,
+    leadPhoneE164: String(buyer.phone || "").trim() || null,
+    providerName: "none",
+    sessionSource: "manual",
+    sessionProvider: provider,
+    occurredAt,
+    startedAt: occurredAt,
+    endedAt: new Date(occurredAt.getTime() + (duration ?? 0) * 1000),
+    durationSeconds: duration,
+    finalDisposition: input.disposition,
+    providerHangupCause: null,
+    idempotencyKey: `manual_buyer_${buyer.id}_${input.userId}_${Date.now()}`,
+    recordRequested: false,
+  } as any);
+
+  await storage.createCallDisposition({
+    sessionId: session.id,
+    disposition: input.disposition,
+    confidence: "high",
+    source: "manual",
+    note: input.note || null,
+    actorUserId: input.userId,
+  } as any);
+  await recordEvent(session.id, "manual_call_logged", null, "completed", { provider, direction: input.direction, disposition: input.disposition }, input.userId);
+  await createActivity(session, "manual_call_logged", `Manual ${input.direction} call logged via ${provider}: ${input.disposition}`, { provider, disposition: input.disposition });
+
+  const applied = await applyBuyerDispositionEffects(buyer, session, input.userId, {
+    disposition: input.disposition,
+    note: input.note,
+    interestLevel: input.interestLevel,
+    nextAction: input.nextAction,
+    nextActionAt: input.nextActionAt,
+    propertyId: input.propertyId,
+  });
+  await createActivity(session, "buyer_updated", `Buyer updated from manual call: ${applied.join("; ")}`, { applied });
+
+  return { ok: true, session: await storage.getCallSessionById(session.id) };
+}
 
 export async function startCallSession(
   sessionId: number,
@@ -564,7 +735,7 @@ export async function requestHumanHandoff(
 
 export async function setDisposition(
   sessionId: number, userId: number,
-  input: { disposition: string; note?: string; confidence?: string },
+  input: { disposition: string; note?: string; confidence?: string; nextAction?: string; nextActionAt?: string; interestLevel?: string },
 ): Promise<{ ok: true; session: any } | { ok: false; status: number; code: string; error: string }> {
   const s = await storage.getCallSessionById(sessionId);
   if (!s) return { ok: false, status: 404, code: "SESSION_NOT_FOUND", error: "Call session not found" };
@@ -579,6 +750,26 @@ export async function setDisposition(
     confidence: input.confidence || "high", source: "agent",
     note: input.note || null, actorUserId: userId,
   } as any);
+  if (s.buyerId) {
+    // Buyer session: the disposition drives the buyer pipeline — next-action
+    // tasks, status transitions, and DNC are all derived here so both dialed
+    // and manually-logged buyer calls produce identical outcomes.
+    const buyer = await storage.getBuyerById(s.buyerId);
+    if (buyer) {
+      if (input.disposition === "do_not_call") {
+        await storage.setBuyerDnc(buyer.id, true);
+        try { await storage.updateBuyer(buyer.id, { buyerStatus: "do_not_contact", nextAction: null, nextActionAt: null } as any); } catch (e) { console.error("buyer DNC status update failed:", e); }
+      }
+      const applied = await applyBuyerDispositionEffects(buyer, s, userId, {
+        disposition: input.disposition,
+        note: input.note,
+        nextAction: input.nextAction,
+        nextActionAt: input.nextActionAt,
+        interestLevel: input.interestLevel,
+      });
+      await createActivity(s, "buyer_updated", `Buyer updated from call disposition: ${applied.join("; ")}`, { applied });
+    }
+  }
   if (input.disposition === "do_not_call" && s.leadId) {
     try {
       await storage.updateLead(s.leadId, { doNotCall: true } as any);
@@ -590,6 +781,144 @@ export async function setDisposition(
   await createActivity(s, "call_dispositioned", `Call dispositioned: ${input.disposition}`, { disposition: input.disposition });
   emitSession(await storage.getCallSessionById(s.id));
   return { ok: true, session: await storage.getCallSessionById(s.id) };
+}
+
+// ── Buyer disposition automations ────────────────────────────────────────────
+// Shared by dialed calls (setDisposition) and manual logs (logManualBuyerCall)
+// so one disposition taxonomy produces one set of outcomes regardless of how
+// the call was placed. Effects: last-contact + disposition stamp, interest
+// level, next-action task, buyer-status pipeline moves, deal-package task, and
+// DNC (handled by callers for session rows).
+async function applyBuyerDispositionEffects(
+  buyer: any, session: any, userId: number,
+  input: { disposition: string; note?: string; interestLevel?: string; nextAction?: string; nextActionAt?: string; propertyId?: number },
+): Promise<string[]> {
+  const applied: string[] = [];
+  const disposition = input.disposition;
+
+  // 1. Contact stamp + last disposition on the buyer record.
+  const buyerPatch: any = {
+    lastContactDate: session.occurredAt ? new Date(session.occurredAt) : new Date(),
+    lastCallDisposition: disposition,
+    updatedAt: new Date(),
+  };
+
+  // 2. Interest level (explicit input wins over disposition inference).
+  let interest: string | null = input.interestLevel || null;
+  if (!interest) {
+    if (disposition === "offer_expected" || disposition === "offer_submitted") interest = "hot";
+    else if (disposition === "send_deal" || disposition === "qualified_buyer") interest = "warm";
+    else if (disposition === "not_interested" || disposition === "criteria_mismatch") interest = "not_a_fit";
+  }
+  if (interest && INTEREST_LEVELS.includes(interest as any)) buyerPatch.interestLevel = interest;
+
+  // 3. Next-action task. Explicit input (quick log) first; otherwise the
+  //    per-disposition default. callback_requested requires a date upstream.
+  const requiresNext = (BUYER_DISPOSITIONS_REQUIRE_NEXT_ACTION as Set<string>).has(disposition);
+  let taskTitle: string | null = null;
+  let taskDue: Date | null = null;
+  if (requiresNext) {
+    const now = new Date();
+    if (disposition === "callback_requested") {
+      taskTitle = `Callback: ${buyer.name || buyer.phone || "buyer"}`;
+      if (input.nextActionAt) taskDue = new Date(input.nextActionAt);
+      if (!taskDue || Number.isNaN(taskDue.getTime())) taskDue = new Date(now.getTime() + 24 * 3600 * 1000);
+    } else if (disposition === "send_deal") {
+      taskTitle = input.propertyId ? `Send deal package: property #${input.propertyId}` : "Send deal package";
+      taskDue = new Date(now.getTime() + 60 * 60 * 1000);
+    } else if (disposition === "offer_expected") {
+      taskTitle = input.propertyId ? `Offer follow-up: property #${input.propertyId}` : "Offer follow-up";
+      taskDue = new Date(now.getTime() + 24 * 3600 * 1000);
+    } else if (disposition === "qualified_buyer") {
+      taskTitle = "Complete buyer buy-box details";
+      taskDue = new Date(now.getTime() + 24 * 3600 * 1000);
+    } else if (disposition === "needs_info") {
+      taskTitle = "Answer buyer questions";
+      taskDue = new Date(now.getTime() + 24 * 3600 * 1000);
+    }
+    if (input.nextActionAt) {
+      const parsed = new Date(input.nextActionAt);
+      if (!Number.isNaN(parsed.getTime())) taskDue = parsed;
+    }
+  }
+  if (input.nextAction && input.nextActionAt) {
+    const parsed = new Date(input.nextActionAt);
+    if (!Number.isNaN(parsed.getTime())) {
+      buyerPatch.nextAction = input.nextAction;
+      buyerPatch.nextActionAt = parsed;
+    }
+  }
+
+  // 4. Buyer-status pipeline moves.
+  let statusMove: string | null = null;
+  if (disposition === "do_not_call") statusMove = "do_not_contact";
+  else if (disposition === "connected" && (buyer.buyerStatus === "new" || buyer.buyerStatus === "attempting_contact")) statusMove = "contacted";
+  else if (disposition === "send_deal" && buyer.buyerStatus !== "do_not_contact") statusMove = "active_buyer";
+  else if (disposition === "offer_submitted" && !["under_contract", "closed"].includes(String(buyer.buyerStatus || ""))) statusMove = "offer_submitted";
+  else if (disposition === "qualified_buyer" && buyerBuyBoxComplete(buyer)) statusMove = "qualified";
+
+  if (Object.keys(buyerPatch).length > 0) {
+    try { await storage.updateBuyer(buyer.id, buyerPatch); applied.push("contact + disposition recorded"); } catch (e) { console.error("buyer contact stamp failed:", e); }
+  }
+  if (interest) applied.push(`interest: ${interest}`);
+
+  if (statusMove) {
+    try {
+      await storage.updateBuyer(buyer.id, { buyerStatus: statusMove, updatedAt: new Date() } as any);
+      applied.push(`status → ${statusMove}`);
+    } catch (e) { console.error("buyer status move failed:", e); }
+  }
+
+  if (taskTitle && taskDue && !Number.isNaN(taskDue.getTime())) {
+    try {
+      const task = await createTask({
+        title: taskTitle,
+        description: input.note || `Follow-up from buyer call (session ${session.id}).`,
+        type: "buyer_follow_up",
+        relatedEntityType: "buyer",
+        relatedEntityId: buyer.id,
+        dueAt: taskDue,
+        priority: disposition === "offer_expected" || disposition === "send_deal" ? "high" : "normal",
+        assignedToUserId: session.assignedAgentUserId || userId,
+        createdBy: userId,
+      } as any);
+      await recordEvent(session.id, "buyer_followup_task", session.status, session.status, { taskId: task.id, disposition });
+      applied.push(`task: ${taskTitle}`);
+    } catch (e) {
+      console.error("buyer follow-up task failed:", e);
+    }
+  }
+
+  // 5. No-answer retry cadence: schedule a next-business-day retry task so
+  //    failed attempts stay on a structured cadence instead of vanishing.
+  if (disposition === "no_answer" || disposition === "busy" || disposition === "voicemail") {
+    const dueAt = new Date(Date.now() + 24 * 3600 * 1000);
+    try {
+      const task = await createTask({
+        title: `Retry call: ${buyer.name || buyer.phone || "buyer"}`,
+        description: `Attempt ${disposition}. Cadence default: retry within 1 business day.`,
+        type: "buyer_follow_up",
+        relatedEntityType: "buyer",
+        relatedEntityId: buyer.id,
+        dueAt,
+        priority: "normal",
+        assignedToUserId: session.assignedAgentUserId || userId,
+        createdBy: userId,
+      } as any);
+      await recordEvent(session.id, "buyer_retry_task", session.status, session.status, { taskId: task.id });
+      applied.push("retry task scheduled (+1 day)");
+    } catch (e) {
+      console.error("buyer retry task failed:", e);
+    }
+    try {
+      if (buyer.buyerStatus === "new") {
+        await storage.updateBuyer(buyer.id, { buyerStatus: "attempting_contact", updatedAt: new Date() } as any);
+        applied.push("status → attempting_contact");
+      }
+    } catch { /* best effort */ }
+  }
+
+  return applied;
 }
 
 export async function addSessionNote(sessionId: number, userId: number, note: string): Promise<{ ok: true } | { ok: false; status: number; code: string; error: string }> {
