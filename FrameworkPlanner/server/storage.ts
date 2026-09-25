@@ -461,6 +461,29 @@ export interface IStorage {
   getTeamActivityLogs(teamId: number, limit?: number): Promise<TeamActivityLog[]>;
   createTeamActivityLog(log: InsertTeamActivityLog): Promise<TeamActivityLog>;
 
+  // Team Pulse (simplified daily standup aggregated from global_activity_logs)
+  getTeamPulseWindow(hours: number): Promise<Array<{ userId: number; action: string; count: number; lastAt: Date | string | null }>>;
+  createTeamActivityLog(log: InsertTeamActivityLog): Promise<TeamActivityLog>;
+
+
+  // Team Pulse: per-user × per-action counts since a rolling window.
+  // One GROUP BY over the global activity log — the whole result set is tiny
+  // (users × action-buckets), so the standup page stays a single cheap query.
+  async getTeamPulseWindow(hours: number): Promise<Array<{ userId: number; action: string; count: number; lastAt: Date | string | null }>> {
+    const since = new Date(Date.now() - Math.max(1, Math.min(hours, 24 * 30)) * 60 * 60 * 1000);
+    const rows = await db
+      .select({
+        userId: globalActivityLogs.userId,
+        action: globalActivityLogs.action,
+        count: sql<number>`count(*)::int`,
+        lastAt: sql<Date | null>`max(${globalActivityLogs.createdAt})`,
+      })
+      .from(globalActivityLogs)
+      .where(gte(globalActivityLogs.createdAt, since))
+      .groupBy(globalActivityLogs.userId, globalActivityLogs.action);
+    return rows as any;
+  }
+
   // Notification Preferences
   getNotificationPreferencesByUserId(userId: number): Promise<NotificationPreference | undefined>;
   createNotificationPreferences(prefs: InsertNotificationPreference): Promise<NotificationPreference>;

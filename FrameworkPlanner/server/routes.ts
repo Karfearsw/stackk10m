@@ -87,7 +87,7 @@ import {
   insertPropertyUnitSchema,
   insertBuyerInquirySchema,
   insertOpportunityEventSchema,
-  opportunityParties, publicListings, buyerInquiries, opportunityEvents,
+  globalActivityLogs,  opportunityParties, publicListings, buyerInquiries, opportunityEvents,
   defaultNotificationCategories, insertInternalMessageSchema, insertCalendarEventSchema
 } from "./shared-schema.js";
 import { z } from "zod";
@@ -12346,6 +12346,115 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     }
   });
   // GLOBAL ACTIVITY ENDPOINT
+  // TEAM PULSE — simplified daily standup for the Team page (/team).
+  // Answers "who's in the mix and what got done?" with per-person digests
+  // instead of the noisy per-event feed the audit flagged. Aggregates the
+  // global activity log into buckets; quiet teammates come from the roster.
+  reg("get", "/api/team-pulse"); app.get("/api/team-pulse", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const hoursRaw = req.query.hours ? parseInt(String(req.query.hours), 10) : 24;
+      const hours = Number.isFinite(hoursRaw) ? Math.min(Math.max(hoursRaw, 1), 24 * 30) : 24;
+      const since = new Date(Date.now() - hours * 60 * 60 * 1000);
+
+      const rows = await storage.getTeamPulseWindow(hours);
+
+      // Bucket each normalized action into the five digest categories.
+      const bucketFor = (action: string): string | null => {
+        const a = String(action || "").toLowerCase();
+        if (a.includes("lead")) return "leads";
+        if (a.includes("task") || a.includes("followup")) return "tasks";
+        if (a.includes("call") || a.includes("sms") || a.includes("telephony") || a.includes("voicemail")) return "calls";
+        if (a.includes("contract") || a.includes("offer") || a.includes("deal")) return "contracts";
+        return null;
+      };
+
+      const byUser = new Map<number, { counts: Record<string, number>; total: number; lastMs: number }>();
+      for (const row of rows) {
+        const uid = Number(row.userId);
+        if (!Number.isFinite(uid) || uid === 0) continue;
+        const entry = byUser.get(uid) || { counts: { leads: 0, tasks: 0, calls: 0, contracts: 0 }, total: 0, lastMs: 0 };
+        const count = Number(row.count) || 0;
+        const bucket = bucketFor(String(row.action || ""));
+        if (bucket) entry.counts[bucket] += count;
+        entry.total += count;
+        const lastMs = row.lastAt ? new Date(row.lastAt as any).getTime() : 0;
+        if (Number.isFinite(lastMs) && lastMs > entry.lastMs) entry.lastMs = lastMs;
+        byUser.set(uid, entry);
+      }
+
+      // Roster drives who appears — active teammates get a card (busy or quiet);
+      // anyone with activity but off the roster still shows as a ghost row.
+      const allUsers = await storage.getUsers(500);
+      const activeUsers = allUsers.filter((u: any) => u && u.isActive !== false);
+      const rosterIds = new Set(activeUsers.map((u: any) => Number(u.id)));
+
+      const toCard = (u: any, entry?: { counts: Record<string, number>; total: number; lastMs: number }) => ({
+        userId: Number(u.id),
+        firstName: u.firstName || null,
+        lastName: u.lastName || null,
+        email: u.email || null,
+        hasProfilePicture: !!u.profilePicture,
+        avatarUrl: u.avatarUrl || null,
+        isActiveTeammate: rosterIds.has(Number(u.id)),
+        counts: entry ? entry.counts : { leads: 0, tasks: 0, calls: 0, contracts: 0 },
+        total: entry ? entry.total : 0,
+        lastActiveAt: entry && entry.lastMs > 0 ? new Date(entry.lastMs).toISOString() : null,
+      });
+
+      const active = activeUsers
+        .filter((u: any) => byUser.has(Number(u.id)))
+        .map((u: any) => toCard(u, byUser.get(Number(u.id))))
+        .sort((a: any, b: any) => (b.lastActiveAt || "").localeCompare(a.lastActiveAt || ""));
+
+      const quiet = activeUsers
+        .filter((u: any) => !byUser.has(Number(u.id)))
+        .map((u: any) => toCard(u));
+
+      // Orphan activity (user off roster / removed account) kept visible so
+      // audit-flagged ghost accounts surface instead of disappearing.
+      const orphans: any[] = [];
+      for (const [uid, entry] of byUser) {
+        if (!rosterIds.has(uid)) {
+          const u = allUsers.find((x: any) => Number(x?.id) === uid);
+          orphans.push(toCard(u || { id: uid, email: null }, entry));
+        }
+      }
+
+      const highlights = await db
+        .select({
+          id: globalActivityLogs.id,
+          userId: globalActivityLogs.userId,
+          action: globalActivityLogs.action,
+          description: globalActivityLogs.description,
+          createdAt: globalActivityLogs.createdAt,
+        })
+        .from(globalActivityLogs)
+        .where(gte(globalActivityLogs.createdAt, since))
+        .orderBy(desc(globalActivityLogs.createdAt))
+        .limit(300);
+
+      // Same 15-minute dedupe window the dashboard feed uses.
+      const windowMs = 15 * 60 * 1000;
+      const grouped: any[] = [];
+      for (const h of highlights) {
+        const last = grouped[grouped.length - 1];
+        const ms = h.createdAt ? new Date(h.createdAt as any).getTime() : 0;
+        const key = `${h.userId}|${h.action}|${h.description || ""}`;
+        if (last && last.__key === key && Number.isFinite(last.__ms) && Number.isFinite(ms) && last.__ms - ms <= windowMs) {
+          last.groupCount += 1;
+          continue;
+        }
+        grouped.push({ ...h, groupCount: 1, __key: key, __ms: ms });
+      }
+      const highlightRows = grouped.slice(0, 8).map(({ __key, __ms, ...rest }: any) => rest);
+
+      res.json({ since: since.toISOString(), hours, totalActive: active.length, totalTeammates: activeUsers.length, active, quiet, orphans, highlights: highlightRows });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   reg("get", "/api/activity"); app.get("/api/activity", async (req, res) => {
     try {
       const authCtx = await requireAuth(req, res);

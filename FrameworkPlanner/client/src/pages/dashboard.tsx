@@ -749,11 +749,15 @@ export default function Dashboard() {
         </Card>
 
         <Card className="col-span-3 hover-elevate">
-          <CardHeader>
+          <CardHeader className="flex-row items-start justify-between space-y-0">
             <CardTitle className="flex items-center gap-2">
               <Activity className="h-5 w-5" />
               Team Activity Feed
             </CardTitle>
+            <Button variant="ghost" size="sm" className="h-7 gap-1 px-2 text-xs text-muted-foreground" onClick={() => setLocation("/team")} data-testid="team-pulse-link">
+              View all
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </Button>
           </CardHeader>
           <CardContent>
             <ScrollArea className="h-[300px] pr-4">

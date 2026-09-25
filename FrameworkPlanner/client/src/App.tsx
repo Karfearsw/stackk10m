@@ -64,6 +64,7 @@ const DocsPage = React.lazy(() => import("@/pages/docs"));
 const AutomationsPage = React.lazy(() => import("@/pages/automations"));
 const AuditPage = React.lazy(() => import("@/pages/audit"));
 const AuditLogPage = React.lazy(() => import("@/pages/audit-log"));
+const TeamPulsePage = React.lazy(() => import("@/pages/team-pulse"));
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -197,6 +198,8 @@ function Router() {
       <Route path="/lois" component={() => <ProtectedRoute component={LoisPage} />} />
       <Route path="/system-health" component={() => <ProtectedRoute component={SystemHealthPage} />} />
       <Route path="/teams" component={() => <ProtectedRoute component={TeamsPage} />} />
+      {/* Team Pulse — simplified daily standup (replaces the activity-feed wall) */}
+      <Route path="/team" component={() => <ProtectedRoute component={TeamPulsePage} />} />
       <Route path="/companies" component={() => <ProtectedRoute component={CompaniesPage} />} />
       <Route path="/documents" component={() => <ProtectedRoute component={DocumentsPage} />} />
       <Route path="/docs" component={() => <ProtectedRoute component={DocsPage} />} />

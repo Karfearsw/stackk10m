@@ -36,6 +36,7 @@ import {
   Briefcase,
   BarChart3,
   Wrench,
+  UsersRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -50,6 +51,7 @@ const primaryNavigation = [
   { name: "Leads Pipeline", href: "/leads", icon: Users },
   { name: "Opportunities", href: "/opportunities", icon: Building2 },
   { name: "Contacts", href: "/contacts", icon: Users },
+  { name: "Team", href: "/team", icon: UsersRound },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
