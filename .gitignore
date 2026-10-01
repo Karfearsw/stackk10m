@@ -20,3 +20,9 @@ FrameworkPlanner/login.json
 .env.local
 # Vercel bulk-import env file (contains live secrets) — never commit
 .env.vercel
+
+# Vercel/Freebuff local tooling artifacts — never commit
+deploy_id.txt
+proj.json
+vercel-manifest.json
+deps.json
