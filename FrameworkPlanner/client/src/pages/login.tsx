@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { PasswordInput } from '@/components/ui/password-input';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { ThemeToggle } from '@/components/system/ThemeToggle';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -102,7 +103,10 @@ export default function Login() {
   const guidance = apiError ? getAuth503Guidance(apiError.code, apiError.missing) : null;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
+    <div className="relative min-h-screen flex items-center justify-center bg-background p-4">
+      <div className="absolute top-4 right-4 z-10">
+        <ThemeToggle />
+      </div>
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-2">

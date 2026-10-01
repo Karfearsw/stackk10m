@@ -17,6 +17,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useLocation } from "wouter";
+import { ThemeToggle } from "@/components/system/ThemeToggle";
 
 interface NotificationItem {
   id: number;
@@ -234,6 +235,7 @@ export function Header() {
       </div>
       
       <div className="flex items-center gap-4">
+        <ThemeToggle className="text-muted-foreground hover:text-foreground shrink-0" />
         <Popover>
           <PopoverTrigger asChild>
             <Button 

@@ -8,6 +8,7 @@ import { Toaster as SonnerToaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { AppErrorBoundary } from "@/components/system/AppErrorBoundary";
+import { ThemeProvider } from "next-themes";
 import { LogoLoader } from "@/components/system/LogoLoader";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
@@ -216,16 +217,18 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <AppErrorBoundary>
-          <TooltipProvider>
-            <Router />
-            <Toaster />
-            <SonnerToaster position="bottom-right" richColors closeButton />
-            <InboundCallToast />
-          </TooltipProvider>
-        </AppErrorBoundary>
-      </AuthProvider>
+      <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} disableTransitionOnChange>
+        <AuthProvider>
+          <AppErrorBoundary>
+            <TooltipProvider>
+              <Router />
+              <Toaster />
+              <SonnerToaster position="bottom-right" richColors closeButton />
+              <InboundCallToast />
+            </TooltipProvider>
+          </AppErrorBoundary>
+        </AuthProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

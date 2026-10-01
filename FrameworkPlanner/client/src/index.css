@@ -110,6 +110,9 @@
   --sidebar-accent-foreground: 0 0% 100%;
   --sidebar-border: 0 0% 10%;
   --sidebar-ring: 46 65% 52%;
+
+  /* Native UI (form controls, autofill, scrollbars) follows the theme */
+  color-scheme: light;
 }
 
 .dark {
@@ -155,6 +158,8 @@
   --sidebar-accent-foreground: 0 0% 100%;
   --sidebar-border: 0 0% 10%;
   --sidebar-ring: 46 65% 56%;
+
+  color-scheme: dark;
 }
 
 @layer base {
@@ -183,7 +188,8 @@
   }
   
   ::-webkit-scrollbar-thumb {
-    background: #a1a1a1;
+    /* Adapts to theme: mid-gray on light, lighter gray on dark */
+    background: hsl(var(--muted-foreground) / 0.55);
     border-radius: 3px;
     transition: background 0.3s ease;
   }
@@ -195,7 +201,7 @@
   /* Firefox */
   * {
     scrollbar-width: thin;
-    scrollbar-color: #a1a1a1 transparent;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.55) transparent;
   }
   
   *::-webkit-scrollbar-thumb:hover {
