@@ -36,6 +36,7 @@ import {
   BarChart3,
   Wrench,
   UsersRound,
+  Handshake,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -82,6 +83,10 @@ const menuGroups = [
     items: [
       { name: "Campaigns", href: "/campaigns", icon: Send },
       { name: "Buyers", href: "/buyers", icon: UserCheck },
+      // DISPO-PHASE1 (feat/dispo-phase1): Disposition workspace. Note: a
+      // parallel builder is removing RVM + Field Mode from this same
+      // Workflows section — different lines, no overlap expected.
+      { name: "Disposition", href: "/disposition", icon: Handshake },
       { name: "Contracts", href: "/contracts", icon: FileText },
     ],
   },

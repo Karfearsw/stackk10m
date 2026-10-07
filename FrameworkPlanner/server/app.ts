@@ -609,6 +609,13 @@ await pool.query(`
   // Self-built e-sign module (v2): mounted from its own router module so
   // server/routes.ts stays untouched. See server/routes/esign.ts.
   registerEsignRoutes(app);
+  // DISPO-PHASE1-START (feat/dispo-phase1): Disposition workspace routes.
+  // Mounted outside registerRoutes (server/routes.ts) to avoid conflicts
+  // with the unmerged freebuff/batch0-p0 branch (PR #25). After PR #25
+  // merges, move this mount inside registerRoutes().
+  const { registerDispositionRoutes } = await import("./routes/dispo.js");
+  registerDispositionRoutes(app);
+  // DISPO-PHASE1-END
 
   const isServerless = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
 
