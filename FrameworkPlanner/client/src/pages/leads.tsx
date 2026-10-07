@@ -2542,6 +2542,32 @@ export default function Leads() {
               </div>
             </div>
           )}
+              <div className="border-t pt-4">
+                <div className="text-sm font-medium mb-2">Consent & Do Not Contact</div>
+                <p className="text-xs text-muted-foreground mb-3">Campaigns only send to opted-in recipients. Do Not Call hard-suppresses every channel.</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={!!editingLead.smsConsent} onCheckedChange={(v) => setEditingLead({ ...editingLead, smsConsent: !!v })} data-testid="checkbox-sms-consent" />
+                    SMS consent
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={!!editingLead.emailConsent} onCheckedChange={(v) => setEditingLead({ ...editingLead, emailConsent: !!v })} data-testid="checkbox-email-consent" />
+                    Email consent
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={!!editingLead.doNotCall} onCheckedChange={(v) => setEditingLead({ ...editingLead, doNotCall: !!v })} data-testid="checkbox-dnc" />
+                    Do Not Call
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={!!editingLead.doNotText} onCheckedChange={(v) => setEditingLead({ ...editingLead, doNotText: !!v })} data-testid="checkbox-dnt" />
+                    Do Not Text
+                  </label>
+                  <label className="flex items-center gap-2 text-sm">
+                    <Checkbox checked={!!editingLead.doNotEmail} onCheckedChange={(v) => setEditingLead({ ...editingLead, doNotEmail: !!v })} data-testid="checkbox-dne" />
+                    Do Not Email
+                  </label>
+                </div>
+              </div>
           <DialogFooter>
             <Button
               variant="outline"

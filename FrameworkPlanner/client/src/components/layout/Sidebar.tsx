@@ -21,7 +21,6 @@ import {
   PhoneCall,
   Send,
   Voicemail,
-  MapPin,
   CheckSquare,
   CalendarDays,
   CalendarCheck2,
@@ -82,8 +81,6 @@ const menuGroups = [
     icon: Briefcase,
     items: [
       { name: "Campaigns", href: "/campaigns", icon: Send },
-      { name: "RVM", href: "/rvm", icon: Voicemail },
-      { name: "Field Mode", href: "/field", icon: MapPin },
       { name: "Buyers", href: "/buyers", icon: UserCheck },
       { name: "Contracts", href: "/contracts", icon: FileText },
     ],
@@ -116,7 +113,8 @@ const menuGroups = [
       { name: "Timesheet", href: "/timesheet", icon: Clock },
       { name: "Notifications", href: "/notifications", icon: Bell },
       { name: "System Health", href: "/system-health", icon: ActivitySquare },
-      { name: "Playground", href: "/playground", icon: Lightbulb },
+      // Owner decision Oct 7: Voice Playground is dev-only — not in prod nav.
+      ...(import.meta.env.DEV ? [{ name: "Playground", href: "/playground", icon: Lightbulb }] : []),
       { name: "Scripts", href: "/scripts", icon: FileText },
       { name: "Call Audit", href: "/call-audit", icon: ScrollText },
     ],

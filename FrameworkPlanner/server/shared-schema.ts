@@ -29,6 +29,10 @@ export const leads = pgTable("leads", {
   doNotCall: boolean("do_not_call").notNull().default(false),
   doNotText: boolean("do_not_text").notNull().default(false),
   doNotEmail: boolean("do_not_email").notNull().default(false),
+  // Campaign consent (positive opt-in). The campaign scheduler requires
+  // smsConsent/emailConsent = true before any send; NULL = not opted in.
+  smsConsent: boolean("sms_consent"),
+  emailConsent: boolean("email_consent"),
   lastTouchAt: timestamp("last_touch_at"),
   nextTouchAt: timestamp("next_touch_at"),
   nextFollowUpAt: timestamp("next_follow_up_at"),
@@ -802,12 +806,24 @@ export type InsertCompSnapshot = z.infer<typeof insertCompSnapshotSchema>;
 export const compSnapshotRows = pgTable("comp_snapshot_rows", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   opportunityId: integer("opportunity_id").notNull(),
-  compPropertyId: integer("comp_property_id").notNull(),
+  // NULL for manual comps (user-entered, real data with a recorded source).
+  compPropertyId: integer("comp_property_id"),
   distanceMiles: decimal("distance_miles", { precision: 8, scale: 3 }),
   soldPrice: decimal("sold_price", { precision: 12, scale: 2 }),
   soldDate: date("sold_date"),
   isRentalComp: boolean("is_rental_comp").notNull().default(false),
   rentPerMonth: decimal("rent_per_month", { precision: 12, scale: 2 }),
+  // Manual comps: real user-entered data with a recorded source (never fabricated).
+  isManual: boolean("is_manual").notNull().default(false),
+  manualAddress: varchar("manual_address", { length: 255 }),
+  manualCity: varchar("manual_city", { length: 100 }),
+  manualState: varchar("manual_state", { length: 2 }),
+  manualZip: varchar("manual_zip", { length: 10 }),
+  manualSqft: integer("manual_sqft"),
+  manualBeds: integer("manual_beds"),
+  manualBaths: numeric("manual_baths"),
+  manualSource: varchar("manual_source", { length: 120 }),
+  manualNotes: text("manual_notes"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

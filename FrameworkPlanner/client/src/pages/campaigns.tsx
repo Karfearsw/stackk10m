@@ -300,10 +300,11 @@ function AudienceBuilder({ campaignId, status }: { campaignId: number; status: s
   const [testMode, setTestMode] = useState(false);
   const [enrollLeadIds, setEnrollLeadIds] = useState("");
   const filterPayload = useMemo(() => ({ filters, excludeDnc: true, testMode }), [filters, testMode]);
-  const { data: audiencePreview, isFetching: previewLoading } = useQuery<{ count: number; excluded: number }>({
+  const { data: audiencePreview, isFetching: previewLoading, isError: previewError } = useQuery<{ count: number; excluded: number; eligible: number; dncExcluded: number; noConsentExcluded: number }>({
     queryKey: ["/api/campaigns", campaignId, "audience-preview", filterPayload],
     enabled: !!campaignId && filters.length > 0,
-    queryFn: async () => { try { const res = await apiRequest("POST", "/api/campaigns/" + campaignId + "/audience-preview", filterPayload); return await res.json(); } catch { return { count: Math.max(0, 150 - filters.length * 12), excluded: filters.length * 3 }; } },
+    queryFn: async () => { const res = await apiRequest("POST", "/api/campaigns/" + campaignId + "/audience-preview", filterPayload); return await res.json(); },
+    retry: false,
   });
   const enrollMutation = useMutation({
     mutationFn: async () => { const ids = enrollLeadIds.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => Number.isFinite(n)); if (ids.length === 0) throw new Error("Enter at least one Lead ID"); const res = await apiRequest("POST", "/api/campaigns/" + campaignId + "/enroll", { leadIds: ids }); return await res.json(); },
@@ -322,7 +323,7 @@ function AudienceBuilder({ campaignId, status }: { campaignId: number; status: s
           <div className="space-y-1 flex-1 min-w-32"><Label className="text-xs">Value</Label><Input value={newValue} onChange={(e) => setNewValue(e.target.value)} placeholder="e.g. Zillow, FL" /></div>
           <Button variant="outline" size="sm" onClick={addFilter}>Add Filter</Button>
         </div>
-        {filters.length > 0 && (<div className="border rounded-md p-3 text-sm"><div className="flex items-center gap-2"><Users className="h-4 w-4" /><span className="font-medium">Estimated audience:</span>{previewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <span>{audiencePreview?.count ?? "---"}</span>}</div>{(audiencePreview?.excluded ?? 0) > 0 && <p className="text-xs text-muted-foreground mt-1">{audiencePreview?.excluded} record(s) excluded (DNC/opt-out)</p>}{testMode && <Badge className="mt-2 bg-amber-100 text-amber-700">Test Mode</Badge>}</div>)}
+        {filters.length > 0 && (<div className="border rounded-md p-3 text-sm"><div className="flex items-center gap-2"><Users className="h-4 w-4" /><span className="font-medium">Estimated audience:</span>{previewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : previewError ? <span className="text-destructive">Preview unavailable</span> : <span>{audiencePreview?.eligible ?? "---"} eligible of {audiencePreview?.count ?? "---"}</span>}</div>{!previewError && (audiencePreview?.excluded ?? 0) > 0 && <p className="text-xs text-muted-foreground mt-1">{audiencePreview?.dncExcluded ?? 0} excluded (DNC/opt-out) · {audiencePreview?.noConsentExcluded ?? 0} excluded (no consent on file)</p>}{testMode && <Badge className="mt-2 bg-amber-100 text-amber-700">Test Mode</Badge>}</div>)}
         <div className="border-t pt-4"><Label className="text-sm font-medium">Enroll Leads (comma-separated IDs)</Label><div className="flex gap-2 mt-1"><Input value={enrollLeadIds} onChange={(e) => setEnrollLeadIds(e.target.value)} placeholder="e.g. 1, 5, 12" className="flex-1" /><Button onClick={() => enrollMutation.mutate()} disabled={enrollMutation.isPending || status === "archived"}>{enrollMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />}Enroll</Button></div></div>
       </CardContent></Card>
   );
@@ -364,10 +365,12 @@ function CompliancePanel({ type, status }: { type: string; status: string }) {
   const isRvm = type === "rvm";
   const isSms = type === "sms";
   const isEmail = type === "email";
+  const { readiness, smsConfigured } = useSmsReady();
+  const emailReady = Boolean(readiness?.email?.configured) && !readiness?.email?.blocker;
   const providers = [
-    { name: "Telnyx SMS", ready: false, required: isSms },
-    { name: "Telnyx RVM", ready: false, required: isRvm },
-    { name: "Email Provider", ready: false, required: isEmail },
+    { name: "Telnyx SMS", ready: smsConfigured, required: isSms, hint: smsConfigured ? null : "Set TELNYX_API_KEY + messaging profile (Settings → System)." },
+    { name: "Telnyx RVM", ready: false, required: isRvm, hint: "RVM is disabled in production by owner decision." },
+    { name: "Email Provider", ready: emailReady, required: isEmail, hint: (readiness?.email?.blocker as string) || null },
   ];
   const allReady = providers.filter((p) => p.required).every((p) => p.ready);
   const allAcknowledged = consentConfirmed && dncAcknowledged && sendingHours;
@@ -375,11 +378,11 @@ function CompliancePanel({ type, status }: { type: string; status: string }) {
     <Card><CardHeader><CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5" />Compliance and Provider Readiness</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2"><Label className="text-sm font-medium">Provider Status</Label>
-          {providers.filter((p) => p.required).map((p) => (<div key={p.name} className="flex items-center justify-between border rounded-md p-2 text-sm"><span>{p.name}</span><Badge className={p.ready ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}>{p.ready ? "Ready" : "Not Configured"}</Badge></div>))}
+          {providers.filter((p) => p.required).map((p) => (<div key={p.name} className="border rounded-md p-2 text-sm"><div className="flex items-center justify-between"><span>{p.name}</span><Badge className={p.ready ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}>{p.ready ? "Ready" : "Not Configured"}</Badge></div>{!p.ready && p.hint && <p className="text-xs text-muted-foreground mt-1">{p.hint}</p>}</div>))}
           {!allReady && <p className="text-xs text-muted-foreground">Campaign will not activate until required providers are configured.</p>}
         </div>
         <div className="space-y-3 border-t pt-4"><Label className="text-sm font-medium">Compliance Acknowledgment</Label>
-          <div className="flex items-start gap-2"><input type="checkbox" checked={consentConfirmed} onChange={(e) => setConsentConfirmed(e.target.checked)} className="mt-1" id="consent" /><Label htmlFor="consent" className="text-sm">I confirm all contacts have provided consent to receive messages.</Label></div>
+          <div className="flex items-start gap-2"><input type="checkbox" checked={consentConfirmed} onChange={(e) => setConsentConfirmed(e.target.checked)} className="mt-1" id="consent" /><Label htmlFor="consent" className="text-sm">I confirm all contacts have provided consent to receive messages. (Enforced server-side: only opted-in recipients are sent to; Do Not Call is hard-suppressed.)</Label></div>
           <div className="flex items-start gap-2"><input type="checkbox" checked={dncAcknowledged} onChange={(e) => setDncAcknowledged(e.target.checked)} className="mt-1" id="dnc" /><Label htmlFor="dnc" className="text-sm">I acknowledge DNC/opted-out contacts are automatically excluded.</Label></div>
           <div className="flex items-start gap-2"><input type="checkbox" checked={sendingHours} onChange={(e) => setSendingHours(e.target.checked)} className="mt-1" id="hours" /><Label htmlFor="hours" className="text-sm">Messages will only be sent during permitted hours (8 AM - 9 PM local).</Label></div>
         </div>
