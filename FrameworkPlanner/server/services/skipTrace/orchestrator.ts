@@ -3,6 +3,7 @@ import type { Lead, Property, SkipTraceJob, SkipTraceResult, LeadScoreSnapshot }
 import { getSkipTraceProvider } from "./provider.js";
 import { computeLeadScore } from "../leadScoring/engine.js";
 import { getPublicResearchRunner, type PublicResearchRunner } from "./publicResearch/runner.js";
+import { validatePhones, isValidationEnabled } from "./validation.js";
 
 export type SkipTraceEntityType = "lead" | "opportunity";
 export type SkipTraceMode = "provider" | "public_research" | "both";
@@ -287,7 +288,17 @@ async function runProviderStep(input: {
 
   let updated: SkipTraceResult = pendingRow as any;
   try {
-    const out = await provider.skipTrace(providerInput);
+    let out = await provider.skipTrace(providerInput);
+    // Optional free-tier validation waterfall: cleans/annotates the provider's
+    // phones before they reach the dialer. Never blocks enrichment on error.
+    if (out.status === "success" && isValidationEnabled()) {
+      try {
+        const v = await validatePhones(out.phones || []);
+        out = { ...out, phones: v.phones, evidence: [...(out.evidence || []), ...v.evidence] };
+      } catch (e: any) {
+        await addJobEvent(input.job.id, "validation_skipped", String(e?.message || e).slice(0, 200), {});
+      }
+    }
     if (out.status === "success") {
       updated = (await storage.updateSkipTraceResult(pendingRow.id, {
         status: "success",
@@ -473,8 +484,34 @@ export async function runSkipTraceJob(jobId: number, input?: { ownerNameOverride
       // Surface free-research contacts alongside provider contacts: collect the
       // phones/emails the runner extracted (owner-anchored) and merge them into
       // the provider result row — or synthesize one for public-only mode.
-      const pubPhones = uniqStrings((pubOut.evidence || []).flatMap((ev) => Array.isArray(ev.extracted?.phones) ? (ev.extracted.phones as unknown[]).map(String) : []));
+      let pubPhones = uniqStrings((pubOut.evidence || []).flatMap((ev) => Array.isArray(ev.extracted?.phones) ? (ev.extracted.phones as unknown[]).map(String) : []));
       const pubEmails = uniqStrings((pubOut.evidence || []).flatMap((ev) => Array.isArray(ev.extracted?.emails) ? (ev.extracted.emails as unknown[]).map(String) : []));
+
+      // Free-lane validation: clean + annotate public-research phones with the
+      // same waterfall as the paid lane, before they reach the dialer.
+      // Never blocks enrichment on error.
+      if (isValidationEnabled() && pubPhones.length) {
+        try {
+          const v = await validatePhones(pubPhones);
+          pubPhones = v.phones;
+          for (const ev of v.evidence) {
+            await storage.createSkipTraceEvidence({
+              jobId: running.id,
+              entityType,
+              entityId,
+              sourceType: String(ev.sourceType || "other"),
+              sourceUrl: ev.sourceUrl ? String(ev.sourceUrl) : null,
+              extractedJson: ev.extracted ?? {},
+              confidenceJson: ev.confidence ?? {},
+              notes: ev.notes ? String(ev.notes) : null,
+              screenshotRef: ev.screenshotRef ? String(ev.screenshotRef) : null,
+            } as any);
+          }
+        } catch (e: any) {
+          await addJobEvent(running.id, "validation_skipped", String(e?.message || e).slice(0, 200), {});
+        }
+      }
+
       if (pubPhones.length || pubEmails.length) {
         if (providerResult) {
           const mergedPhones = uniqStrings([...parseJsonArray((providerResult as any).phonesJson), ...pubPhones]);
