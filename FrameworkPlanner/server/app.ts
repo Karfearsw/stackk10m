@@ -451,6 +451,11 @@ export default async function runApp(
     // Ticket 8: per-user caller ID + recording (idempotent for older DBs).
     await pool.query(`ALTER TABLE crm_agent_phone_settings ADD COLUMN IF NOT EXISTS caller_id_e164 varchar(20);`);
     await pool.query(`ALTER TABLE crm_agent_phone_settings ADD COLUMN IF NOT EXISTS recording_enabled boolean NOT NULL DEFAULT true;`);
+    // Ticket 4: audit metadata + service identity (idempotent for older DBs).
+    await pool.query(`ALTER TABLE IF EXISTS audit_events ADD COLUMN IF NOT EXISTS domain varchar(32);`);
+    await pool.query(`ALTER TABLE IF EXISTS audit_events ADD COLUMN IF NOT EXISTS actor_kind varchar(16) NOT NULL DEFAULT 'user';`);
+    await pool.query(`ALTER TABLE IF EXISTS audit_events ADD COLUMN IF NOT EXISTS service_identity varchar(64);`);
+    await pool.query(`ALTER TABLE IF EXISTS audit_events ADD COLUMN IF NOT EXISTS metadata_json text;`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS crm_call_dispositions (
         id serial PRIMARY KEY,

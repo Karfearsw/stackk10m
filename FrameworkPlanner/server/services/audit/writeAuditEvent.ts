@@ -1,66 +1,63 @@
 import { db } from "../../db.js";
 import { auditEvents } from "../../shared-schema.js";
+import { buildAuditEventValues, type AuditEventInput } from "./audit-metadata.js";
+import { getServiceIdentity, type ServiceIdentityId } from "../../../shared/service-identities.js";
+import { getDataDomain, type DataDomainId } from "../../../shared/data-domains.js";
 
-function computeShallowDiff(before: any, after: any) {
-  const b = before && typeof before === "object" ? before : {};
-  const a = after && typeof after === "object" ? after : {};
-  const keys = new Set<string>([...Object.keys(b), ...Object.keys(a)]);
-  const changed: Array<{ key: string; before: unknown; after: unknown }> = [];
-  for (const key of keys) {
-    const bv = (b as any)[key];
-    const av = (a as any)[key];
-    if (JSON.stringify(bv) !== JSON.stringify(av)) {
-      changed.push({ key, before: bv ?? null, after: av ?? null });
-    }
-  }
-  return { changed };
-}
+export type { AuditEventInput } from "./audit-metadata.js";
 
-export async function writeAuditEvent(input: {
-  teamId: number;
-  actorUserId?: number | null;
-  entityType: string;
-  entityId?: number | null;
-  action: string;
-  before?: unknown;
-  after?: unknown;
-  diff?: unknown;
-  ip?: string | null;
-  userAgent?: string | null;
-  requestId?: string | null;
-  kind?: "create" | "update" | "delete";
-}) {
-  const beforeJson = typeof input.before === "undefined" ? null : JSON.stringify(input.before);
-  const afterJson = typeof input.after === "undefined" ? null : JSON.stringify(input.after);
-  const diff =
-    typeof input.diff !== "undefined"
-      ? input.diff
-      : typeof input.before !== "undefined" || typeof input.after !== "undefined"
-        ? computeShallowDiff(input.before, input.after)
-        : null;
-  const diffJson =
-    diff === null
-      ? input.kind
-        ? JSON.stringify({ kind: input.kind, changed: [] })
-        : null
-      : JSON.stringify({ kind: input.kind || "update", ...(diff as any) });
-
+/**
+ * Append an immutable audit row.
+ *
+ * Ticket 04: rows now carry the owning data domain, the actor kind
+ * (`user` | `service` | `system`), the first-party service identity when a
+ * background worker performed the change, and free-form non-secret metadata.
+ */
+export async function writeAuditEvent(input: AuditEventInput) {
+  const { values } = buildAuditEventValues(input);
   const rows = await db
     .insert(auditEvents)
-    .values({
-      teamId: input.teamId,
-      actorUserId: typeof input.actorUserId === "number" ? input.actorUserId : null,
-      entityType: String(input.entityType || "").trim(),
-      entityId: typeof input.entityId === "number" ? input.entityId : null,
-      action: String(input.action || "").trim(),
-      beforeJson,
-      afterJson,
-      diffJson,
-      ip: input.ip ? String(input.ip).slice(0, 64) : null,
-      userAgent: input.userAgent ? String(input.userAgent) : null,
-      requestId: input.requestId ? String(input.requestId).slice(0, 64) : null,
-    } as any)
+    .values(values as any)
     .returning();
   return rows[0] || null;
 }
 
+/**
+ * Ticket 04 — write an audit row attributed to a registered background worker.
+ * Rejects unknown identities and unknown domains instead of silently producing
+ * an unattributable row.
+ */
+export async function recordServiceAuditEvent(input: {
+  teamId: number;
+  serviceIdentity: ServiceIdentityId | string;
+  entityType: string;
+  entityId?: number | null;
+  action: string;
+  domain?: DataDomainId | string | null;
+  metadata?: Record<string, unknown> | null;
+  kind?: "create" | "update" | "delete";
+  requestId?: string | null;
+}) {
+  const identity = getServiceIdentity(input.serviceIdentity);
+  if (!identity) {
+    throw new Error(
+      `Unknown service identity "${String(input.serviceIdentity)}". Register it in shared/service-identities.ts before it writes to the audit trail.`,
+    );
+  }
+  if (input.domain && !getDataDomain(input.domain)) {
+    throw new Error(`Unknown data domain "${String(input.domain)}". Register it in shared/data-domains.ts before it writes to the audit trail.`);
+  }
+  return writeAuditEvent({
+    teamId: input.teamId,
+    actorUserId: null,
+    entityType: input.entityType,
+    entityId: input.entityId ?? null,
+    action: input.action,
+    kind: input.kind,
+    actorKind: "service",
+    serviceIdentity: identity.id,
+    domain: input.domain ?? null,
+    metadata: input.metadata ?? null,
+    requestId: input.requestId ?? null,
+  });
+}

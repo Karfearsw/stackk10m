@@ -5,7 +5,7 @@ entry documents the name, purpose, and how it is rotated/provisioned. The runtim
 validates these at startup via `server/env.ts`, and unsafe/mixed configurations are
 refused in production.
 
-- Catalog version: `2026-10-06.1`
+- Catalog version: `2026-10-07.1`
 - Owner: Platform owner (see rotation column)
 - Environments: `development`, `test`, `production` (resolved by `resolveAppEnv`)
 
@@ -62,6 +62,10 @@ and Ticket 16 for keep/kill decisions.
 | `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID`, `TELNYX_MESSAGING_PROFILE_ID`, `TELNYX_PUBLIC_KEY`, `TELNYX_DEFAULT_FROM_NUMBER` | Telephony / SMS. | Telnyx portal. |
 | `SIGNALWIRE_SPACE_URL`, `SIGNALWIRE_PROJECT_ID`, `SIGNALWIRE_API_TOKEN` | AI voice config. | SignalWire portal. |
 | `SENTRY_DSN` | Error monitoring. | Sentry project. |
+| `SKIP_TRACE_PROVIDER` | Skip trace provider selection. Registered slugs: `free-web` (default, no keys), `enformiongo`. Synthetic values (`mock`/`demo`/`test`) are refused. | No secret. See `docs/skip-trace-providers.md`. |
+| `SKIP_TRACE_PROVIDER_FALLBACKS` | Comma-separated provider slugs to try, in order, when the selected provider returns no contacts. | No secret. |
+| `ENFORMION_AP_NAME`, `ENFORMION_AP_PASSWORD` | EnformionGO commercial provider credentials. | EnformionGO portal. |
+| `ENFORMION_API_BASE_URL`, `ENFORMION_COST_CENTS` | Optional EnformionGO endpoint override and per-lookup cost accounting (cents). | No secret. |
 
 ## Build / runtime
 

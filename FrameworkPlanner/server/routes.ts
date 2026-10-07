@@ -109,7 +109,12 @@ import type { OpportunityStage } from "../shared/pipeline-stages.js";
 import { settingsFromRow as agentPhoneSettingsFromRow, validateAgentPhoneSettings } from "./dialer/user-settings.js";
 import { createSkipTraceJob, isHttpError, runProviderSkipTraceForEntity, runSkipTraceJob } from "./services/skipTrace/orchestrator.js";
 import { hydrateSkipTraceResultForApi, mergeSkipTraceResult } from "./services/skipTrace/merge.js";
-import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
+import {
+  getSkipTraceProviderChainSlugs,
+  getSkipTraceProviderStatuses,
+  resolvePrimarySkipTraceProviderDescriptor,
+  resolveSkipTraceProviderChain,
+} from "./services/skipTrace/provider.js";
 import { telnyx, TelnyxConfigError, createTelnyxWebhookRouter } from "./services/telecom/telnyx-client.js";
 import { sendEmail } from "./services/messaging/email-router.js";
 import { getAuthStatusSnapshot, getEmailProviderMissing } from "./auth/config.js";
@@ -122,7 +127,7 @@ import { getProviderReadiness } from "./services/telecom/provider-readiness.js";
 import { getWebRtcReadiness, getWebRtcClientConfig } from "./services/telecom/webrtc-config.js";
 import { getAiAssistantConfig } from "./services/telecom/ai-config.js";
 import * as callSessions from "./services/telecom/call-sessions.js";
-import { writeAuditEvent } from "./services/audit/writeAuditEvent.js";
+import { writeAuditEvent, recordServiceAuditEvent } from "./services/audit/writeAuditEvent.js";
 import { dispatchAutomationEvent, dryRunAutomation } from "./services/automations/engine.js";
 const require = createRequire(import.meta.url);
 const packageJson: any = (() => {
@@ -469,6 +474,41 @@ async function getOrInitActiveTeamId(req: any, userId: number): Promise<number |
     return null;
   }
 }
+/**
+ * Ticket 4 — record an audit row attributed to a first-party background worker
+ * (never to the requesting human). Best-effort: an audit failure must not break
+ * the operation itself.
+ */
+async function auditServiceAction(
+  req: any,
+  user: any,
+  input: {
+    serviceIdentity: string;
+    entityType: string;
+    entityId?: number | null;
+    action: string;
+    domain?: string | null;
+    metadata?: Record<string, unknown> | null;
+    kind?: "create" | "update" | "delete";
+  },
+): Promise<void> {
+  try {
+    const teamId = await getOrInitActiveTeamId(req, user.id);
+    if (!teamId) return;
+    await recordServiceAuditEvent({
+      teamId,
+      serviceIdentity: input.serviceIdentity,
+      entityType: input.entityType,
+      entityId: input.entityId ?? null,
+      action: input.action,
+      domain: input.domain ?? null,
+      kind: input.kind,
+      metadata: { ...(input.metadata ?? {}), requestedByUserId: user.id },
+      requestId: (req.res?.locals as any)?.requestId ?? null,
+    });
+  } catch {}
+}
+
 async function requireActiveTeam(req: any, res: any, input?: { minRole?: "viewer" | "member" | "admin" | "owner" }) {
   const user = await requireAuth(req, res);
   if (!user) return null;
@@ -958,6 +998,15 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Invalid entityType" });
     }
     const result = await scanAndFlagEntity(entityType as any, user.id);
+    // Ticket 4: the scan is performed by the platform, not the requesting human.
+    await auditServiceAction(req, user, {
+      serviceIdentity: "quarantine-scanner",
+      entityType: "quarantine",
+      action: "quarantine_scan",
+      domain: "leads",
+      kind: "create",
+      metadata: { scannedEntityType: entityType, ...(result as any) },
+    });
     return res.json(result);
   });
   reg("post", "/api/crm/quarantine/:id/restore"); app.post("/api/crm/quarantine/:id/restore", async (req, res) => {
@@ -4757,7 +4806,10 @@ export async function registerRoutes(
           allowedModes: [],
         });
       }
-      const providerName = getSkipTraceProvider().name;
+      // Ticket 05: report the whole provider chain, not a single hardcoded vendor.
+      const providerName = resolvePrimarySkipTraceProviderDescriptor().slug;
+      const providers = getSkipTraceProviderStatuses();
+      const providerChain = getSkipTraceProviderChainSlugs();
       const publicResearchEnabled = String(process.env.SKIP_TRACE_PUBLIC_RESEARCH_ENABLED || "")
         .trim()
         .toLowerCase() === "true";
@@ -4765,8 +4817,27 @@ export async function registerRoutes(
       res.json({
         enabled: true,
         providerName,
+        providers,
+        providerChain,
         publicResearchEnabled,
         allowedModes,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // Ticket 05: provider-agnostic skip trace catalog (registered providers + chain).
+  reg("get", "/api/skip-trace/providers"); app.get("/api/skip-trace/providers", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "skip_trace", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const selected = resolvePrimarySkipTraceProviderDescriptor();
+      const chain = resolveSkipTraceProviderChain();
+      return res.json({
+        activeProvider: selected.slug,
+        chain: chain.map((d) => ({ slug: d.slug, label: d.label, configured: d.isConfigured(), blocker: d.isConfigured() ? null : d.blocker() })),
+        providers: getSkipTraceProviderStatuses(),
       });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -4792,6 +4863,15 @@ export async function registerRoutes(
       });
       if (body.mode === "provider") {
         const out = await runSkipTraceJob(job.id);
+        await auditServiceAction(req, user, {
+          serviceIdentity: "skip-trace-worker",
+          entityType: body.entityType,
+          entityId: body.entityId,
+          action: "skip_trace_completed",
+          domain: "leads",
+          kind: "update",
+          metadata: { jobId: out.job.id, mode: body.mode, status: out.job.status, providerName: (out.job as any).providerName ?? null },
+        });
         return res.json({ jobId: out.job.id, status: out.job.status });
       }
       res.json({ jobId: job.id, status: job.status });
@@ -4811,6 +4891,15 @@ export async function registerRoutes(
       if (!job) return res.status(404).json({ message: "Not found" });
       if (!user.isSuperAdmin && (job as any).requestedByUserId && Number((job as any).requestedByUserId) !== user.id) return res.status(404).json({ message: "Not found" });
       const out = await runSkipTraceJob(job.id);
+      await auditServiceAction(req, user, {
+        serviceIdentity: "skip-trace-worker",
+        entityType: String((job as any).entityType || "lead"),
+        entityId: Number((job as any).entityId) || null,
+        action: "skip_trace_completed",
+        domain: "leads",
+        kind: "update",
+        metadata: { jobId: out.job.id, mode: (job as any).mode ?? null, status: out.job.status, providerName: (out.job as any).providerName ?? null },
+      });
       res.json({ jobId: out.job.id, status: out.job.status });
     } catch (error: any) {
       if (isHttpError(error)) return res.status(error.statusCode).json({ message: error.message });
@@ -4892,6 +4981,15 @@ export async function registerRoutes(
       if (!(await isFeatureEnabled(user.id, "skip_trace", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const leadId = parseInt(req.params.id);
       const out = await runProviderSkipTraceForEntity({ entityType: "lead", entityId: leadId, requestedByUserId: user.id });
+      await auditServiceAction(req, user, {
+        serviceIdentity: "skip-trace-worker",
+        entityType: "lead",
+        entityId: leadId,
+        action: "skip_trace_completed",
+        domain: "leads",
+        kind: "update",
+        metadata: { cached: Boolean(out.cached), providerName: String((out.providerResult as any)?.providerName || "") || null },
+      });
       if ("pending" in out && out.pending) {
         return res.json({ pending: true, result: hydrateSkipTraceResultForApi(out.providerResult as any) });
       }
@@ -8465,6 +8563,25 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       const checkedAt = new Date().toISOString();
       const has = (key: string) => Boolean(process.env[key] && String(process.env[key]).trim() !== "");
       const telnyxReady = telnyxResult.status === "reachable";
+      // Ticket 05: skip trace reports the whole provider chain, not one vendor.
+      let skipTraceStatus: { configured: boolean; detail: string } = {
+        configured: false,
+        detail: "No skip trace provider registered",
+      };
+      try {
+        const providers = getSkipTraceProviderStatuses();
+        const selected = providers.find((p) => p.selected) ?? null;
+        const chain = getSkipTraceProviderChainSlugs();
+        const ready = providers.filter((p) => p.configured).map((p) => p.slug);
+        skipTraceStatus = {
+          configured: ready.length > 0,
+          detail: ready.length
+            ? `Providers ready: ${ready.join(", ")} (chain: ${chain.join(" → ")})`
+            : `${selected?.blocker || "No skip trace provider configured"} — set SKIP_TRACE_PROVIDER=free-web for free lookups`,
+        };
+      } catch (e: any) {
+        skipTraceStatus = { configured: false, detail: `Skip trace configuration invalid: ${String(e?.message || e)}` };
+      }
       // Feature flag state matrix (Phase 7)
       const pf = (v: string | undefined): boolean => {
         if (!v) return false;
@@ -8492,7 +8609,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
         { key: "telnyx_voice", label: "Telnyx Voice", state: telnyxReady ? "healthy" : telnyxResult.status === "unconfigured" ? "unconfigured" : "unavailable", detail: telnyxResult.message || "Unknown", hint: (telnyxResult as any).hint || null, lastChecked: checkedAt },
         { key: "telnyx_sms", label: "Telnyx SMS", state: telnyxReady && has("TELNYX_MESSAGING_PROFILE_ID") ? "healthy" : !has("TELNYX_MESSAGING_PROFILE_ID") ? "unconfigured" : telnyxResult.httpStatus === 401 || telnyxResult.httpStatus === 403 ? "unavailable" : !telnyxReady ? "unavailable" : "healthy", detail: !has("TELNYX_MESSAGING_PROFILE_ID") ? "TELNYX_MESSAGING_PROFILE_ID missing" : telnyxResult.httpStatus === 401 || telnyxResult.httpStatus === 403 ? `Telnyx rejected the API key (HTTP ${telnyxResult.httpStatus}) — rotate the key in the Telnyx portal` : !telnyxReady ? (telnyxResult.message || "Telnyx API unreachable") : "SMS provider reachable and profile configured", lastChecked: checkedAt },
         { key: "telnyx_webhook", label: "Telnyx webhook", state: has("TELNYX_WEBHOOK_URL") ? "healthy" : "unconfigured", detail: has("TELNYX_WEBHOOK_URL") ? "Webhook URL configured" : "TELNYX_WEBHOOK_URL missing — call events / inbound SMS not received", lastChecked: checkedAt },
-        { key: "skip_trace", label: "Skip trace provider", state: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") || process.env.SKIP_TRACE_PROVIDER === "free-web" ? "healthy" : "unconfigured", detail: has("SKIPTRACE_API_KEY") || has("SKIP_TRACE_API_KEY") ? "Skip trace provider configured" : process.env.SKIP_TRACE_PROVIDER === "free-web" ? "Free public-web research provider active (no API keys required)" : "No skip trace provider configured — set SKIP_TRACE_PROVIDER=free-web for free lookups", lastChecked: checkedAt },
+        { key: "skip_trace", label: "Skip trace provider", state: skipTraceStatus.configured ? "healthy" : "unconfigured", detail: skipTraceStatus.detail, lastChecked: checkedAt },
         { key: "calendar", label: "Calendar / meetings", state: "healthy", detail: "Internal CRM calendar active; external calendar sync requires an opt-in connector", lastChecked: checkedAt },
         { key: "campaigns", label: "Ad / campaign providers", state: has("META_ADS_TOKEN") || has("GOOGLE_ADS_TOKEN") ? "healthy" : "unconfigured", detail: has("META_ADS_TOKEN") || has("GOOGLE_ADS_TOKEN") ? "Ad provider configured" : "No ad network credentials — campaign planning works, live ad delivery is off", lastChecked: checkedAt },
         { key: "automations", label: "Automation engine", state: "healthy", detail: "Automation engine available (trigger/conditions/actions)", lastChecked: checkedAt },

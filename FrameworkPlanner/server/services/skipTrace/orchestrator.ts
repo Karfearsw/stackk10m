@@ -1,6 +1,6 @@
 import { storage } from "../../storage.js";
 import type { Lead, Property, SkipTraceJob, SkipTraceResult, LeadScoreSnapshot } from "../../shared-schema.js";
-import { getSkipTraceProvider } from "./provider.js";
+import { isSyntheticProviderName, resolveSkipTraceProviderChain } from "./provider.js";
 import { computeLeadScore } from "../leadScoring/engine.js";
 import { getPublicResearchRunner, type PublicResearchRunner } from "./publicResearch/runner.js";
 
@@ -224,7 +224,7 @@ async function runProviderStep(input: {
     const completedAtMs = new Date((existing as any).completedAt).getTime();
     // Never reuse mock-provider rows: mock contacts are synthetic and must
     // not leak into live lookups.
-    const cacheCompatible = String((existing as any).providerName || "").toLowerCase() !== "mock";
+    const cacheCompatible = !isSyntheticProviderName((existing as any).providerName);
     if (cacheCompatible && Number.isFinite(completedAtMs) && now - completedAtMs < ms90d) {
       const cached = await storage.createSkipTraceResult({
         jobId: input.job.id,
@@ -255,21 +255,26 @@ async function runProviderStep(input: {
 
   if (existing && String((existing as any).status || "") === "pending" && (existing as any).requestedAt) {
     const requestedAtMs = new Date((existing as any).requestedAt).getTime();
-    const pendingCompatible = String((existing as any).providerName || "").toLowerCase() !== "mock";
+    const pendingCompatible = !isSyntheticProviderName((existing as any).providerName);
     if (pendingCompatible && Number.isFinite(requestedAtMs) && now - requestedAtMs < ms5m && (existing as any).jobId) {
       await addJobEvent(input.job.id, "provider_pending", null, { existingJobId: (existing as any).jobId, skipTraceResultId: (existing as any).id });
       return { providerResult: existing, cached: false, pending: true, lead: entity.lead, sourceLead: entity.sourceLead };
     }
   }
 
-  const provider = getSkipTraceProvider();
-  await storage.updateSkipTraceJob(input.job.id, { providerName: provider.name } as any);
+  // Ticket 05: provider-agnostic chain. The selected provider runs first; a
+  // provider that cannot return contacts falls back to the next configured one
+  // instead of failing the whole job.
+  const descriptors = resolveSkipTraceProviderChain();
+  const chain = descriptors.map((descriptor) => ({ descriptor, provider: descriptor.create() }));
+  const primary = chain[0].provider;
+  await storage.updateSkipTraceJob(input.job.id, { providerName: primary.name } as any);
 
   const pendingRow = await storage.createSkipTraceResult({
     jobId: input.job.id,
     leadId: input.entityType === "lead" ? input.entityId : (entity.sourceLead as any)?.id ?? null,
     propertyId: input.entityType === "opportunity" ? input.entityId : null,
-    providerName: provider.name,
+    providerName: primary.name,
     status: "pending",
     phonesJson: "[]",
     emailsJson: "[]",
@@ -277,31 +282,41 @@ async function runProviderStep(input: {
     requestedAt: new Date(),
   } as any);
 
-  await addJobEvent(input.job.id, "provider_requested", null, { skipTraceResultId: pendingRow.id, provider: provider.name });
+  await addJobEvent(input.job.id, "provider_requested", null, {
+    skipTraceResultId: pendingRow.id,
+    provider: primary.name,
+    providerChain: descriptors.map((d) => d.slug),
+  });
   await storage.createGlobalActivity({
     userId: input.requestedByUserId,
     action: "skip_trace_requested",
     description: `Skip trace requested: ${providerInput.address}`,
-    metadata: JSON.stringify({ entityType: input.entityType, entityId: input.entityId, skipTraceId: pendingRow.id, provider: provider.name }),
+    metadata: JSON.stringify({ entityType: input.entityType, entityId: input.entityId, skipTraceId: pendingRow.id, provider: primary.name, providerChain: descriptors.map((d) => d.slug) }),
   } as any);
 
   let updated: SkipTraceResult = pendingRow as any;
-  try {
+  for (let attempt = 0; attempt < chain.length; attempt += 1) {
+    const provider = chain[attempt].provider;
+    const nextProvider = attempt + 1 < chain.length ? chain[attempt + 1].provider : null;
+    try {
     const out = await provider.skipTrace(providerInput);
     if (out.status === "success") {
       updated = (await storage.updateSkipTraceResult(pendingRow.id, {
         status: "success",
+        providerName: provider.name,
         phonesJson: JSON.stringify(out.phones || []),
         emailsJson: JSON.stringify(out.emails || []),
         costCents: out.costCents,
         completedAt: new Date(),
         rawResponseJson: JSON.stringify(out.raw ?? null),
       } as any)) as any;
+      await storage.updateSkipTraceJob(input.job.id, { providerName: provider.name } as any);
 
       const leadToPatch = input.entityType === "lead" ? entity.lead : entity.sourceLead;
       const leadId = (leadToPatch as any)?.id ? Number((leadToPatch as any).id) : null;
-      // Mock contacts are synthetic — never write them onto real lead records.
-      if (leadId && provider.name !== "mock") {
+      // Synthetic contacts (if any provider ever produced them) must never be
+      // written onto real lead records.
+      if (leadId && !isSyntheticProviderName(provider.name)) {
         const leadPatch: any = {};
         if (!String((leadToPatch as any).ownerPhone || "").trim() && out.phones?.[0]) leadPatch.ownerPhone = out.phones[0];
         if (!String((leadToPatch as any).ownerEmail || "").trim() && out.emails?.[0]) leadPatch.ownerEmail = out.emails[0];
@@ -322,13 +337,14 @@ async function runProviderStep(input: {
         } as any);
       }
 
-      await addJobEvent(input.job.id, "provider_success", null, { skipTraceResultId: updated.id, phones: out.phones?.length || 0, emails: out.emails?.length || 0, costCents: out.costCents });
+      await addJobEvent(input.job.id, "provider_success", null, { skipTraceResultId: updated.id, provider: provider.name, phones: out.phones?.length || 0, emails: out.emails?.length || 0, costCents: out.costCents });
       await storage.createGlobalActivity({
         userId: input.requestedByUserId,
         action: "skip_trace_success",
         description: `Skip trace success: ${providerInput.address}`,
-        metadata: JSON.stringify({ entityType: input.entityType, entityId: input.entityId, skipTraceId: updated.id, phones: out.phones?.length || 0, emails: out.emails?.length || 0, costCents: out.costCents }),
+        metadata: JSON.stringify({ entityType: input.entityType, entityId: input.entityId, skipTraceId: updated.id, provider: provider.name, phones: out.phones?.length || 0, emails: out.emails?.length || 0, costCents: out.costCents }),
       } as any);
+      break;
     } else {
       updated = (await storage.updateSkipTraceResult(pendingRow.id, {
         status: "fail",
@@ -352,27 +368,37 @@ async function runProviderStep(input: {
         } as any);
       }
 
-      await addJobEvent(input.job.id, "provider_fail", String((out as any).errorMessage || "failed") || null, { skipTraceResultId: updated.id, costCents: out.costCents });
-      await storage.createGlobalActivity({
-        userId: input.requestedByUserId,
-        action: "skip_trace_failed",
-        description: `Skip trace failed: ${providerInput.address}`,
-        metadata: JSON.stringify({ entityType: input.entityType, entityId: input.entityId, skipTraceId: updated.id, error: (out as any).errorMessage || "failed", costCents: out.costCents }),
-      } as any);
+      await addJobEvent(input.job.id, "provider_fail", String((out as any).errorMessage || "failed") || null, { skipTraceResultId: updated.id, provider: provider.name, costCents: out.costCents });
+      if (nextProvider) {
+        await addJobEvent(input.job.id, "provider_fallback", `Falling back to ${nextProvider.name} after ${provider.name} returned no contacts`, { failedProvider: provider.name, nextProvider: nextProvider.name });
+      } else {
+        await storage.createGlobalActivity({
+          userId: input.requestedByUserId,
+          action: "skip_trace_failed",
+          description: `Skip trace failed: ${providerInput.address}`,
+          metadata: JSON.stringify({ entityType: input.entityType, entityId: input.entityId, skipTraceId: updated.id, provider: provider.name, error: (out as any).errorMessage || "failed", costCents: out.costCents }),
+        } as any);
+      }
     }
   } catch (e: any) {
     updated = (await storage.updateSkipTraceResult(pendingRow.id, {
       status: "fail",
+      providerName: provider.name,
       completedAt: new Date(),
-      rawResponseJson: JSON.stringify({ error: String(e?.message || e) }),
+      rawResponseJson: JSON.stringify({ error: String(e?.message || e), provider: provider.name }),
     } as any)) as any;
-    await addJobEvent(input.job.id, "provider_fail", String(e?.message || e) || null, { skipTraceResultId: updated.id });
-    await storage.createGlobalActivity({
-      userId: input.requestedByUserId,
-      action: "skip_trace_failed",
-      description: `Skip trace failed: ${providerInput.address}`,
-      metadata: JSON.stringify({ entityType: input.entityType, entityId: input.entityId, skipTraceId: updated.id, error: String(e?.message || e) }),
-    } as any);
+    await addJobEvent(input.job.id, "provider_fail", String(e?.message || e) || null, { skipTraceResultId: updated.id, provider: provider.name });
+    if (nextProvider) {
+      await addJobEvent(input.job.id, "provider_fallback", `Falling back to ${nextProvider.name} after ${provider.name} errored`, { failedProvider: provider.name, nextProvider: nextProvider.name });
+    } else {
+      await storage.createGlobalActivity({
+        userId: input.requestedByUserId,
+        action: "skip_trace_failed",
+        description: `Skip trace failed: ${providerInput.address}`,
+        metadata: JSON.stringify({ entityType: input.entityType, entityId: input.entityId, skipTraceId: updated.id, provider: provider.name, error: String(e?.message || e) }),
+      } as any);
+    }
+  }
   }
 
   return { providerResult: updated, cached: false, pending: false, lead: entity.lead, sourceLead: entity.sourceLead };
@@ -569,7 +595,7 @@ export async function runProviderSkipTraceForEntity(input: {
     const completedAtMs = new Date((existing as any).completedAt).getTime();
     // Never reuse mock-provider rows: mock contacts are synthetic and must
     // not leak into live lookups.
-    const cacheCompatible = String((existing as any).providerName || "").toLowerCase() !== "mock";
+    const cacheCompatible = !isSyntheticProviderName((existing as any).providerName);
     if (cacheCompatible && Number.isFinite(completedAtMs) && now - completedAtMs < ms90d) {
       const job = await createSkipTraceJob({ entityType: input.entityType, entityId: input.entityId, mode: "provider", requestedByUserId: input.requestedByUserId });
       await runSkipTraceJob(job.id, { ownerNameOverride: input.ownerNameOverride ?? null });
@@ -581,7 +607,7 @@ export async function runProviderSkipTraceForEntity(input: {
 
   if (existing && String((existing as any).status || "") === "pending" && (existing as any).requestedAt) {
     const requestedAtMs = new Date((existing as any).requestedAt).getTime();
-    const pendingCompatible = String((existing as any).providerName || "").toLowerCase() !== "mock";
+    const pendingCompatible = !isSyntheticProviderName((existing as any).providerName);
     if (pendingCompatible && Number.isFinite(requestedAtMs) && now - requestedAtMs < ms5m) {
       return { cached: false, pending: true, providerResult: existing };
     }

@@ -1,6 +1,7 @@
 import { telnyx } from "./telnyx-client.js";
 import { documentStorageMode, documentVaultHealth } from "../../media/documentVault.js";
 import { getAiAssistantConfig } from "./ai-config.js";
+import { getSkipTraceProviderChainSlugs, getSkipTraceProviderStatuses } from "../skipTrace/provider.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -32,21 +33,21 @@ export type VideoReadiness = {
   blocker?: string;
 };
 
-export type EmailReadiness = {
-  configured: boolean;
-  activeProvider: "resend" | "telnyx" | null;
-  fromAddress: string | null;
-  fromName: string | null;
-  telnyxEssionEnabled: boolean;
-  telnyxEmailReachable: boolean;
-  /** live probe: telnyx email capability present on the account */
-  telnyxCapability: boolean;
-  /** live probe: a verified custom sending domain exists (arbitrary recipients OK) */
-  customDomainVerified: boolean;
-  /** live probe: shared domain id (recipient-restricted mode) */
-  sharedDomain: string | null;
-  domains: { domain: string; status: string; type: string }[];
-  blocker?: string;
+export type EmailReadiness = {
+  configured: boolean;
+  activeProvider: "resend" | "telnyx" | null;
+  fromAddress: string | null;
+  fromName: string | null;
+  telnyxEssionEnabled: boolean;
+  telnyxEmailReachable: boolean;
+  /** live probe: telnyx email capability present on the account */
+  telnyxCapability: boolean;
+  /** live probe: a verified custom sending domain exists (arbitrary recipients OK) */
+  customDomainVerified: boolean;
+  /** live probe: shared domain id (recipient-restricted mode) */
+  sharedDomain: string | null;
+  domains: { domain: string; status: string; type: string }[];
+  blocker?: string;
 };
 
 export type DocumentStorageReadiness = {
@@ -71,6 +72,27 @@ export type AiAssistantReadiness = {
   blocker?: string;
 };
 
+export type SkipTraceProviderReadiness = {
+  slug: string;
+  label: string;
+  kind: string;
+  configured: boolean;
+  selected: boolean;
+  chainIndex: number | null;
+  missingEnv: string[];
+  costPerLookupCents: number;
+  blocker: string | null;
+};
+
+export type SkipTraceReadiness = {
+  configured: boolean;
+  activeProvider: string;
+  /** Order providers would run in (selected provider first, then fallbacks). */
+  chain: string[];
+  providers: SkipTraceProviderReadiness[];
+  blocker?: string;
+};
+
 export type ProviderReadiness = {
   voice: VoiceReadiness;
   sms: SmsReadiness;
@@ -79,6 +101,7 @@ export type ProviderReadiness = {
   documentStorage: DocumentStorageReadiness;
   webhook: WebhookReadiness;
   aiAssistant: AiAssistantReadiness;
+  skipTrace: SkipTraceReadiness;
   featureFlags: Record<string, boolean>;
   overallStatus: ChannelStatus;
   checkedAt: string;
@@ -204,61 +227,61 @@ async function checkVideo(): Promise<VideoReadiness> {
   return telnyxVideo.healthCheck();
 }
 
-async function checkEmail(): Promise<EmailReadiness> {
-  const resendKey = has("RESEND_API_KEY");
-  const resendFrom = envStr("RESEND_FROM");
-  const telnyxEmailEnabled = parseBoolFlag(process.env.TELNYX_EMAIL_ENABLED);
-  const telnyxApiKey = has("TELNYX_API_KEY");
-  const emailFromAddress = envStr("EMAIL_FROM_ADDRESS");
-  const emailFromName = envStr("EMAIL_FROM_NAME");
-
-  // Live probe of the Telnyx Email API capability + sending domains.
-  const { telnyxEmailReadiness } = await import("../messaging/telnyx-email.js");
-  let probe: Awaited<ReturnType<typeof telnyxEmailReadiness>> = {
-    capability: false, domains: [], customVerified: false, sharedDomain: null,
-    ownerEmailConfigured: Boolean(envStr("TELNYX_ACCOUNT_EMAIL")),
-  };
-  if (telnyxEmailEnabled && telnyxApiKey) {
-    probe = await telnyxEmailReadiness();
-  }
-
-  const activeProvider: "resend" | "telnyx" | null =
-    telnyxEmailEnabled && telnyxApiKey && probe.capability ? "telnyx"
-    : telnyxEmailEnabled && telnyxApiKey && (probe.domains.length >= 0 && telnyxApiKey && probe.capability === false && resendKey === false) ? "telnyx"
-    : resendKey ? "resend" : null;
-
-  const configured = activeProvider !== null;
-  const fromAddress = emailFromAddress || resendFrom || (activeProvider === "telnyx" && probe.sharedDomain ? `onboarding@${probe.sharedDomain}` : null);
-
-  let blocker: string | undefined;
-  if (!configured) {
-    blocker =
-      "No email provider configured. Set RESEND_API_KEY + RESEND_FROM for Resend, " +
-      "or TELNYX_EMAIL_ENABLED=true for Telnyx Email API.";
-  } else if (activeProvider === "telnyx" && probe.capability && !probe.customVerified) {
-    // The honest operational blocker: shared domain cannot email leads.
-    blocker = probe.ownerEmailConfigured
-      ? `Telnyx email is in shared-domain mode (onboarding@${probe.sharedDomain || "msgtelnyx.com"}): can only send to the account owner\u2019s verified email. Verify a custom domain (DNS DKIM + ownership) to email leads.`
-      : `Telnyx email is in shared-domain mode and TELNYX_ACCOUNT_EMAIL is not set. Verify a custom domain (DNS DKIM + ownership) to email leads.`;
-  } else if (activeProvider === "telnyx" && probe.capability && probe.customVerified && !fromAddress) {
-    blocker = "Custom sending domain is verified — set EMAIL_FROM_ADDRESS (e.g. notifications@oceanluxe.org) to enable sends.";
-  } else if (!fromAddress) {
-    blocker = "Email from address not configured. Set RESEND_FROM or EMAIL_FROM_ADDRESS.";
-  }
-
-  return {
-    configured,
-    activeProvider,
-    fromAddress,
-    fromName: emailFromName || null,
-    telnyxEssionEnabled: telnyxEmailEnabled,
-    telnyxEmailReachable: probe.capability,
-    telnyxCapability: probe.capability,
-    customDomainVerified: probe.customVerified,
-    sharedDomain: probe.sharedDomain,
-    domains: probe.domains,
-    blocker,
-  };
+async function checkEmail(): Promise<EmailReadiness> {
+  const resendKey = has("RESEND_API_KEY");
+  const resendFrom = envStr("RESEND_FROM");
+  const telnyxEmailEnabled = parseBoolFlag(process.env.TELNYX_EMAIL_ENABLED);
+  const telnyxApiKey = has("TELNYX_API_KEY");
+  const emailFromAddress = envStr("EMAIL_FROM_ADDRESS");
+  const emailFromName = envStr("EMAIL_FROM_NAME");
+
+  // Live probe of the Telnyx Email API capability + sending domains.
+  const { telnyxEmailReadiness } = await import("../messaging/telnyx-email.js");
+  let probe: Awaited<ReturnType<typeof telnyxEmailReadiness>> = {
+    capability: false, domains: [], customVerified: false, sharedDomain: null,
+    ownerEmailConfigured: Boolean(envStr("TELNYX_ACCOUNT_EMAIL")),
+  };
+  if (telnyxEmailEnabled && telnyxApiKey) {
+    probe = await telnyxEmailReadiness();
+  }
+
+  const activeProvider: "resend" | "telnyx" | null =
+    telnyxEmailEnabled && telnyxApiKey && probe.capability ? "telnyx"
+    : telnyxEmailEnabled && telnyxApiKey && (probe.domains.length >= 0 && telnyxApiKey && probe.capability === false && resendKey === false) ? "telnyx"
+    : resendKey ? "resend" : null;
+
+  const configured = activeProvider !== null;
+  const fromAddress = emailFromAddress || resendFrom || (activeProvider === "telnyx" && probe.sharedDomain ? `onboarding@${probe.sharedDomain}` : null);
+
+  let blocker: string | undefined;
+  if (!configured) {
+    blocker =
+      "No email provider configured. Set RESEND_API_KEY + RESEND_FROM for Resend, " +
+      "or TELNYX_EMAIL_ENABLED=true for Telnyx Email API.";
+  } else if (activeProvider === "telnyx" && probe.capability && !probe.customVerified) {
+    // The honest operational blocker: shared domain cannot email leads.
+    blocker = probe.ownerEmailConfigured
+      ? `Telnyx email is in shared-domain mode (onboarding@${probe.sharedDomain || "msgtelnyx.com"}): can only send to the account owner\u2019s verified email. Verify a custom domain (DNS DKIM + ownership) to email leads.`
+      : `Telnyx email is in shared-domain mode and TELNYX_ACCOUNT_EMAIL is not set. Verify a custom domain (DNS DKIM + ownership) to email leads.`;
+  } else if (activeProvider === "telnyx" && probe.capability && probe.customVerified && !fromAddress) {
+    blocker = "Custom sending domain is verified — set EMAIL_FROM_ADDRESS (e.g. notifications@oceanluxe.org) to enable sends.";
+  } else if (!fromAddress) {
+    blocker = "Email from address not configured. Set RESEND_FROM or EMAIL_FROM_ADDRESS.";
+  }
+
+  return {
+    configured,
+    activeProvider,
+    fromAddress,
+    fromName: emailFromName || null,
+    telnyxEssionEnabled: telnyxEmailEnabled,
+    telnyxEmailReachable: probe.capability,
+    telnyxCapability: probe.capability,
+    customDomainVerified: probe.customVerified,
+    sharedDomain: probe.sharedDomain,
+    domains: probe.domains,
+    blocker,
+  };
 }
 
 function checkDocumentStorage(): DocumentStorageReadiness {
@@ -282,6 +305,34 @@ function checkWebhook(): WebhookReadiness {
       ? undefined
       : "TELNYX_WEBHOOK_URL is missing. Call events and inbound SMS will not be received.",
   };
+}
+
+/** Ticket 05 — skip trace is provider-agnostic: report every registered provider. */
+function checkSkipTrace(): SkipTraceReadiness {
+  try {
+    const providers = getSkipTraceProviderStatuses();
+    const chain = getSkipTraceProviderChainSlugs();
+    const active = providers.find((p) => p.selected)?.slug ?? chain[0] ?? "";
+    const configured = providers.some((p) => p.configured);
+    const selected = providers.find((p) => p.selected);
+    return {
+      configured,
+      activeProvider: active,
+      chain,
+      providers,
+      blocker: configured
+        ? undefined
+        : selected?.blocker ?? "No skip trace provider is configured. Free public-web research needs no keys (SKIP_TRACE_PROVIDER=free-web).",
+    };
+  } catch (e: any) {
+    return {
+      configured: false,
+      activeProvider: "",
+      chain: [],
+      providers: [],
+      blocker: `Skip trace provider configuration is invalid: ${String(e?.message || e)}`,
+    };
+  }
 }
 
 async function checkAiAssistant(): Promise<AiAssistantReadiness> {
@@ -341,6 +392,7 @@ export async function getProviderReadiness(): Promise<ProviderReadiness> {
     checkAiAssistant(),
   ]);
 
+  const skipTrace = checkSkipTrace();
   const featureFlags = checkFeatureFlags();
 
   // Determine overall status
@@ -356,6 +408,7 @@ export async function getProviderReadiness(): Promise<ProviderReadiness> {
   channelStatuses.push(toStatus(video));
   channelStatuses.push(toStatus(email));
   channelStatuses.push(toStatus(aiAssistant));
+  channelStatuses.push(toStatus({ configured: skipTrace.configured, reachable: skipTrace.configured, blocker: skipTrace.blocker }));
 
   let overallStatus: ChannelStatus = "healthy";
   if (channelStatuses.includes("unavailable")) overallStatus = "unavailable";
@@ -370,6 +423,7 @@ export async function getProviderReadiness(): Promise<ProviderReadiness> {
     documentStorage,
     webhook,
     aiAssistant,
+    skipTrace,
     featureFlags,
     overallStatus,
     checkedAt: new Date().toISOString(),

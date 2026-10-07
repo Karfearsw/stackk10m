@@ -2035,6 +2035,11 @@ export const auditEvents = pgTable("audit_events", {
   ip: varchar("ip", { length: 64 }),
   userAgent: text("user_agent"),
   requestId: varchar("request_id", { length: 64 }),
+  // Ticket 04: owning data domain, actor kind, service identity, extra context.
+  domain: varchar("domain", { length: 32 }),
+  actorKind: varchar("actor_kind", { length: 16 }).notNull().default("user"),
+  serviceIdentity: varchar("service_identity", { length: 64 }),
+  metadataJson: text("metadata_json"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
