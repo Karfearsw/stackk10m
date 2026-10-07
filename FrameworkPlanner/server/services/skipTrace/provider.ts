@@ -1,5 +1,7 @@
 import { EnformionGOSkipTraceProvider } from "./enformiongo.js";
 import { FreeWebSkipTraceProvider } from "./freeWeb.js";
+import { TracerfySkipTraceProvider } from "./tracerfy.js";
+import { CourtListenerSkipTraceProvider } from "./courtListener.js";
 
 export type SkipTraceInput = {
   ownerName: string;
@@ -45,20 +47,27 @@ export type SkipTraceProviderEvidence = {
 
 // The former "mock" provider (fabricated phone numbers, @example.com emails,
 // and a fake 99¢ charge) has been deleted: production must only ever produce
-// real, evidence-backed contact data. Two real providers remain:
+// real, evidence-backed contact data. Three real providers remain:
 //  - free-web: agentic public-records research (Census geocoder + public web),
 //    no API keys, every hit backed by recorded evidence, misses stay misses.
+//  - tracerfy: pay-as-you-go commercial skip trace (TRACERFY_API_KEY required).
+//    Instant lookup, 5 credits ($0.10) per hit, misses free. Cheapest paid path.
+//  - courtlistener: FREE bankruptcy-petition enrichment (COURTLISTENER_API_TOKEN
+//    required). Searches RECAP for the owner as debtor; pro se Form 101
+//    petitions often list phone/cell/email. ~125 API calls/day free quota.
 //  - enformiongo: paid commercial data provider (ENFORMION_API_KEY required).
 export function getSkipTraceProvider(): SkipTraceProvider {
   const v = String(process.env.SKIP_TRACE_PROVIDER || "free-web").trim().toLowerCase();
   if (v === "free-web" || v === "free_web" || v === "freeweb" || v === "free" || v === "web") return new FreeWebSkipTraceProvider();
+  if (v === "tracerfy") return new TracerfySkipTraceProvider();
+  if (v === "courtlistener" || v === "recap") return new CourtListenerSkipTraceProvider();
   if (v === "enformiongo" || v === "enformion") return new EnformionGOSkipTraceProvider();
   if (v === "mock" || v === "demo" || v === "test") {
     throw new Error(
-      `SKIP_TRACE_PROVIDER="${v}" is no longer supported: mock/demo data is disabled. Set SKIP_TRACE_PROVIDER=free-web (no API keys) or =enformiongo (requires ENFORMION_API_KEY).`,
+      `SKIP_TRACE_PROVIDER="${v}" is no longer supported: mock/demo data is disabled. Set SKIP_TRACE_PROVIDER=free-web (no API keys), =tracerfy (requires TRACERFY_API_KEY), =courtlistener (requires COURTLISTENER_API_TOKEN), or =enformiongo (requires ENFORMION_API_KEY).`,
     );
   }
   throw new Error(
-    `Unknown SKIP_TRACE_PROVIDER "${v}". Supported values: free-web (default, no API keys) or enformiongo (requires ENFORMION_API_KEY).`,
+    `Unknown SKIP_TRACE_PROVIDER "${v}". Supported values: free-web (default, no API keys), tracerfy (requires TRACERFY_API_KEY), courtlistener (requires COURTLISTENER_API_TOKEN), or enformiongo (requires ENFORMION_API_KEY).`,
   );
 }

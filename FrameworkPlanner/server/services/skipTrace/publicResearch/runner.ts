@@ -1,4 +1,5 @@
 import { FreeWebPublicResearchRunner } from "../freeWeb.js";
+import { CompositePublicResearchRunner } from "./composite.js";
 
 export type PublicResearchEntityType = "lead" | "opportunity";
 
@@ -89,10 +90,12 @@ export class DefaultPublicResearchRunner implements PublicResearchRunner {
 
 /**
  * Free agentic public-research runner (no API keys, no per-lookup cost).
- * The DefaultPublicResearchRunner is retained as a disabled-by-default fallback
- * for deployments that explicitly opt out of network research.
+ * Composite runner: free-web research + CourtListener bankruptcy enrichment
+ * (when COURTLISTENER_API_TOKEN is set). The DefaultPublicResearchRunner is
+ * retained as a disabled-by-default fallback for deployments that explicitly
+ * opt out of network research.
  */
 export function getPublicResearchRunner(): PublicResearchRunner {
-  return new FreeWebPublicResearchRunner();
+  return new CompositePublicResearchRunner();
 }
 
