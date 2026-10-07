@@ -398,6 +398,7 @@ export interface IStorage {
   createCompSnapshot(input: InsertCompSnapshot): Promise<CompSnapshot>;
   getCompSnapshotsByProperty(propertyId: number, limit?: number): Promise<CompSnapshot[]>;
   replaceCompSnapshotRows(opportunityId: number, rows: Omit<InsertCompSnapshotRow, "opportunityId">[]): Promise<void>;
+  insertCompSnapshotRow(row: Omit<InsertCompSnapshotRow, "id" | "createdAt">): Promise<CompSnapshotRow>;
   getCompSnapshotRowsByOpportunity(opportunityId: number, limit?: number): Promise<CompSnapshotRow[]>;
 
   // Buyer matching
@@ -2328,9 +2329,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async replaceCompSnapshotRows(opportunityId: number, rows: Omit<InsertCompSnapshotRow, "opportunityId">[]): Promise<void> {
-    await db.delete(compSnapshotRows).where(eq(compSnapshotRows.opportunityId, opportunityId));
+    // Manual comps are user-entered real data — the internal pull replaces only
+    // its own rows and never wipes manual entries.
+    await db
+      .delete(compSnapshotRows)
+      .where(and(eq(compSnapshotRows.opportunityId, opportunityId), eq(compSnapshotRows.isManual, false)));
     if (!rows.length) return;
     await db.insert(compSnapshotRows).values(rows.map((r) => ({ ...r, opportunityId })) as any);
+  }
+
+  async insertCompSnapshotRow(row: Omit<InsertCompSnapshotRow, "id" | "createdAt">): Promise<CompSnapshotRow> {
+    const out = await db.insert(compSnapshotRows).values(row as any).returning();
+    return (out as unknown as CompSnapshotRow[])[0];
   }
 
   async getCompSnapshotRowsByOpportunity(opportunityId: number, limit = 200): Promise<CompSnapshotRow[]> {

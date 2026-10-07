@@ -4,6 +4,7 @@ import { telnyx } from "../services/telecom/telnyx-client.js";
 import { sendEmail } from "../services/messaging/email-router.js";
 import { storage } from "../storage.js";
 import { onCampaignCompleted } from "../services/tasks/task-service.js";
+import { evaluateCampaignRecipient } from "../services/campaigns/consent.js";
 
 function parseHHMM(v: any): { h: number; m: number } | null {
   const s = String(v || "").trim();
@@ -64,12 +65,16 @@ export function startCampaignScheduler(intervalMs = 60_000) {
           l.owner_phone,
           l.owner_email,
           l.assigned_to,
+          l.do_not_call,
           l.do_not_text,
-          l.do_not_email
+          l.do_not_email,
+          l.sms_consent,
+          l.email_consent
         FROM campaign_enrollments ce
         JOIN campaigns c ON c.id = ce.campaign_id
         JOIN leads l ON l.id = ce.lead_id
         WHERE ce.status = 'active'
+          AND c.status = 'active'
           AND ce.next_run_at IS NOT NULL
           AND ce.next_run_at <= NOW()
         ORDER BY ce.next_run_at ASC
@@ -150,47 +155,43 @@ export function startCampaignScheduler(intervalMs = 60_000) {
         let providerId: string | null = null;
         let error: string | null = null;
 
-        if (channel === "sms") {
+        const gate = channel === "sms" || channel === "email"
+          ? evaluateCampaignRecipient(channel, {
+              ownerPhone: r.owner_phone,
+              ownerEmail: r.owner_email,
+              smsConsent: r.sms_consent,
+              emailConsent: r.email_consent,
+              doNotCall: r.do_not_call,
+              doNotText: r.do_not_text,
+              doNotEmail: r.do_not_email,
+            })
+          : { allowed: false, code: "UNKNOWN_CHANNEL", reason: `Unknown channel: ${channel}` };
+
+        if (!gate.allowed) {
+          deliveryStatus = "failed";
+          error = `${gate.code}: ${gate.reason}`;
+        } else if (channel === "sms") {
           const to = String(r.owner_phone || "").trim();
-          if (r.do_not_text) {
+          try {
+            const out = await telnyx.sendSms({ to, body: templateText });
+            deliveryStatus = "sent";
+            providerId = out.messageId || null;
+          } catch (e: any) {
             deliveryStatus = "failed";
-            error = "DNC: do_not_text";
-          } else if (!to) {
-            deliveryStatus = "failed";
-            error = "Missing lead phone";
-          } else {
-            try {
-              const out = await telnyx.sendSms({ to, body: templateText });
-              deliveryStatus = "sent";
-              providerId = out.messageId || null;
-            } catch (e: any) {
-              deliveryStatus = "failed";
-              error = String(e?.message || e);
-            }
+            error = String(e?.message || e);
           }
         } else if (channel === "email") {
           const to = String(r.owner_email || "").trim();
-          if (r.do_not_email) {
+          try {
+            const campaignName = String(r.campaign_name || "").trim();
+            const subject = campaignName ? `Campaign: ${campaignName}` : "Campaign email";
+            const out = await sendEmail({ to, subject, text: templateText });
+            deliveryStatus = "sent";
+            providerId = out.id || null;
+          } catch (e: any) {
             deliveryStatus = "failed";
-            error = "DNC: do_not_email";
-          } else if (!to) {
-            deliveryStatus = "failed";
-            error = "Missing lead email";
-          } else {
-            try {
-              const campaignName = String(r.campaign_name || "").trim();
-              const subject = campaignName ? `Campaign: ${campaignName}` : "Campaign email";
-              const out = await sendEmail({ to, subject, text: templateText });
-              deliveryStatus = "sent";
-              providerId = out.id || null;
-            } catch (e: any) {
-              deliveryStatus = "failed";
-              error = String(e?.message || e);
-            }
+            error = String(e?.message || e);
           }
-        } else {
-          deliveryStatus = "failed";
-          error = `Unknown channel: ${channel}`;
         }
 
         const sentAt = deliveryStatus === "sent" ? new Date() : null;

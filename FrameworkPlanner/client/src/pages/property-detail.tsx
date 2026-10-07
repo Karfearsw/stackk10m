@@ -17,6 +17,7 @@ import { CommissionCalculator } from "@/components/deals/CommissionCalculator";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
 import { SkipTraceJobPanel } from "@/components/skipTrace/SkipTraceJobPanel";
 import { MediaGallery } from "@/components/media/MediaGallery";
+import { ManualCompDialog, type ManualCompPayload } from "@/components/comps/ManualCompDialog";
 import { 
   ArrowLeft, 
   MapPin, 
@@ -179,6 +180,27 @@ export default function PropertyDetail() {
       toast({ title: "Comps pulled" });
     },
     onError: (e: any) => toast({ title: e?.message || "Failed to pull comps", variant: "destructive" }),
+  });
+
+  const [manualCompOpen, setManualCompOpen] = React.useState(false);
+  const manualCompMutation = useMutation({
+    mutationFn: async (payload: ManualCompPayload) => {
+      const res = await fetch(`/api/opportunities/${id}/comps/manual`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((json as any).errors?.join("; ") || (json as any).message || "Failed to save manual comp");
+      return json;
+    },
+    onSuccess: async () => {
+      setManualCompOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["/api/opportunities", id, "comps-snapshots"] });
+      toast({ title: "Manual comp saved" });
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to save manual comp", variant: "destructive" }),
   });
 
   const { data: buyerMatches = [] } = useQuery<any[]>({
@@ -1183,9 +1205,14 @@ export default function PropertyDetail() {
                 <Card>
                   <CardHeader className="flex flex-row items-center justify-between">
                     <CardTitle className="text-lg">Internal Comps</CardTitle>
-                    <Button variant="secondary" onClick={() => pullCompsMutation.mutate()} disabled={pullCompsMutation.isPending}>
-                      Pull Internal Comps
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button variant="outline" onClick={() => setManualCompOpen(true)}>
+                        Add Manual Comp
+                      </Button>
+                      <Button variant="secondary" onClick={() => pullCompsMutation.mutate()} disabled={pullCompsMutation.isPending}>
+                        Pull Internal Comps
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-2 gap-3">
@@ -1206,7 +1233,7 @@ export default function PropertyDetail() {
                     <div className="space-y-2">
                       <div className="text-sm font-medium">Sale Comps</div>
                       {(internalComps?.saleComps || []).length === 0 ? (
-                        <div className="text-sm text-muted-foreground">No sale comps yet.</div>
+                        <div className="text-sm text-muted-foreground">No sale comps yet — pull internal comps or add one manually from a verified source.</div>
                       ) : (
                         <div className="border rounded-md scroll-x-container">
                           <div className="min-w-[900px]">
@@ -1219,7 +1246,13 @@ export default function PropertyDetail() {
                             </div>
                             {(internalComps.saleComps || []).slice(0, 25).map((r: any) => (
                               <div key={String(r.id)} className="grid grid-cols-6 gap-2 p-2 text-sm border-t">
-                                <div className="col-span-2 truncate">{r.comp?.address || `Property ${r.compPropertyId}`}</div>
+                                <div className="col-span-2 truncate">
+                                  {r.isManual ? (
+                                    <span title={r.manualSource ? `Manual comp — source: ${r.manualSource}` : "Manual comp"}>
+                                      {r.manualAddress || "Manual comp"} <Badge variant="outline" className="ml-1 text-[10px]">Manual</Badge>
+                                    </span>
+                                  ) : (r.comp?.address || `Property ${r.compPropertyId}`)}
+                                </div>
                                 <div>{typeof r.distanceMiles === "number" ? r.distanceMiles.toFixed(2) : "—"} mi</div>
                                 <div>{typeof r.soldPrice === "number" ? `$${Math.round(r.soldPrice).toLocaleString()}` : "—"}</div>
                                 <div>{r.soldDate ? new Date(r.soldDate).toLocaleDateString() : "—"}</div>
@@ -1234,7 +1267,7 @@ export default function PropertyDetail() {
                     <div className="space-y-2">
                       <div className="text-sm font-medium">Rental Comps</div>
                       {(internalComps?.rentalComps || []).length === 0 ? (
-                        <div className="text-sm text-muted-foreground">No rental comps yet.</div>
+                        <div className="text-sm text-muted-foreground">No rental comps yet — pull internal comps or add one manually from a verified source.</div>
                       ) : (
                         <div className="border rounded-md scroll-x-container">
                           <div className="min-w-[900px]">
@@ -1247,7 +1280,13 @@ export default function PropertyDetail() {
                             </div>
                             {(internalComps.rentalComps || []).slice(0, 25).map((r: any) => (
                               <div key={String(r.id)} className="grid grid-cols-6 gap-2 p-2 text-sm border-t">
-                                <div className="col-span-2 truncate">{r.comp?.address || `Property ${r.compPropertyId}`}</div>
+                                <div className="col-span-2 truncate">
+                                  {r.isManual ? (
+                                    <span title={r.manualSource ? `Manual comp — source: ${r.manualSource}` : "Manual comp"}>
+                                      {r.manualAddress || "Manual comp"} <Badge variant="outline" className="ml-1 text-[10px]">Manual</Badge>
+                                    </span>
+                                  ) : (r.comp?.address || `Property ${r.compPropertyId}`)}
+                                </div>
                                 <div>{typeof r.distanceMiles === "number" ? r.distanceMiles.toFixed(2) : "—"} mi</div>
                                 <div>{typeof r.rentPerMonth === "number" ? `$${Math.round(r.rentPerMonth).toLocaleString()}/mo` : "—"}</div>
                                 <div>{r.comp?.rented_date || r.comp?.rentedDate ? new Date(r.comp.rented_date || r.comp.rentedDate).toLocaleDateString() : "—"}</div>
@@ -1260,6 +1299,12 @@ export default function PropertyDetail() {
                     </div>
                   </CardContent>
                 </Card>
+                <ManualCompDialog
+                  open={manualCompOpen}
+                  onOpenChange={setManualCompOpen}
+                  isPending={manualCompMutation.isPending}
+                  onSubmit={(payload) => manualCompMutation.mutate(payload)}
+                />
               </TabsContent>
 
               <TabsContent value="buyerMatches" className="mt-6 space-y-6">

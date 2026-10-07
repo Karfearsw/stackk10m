@@ -176,7 +176,8 @@ function Router() {
       <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />
       <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
       <Route path="/messages" component={() => <ProtectedRoute component={MessagesPage} />} />
-      <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />
+      {/* Owner decision Oct 7: Voice Playground is dev-only — unreachable in prod builds. */}
+      {import.meta.env.DEV && <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />}
       <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />
       <Route path="/tasks" component={() => <ProtectedRoute component={TasksPage} />} />
       <Route path="/calendar" component={() => <ProtectedRoute component={CalendarPage} />} />

@@ -109,6 +109,8 @@ import type { OpportunityStage } from "../shared/pipeline-stages.js";
 import { settingsFromRow as agentPhoneSettingsFromRow, validateAgentPhoneSettings } from "./dialer/user-settings.js";
 import { createSkipTraceJob, isHttpError, runProviderSkipTraceForEntity, runSkipTraceJob } from "./services/skipTrace/orchestrator.js";
 import { hydrateSkipTraceResultForApi, mergeSkipTraceResult } from "./services/skipTrace/merge.js";
+import { recomputeBuyerMatchesForOpportunity } from "./services/buyerMatch/recompute.js";
+import { validateManualCompInput } from "./services/comps/manual.js";
 import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
 import { telnyx, TelnyxConfigError, createTelnyxWebhookRouter } from "./services/telecom/telnyx-client.js";
 import { sendEmail } from "./services/messaging/email-router.js";
@@ -4994,7 +4996,8 @@ export async function registerRoutes(
       if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const schema = z.object({ name: z.string().trim().min(1).max(120) });
       const payload = schema.parse(req.body || {});
-      const row = await storage.createCampaign({ userId: user.id, name: payload.name, status: "active" } as any);
+      // New campaigns start as "draft": build -> activate (M20 SMS gate) -> scheduler executes.
+      const row = await storage.createCampaign({ userId: user.id, name: payload.name, status: "draft" } as any);
       res.status(201).json(row);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -5108,6 +5111,62 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
+  // Real audience preview: counts leads matching the builder filters and
+  // breaks out DNC/opt-out vs missing-consent exclusions. Replaces the old
+  // client-side fabricated fallback numbers.
+  reg("post", "/api/campaigns/:id/audience-preview"); app.post("/api/campaigns/:id/audience-preview", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const filters = Array.isArray((req.body as any)?.filters) ? (req.body as any).filters : [];
+      // Safe allowlist: only real leads columns, exact or ILIKE match.
+      const allowed: Record<string, { col: string; like: boolean }> = {
+        source: { col: "source", like: true },
+        status: { col: "status", like: false },
+        state: { col: "state", like: false },
+        county: { col: "county", like: true },
+        leadType: { col: "lead_type", like: false },
+        assignedTo: { col: "assigned_to", like: false },
+      };
+      // Column names come from the hardcoded allowlist above (never user input);
+      // values are bound as drizzle parameters.
+      const conds: any[] = [];
+      for (const f of filters) {
+        const spec = allowed[String((f as any)?.field || "")];
+        const rawVal = String((f as any)?.value || "").trim();
+        if (!spec || !rawVal) continue;
+        const col = sql.raw(`"${spec.col}"`);
+        if (spec.col === "assigned_to") {
+          const n = parseInt(rawVal, 10);
+          if (!Number.isFinite(n)) continue;
+          conds.push(sql`${col} = ${n}`);
+        } else if (spec.like) {
+          conds.push(sql`${col} ILIKE ${`%${rawVal}%`}`);
+        } else {
+          conds.push(sql`${col} = ${rawVal}`);
+        }
+      }
+      const where = conds.length ? sql`WHERE ${sql.join(conds, sql` AND `)}` : sql``;
+      const out: any = await db.execute(sql`
+        SELECT
+          COUNT(*)::int AS total,
+          SUM(CASE WHEN do_not_call OR do_not_text OR do_not_email THEN 1 ELSE 0 END)::int AS dnc_excluded,
+          SUM(CASE WHEN NOT (do_not_call OR do_not_text OR do_not_email)
+            AND sms_consent IS NOT TRUE AND email_consent IS NOT TRUE THEN 1 ELSE 0 END)::int AS no_consent_excluded
+        FROM leads
+        ${where}
+      `);
+      const row = ((out as any).rows || [])[0] || {};
+      const total = Number(row.total || 0);
+      const dnc = Number(row.dnc_excluded || 0);
+      const noConsent = Number(row.no_consent_excluded || 0);
+      res.json({ count: total, eligible: Math.max(0, total - dnc - noConsent), excluded: dnc + noConsent, dncExcluded: dnc, noConsentExcluded: noConsent });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   reg("get", "/api/campaigns/:id/stats"); app.get("/api/campaigns/:id/stats", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -5918,7 +5977,7 @@ export async function registerRoutes(
       const opportunityId = parseInt(req.params.id, 10);
       const rows = await storage.getCompSnapshotRowsByOpportunity(opportunityId, 500);
       if (!rows.length) return res.json({ avgArv: null, avgRent: null, saleComps: [], rentalComps: [] });
-      const ids = Array.from(new Set(rows.map((r: any) => Number(r.compPropertyId)).filter(Number.isFinite)));
+      const ids = Array.from(new Set(rows.map((r: any) => ((r as any).compPropertyId != null ? Number((r as any).compPropertyId) : NaN)).filter(Number.isFinite)));
       const compsById = new Map<number, any>();
       if (ids.length) {
         const idSql = sql.join(ids.map((id) => sql`${id}`), sql`, `);
@@ -5932,15 +5991,25 @@ export async function registerRoutes(
       const sale: any[] = [];
       const rental: any[] = [];
       for (const r of rows) {
-        const comp = compsById.get(Number((r as any).compPropertyId)) || null;
+        const comp = (r as any).compPropertyId != null ? compsById.get(Number((r as any).compPropertyId)) || null : null;
         const base = {
           id: (r as any).id,
-          compPropertyId: Number((r as any).compPropertyId),
+          compPropertyId: (r as any).compPropertyId != null ? Number((r as any).compPropertyId) : null,
           distanceMiles: toNumberOrNull((r as any).distanceMiles),
           soldPrice: toNumberOrNull((r as any).soldPrice),
           soldDate: (r as any).soldDate ?? null,
           rentPerMonth: toNumberOrNull((r as any).rentPerMonth),
           isRentalComp: !!(r as any).isRentalComp,
+          isManual: !!(r as any).isManual,
+          manualAddress: (r as any).manualAddress ?? null,
+          manualCity: (r as any).manualCity ?? null,
+          manualState: (r as any).manualState ?? null,
+          manualZip: (r as any).manualZip ?? null,
+          manualSqft: toNumberOrNull((r as any).manualSqft),
+          manualBeds: toNumberOrNull((r as any).manualBeds),
+          manualBaths: toNumberOrNull((r as any).manualBaths),
+          manualSource: (r as any).manualSource ?? null,
+          manualNotes: (r as any).manualNotes ?? null,
           comp,
         };
         if (base.isRentalComp) rental.push(base);
@@ -6048,79 +6117,50 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
-  async function recomputeBuyerMatches(opportunityId: number, userId: number) {
-    const property = await storage.getPropertyById(opportunityId);
-    if (!property) throw new Error("Opportunity not found");
-    const dealZipCode = String((property as any).zipCode || "").trim();
-    const dealState = String((property as any).state || "").trim();
-    const dealPrice = toNumberOrNull((property as any).price);
-    const dealRepairCost = toNumberOrNull((property as any).repairCost ?? (property as any).repair_cost);
-    const snapshotRows = await storage.getCompSnapshotRowsByOpportunity(opportunityId, 500);
-    const saleRows = snapshotRows.filter((r: any) => !r.isRentalComp);
-    const avgArvFromSnapshots = (() => {
-      const vals = saleRows.map((r: any) => toNumberOrNull(r.soldPrice)).filter((x): x is number => x !== null);
-      if (!vals.length) return null;
-      return vals.reduce((a, b) => a + b, 0) / vals.length;
-    })();
-    const dealArv = avgArvFromSnapshots ?? toNumberOrNull((property as any).arv);
-    const dealSpread =
-      dealArv !== null && dealPrice !== null
-        ? dealArv - dealPrice - (dealRepairCost ?? 0)
-        : null;
-    const buyers = await storage.getBuyers(2000, 0);
-    const buyerIds = (buyers || []).map((b: any) => Number(b.id)).filter(Number.isFinite);
-    const profilesById = new Map<number, any>();
-    if (buyerIds.length) {
-      const idsSql = sql.join(buyerIds.map((id) => sql`${id}`), sql`, `);
-      const out: any = await db.execute(sql`SELECT * FROM buyer_profiles WHERE id IN (${idsSql})`);
-      for (const r of (out as any).rows || []) profilesById.set(Number(r.id), r);
+
+  // Manual comp entry: the documented fallback when the internal pull finds
+  // nothing. Manual comps are REAL user-entered data — address, a price signal,
+  // and the source are all required. Never fabricated; flagged is_manual so the
+  // UI badges them and the internal pull never overwrites them.
+  reg("post", "/api/opportunities/:id/comps/manual"); app.post("/api/opportunities/:id/comps/manual", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const opportunityId = parseInt(req.params.id, 10);
+      const property = await storage.getPropertyById(opportunityId);
+      if (!property) return res.status(404).json({ message: "Opportunity not found" });
+      const checked = validateManualCompInput((req.body || {}) as any);
+      if (!checked.ok) return res.status(400).json({ message: "Invalid manual comp", errors: (checked as any).errors });
+      const v = checked.value;
+      const row = await storage.insertCompSnapshotRow({
+        opportunityId,
+        compPropertyId: null,
+        distanceMiles: null,
+        soldPrice: v.soldPrice != null ? String(v.soldPrice) : null,
+        soldDate: v.soldDate,
+        isRentalComp: v.isRentalComp,
+        rentPerMonth: v.rentPerMonth != null ? String(v.rentPerMonth) : null,
+        isManual: true,
+        manualAddress: v.address,
+        manualCity: v.city,
+        manualState: v.state,
+        manualZip: v.zip,
+        manualSqft: v.sqft,
+        manualBeds: v.beds,
+        manualBaths: v.baths != null ? String(v.baths) : null,
+        manualSource: v.source,
+        manualNotes: v.notes,
+      } as any);
+      res.status(201).json({ ok: true, id: (row as any).id });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
     }
-    const historyBuyerIds = new Set<number>();
-    if (dealZipCode) {
-      const out: any = await db.execute(sql`
-        SELECT DISTINCT da.buyer_id
-        FROM deal_assignments da
-        INNER JOIN properties p ON p.id = da.property_id
-        WHERE p.zip_code = ${dealZipCode}
-      `);
-      for (const r of (out as any).rows || []) historyBuyerIds.add(Number(r.buyer_id));
-    }
-    const scored = (buyers || [])
-      .map((b: any) => {
-        const buyerId = Number(b.id);
-        const profile = profilesById.get(buyerId) || null;
-        const targetZips = Array.isArray(profile?.target_zips) ? profile.target_zips.map(String) : Array.isArray(b.zipCodes) ? b.zipCodes.map(String) : [];
-        const targetStates = Array.isArray(profile?.target_states) ? profile.target_states.map(String) : [];
-        const minSpread = toNumberOrNull(profile?.min_spread);
-        let score = 0;
-        const reasons: string[] = [];
-        if (dealZipCode && targetZips.includes(dealZipCode)) {
-          score += 0.4;
-          reasons.push(`Invests in ${dealZipCode}`);
-        }
-        if (dealState && targetStates.includes(dealState)) {
-          score += 0.2;
-          reasons.push(`Invests in ${dealState}`);
-        }
-        if (dealSpread !== null && minSpread !== null && dealSpread >= minSpread) {
-          score += 0.3;
-          reasons.push("Meets minimum spread");
-        }
-        if (historyBuyerIds.has(buyerId) && dealZipCode) {
-          score += 0.3;
-          reasons.push(`Has bought in ${dealZipCode}`);
-        }
-        const scoreInt = Math.max(0, Math.round(score * 1000));
-        return { buyerId, scoreInt, reasons };
-      })
-      .filter((m: any) => m.scoreInt > 0)
-      .sort((a: any, b: any) => b.scoreInt - a.scoreInt)
-      .slice(0, 50);
-    await storage.replaceDealBuyerMatches(
-      opportunityId,
-      scored.map((m: any) => ({ buyerId: m.buyerId, score: m.scoreInt, reasons: m.reasons, computedAt: new Date() })) as any,
-    );
-    return scored;
+  });
+  // Buyer-match recompute now delegates to the shared engine service
+  // (server/services/buyerMatch/recompute.ts) — same route contract,
+  // human-readable reasons from scoreBuyerMatch.
+  async function recomputeBuyerMatches(opportunityId: number) {
+    return recomputeBuyerMatchesForOpportunity(opportunityId);
   }
   reg("get", "/api/opportunities/:id/buyer-matches"); app.get("/api/opportunities/:id/buyer-matches", async (req, res) => {
     try {
@@ -6144,7 +6184,7 @@ export async function registerRoutes(
       const user = await requireAuth(req, res);
       if (!user) return;
       const propertyId = parseInt(req.params.id);
-      const matches = await recomputeBuyerMatches(propertyId, user.id);
+      const matches = await recomputeBuyerMatches(propertyId);
       res.json({ ok: true, count: matches.length });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
