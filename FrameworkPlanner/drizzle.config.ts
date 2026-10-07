@@ -5,9 +5,6 @@ import { config } from "dotenv";
 // Force load from FrameworkPlanner/.env
 config({ path: "./.env" });
 
-console.log("DATABASE_URL loaded:", !!process.env.DATABASE_URL);
-console.log("DATABASE_URL length:", process.env.DATABASE_URL?.length);
-
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL missing");
 }
@@ -28,7 +25,6 @@ function sanitizeDatabaseUrl(input: string): string {
 }
 
 const sanitized = sanitizeDatabaseUrl(process.env.DATABASE_URL);
-console.log("Sanitized URL:", sanitized);
 
 export default defineConfig({
   out: "./migrations",

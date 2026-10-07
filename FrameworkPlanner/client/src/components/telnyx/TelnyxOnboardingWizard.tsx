@@ -112,7 +112,7 @@ export function TelnyxOnboardingWizard({ onComplete }: { onComplete?: () => void
 
   function renderStatusBadge(s?: StepStatus) {
     if (!s || s === "pending") return null;
-    if (s === "testing") return <span className="flex items-center gap-1 text-xs text-blue-600"><Loader2 className="w-3 h-3 animate-spin" /> Testing...</span>;
+    if (s === "testing") return <span className="flex items-center gap-1 text-xs text-slate-600"><Loader2 className="w-3 h-3 animate-spin" /> Testing...</span>;
     if (s === "passed") return <span className="flex items-center gap-1 text-xs text-green-600"><CheckCircle2 className="w-3 h-3" /> Verified</span>;
     return <span className="flex items-center gap-1 text-xs text-red-600"><XCircle className="w-3 h-3" /> Failed</span>;
   }
@@ -166,7 +166,7 @@ export function TelnyxOnboardingWizard({ onComplete }: { onComplete?: () => void
               Test API Key
             </Button>
             {renderResult(currentResult)}
-            <div className="rounded-md bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800">
+            <div className="rounded-md bg-slate-50 border border-slate-200 p-3 text-xs text-slate-800">
               <p className="font-medium">Where to find it:</p>
               <ol className="list-decimal list-inside mt-1 space-y-0.5">
                 <li>Log in to <a href="https://portal.telnyx.com" target="_blank" rel="noopener" className="underline">portal.telnyx.com</a></li>
@@ -190,7 +190,7 @@ export function TelnyxOnboardingWizard({ onComplete }: { onComplete?: () => void
               Test Connection
             </Button>
             {renderResult(currentResult)}
-            <div className="rounded-md bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800">
+            <div className="rounded-md bg-slate-50 border border-slate-200 p-3 text-xs text-slate-800">
               <p className="font-medium">Where to find it:</p>
               <ol className="list-decimal list-inside mt-1 space-y-0.5">
                 <li>Go to Telnyx Portal → Voice → Call Control Applications</li>
@@ -221,7 +221,7 @@ export function TelnyxOnboardingWizard({ onComplete }: { onComplete?: () => void
               Test Messaging Profile
             </Button>
             {renderResult(currentResult)}
-            <div className="rounded-md bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800">
+            <div className="rounded-md bg-slate-50 border border-slate-200 p-3 text-xs text-slate-800">
               <p className="font-medium">Where to find it:</p>
               <ol className="list-decimal list-inside mt-1 space-y-0.5">
                 <li>Go to Telnyx Portal → Messaging → Profiles</li>
@@ -248,7 +248,7 @@ export function TelnyxOnboardingWizard({ onComplete }: { onComplete?: () => void
                 </Button>
               </div>
             </div>
-            <div className="rounded-md bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800">
+            <div className="rounded-md bg-slate-50 border border-slate-200 p-3 text-xs text-slate-800">
               <p className="font-medium">Setup steps:</p>
               <ol className="list-decimal list-inside mt-1 space-y-0.5">
                 <li>In Telnyx Portal, open your Call Control Application</li>
