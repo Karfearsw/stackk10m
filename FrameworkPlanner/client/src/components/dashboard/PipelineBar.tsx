@@ -18,9 +18,9 @@ const GROUP_META: Record<
   string,
   { icon: typeof Users; textColor: string; bgColor: string; borderColor: string }
 > = {
-  lead: { icon: Users, textColor: "text-blue-600", bgColor: "bg-blue-50", borderColor: "border-blue-200" },
+  lead: { icon: Users, textColor: "text-slate-600", bgColor: "bg-slate-50", borderColor: "border-slate-200" },
   negotiating: { icon: Handshake, textColor: "text-orange-600", bgColor: "bg-orange-50", borderColor: "border-orange-200" },
-  under_contract: { icon: FileText, textColor: "text-purple-600", bgColor: "bg-purple-50", borderColor: "border-purple-200" },
+  under_contract: { icon: FileText, textColor: "text-amber-600", bgColor: "bg-amber-50", borderColor: "border-amber-200" },
   closed: { icon: CheckCircle2, textColor: "text-green-600", bgColor: "bg-green-50", borderColor: "border-green-200" },
   inactive: { icon: Ban, textColor: "text-zinc-600", bgColor: "bg-zinc-50", borderColor: "border-zinc-200" },
 };

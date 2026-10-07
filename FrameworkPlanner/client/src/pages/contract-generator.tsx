@@ -28,9 +28,9 @@ function Row({ label, value }: { label: string; value: any }) {
 
 const statusColors: Record<string, string> = {
   draft: "bg-gray-500",
-  sent: "bg-blue-500", 
+  sent: "bg-slate-500", 
   executed: "bg-green-500",
-  closed: "bg-purple-500",
+  closed: "bg-amber-500",
 };
 
 export default function ContractGenerator() {
@@ -1202,11 +1202,11 @@ function ContractsList({
               <span className="text-muted-foreground">Pipeline:</span>
               <Badge variant="outline" className="bg-gray-500/10">Draft</Badge>
               <ArrowRight className="w-3 h-3 text-muted-foreground" />
-              <Badge variant="outline" className="bg-blue-500/10">Sent</Badge>
+              <Badge variant="outline" className="bg-slate-500/10">Sent</Badge>
               <ArrowRight className="w-3 h-3 text-muted-foreground" />
               <Badge variant="outline" className="bg-green-500/10">Executed</Badge>
               <ArrowRight className="w-3 h-3 text-muted-foreground" />
-              <Badge variant="outline" className="bg-purple-500/10">Closed</Badge>
+              <Badge variant="outline" className="bg-amber-500/10">Closed</Badge>
             </div>
           </div>
         </div>
