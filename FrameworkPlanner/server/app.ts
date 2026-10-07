@@ -539,6 +539,73 @@ await pool.query(`
   const server = await registerRoutes(app, { mode: "server" });
   if (!server) throw new Error("registerRoutes returned null in server mode");
 
+  // Investor portal (Phase 2): mounted on its own module so server/routes.ts
+  // stays untouched. Fully gated by INVESTOR_PORTAL_ENABLED (default off).
+  try {
+    const { registerInvestorRoutes } = await import("./investor/router.js");
+    await registerInvestorRoutes(app);
+    log("[Startup] Investor portal routes mounted (flag-gated)", "investor");
+  } catch (e) {
+    console.error("Failed to mount investor portal routes:", e);
+  }
+  // Idempotent DDL fallback for migration 0080 (mirrors the pattern above).
+  try {
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS investor_status varchar(20) NOT NULL DEFAULT 'pending';`);
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS investor_rejected_reason text;`);
+    await pool.query(`ALTER TABLE buyers ADD COLUMN IF NOT EXISTS user_id integer;`);
+    await pool.query(`
+      ALTER TABLE buyer_profiles
+        ADD COLUMN IF NOT EXISTS property_types text[],
+        ADD COLUMN IF NOT EXISTS price_min numeric(12, 2),
+        ADD COLUMN IF NOT EXISTS price_max numeric(12, 2),
+        ADD COLUMN IF NOT EXISTS min_beds integer,
+        ADD COLUMN IF NOT EXISTS max_beds integer,
+        ADD COLUMN IF NOT EXISTS notify_prefs jsonb NOT NULL DEFAULT '{"mode":"digest"}'::jsonb;
+    `);
+    await pool.query(`ALTER TABLE properties ADD COLUMN IF NOT EXISTS investor_visibility varchar(24) NOT NULL DEFAULT 'off_market';`);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS investor_deal_interactions (
+        id serial PRIMARY KEY,
+        investor_user_id integer NOT NULL,
+        property_id integer NOT NULL,
+        action varchar(16) NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT uq_investor_deal_interaction UNIQUE (investor_user_id, property_id),
+        CONSTRAINT chk_investor_deal_action CHECK (action IN ('interested', 'pass'))
+      );
+      CREATE TABLE IF NOT EXISTS investor_offers (
+        id serial PRIMARY KEY,
+        investor_user_id integer NOT NULL,
+        buyer_id integer,
+        property_id integer NOT NULL,
+        offer_amount numeric(12, 2) NOT NULL,
+        earnest_money numeric(12, 2),
+        closing_timeline_days integer,
+        contingencies text[],
+        special_terms text,
+        status varchar(32) NOT NULL DEFAULT 'submitted',
+        loi_id integer,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT chk_investor_offer_status CHECK (
+          status IN ('submitted', 'under_review', 'accepted', 'countered', 'dead'))
+      );
+      CREATE TABLE IF NOT EXISTS investor_pof_documents (
+        id serial PRIMARY KEY,
+        investor_user_id integer NOT NULL,
+        original_filename text NOT NULL,
+        mime_type text NOT NULL,
+        size_bytes bigint NOT NULL,
+        sha256 text,
+        data bytea NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+    `);
+    log("[Startup] Verified investor portal tables (0080 fallback)", "investor");
+  } catch (e) {
+    console.error("Failed to ensure investor portal tables:", e);
+  }
+
   const isServerless = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
 
   // Start background automation worker

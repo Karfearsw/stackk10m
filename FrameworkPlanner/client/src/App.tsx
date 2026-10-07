@@ -66,6 +66,8 @@ const AutomationsPage = React.lazy(() => import("@/pages/automations"));
 const AuditPage = React.lazy(() => import("@/pages/audit"));
 const AuditLogPage = React.lazy(() => import("@/pages/audit-log"));
 const TeamPulsePage = React.lazy(() => import("@/pages/team-pulse"));
+// INVESTOR-PORTAL-P2: separate investor UI shell (flag-gated inside the module).
+const InvestorRoutes = React.lazy(() => import("@/investor/routes"));
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
@@ -207,6 +209,15 @@ function Router() {
       <Route path="/automations" component={() => <ProtectedRoute component={AutomationsPage} />} />
       <Route path="/audit" component={() => <ProtectedRoute component={AuditPage} />} />
       <Route path="/audit-log" component={() => <ProtectedRoute component={AuditLogPage} />} />
+
+      {/* INVESTOR-PORTAL-P2: investor portal route group (/investor/*).
+          The module renders the CRM 404 when INVESTOR_PORTAL_ENABLED is off,
+          so no public routes or nav entries are reachable while disabled. */}
+      <Route path="/investor/*" component={() => (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+          <InvestorRoutes />
+        </Suspense>
+      )} />
 
       {/* Fallback */}
       <Route component={NotFound} />
