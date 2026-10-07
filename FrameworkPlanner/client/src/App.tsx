@@ -37,6 +37,8 @@ const Notifications = React.lazy(() => import("@/pages/notifications"));
 const MessagesPage = React.lazy(() => import("@/pages/messages"));
 const Playground = React.lazy(() => import("@/pages/playground"));
 const Buyers = React.lazy(() => import("@/pages/buyers"));
+// DISPO-PHASE1 (feat/dispo-phase1): Disposition workspace page.
+const Disposition = React.lazy(() => import("@/pages/disposition"));
 const TasksPage = React.lazy(() => import("@/pages/tasks"));
 const CalendarPage = React.lazy(() => import("@/pages/calendar"));
 const TodayPage = React.lazy(() => import("@/pages/today"));
@@ -178,6 +180,8 @@ function Router() {
       <Route path="/messages" component={() => <ProtectedRoute component={MessagesPage} />} />
       <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />
       <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />
+      {/* DISPO-PHASE1 (feat/dispo-phase1): Disposition workspace. */}
+      <Route path="/disposition" component={() => <ProtectedRoute component={Disposition} />} />
       <Route path="/tasks" component={() => <ProtectedRoute component={TasksPage} />} />
       <Route path="/calendar" component={() => <ProtectedRoute component={CalendarPage} />} />
       <Route path="/today" component={() => <ProtectedRoute component={TodayPage} />} />
