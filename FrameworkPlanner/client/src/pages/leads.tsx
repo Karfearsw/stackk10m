@@ -1232,7 +1232,7 @@ export default function Leads() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <CrmImportExportDialog entityType="lead" />
-          <div className="relative hidden md:block">
+          <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Search leads..."
