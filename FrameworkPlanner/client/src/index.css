@@ -53,7 +53,7 @@
   --color-sidebar-ring: hsl(var(--sidebar-ring));
 
   --font-sans: 'Plus Jakarta Sans', sans-serif;
-  --font-display: 'Playfair Display', serif;
+  --font-display: 'Barlow', sans-serif;
 }
 
 /* LIGHT MODE - Black, White, Gold Theme */

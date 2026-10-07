@@ -6,6 +6,7 @@ import connectPgSimple from "connect-pg-simple";
 import helmet from "helmet";
 import { pool, databaseUrl } from "./db.js";
 import { registerRoutes } from "./routes.js";
+import { registerEsignRoutes } from "./routes/esign.js";
 import { initSentry, Sentry } from "./sentry.js";
 import crypto from "node:crypto";
 import { httpRequestsTotal, httpErrorsTotal, metricsText } from "./metrics.js";
@@ -538,6 +539,10 @@ await pool.query(`
 
   const server = await registerRoutes(app, { mode: "server" });
   if (!server) throw new Error("registerRoutes returned null in server mode");
+
+  // Self-built e-sign module (v2): mounted from its own router module so
+  // server/routes.ts stays untouched. See server/routes/esign.ts.
+  registerEsignRoutes(app);
 
   const isServerless = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
 

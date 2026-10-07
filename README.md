@@ -2,10 +2,6 @@
 
 A comprehensive real estate wholesaler CRM built with React, Express, and PostgreSQL.
 
-## Repository layout
-
-The application lives in **`FrameworkPlanner/`** — all app commands (`npm install`, `npm run dev`, tests, builds) run from that directory. The repo root holds deployment glue only (`vercel.json`, the `api/` serverless shim).
-
 ## Architecture
 
 - **Frontend**: React + Vite + Tailwind CSS + shadcn/ui
@@ -21,11 +17,8 @@ The application lives in **`FrameworkPlanner/`** — all app commands (`npm inst
 
 ## Setup
 
-All commands run from `FrameworkPlanner/`:
-
 1. Install dependencies:
    ```bash
-   cd FrameworkPlanner
    npm install
    ```
 
@@ -49,7 +42,7 @@ All commands run from `FrameworkPlanner/`:
 
 ## Testing
 
-Run unit and integration tests (from `FrameworkPlanner/`):
+Run unit and integration tests:
 ```bash
 npx vitest run
 ```

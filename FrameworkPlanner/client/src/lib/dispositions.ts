@@ -33,12 +33,12 @@ const LABELS: Record<string, string> = {
 // Buyer pipeline (mirrors server BUYER_PIPELINE in shared-schema.ts)
 export const BUYER_PIPELINE: Array<{ value: string; label: string; color: string }> = [
   { value: "new", label: "New", color: "bg-slate-100 text-slate-800" },
-  { value: "attempting_contact", label: "Attempting Contact", color: "bg-neutral-100 text-neutral-800" },
-  { value: "contacted", label: "Contacted", color: "bg-slate-200 text-slate-800" },
-  { value: "qualified", label: "Qualified", color: "bg-stone-200 text-stone-800" },
-  { value: "active_buyer", label: "Active Buyer", color: "bg-amber-200 text-amber-900" },
+  { value: "attempting_contact", label: "Attempting Contact", color: "bg-sky-100 text-sky-800" },
+  { value: "contacted", label: "Contacted", color: "bg-blue-100 text-blue-800" },
+  { value: "qualified", label: "Qualified", color: "bg-indigo-100 text-indigo-800" },
+  { value: "active_buyer", label: "Active Buyer", color: "bg-violet-100 text-violet-800" },
   { value: "offer_submitted", label: "Offer Submitted", color: "bg-amber-100 text-amber-800" },
-  { value: "under_contract", label: "Under Contract", color: "bg-amber-300 text-amber-950" },
+  { value: "under_contract", label: "Under Contract", color: "bg-purple-100 text-purple-800" },
   { value: "closed", label: "Closed", color: "bg-emerald-100 text-emerald-800" },
   { value: "nurture", label: "Nurture", color: "bg-zinc-100 text-zinc-800" },
   { value: "do_not_contact", label: "Do Not Contact", color: "bg-red-100 text-red-800" },

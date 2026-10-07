@@ -29,9 +29,9 @@ const CONTRACT_STATUSES = [
 
 const STATUS_COLORS: Record<string, string> = {
   draft: "bg-gray-500",
-  ready_to_send: "bg-slate-400",
-  sent: "bg-slate-600",
-  viewed: "bg-slate-400",
+  ready_to_send: "bg-blue-400",
+  sent: "bg-blue-600",
+  viewed: "bg-blue-400",
   partially_signed: "bg-yellow-600",
   signed: "bg-green-600",
   executed: "bg-green-700",

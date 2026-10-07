@@ -59,10 +59,10 @@ const CHANNELS = [
 
 const STATUSES: Record<string, { color: string; label: string }> = {
   draft: { color: "bg-gray-100 text-gray-700", label: "Draft" },
-  scheduled: { color: "bg-slate-200 text-slate-700", label: "Scheduled" },
+  scheduled: { color: "bg-blue-100 text-blue-700", label: "Scheduled" },
   active: { color: "bg-green-100 text-green-700", label: "Active" },
   paused: { color: "bg-amber-100 text-amber-700", label: "Paused" },
-  completed: { color: "bg-amber-100 text-amber-700", label: "Completed" },
+  completed: { color: "bg-purple-100 text-purple-700", label: "Completed" },
   archived: { color: "bg-gray-100 text-gray-500", label: "Archived" },
   failed: { color: "bg-red-100 text-red-700", label: "Failed" },
 };
@@ -352,7 +352,7 @@ function ABTestPanel({ campaignId, status }: { campaignId: number; status: strin
           {totalWeight !== 100 ? <span className="text-sm text-destructive">Total weight: {totalWeight}% (must be 100%)</span> : <span className="text-sm text-green-600"><CheckCircle2 className="h-4 w-4 inline mr-1" />Weights valid</span>}
         </div>
         <div className="space-y-2"><Label className="text-sm">Success Metric</Label><Select value={metric} onValueChange={setMetric}><SelectTrigger className="w-56"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="reply">Reply Rate</SelectItem><SelectItem value="response">Response Rate</SelectItem><SelectItem value="appointment">Appointments Set</SelectItem><SelectItem value="conversion">Conversions</SelectItem><SelectItem value="offer">Offers</SelectItem><SelectItem value="contract">Contracts</SelectItem></SelectContent></Select></div>
-        <div className="rounded-md bg-slate-50 border border-slate-200 p-3 text-sm text-slate-800"><p>Assignment is deterministic. Once enrolled, variant assignment never changes.</p><p className="mt-1 text-xs">Insufficient sample sizes (less than 30 per variant) will be flagged - no winner declared.</p></div>
+        <div className="rounded-md bg-blue-50 border border-blue-200 p-3 text-sm text-blue-800"><p>Assignment is deterministic. Once enrolled, variant assignment never changes.</p><p className="mt-1 text-xs">Insufficient sample sizes (less than 30 per variant) will be flagged - no winner declared.</p></div>
       </CardContent></Card>
   );
 }

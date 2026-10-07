@@ -32,7 +32,7 @@ function providerStateTone(state: ProviderResultInfo["state"]): string {
     case "failed":
       return "bg-red-500/10 text-red-700 border-red-500/20";
     case "pending":
-      return "bg-neutral-500/10 text-neutral-700 border-neutral-500/20";
+      return "bg-blue-500/10 text-blue-700 border-blue-500/20";
     default:
       return "bg-muted text-muted-foreground border-muted";
   }
