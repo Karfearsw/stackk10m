@@ -43,6 +43,7 @@ const TodayPage = React.lazy(() => import("@/pages/today"));
 const Contacts = React.lazy(() => import("@/pages/contacts"));
 const SearchPage = React.lazy(() => import("@/pages/search"));
 const SignContractPage = React.lazy(() => import("@/pages/sign-contract"));
+const EsignSignPage = React.lazy(() => import("@/pages/esign-sign"));
 const FieldModePage = React.lazy(() => import("@/pages/field"));
 const PhoneWorkspace = React.lazy(() => import("@/pages/phone"));
 const Dialer = React.lazy(() => import("@/pages/dialer"));
@@ -120,6 +121,13 @@ function Router() {
       )} />
 
       {/* Public E-Sign Route (no auth, token-authenticated) */}
+      {/* Public self-built e-sign v2 ceremony (no auth, HMAC token-authenticated) */}
+      <Route path="/esign/:token" component={() => (
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+          <EsignSignPage />
+        </Suspense>
+      )} />
+
       <Route path="/sign/:token" component={() => (
         <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
           <SignContractPage />

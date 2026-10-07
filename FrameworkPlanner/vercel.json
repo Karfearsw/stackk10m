@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "buildCommand": "npm run vercel-build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/index" },
+    { "source": "/((?!api/|assets/|favicon.ico|favicon.png|apple-touch-icon.png|manifest.webmanifest|icon-192.png|icon-512.png|logo.jpg|luxe-logo.png).*)", "destination": "/index.html" }
+  ]
+}

@@ -679,6 +679,15 @@ export type InsertContractDocument = z.infer<typeof insertContractDocumentSchema
 export const contractEnvelopes = pgTable("contract_envelopes", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   documentId: integer("document_id").notNull(),
+  // v2 self-built e-sign extensions (migration 0081_esign_selfbuilt.sql)
+  contractId: integer("contract_id"),
+  signingMode: varchar("signing_mode", { length: 20 }).notNull().default("sequential"),
+  completedAt: timestamp("completed_at"),
+  voidedAt: timestamp("voided_at"),
+  documentSha256: varchar("document_sha256", { length: 64 }),
+  finalPdfSha256: varchar("final_pdf_sha256", { length: 64 }),
+  esignVersion: integer("esign_version").notNull().default(1),
+  notificationLog: text("notification_log").notNull().default("[]"),
   status: varchar("status", { length: 20 }).notNull().default("draft"),
   signerName: varchar("signer_name", { length: 255 }),
   signerEmail: varchar("signer_email", { length: 255 }),
@@ -704,6 +713,16 @@ export type InsertContractEnvelope = z.infer<typeof insertContractEnvelopeSchema
 export const contractSigners = pgTable("contract_signers", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   contractId: integer("contract_id").notNull(),
+  // v2 self-built e-sign extensions (migration 0081_esign_selfbuilt.sql)
+  envelopeId: integer("envelope_id"),
+  tokenNonce: varchar("token_nonce", { length: 128 }),
+  tokenUsedAt: timestamp("token_used_at"),
+  signatureImageBase64: text("signature_image_base64"),
+  signatureSvg: text("signature_svg"),
+  consentAt: timestamp("consent_at"),
+  consentText: text("consent_text"),
+  declineReason: text("decline_reason"),
+  remindedAt: timestamp("reminded_at"),
   contactId: integer("contact_id"),
   name: varchar("name", { length: 255 }).notNull(),
   email: varchar("email", { length: 255 }),
@@ -731,6 +750,10 @@ export type InsertContractSigner = z.infer<typeof insertContractSignerSchema>;
 export const contractEvents = pgTable("contract_events", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   contractId: integer("contract_id").notNull(),
+  // v2 self-built e-sign: SHA-256 hash-chain audit trail (migration 0081_esign_selfbuilt.sql).
+  // eventHash = sha256(prevHash || canonicalJson(eventType, payload, createdAt)).
+  eventHash: varchar("event_hash", { length: 64 }),
+  prevHash: varchar("prev_hash", { length: 64 }),
   actorType: varchar("actor_type", { length: 50 }).notNull().default("system"),
   actorUserId: integer("actor_user_id"),
   actorContactId: integer("actor_contact_id"),

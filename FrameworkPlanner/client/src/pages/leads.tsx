@@ -1027,10 +1027,10 @@ export default function Leads() {
 
   const getStatusBadgeColor = (status: string) => {
     switch (status) {
-      case "new": return "bg-gray-500/10 text-gray-500 border-gray-500/20";
+      case "new": return "bg-blue-500/10 text-blue-500 border-blue-500/20";
       case "contacted": return "bg-yellow-500/10 text-yellow-500 border-yellow-500/20";
       case "qualified": return "bg-green-500/10 text-green-500 border-green-500/20";
-      case "negotiation": return "bg-primary/10 text-primary border-primary/20";
+      case "negotiation": return "bg-purple-500/10 text-purple-500 border-purple-500/20";
       case "under_contract": return "bg-primary/10 text-primary border-primary/20";
       case "closed": return "bg-emerald-500/10 text-emerald-500 border-emerald-500/20";
       case "lost": return "bg-gray-500/10 text-gray-500 border-gray-500/20";

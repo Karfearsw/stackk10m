@@ -53,7 +53,7 @@ function getActionIcon(action: string) {
 
 function getActionColor(action: string) {
   if (action.includes('created')) return 'text-green-600';
-  if (action.includes('updated')) return 'text-slate-600';
+  if (action.includes('updated')) return 'text-blue-600';
   if (action.includes('deleted')) return 'text-red-600';
   return 'text-muted-foreground';
 }
@@ -879,14 +879,14 @@ export default function Dashboard() {
                 </p>
                 <p className="text-sm text-muted-foreground">Active</p>
               </div>
-              <div className="text-center p-4 bg-amber-500/10 rounded-lg min-w-0">
-                <p className="text-3xl font-bold text-amber-600 break-words">
+              <div className="text-center p-4 bg-blue-500/10 rounded-lg min-w-0">
+                <p className="text-3xl font-bold text-blue-600 break-words">
                   {properties.filter((p: any) => p.status === 'under_contract').length}
                 </p>
                 <p className="text-sm text-muted-foreground">Under Contract</p>
               </div>
-              <div className="text-center p-4 bg-amber-600/10 rounded-lg min-w-0">
-                <p className="text-3xl font-bold text-amber-700 break-words">
+              <div className="text-center p-4 bg-purple-500/10 rounded-lg min-w-0">
+                <p className="text-3xl font-bold text-purple-600 break-words">
                   {properties.filter((p: any) => p.status === 'sold').length}
                 </p>
                 <p className="text-sm text-muted-foreground">Sold</p>
