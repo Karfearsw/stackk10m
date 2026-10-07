@@ -92,6 +92,23 @@ const DIAL_TIME_LIMIT_SECS = Number(process.env.TELNYX_CALL_TIME_LIMIT_SECS || "
 
 function defaultFrom(): string { return String(process.env.TELNYX_DEFAULT_FROM_NUMBER || "").trim(); }
 
+/**
+ * Ticket 8: resolve the outbound caller ID for a user. Uses the user's own
+ * caller ID when configured, otherwise the platform default from env. Any
+ * lookup failure falls back silently so dialing never breaks on a settings read.
+ */
+async function resolveCallerId(userId: number | null | undefined): Promise<string> {
+  const platformDefault = defaultFrom();
+  const id = Number(userId);
+  if (!Number.isFinite(id) || id <= 0) return platformDefault;
+  try {
+    const setting = await storage.getAgentPhoneSetting(id);
+    return String(setting?.callerIdE164 || "").trim() || platformDefault;
+  } catch {
+    return platformDefault;
+  }
+}
+
 async function recordEvent(
   sessionId: number, eventType: string, fromStatus: string | null, toStatus: string | null,
   metadata: any = {}, actorUserId?: number,
@@ -364,7 +381,7 @@ export async function startCallSession(
   const to = needsAgent ? s.agentPhoneE164 : s.leadPhoneE164;
   const connectionId = String(process.env.TELNYX_CONNECTION_ID || "");
   try {
-    const { callControlId, callSessionId } = await telnyx.dial({ to: String(to || ""), from: defaultFrom(), connectionId, timeoutSecs: DIAL_TIMEOUT_SECS, timeLimitSecs: DIAL_TIME_LIMIT_SECS, clientState: encodeDialerClientState(s.id, needsAgent ? "agent" : "lead") });
+    const { callControlId, callSessionId } = await telnyx.dial({ to: String(to || ""), from: await resolveCallerId((s as any).assignedAgentUserId || s.initiatingUserId), connectionId, timeoutSecs: DIAL_TIMEOUT_SECS, timeLimitSecs: DIAL_TIME_LIMIT_SECS, clientState: encodeDialerClientState(s.id, needsAgent ? "agent" : "lead") });
     const patch: any = needsAgent
       ? { status: "agent_dialing", agentLegCallControlId: callControlId, startedAt: new Date(), providerConnectionId: connectionId }
       : { status: "lead_dialing", leadLegCallControlId: callControlId, startedAt: new Date(), providerConnectionId: connectionId, providerCallSessionId: callSessionId };
@@ -458,7 +475,7 @@ async function onLegAnswered(session: any, leg: string) {
       const agentSessionId = String((session as any).providerCallSessionId || "");
       const useAutoBridge = Boolean(agentSessionId);
       const { callControlId } = await telnyx.dial({
-        to: String(session.leadPhoneE164 || ""), from: defaultFrom(), connectionId,
+        to: String(session.leadPhoneE164 || ""), from: await resolveCallerId((session as any).assignedAgentUserId || session.initiatingUserId), connectionId,
         timeoutSecs: DIAL_TIMEOUT_SECS, timeLimitSecs: DIAL_TIME_LIMIT_SECS,
         clientState: encodeDialerClientState(session.id, "lead"),
         ...(useAutoBridge ? { bridgeOnAnswer: true, linkTo: agentSessionId } : {}),
@@ -719,7 +736,7 @@ export async function requestHumanHandoff(
   await createActivity(s, "handoff_requested", "AI screening requested human handoff", {});
   const connectionId = String(process.env.TELNYX_CONNECTION_ID || "");
   try {
-    const { callControlId } = await telnyx.dial({ to: agentPhone, from: defaultFrom(), connectionId, timeoutSecs: DIAL_TIMEOUT_SECS, timeLimitSecs: DIAL_TIME_LIMIT_SECS, clientState: encodeDialerClientState(s.id, "agent") });
+    const { callControlId } = await telnyx.dial({ to: agentPhone, from: await resolveCallerId(userId), connectionId, timeoutSecs: DIAL_TIMEOUT_SECS, timeLimitSecs: DIAL_TIME_LIMIT_SECS, clientState: encodeDialerClientState(s.id, "agent") });
     await storage.updateCallSession(s.id, { agentLegCallControlId: callControlId, status: "handoff_agent_dialing" });
     await recordEvent(s.id, "handoff_agent_dialed", "handoff_requested", "handoff_agent_dialing", { callControlId });
     emitSession(await storage.getCallSessionById(s.id));

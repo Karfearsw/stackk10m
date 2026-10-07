@@ -228,6 +228,12 @@ export const crmImportJobs = pgTable("crm_import_jobs", {
   errorCount: integer("error_count").default(0),
   startedAt: timestamp("started_at"),
   finishedAt: timestamp("finished_at"),
+  source: varchar("source", { length: 64 }).default("manual_upload"),
+  approvalStatus: varchar("approval_status", { length: 32 }).default("pending"),
+  approvedBy: integer("approved_by"),
+  approvedAt: timestamp("approved_at"),
+  rejectionReason: text("rejection_reason"),
+  importSignature: varchar("import_signature", { length: 64 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -244,6 +250,26 @@ export const crmImportJobErrors = pgTable("crm_import_job_errors", {
   rawRow: text("raw_row"),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+// Ticket 02 — reversible quarantine of production test data (nothing is deleted).
+export const quarantinedRecords = pgTable("quarantined_records", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 32 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  matchReason: text("match_reason").notNull(),
+  matchedPattern: varchar("matched_pattern", { length: 64 }),
+  matchedField: varchar("matched_field", { length: 32 }),
+  status: varchar("status", { length: 16 }).notNull().default("quarantined"),
+  flaggedBy: integer("flagged_by"),
+  flaggedAt: timestamp("flagged_at").defaultNow(),
+  restoredBy: integer("restored_by"),
+  restoredAt: timestamp("restored_at"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type QuarantinedRecord = typeof quarantinedRecords.$inferSelect;
 
 export const insertCrmImportJobErrorSchema = createInsertSchema(crmImportJobErrors).omit({ id: true, createdAt: true } as any);
 export type CrmImportJobError = typeof crmImportJobErrors.$inferSelect;
@@ -2282,6 +2308,11 @@ export const agentPhoneSettings = pgTable("crm_agent_phone_settings", {
   userId: integer("user_id").notNull().unique(),
   phoneE164: varchar("phone_e164", { length: 20 }).notNull(),
   defaultCallMode: varchar("default_call_mode", { length: 24 }).notNull().default("human_first"),
+  // Ticket 8: per-user outbound caller ID (shown to leads/buyers) and whether
+  // this user's dialer calls are recorded. Null caller ID falls back to the
+  // platform default (TELNYX_DEFAULT_FROM_NUMBER).
+  callerIdE164: varchar("caller_id_e164", { length: 20 }),
+  recordingEnabled: boolean("recording_enabled").notNull().default(true),
   verified: boolean("verified").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

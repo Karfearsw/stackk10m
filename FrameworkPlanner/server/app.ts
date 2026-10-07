@@ -12,6 +12,7 @@ import { httpRequestsTotal, httpErrorsTotal, metricsText } from "./metrics.js";
 import { getSchemaReadiness, schemaFixInstructions } from "./schema-readiness.js";
 import { getDatabaseUrlMissing, getSessionSecretMissing } from "./auth/config.js";
 import { getRequestIdFromRes, sendAuthError } from "./auth/errors.js";
+import { assertEnvSafe, formatEnvIssues, logEnvValidation, validateEnv } from "./env.js";
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -27,6 +28,15 @@ export function log(message: string, source = "express") {
 export const app = express();
 
 log(`[Startup] Server initializing... (Commit: 90e785a)`);
+
+// Ticket 03: validate environment at startup. Outside production this only logs;
+// in production an unsafe/mixed configuration refuses to start.
+const envValidation = validateEnv();
+logEnvValidation(envValidation);
+if (envValidation.appEnv === "production" && !envValidation.ok) {
+  throw new Error(`Refusing to start with unsafe production configuration — ${formatEnvIssues(envValidation)}`);
+}
+assertEnvSafe(process.env);
 
 initSentry();
 // Sentry v8+ auto-instruments Express; request handler is no longer required
@@ -438,6 +448,9 @@ export default async function runApp(
         updated_at timestamptz NOT NULL DEFAULT now()
       );
     `);
+    // Ticket 8: per-user caller ID + recording (idempotent for older DBs).
+    await pool.query(`ALTER TABLE crm_agent_phone_settings ADD COLUMN IF NOT EXISTS caller_id_e164 varchar(20);`);
+    await pool.query(`ALTER TABLE crm_agent_phone_settings ADD COLUMN IF NOT EXISTS recording_enabled boolean NOT NULL DEFAULT true;`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS crm_call_dispositions (
         id serial PRIMARY KEY,

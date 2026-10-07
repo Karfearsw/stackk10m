@@ -30,6 +30,10 @@ import {
   suggestMapping,
   verifyExportToken,
 } from "./crm/import-export.js";
+import { canApproveImports, computeImportSignature, evaluateImportGate } from "./crm/import-approval.js";
+import { QUARANTINE_ENTITY_TYPES, canRestoreQuarantine } from "./crm/quarantine.js";
+import { listQuarantinedRecords, restoreQuarantinedRecord, scanAndFlagEntity } from "./crm/quarantine-service.js";
+import { setImportApproval } from "./crm/import-export.js";
 import { 
   insertLeadSchema,
   type InsertLead, 
@@ -93,6 +97,16 @@ import {
 } from "./shared-schema.js";
 import { z } from "zod";
 import { computeArvFromComps, computeCommissionMath, computeDealMath, computeRepairTotal, commissionSnapshotInputSchema, underwritingSchemaV1, underwritingTemplateConfigSchema } from "../shared/underwriting.js";
+import {
+  OPPORTUNITY_STAGES,
+  OPPORTUNITY_STAGE_CONFIG,
+  isValidStage,
+  canTransitionOpportunityStage as canTransitionStage,
+  DEFAULT_PIPELINE_COLUMNS,
+  validatePipelineColumns,
+} from "../shared/pipeline-stages.js";
+import type { OpportunityStage } from "../shared/pipeline-stages.js";
+import { settingsFromRow as agentPhoneSettingsFromRow, validateAgentPhoneSettings } from "./dialer/user-settings.js";
 import { createSkipTraceJob, isHttpError, runProviderSkipTraceForEntity, runSkipTraceJob } from "./services/skipTrace/orchestrator.js";
 import { hydrateSkipTraceResultForApi, mergeSkipTraceResult } from "./services/skipTrace/merge.js";
 import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
@@ -580,19 +594,11 @@ function haversineMiles(a: { lat: number; lng: number }, b: { lat: number; lng: 
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 // ===== OPPORTUNITY STAGE WORKFLOW CONSTANTS =====
-export const OPPORTUNITY_STAGES = [
-  "lead",
-  "contacted",
-  "negotiating",
-  "under_contract",
-  "in_disposition",
-  "reserved",
-  "sold",
-  "closed",
-  "dead",
-  "voided",
-] as const;
-export type OpportunityStage = (typeof OPPORTUNITY_STAGES)[number];
+// Ticket 7: the canonical taxonomy lives in shared/pipeline-stages.ts and is
+// re-exported here for existing importers, so there is exactly one vocabulary
+// across the server, client, and automations.
+export { OPPORTUNITY_STAGES, OPPORTUNITY_STAGE_CONFIG, isValidStage, canTransitionStage };
+export type { OpportunityStage };
 export const OPPORTUNITY_TYPE_OPTIONS = [
   "acquisition",
   "disposition",
@@ -610,30 +616,6 @@ export const OPPORTUNITY_STATUS_OPTIONS = [
   "archived",
 ] as const;
 export type OpportunityStatus = (typeof OPPORTUNITY_STATUS_OPTIONS)[number];
-export const OPPORTUNITY_STAGE_CONFIG: Record<OpportunityStage, { label: string; expects: string[] }> = {
-  lead: { label: "Lead", expects: ["Contact seller", "Initial outreach", "Qualify property"] },
-  contacted: { label: "Contacted", expects: ["Schedule showing", "Send CMA", "Gather seller details"] },
-  negotiating: { label: "Negotiating", expects: ["Review offer terms", "Counter offer", "Finalize contract terms"] },
-  under_contract: { label: "Under Contract", expects: ["EMD deposit", "Inspection deadline", "Due diligence", "Secure financing"] },
-  in_disposition: { label: "In Disposition", expects: ["Build buyer list", "Create public listing", "Schedule tours"] },
-  reserved: { label: "Reserved", expects: ["Confirm buyer commitment", "Coordinate closing", "Assign contract"] },
-  sold: { label: "Sold", expects: ["Close deal", "Receive assignment fee", "Disburse funds"] },
-  closed: { label: "Closed", expects: ["Post-close wrap-up", "Archive documents"] },
-  dead: { label: "Dead", expects: ["Document reasons", "Attempt re-engagement"] },
-  voided: { label: "Voided", expects: ["Reason recorded", "Cancel related tasks", "Archive"] },
-};
-export function isValidStage(stage: string): stage is OpportunityStage {
-  return (OPPORTUNITY_STAGES as readonly string[]).includes(stage);
-}
-export function canTransitionStage(from: OpportunityStage, to: OpportunityStage): boolean {
-  if (from === to) return true;
-  const terminal = new Set(["dead", "voided"]);
-  if (terminal.has(from) && !terminal.has(to)) return false;
-  // N3: closed↔sold must be reversible — Sold is the stage whose expectations
-  // include receiving the assignment fee, and the audit caught a real close
-  // that needed to move closed→sold. Only dead/voided are one-way now.
-  return true;
-}
 export function generateSlug(title: string): string {
   const base = String(title || "")
     .toLowerCase()
@@ -848,6 +830,13 @@ export async function registerRoutes(
     const format = detectFormat(file.originalname, file.mimetype);
     if (!format) return res.status(400).json({ message: "Unsupported file type" });
     const fileBase64 = file.buffer.toString("base64");
+    // Ticket 01: every bulk import is gated behind explicit approval. Machine
+    // integrations must identify themselves with a known `source`.
+    const gate = evaluateImportGate({ source: req.body.source, actor: user as any });
+    if (gate.approvalStatus === "rejected") {
+      return res.status(400).json({ message: gate.reason, code: "IMPORT_SOURCE_UNKNOWN" });
+    }
+    const importSignature = computeImportSignature({ entityType, fileBase64, mapping, options });
     const job = await createImportJob({
       entityType: entityType as any,
       createdBy: user.id,
@@ -856,7 +845,21 @@ export async function registerRoutes(
       fileMimeType: file.mimetype,
       mapping,
       options,
+      source: gate.source,
+      approvalStatus: gate.approvalStatus,
+      approvedBy: gate.allowed && gate.approvalStatus === "approved" ? user.id : null,
+      approvedAt: gate.allowed && gate.approvalStatus === "approved" ? new Date() : null,
+      importSignature,
+      status: gate.allowed ? "queued" : "blocked_pending_approval",
     });
+    if (!gate.allowed) {
+      return res.status(202).json({
+        jobId: job.id,
+        approvalRequired: true,
+        approvalStatus: gate.approvalStatus,
+        message: gate.reason,
+      });
+    }
     if (mode === "server") {
       setImmediate(() => {
         processImportJob(job.id).catch((e: any) => {
@@ -882,21 +885,116 @@ export async function registerRoutes(
     if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
     const job = await getImportJob(jobId);
     if (!job) return res.status(404).json({ message: "Not found" });
-    if (job.createdBy !== user.id) return res.status(403).json({ message: "Forbidden" });
-    await processImportJob(jobId, { maxRows: 100, maxBatches: 1, resume: true });
+    if (job.createdBy !== user.id && !canApproveImports(user as any)) return res.status(403).json({ message: "Forbidden" });
+    try {
+      await processImportJob(jobId, { maxRows: 100, maxBatches: 1, resume: true });
+    } catch (e: any) {
+      if (e?.code === "IMPORT_NOT_APPROVED") {
+        return res.status(403).json({ message: e.message, code: e.code, approvalStatus: (job as any).approvalStatus ?? "pending" });
+      }
+      throw e;
+    }
     const nextJob = await getImportJob(jobId);
     const errors = await listImportJobErrors(jobId, 50);
     return res.json({ job: nextJob, errors });
   });
+  reg("post", "/api/crm/import/jobs/:id/approve"); app.post("/api/crm/import/jobs/:id/approve", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!canApproveImports(user as any)) return res.status(403).json({ message: "Not permitted to approve imports" });
+    const jobId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
+    const job = await getImportJob(jobId);
+    if (!job) return res.status(404).json({ message: "Not found" });
+    if ((job as any).approvalStatus !== "approved") {
+      await setImportApproval(jobId, { approvalStatus: "approved", approvedBy: user.id });
+    }
+    if (mode === "server") {
+      setImmediate(() => {
+        processImportJob(jobId).catch((e: any) => {
+          console.error(JSON.stringify({ ts: new Date().toISOString(), event: "crm_import", kind: "approved_process_failed", jobId, message: String(e?.message || e) }));
+        });
+      });
+    } else {
+      try {
+        await processImportJob(jobId, { maxRows: 100, maxBatches: 1, resume: true });
+      } catch (e: any) {
+        if (e?.code !== "IMPORT_NOT_APPROVED") throw e;
+      }
+    }
+    const updated = await getImportJob(jobId);
+    return res.json({ job: updated });
+  });
+  reg("post", "/api/crm/import/jobs/:id/reject"); app.post("/api/crm/import/jobs/:id/reject", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!canApproveImports(user as any)) return res.status(403).json({ message: "Not permitted to review imports" });
+    const jobId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(jobId)) return res.status(400).json({ message: "Invalid job id" });
+    const job = await getImportJob(jobId);
+    if (!job) return res.status(404).json({ message: "Not found" });
+    const reason = String(req.body?.reason || "").slice(0, 500) || null;
+    await setImportApproval(jobId, { approvalStatus: "rejected", approvedBy: null, rejectionReason: reason });
+    const updated = await getImportJob(jobId);
+    return res.json({ job: updated });
+  });
+  // Ticket 02 — quarantine view / scan / restore (reversible; nothing deleted).
+  reg("get", "/api/crm/quarantine"); app.get("/api/crm/quarantine", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const records = await listQuarantinedRecords({
+      entityType: String(req.query.entityType || "").trim() || undefined,
+      status: String(req.query.status || "").trim() || undefined,
+      limit: req.query.limit ? parseInt(String(req.query.limit), 10) : 200,
+    });
+    return res.json({ records });
+  });
+  reg("post", "/api/crm/quarantine/scan"); app.post("/api/crm/quarantine/scan", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!canRestoreQuarantine(user as any)) return res.status(403).json({ message: "Not permitted to run quarantine scans" });
+    const entityType = String(req.body?.entityType || "lead").trim();
+    if (!(QUARANTINE_ENTITY_TYPES as readonly string[]).includes(entityType)) {
+      return res.status(400).json({ message: "Invalid entityType" });
+    }
+    const result = await scanAndFlagEntity(entityType as any, user.id);
+    return res.json(result);
+  });
+  reg("post", "/api/crm/quarantine/:id/restore"); app.post("/api/crm/quarantine/:id/restore", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!canRestoreQuarantine(user as any)) return res.status(403).json({ message: "Not permitted to restore quarantined records" });
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid id" });
+    const notes = String(req.body?.notes || "").slice(0, 500) || null;
+    const restored = await restoreQuarantinedRecord(id, user.id, notes);
+    if (!restored) return res.status(404).json({ message: "Not found" });
+    return res.json({ record: restored });
+  });
   reg("get", "/api/crm/import/jobs"); app.get("/api/crm/import/jobs", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
+    // Ticket 01: import-batch history is filterable by source/status/approval/date.
+    // Approvers can review all batches; ordinary users only see their own.
+    const conditions: any[] = [];
+    if (!canApproveImports(user as any)) conditions.push(eq(crmImportJobs.createdBy, user.id));
+    const sourceFilter = String(req.query.source || "").trim();
+    if (sourceFilter) conditions.push(eq(crmImportJobs.source, sourceFilter));
+    const statusFilter = String(req.query.status || "").trim();
+    if (statusFilter) conditions.push(eq(crmImportJobs.status, statusFilter));
+    const approvalFilter = String(req.query.approvalStatus || "").trim();
+    if (approvalFilter) conditions.push(eq(crmImportJobs.approvalStatus, approvalFilter));
+    const fromFilter = String(req.query.from || "").trim();
+    if (fromFilter) conditions.push(gte(crmImportJobs.createdAt, new Date(fromFilter)));
+    const toFilter = String(req.query.to || "").trim();
+    if (toFilter) conditions.push(lte(crmImportJobs.createdAt, new Date(toFilter)));
+    const importListWhere = conditions.length ? and(...conditions) : undefined;
     const rows = await db
       .select()
       .from(crmImportJobs)
-      .where(eq(crmImportJobs.createdBy, user.id))
+      .where(importListWhere)
       .orderBy(desc(crmImportJobs.updatedAt))
-      .limit(20);
+      .limit(50);
     return res.json({ jobs: rows });
   });
   reg("get", "/api/crm/import/jobs/:id"); app.get("/api/crm/import/jobs/:id", async (req, res) => {
@@ -9097,23 +9195,28 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     const user = await requireAuth(req, res);
     if (!user) return;
     const setting = await storage.getAgentPhoneSetting(user.id).catch(() => undefined);
-    res.json({ phoneE164: setting?.phoneE164 || null, defaultCallMode: setting?.defaultCallMode || "human_first", verified: !!setting?.verified });
+    res.json({ ...agentPhoneSettingsFromRow(setting), verified: !!setting?.verified });
   });
 
   reg("put", "/api/v1/telecom/agent-phone"); app.put("/api/v1/telecom/agent-phone", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-    const phone = String(req.body?.phoneE164 || "").trim();
-    const e164Re = /^\+[1-9]\d{1,14}$/;
-    if (!e164Re.test(phone)) {
-      return res.status(400).json({ error: "Agent phone must be E.164", code: "INVALID_PHONE" });
+    // Ticket 8: merge the payload onto the stored settings so a caller-ID-only
+    // save keeps the agent phone, and validate/normalize every number to E.164.
+    const existing = await storage.getAgentPhoneSetting(user.id).catch(() => undefined);
+    const { values, errors } = validateAgentPhoneSettings(req.body, agentPhoneSettingsFromRow(existing));
+    if (errors.length) {
+      return res.status(400).json({ error: errors[0], code: "INVALID_AGENT_PHONE", errors });
     }
-    const mode = String(req.body?.defaultCallMode || "human_first");
-    if (!["human_first", "ai_screen", "ai_screen_handoff"].includes(mode)) {
-      return res.status(400).json({ error: "Invalid default call mode", code: "INVALID_MODE" });
-    }
-    await storage.setAgentPhoneSetting({ userId: user.id, phoneE164: phone, defaultCallMode: mode, verified: false } as any);
-    res.json({ ok: true, phoneE164: phone, defaultCallMode: mode });
+    await storage.setAgentPhoneSetting({
+      userId: user.id,
+      phoneE164: values.phoneE164,
+      callerIdE164: values.callerIdE164,
+      defaultCallMode: values.defaultCallMode,
+      recordingEnabled: values.recordingEnabled,
+      verified: !!existing?.verified,
+    } as any);
+    res.json({ ok: true, ...values, verified: !!existing?.verified });
   });
 
   // Buyer calling: dial a buyer through the same two-leg Telnyx state machine
@@ -12120,29 +12223,11 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.status(500).json({ message: error.message });
     }
   });
-  const defaultPipelineColumnsByEntityType: Record<string, Array<{ value: string; label: string }>> = {
-    lead: [
-      { value: "new", label: "New" },
-      { value: "contacted", label: "Contacted" },
-      { value: "qualified", label: "Qualified" },
-      { value: "negotiation", label: "Negotiation" },
-      { value: "under_contract", label: "Under Contract" },
-      { value: "closed", label: "Closed" },
-      { value: "lost", label: "Lost" },
-    ],
-    opportunity: [
-      { value: "lead", label: "Lead" },
-      { value: "contacted", label: "Contacted" },
-      { value: "negotiating", label: "Negotiating" },
-      { value: "under_contract", label: "Under Contract" },
-      { value: "in_disposition", label: "In Disposition" },
-      { value: "reserved", label: "Reserved" },
-      { value: "sold", label: "Sold" },
-      { value: "closed", label: "Closed" },
-      { value: "dead", label: "Dead" },
-      { value: "voided", label: "Voided" },
-    ],
-  };
+  // Ticket 7: the canonical default lives in shared/pipeline-stages.ts. Always
+  // returning a real default means a lead/opportunity board is never empty just
+  // because a user has not customized their columns ("columns not configured").
+  const defaultPipelineColumnsByEntityType: Record<string, Array<{ value: string; label: string }>> =
+    DEFAULT_PIPELINE_COLUMNS;
   // ===================== DOCUMENTATION (playbook / knowledge base) =====================
   // Read: any authenticated team member. Write: admins only. First GET on a
   // team seeds the OceanLuxe Sales Playbook once (idempotent, never overwrites).
@@ -12334,7 +12419,10 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       let parsed: any = defaults;
       try {
         const json = JSON.parse(row.columns);
-        if (Array.isArray(json)) parsed = json;
+        // Ticket 7: normalize stored config to canonical stage ids; drop unknowns
+        // and fall back to the safe default if nothing canonical remains.
+        const { columns: canonical } = validatePipelineColumns(entityType as any, json);
+        if (canonical.length) parsed = canonical;
       } catch {}
       res.json({ entityType, columns: parsed });
     } catch (error: any) {
@@ -12350,9 +12438,17 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       if (!defaults) return res.status(400).json({ message: "Invalid entityType" });
       const columns = req.body?.columns;
       if (!Array.isArray(columns) || !columns.length) return res.status(400).json({ message: "Invalid columns" });
-      const cleaned = columns
-        .map((c: any) => ({ value: String(c?.value || "").trim(), label: String(c?.label || "").trim() }))
-        .filter((c: any) => c.value && c.label);
+      // Ticket 7: validate against the canonical taxonomy. Known legacy aliases
+      // are normalized; genuinely unknown stages are rejected (never persisted),
+      // so the board cannot drift into a vocabulary nothing else understands.
+      const { columns: cleaned, rejected } = validatePipelineColumns(entityType as any, columns);
+      if (rejected.length) {
+        return res.status(400).json({
+          message: "Unknown pipeline stage(s)",
+          rejected,
+          allowed: defaults.map((c) => c.value),
+        });
+      }
       if (!cleaned.length) return res.status(400).json({ message: "Invalid columns" });
       const updated = await storage.upsertPipelineConfig(userId, entityType, JSON.stringify(cleaned));
       let parsed: any = cleaned;

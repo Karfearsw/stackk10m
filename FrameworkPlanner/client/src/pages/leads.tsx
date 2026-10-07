@@ -1,3 +1,4 @@
+import { LEAD_PIPELINE_COLUMNS } from "@shared/pipeline-stages";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,15 +67,9 @@ import { VoiceActionDialog } from "@/components/leads/VoiceActionDialog";
 import { apiRequest } from "@/lib/queryClient";
 import { calendarUrl, dialerUrl, opportunityUrl, playgroundUrl, tasksUrl } from "@/lib/deepLinks";
 
-const statusOptions = [
-  { value: "new", label: "New" },
-  { value: "contacted", label: "Contacted" },
-  { value: "qualified", label: "Qualified" },
-  { value: "negotiation", label: "Negotiation" },
-  { value: "under_contract", label: "Under Contract" },
-  { value: "closed", label: "Closed" },
-  { value: "lost", label: "Lost" },
-];
+// Ticket 7: canonical lead stages (shared/pipeline-stages.ts) — the single
+// source of truth shared with the server and the opportunity board.
+const statusOptions = LEAD_PIPELINE_COLUMNS;
 
 const CUSTOM_SOURCE_VALUE = "__custom__";
 

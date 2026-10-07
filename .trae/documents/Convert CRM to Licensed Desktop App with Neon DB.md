@@ -3,9 +3,14 @@
 - `DATABASE_URL` includes `channel_binding=require` — remove it; keep `sslmode=require`.
 
 ## Correct Values (Vercel → Project → Settings → Environment Variables)
-- `EMPLOYEE_ACCESS_CODE=3911`
-- `SESSION_SECRET=e9a2d8b7-6f5c-4d3e-8a1b-0c9d8e7f6a5b`
-- `DATABASE_URL=postgresql://neondb_owner:npg_CouIeypSA80K@ep-damp-bonus-adm8s91b-pooler.c-2.us-east-1.aws.neon.tech/neondb?sslmode=require`
+
+> Secrets are **never** recorded in source control. The values below were redacted
+> on 2026-10-07 (they had been committed here); retrieve the real values from the
+> Vercel environment or Neon console. **Rotate any value that was exposed.**
+
+- `EMPLOYEE_ACCESS_CODE=<set in Vercel, not in source>`
+- `SESSION_SECRET=<set in Vercel, not in source>`
+- `DATABASE_URL=postgresql://<user>:<password>@<host>/<db>?sslmode=require`
 - `NODE_ENV=production`
 
 ## Steps

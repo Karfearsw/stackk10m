@@ -3806,7 +3806,14 @@ export class DatabaseStorage implements IStorage {
       .values({ ...(input as any), updatedAt: new Date() })
       .onConflictDoUpdate({
         target: agentPhoneSettings.userId,
-        set: { phoneE164: input.phoneE164, defaultCallMode: input.defaultCallMode, verified: input.verified ?? false, updatedAt: new Date() },
+        set: {
+          phoneE164: input.phoneE164,
+          defaultCallMode: input.defaultCallMode,
+          callerIdE164: input.callerIdE164 ?? null,
+          recordingEnabled: input.recordingEnabled ?? true,
+          verified: input.verified ?? false,
+          updatedAt: new Date(),
+        },
       })
       .returning();
     return result[0];

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { OPPORTUNITY_PIPELINE_COLUMNS } from "@shared/pipeline-stages";
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -780,18 +781,10 @@ export default function Opportunities() {
   // Stage dialog and this board. Custom pipeline configs that still carry the
   // legacy vocabulary (active/pending/withdrawn) fall back to the canonical
   // stages so every real stage has a home (including a Closed column).
-  const CANONICAL_OPPORTUNITY_STAGES: Array<{ value: string; label: string }> = [
-    { value: "lead", label: "Lead" },
-    { value: "contacted", label: "Contacted" },
-    { value: "negotiating", label: "Negotiating" },
-    { value: "under_contract", label: "Under Contract" },
-    { value: "in_disposition", label: "In Disposition" },
-    { value: "reserved", label: "Reserved" },
-    { value: "sold", label: "Sold" },
-    { value: "closed", label: "Closed" },
-    { value: "dead", label: "Dead" },
-    { value: "voided", label: "Voided" },
-  ];
+  // Ticket 7: canonical opportunity stages come from shared/pipeline-stages.ts
+  // so the Move Stage dialog, this board, and the server agree on one taxonomy.
+  const CANONICAL_OPPORTUNITY_STAGES: Array<{ value: string; label: string }> =
+    OPPORTUNITY_PIPELINE_COLUMNS;
   const canonicalStageValues = new Set(CANONICAL_OPPORTUNITY_STAGES.map((s) => s.value));
   const pipelineColumns = useMemo(() => {
     const cols = (opportunityPipelineConfig as any)?.columns;

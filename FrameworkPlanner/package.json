@@ -24,7 +24,8 @@
     "test:smoke": "node ./node_modules/vitest/vitest.mjs run server/tests",
     "test:all": "node ./node_modules/vitest/vitest.mjs run",
     "test:e2e": "playwright test",
-    "security:audit": "npm audit --audit-level=high"
+    "security:audit": "npm audit --audit-level=high",
+    "security:scan-secrets": "tsx server/scripts/scan-secrets.ts"
   },
   "notes": "removed framer motion dependency",
   "dependencies": {

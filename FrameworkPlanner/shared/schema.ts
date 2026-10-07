@@ -103,6 +103,12 @@ export const crmImportJobs = pgTable("crm_import_jobs", {
   errorCount: integer("error_count").default(0),
   startedAt: timestamp("started_at"),
   finishedAt: timestamp("finished_at"),
+  source: varchar("source", { length: 64 }).default("manual_upload"),
+  approvalStatus: varchar("approval_status", { length: 32 }).default("pending"),
+  approvedBy: integer("approved_by"),
+  approvedAt: timestamp("approved_at"),
+  rejectionReason: text("rejection_reason"),
+  importSignature: varchar("import_signature", { length: 64 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -115,6 +121,26 @@ export const crmImportJobErrors = pgTable("crm_import_job_errors", {
   rawRow: text("raw_row"),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+// Ticket 02 — reversible quarantine of production test data (nothing is deleted).
+export const quarantinedRecords = pgTable("quarantined_records", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  entityType: varchar("entity_type", { length: 32 }).notNull(),
+  entityId: integer("entity_id").notNull(),
+  matchReason: text("match_reason").notNull(),
+  matchedPattern: varchar("matched_pattern", { length: 64 }),
+  matchedField: varchar("matched_field", { length: 32 }),
+  status: varchar("status", { length: 16 }).notNull().default("quarantined"),
+  flaggedBy: integer("flagged_by"),
+  flaggedAt: timestamp("flagged_at").defaultNow(),
+  restoredBy: integer("restored_by"),
+  restoredAt: timestamp("restored_at"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type QuarantinedRecord = typeof quarantinedRecords.$inferSelect;
 
 export const crmExportFiles = pgTable("crm_export_files", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),

@@ -19,6 +19,7 @@ import {
   users,
 } from "../shared-schema.js";
 import type { InsertBuyer, InsertContact, InsertLead, InsertProperty } from "../shared-schema.js";
+import type { ImportApprovalStatus } from "./import-approval.js";
 
 export type CrmEntityType = "lead" | "opportunity" | "contact" | "buyer";
 export type ImportFileFormat = "csv" | "xlsx";
@@ -949,6 +950,15 @@ export async function ensureAssigneesExist(assignedToIds: number[]) {
   return new Set(rows.map((r) => r.id));
 }
 
+/** Raised when a job must not run because it is not approved. */
+export class ImportNotApprovedError extends Error {
+  code = "IMPORT_NOT_APPROVED";
+  constructor(public approvalStatus: string, public jobId: number) {
+    super(`Import job ${jobId} is not approved (approval status: ${approvalStatus}).`);
+    this.name = "ImportNotApprovedError";
+  }
+}
+
 export async function createImportJob(params: {
   entityType: CrmEntityType;
   createdBy: number;
@@ -957,13 +967,21 @@ export async function createImportJob(params: {
   fileMimeType?: string;
   mapping: Record<string, string>;
   options: ImportOptions;
+  /** Ticket 01: import source identity (see import-approval.ts). */
+  source?: string;
+  approvalStatus?: ImportApprovalStatus;
+  approvedBy?: number | null;
+  approvedAt?: Date | null;
+  importSignature?: string | null;
+  status?: string;
 }) {
+  const approvalStatus: ImportApprovalStatus = params.approvalStatus || "pending";
   const result = await db
     .insert(crmImportJobs)
     .values({
       entityType: params.entityType,
       createdBy: params.createdBy,
-      status: "queued",
+      status: params.status || "queued",
       originalFilename: params.originalFilename || null,
       fileMimeType: params.fileMimeType || null,
       fileBase64: params.fileBase64,
@@ -974,9 +992,36 @@ export async function createImportJob(params: {
       updatedCount: 0,
       skippedCount: 0,
       errorCount: 0,
+      source: params.source || "manual_upload",
+      approvalStatus,
+      approvedBy: typeof params.approvedBy === "number" ? params.approvedBy : null,
+      approvedAt: params.approvedAt || null,
+      importSignature: params.importSignature || null,
     } as any)
     .returning();
   return result[0];
+}
+
+/**
+ * Ticket 01: record an approval or rejection on an import batch. The batch
+ * history (counts, source, timestamps) is never rewritten by ordinary users -
+ * only the approval fields change, and only via a permitted-role route.
+ */
+export async function setImportApproval(
+  jobId: number,
+  patch: { approvalStatus: ImportApprovalStatus; approvedBy?: number | null; rejectionReason?: string | null },
+) {
+  const rows = await db
+    .update(crmImportJobs)
+    .set({
+      approvalStatus: patch.approvalStatus,
+      approvedBy: typeof patch.approvedBy === "number" ? patch.approvedBy : null,
+      approvedAt: patch.approvalStatus === "approved" ? new Date() : null,
+      rejectionReason: patch.rejectionReason ?? null,
+    } as any)
+    .where(eq(crmImportJobs.id, jobId))
+    .returning();
+  return rows[0];
 }
 
 export async function getImportJob(jobId: number) {
@@ -998,6 +1043,12 @@ export async function processImportJob(jobId: number, limits: JobRunLimits = {})
     const jobRows = await tx.select().from(crmImportJobs).where(eq(crmImportJobs.id, jobId)).limit(1);
     const job = jobRows[0];
     if (!job) throw new Error("Import job not found");
+
+    // Ticket 01: an import that has not been approved must never mutate records.
+    const approvalStatus = String((job as any).approvalStatus || "pending");
+    if (approvalStatus !== "approved" && approvalStatus !== "not_required") {
+      throw new ImportNotApprovedError(approvalStatus, jobId);
+    }
 
     const updatedAtMs = toDateMs((job as any).updatedAt);
     const activeWindowMs = limits.resume ? 5_000 : 90_000;

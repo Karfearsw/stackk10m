@@ -71,9 +71,10 @@ function baseUrl() {
     const res = await fetch(`${baseUrl()}/api/system/health`);
     const body = await res.json();
     const json = JSON.stringify(body);
-    // Ensure no API keys leak
-    expect(json).not.toContain("KEY019FB0AA881CB723E3D634E8E87724BD");
-    expect(json).not.toContain("npg_7sAWdTo6cjpF");
+    // Ensure no API keys or DB credentials leak. Assert on secret *shapes*
+    // rather than embedding real values (which would itself leak them here).
+    expect(json).not.toMatch(/\bKEY[0-9A-Fa-f]{32}\b/);
+    expect(json).not.toMatch(/\bnpg_[A-Za-z0-9]{8,}\b/);
     // Ensure features don't contain action field with credential values
     for (const f of body.features) {
       expect(f.action).not.toMatch(/key|secret|token|password/i);

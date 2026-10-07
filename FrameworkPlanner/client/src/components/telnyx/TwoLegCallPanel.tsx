@@ -61,6 +61,10 @@ export function TwoLegCallPanel({ leadId }: { leadId?: number | null }) {
   const [features, setFeatures] = useState<{ twoLeg: boolean; aiScreening: boolean; aiHandoff: boolean } | null>(null);
   const [agentPhone, setAgentPhone] = useState("");
   const [agentPhoneDraft, setAgentPhoneDraft] = useState("");
+  // Ticket 8: per-user outbound caller ID + recording default.
+  const [callerId, setCallerId] = useState("");
+  const [callerIdDraft, setCallerIdDraft] = useState("");
+  const [defaultRecording, setDefaultRecording] = useState(true);
   const [editingPhone, setEditingPhone] = useState(false);
   const [mode, setMode] = useState<CallMode>("human_first");
   const [session, setSession] = useState<any>(null);
@@ -91,6 +95,10 @@ export function TwoLegCallPanel({ leadId }: { leadId?: number | null }) {
       const p = await pRes.json();
       setFeatures(f);
       setAgentPhone(p.phoneE164 || "");
+      setCallerId(p.callerIdE164 || "");
+      setCallerIdDraft(p.callerIdE164 || "");
+      setDefaultRecording(p.recordingEnabled !== false);
+      setRecord(p.recordingEnabled !== false);
       try {
         const rRes = await apiRequest("GET", "/api/settings/telecom/call-recording");
         const r = await rRes.json();
@@ -188,8 +196,14 @@ export function TwoLegCallPanel({ leadId }: { leadId?: number | null }) {
 
   const saveAgentPhone = () =>
     run(async () => {
-      await apiRequest("PUT", "/api/v1/telecom/agent-phone", { phoneE164: agentPhoneDraft, defaultCallMode: mode });
+      await apiRequest("PUT", "/api/v1/telecom/agent-phone", {
+        phoneE164: agentPhoneDraft,
+        callerIdE164: callerIdDraft,
+        defaultCallMode: mode,
+        recordingEnabled: defaultRecording,
+      });
       setAgentPhone(agentPhoneDraft);
+      setCallerId(callerIdDraft);
       setEditingPhone(false);
     });
 
@@ -210,12 +224,18 @@ export function TwoLegCallPanel({ leadId }: { leadId?: number | null }) {
         <div className="space-y-1">
           <Label className="text-xs">Your phone</Label>
           {editingPhone ? (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Input
-                className="h-8"
+                className="h-8 w-44"
                 value={agentPhoneDraft}
                 onChange={(e) => setAgentPhoneDraft(e.target.value)}
-                placeholder="+15550000000"
+                placeholder="Your phone +15550000000"
+              />
+              <Input
+                className="h-8 w-52"
+                value={callerIdDraft}
+                onChange={(e) => setCallerIdDraft(e.target.value)}
+                placeholder="Caller ID shown to leads"
               />
               <Button size="sm" onClick={saveAgentPhone} disabled={busy}>
                 Save
@@ -235,6 +255,7 @@ export function TwoLegCallPanel({ leadId }: { leadId?: number | null }) {
           ) : (
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium">{agentPhone ? mask(agentPhone) : "Not set"}</span>
+              <span className="text-xs text-muted-foreground">{callerId ? `· shows ${mask(callerId)}` : "· default caller ID"}</span>
               <Button
                 size="sm"
                 variant="outline"

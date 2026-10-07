@@ -4,6 +4,8 @@
  * UI never needs to ask users to write raw JSON. Unit-testable in node.
  */
 
+import { OPPORTUNITY_PIPELINE_COLUMNS } from "@shared/pipeline-stages";
+
 export type AutomationTriggerDef = { value: string; label: string; description: string };
 export type AutomationActionDef = {
   value: string;
@@ -82,18 +84,7 @@ export const AUTOMATION_ACTIONS: AutomationActionDef[] = [
     label: "Change pipeline stage",
     description: "Move an opportunity to a new pipeline stage",
     fields: [
-      { key: "stage", label: "Target stage", type: "select", options: [
-        { value: "lead", label: "Lead" },
-        { value: "contacted", label: "Contacted" },
-        { value: "negotiating", label: "Negotiating" },
-        { value: "under_contract", label: "Under Contract" },
-        { value: "in_disposition", label: "In Disposition" },
-        { value: "reserved", label: "Reserved" },
-        { value: "sold", label: "Sold" },
-        { value: "closed", label: "Closed" },
-        { value: "dead", label: "Dead" },
-        { value: "voided", label: "Voided" },
-      ], default: "contacted" },
+      { key: "stage", label: "Target stage", type: "select", options: OPPORTUNITY_PIPELINE_COLUMNS, default: "contacted" },
     ],
   },
   {

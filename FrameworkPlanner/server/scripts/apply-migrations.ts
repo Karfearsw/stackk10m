@@ -2,6 +2,7 @@ import dotenv from "dotenv";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
+import { assertSafeMigrationTarget } from "../env.js";
 
 const frameworkRoot = process.cwd();
 
@@ -111,6 +112,9 @@ function splitSqlStatements(input: string) {
 }
 
 export async function applyMigrations() {
+  // Ticket 03: never let a dev/test run mutate production schema implicitly.
+  assertSafeMigrationTarget();
+
   const dir = join(frameworkRoot, "migrations");
   const files = readdirSync(dir)
     .filter((f) => f.endsWith(".sql"))
