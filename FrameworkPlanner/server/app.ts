@@ -460,6 +460,16 @@ export default async function runApp(
         created_at timestamptz NOT NULL DEFAULT now()
       );
     `);
+    // 0082: per-user dialer widget layouts (idempotent for older DBs).
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_widget_layouts (
+        user_id integer NOT NULL,
+        page varchar(64) NOT NULL,
+        layout jsonb NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (user_id, page)
+      );
+    `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS crm_ai_call_qualifications (
         id serial PRIMARY KEY,

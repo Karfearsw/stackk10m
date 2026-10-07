@@ -107,6 +107,7 @@ import {
 } from "../shared/pipeline-stages.js";
 import type { OpportunityStage } from "../shared/pipeline-stages.js";
 import { settingsFromRow as agentPhoneSettingsFromRow, validateAgentPhoneSettings } from "./dialer/user-settings.js";
+import { validateWidgetLayout } from "./dialer/widget-layouts.js";
 import { createSkipTraceJob, isHttpError, runProviderSkipTraceForEntity, runSkipTraceJob } from "./services/skipTrace/orchestrator.js";
 import { hydrateSkipTraceResultForApi, mergeSkipTraceResult } from "./services/skipTrace/merge.js";
 import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
@@ -9217,6 +9218,32 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       verified: !!existing?.verified,
     } as any);
     res.json({ ok: true, ...values, verified: !!existing?.verified });
+  });
+
+  // 0082: per-user dialer widget layouts. Layouts are keyed by (user_id, page)
+  // so each agent's drag/resize arrangement is private to them.
+  reg("get", "/api/users/me/widget-layout"); app.get("/api/users/me/widget-layout", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const page = String(req.query.page || "dialer-workspace").slice(0, 64);
+    const rows: any = await db.execute(sql`
+      SELECT layout FROM user_widget_layouts WHERE user_id = ${user.id} AND page = ${page} LIMIT 1
+    `);
+    const row = (rows.rows || [])[0];
+    res.json({ page, layout: row?.layout ?? null });
+  });
+
+  reg("put", "/api/users/me/widget-layout"); app.put("/api/users/me/widget-layout", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const v = validateWidgetLayout(req.body?.page, req.body?.layout);
+    if (!v.ok) return res.status(400).json({ error: v.error, code: "INVALID_WIDGET_LAYOUT" });
+    await db.execute(sql`
+      INSERT INTO user_widget_layouts (user_id, page, layout, updated_at)
+      VALUES (${user.id}, ${v.page}, ${JSON.stringify(v.items)}::jsonb, now())
+      ON CONFLICT (user_id, page) DO UPDATE SET layout = EXCLUDED.layout, updated_at = now()
+    `);
+    res.json({ ok: true, page: v.page, layout: v.items });
   });
 
   // Buyer calling: dial a buyer through the same two-leg Telnyx state machine

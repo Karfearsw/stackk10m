@@ -19,6 +19,10 @@ function formatE164(raw: string) {
   return digits;
 }
 
+/**
+ * @deprecated — the /dialer route now redirects to /phone. Kept only so old
+ * deep links in code don't break the build; safe to delete.
+ */
 const KEYS = ["1","2","3","4","5","6","7","8","9","*","0","#"];
 
 export default function Dialer() {

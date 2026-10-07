@@ -272,6 +272,18 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
       // Mic permission must be granted (and enabled on the client) before the
       // call — retry here in case the connect-time attempt was blocked.
       try { client.enableMicrophone(); } catch { /* browser may still be prompting */ }
+      // Preferred audio codec from phone settings (browser-level choice; the
+      // SDK takes the full codec objects from RTCRtpReceiver capabilities).
+      let preferredCodecs: Array<{ mimeType: string }> | undefined;
+      try {
+        const stored = typeof window !== "undefined" ? window.localStorage.getItem("ol.preferredAudioCodec") : null;
+        if (stored) {
+          const caps = (window as any).RTCRtpReceiver?.getCapabilities?.("audio");
+          const all = Array.isArray(caps?.codecs) ? caps.codecs : [];
+          const match = all.filter((c: any) => String(c?.mimeType || "").toLowerCase() === `audio/${String(stored).toLowerCase()}`);
+          if (match.length) preferredCodecs = match;
+        }
+      } catch { /* keep browser default */ }
       const sdkCall = client.newCall({
         destinationNumber,
         audio: true,
@@ -286,6 +298,7 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
           ...(webrtcCallLogIdRef.current ? { callLogId: webrtcCallLogIdRef.current } : {}),
         })),
         ...(defaultFromRef.current ? { callerNumber: defaultFromRef.current } : {}),
+        ...(preferredCodecs ? { preferred_codecs: preferredCodecs } : {}),
       });
       callRef.current = sdkCall;
       const remote = String(destinationNumber || "") || "";
