@@ -269,5 +269,12 @@ export function useSignalWire() {
     aiAssistantActive,
     startAiAssistant,
     stopAiAssistant,
+    // CallBar support: DTMF + incoming-call answer/decline delegate straight
+    // to the underlying WebRTC leg; dialing still goes through makeCall's
+    // server-side DNC gates.
+    sendDigits: rtc.sendDigits,
+    incomingCall: rtc.incoming,
+    answerIncoming: rtc.answerIncoming,
+    rejectIncoming: rtc.rejectIncoming,
   };
 }

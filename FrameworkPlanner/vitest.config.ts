@@ -21,10 +21,21 @@ if (testDatabaseUrl) {
 }
 
 export default defineConfig({
+  esbuild: {
+    // Match the app's automatic JSX runtime so test files don't need React in scope.
+    jsx: "automatic",
+  },
+  resolve: {
+    // Mirror the vite/tsconfig "@" alias so client components are importable
+    // in unit tests.
+    alias: {
+      "@": path.resolve(__dirname, "client/src"),
+    },
+  },
   test: {
     include: [
-      'tests/**/*.{test,spec}.ts',
-      'server/tests/**/*.{test,spec}.ts',
+      'tests/**/*.{test,spec}.ts?(x)',
+      'server/tests/**/*.{test,spec}.ts?(x)',
     ],
     globals: true,
     environment: "node",

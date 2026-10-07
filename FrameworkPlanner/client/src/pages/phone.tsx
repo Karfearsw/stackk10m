@@ -14,6 +14,8 @@ import { useSignalWire } from "@/hooks/useSignalWire";
 import { useCallAudio } from "@/hooks/useCallAudio";
 import { useTelephonyEvents } from "@/hooks/useTelephonyEvents";
 import { TelnyxHealthStatus } from "@/components/telephony/TelnyxHealthStatus";
+import { CallBar } from "@/components/telephony/CallBar";
+import { PhoneSettingsCard } from "@/components/telephony/PhoneSettingsCard";
 import { Softphone } from "@/components/telnyx/Softphone";
 import { ContactsManager } from "@/components/contacts/ContactsManager";
 import { apiRequest } from "@/lib/queryClient";
@@ -55,6 +57,10 @@ export default function PhoneWorkspace() {
     toggleMute,
     toggleHold,
     transferCall,
+    sendDigits,
+    incomingCall,
+    answerIncoming,
+    rejectIncoming,
     aiAssistantActive,
     startAiAssistant,
     stopAiAssistant,
@@ -132,6 +138,8 @@ export default function PhoneWorkspace() {
   }, [status]);
 
   const formatted = useMemo(() => formatE164(number), [number]);
+
+  const callActive = Boolean(activeCall && activeCall.state !== "finished" && activeCall.state !== "failed");
 
 
   const prevAudioStatus = useRef<string | null>(null);
@@ -399,85 +407,97 @@ export default function PhoneWorkspace() {
                           ))}
                         </div>
 
-                        <div className="flex flex-wrap gap-2 mt-4">
-                          <Button onClick={() => createCall.mutate({ direction: "outbound", number: formatted })} disabled={!formatted || createCall.isPending || status === "dialing" || status === "connected"} aria-label="Call">
-                            <Phone className="w-4 h-4 mr-2" /> Call
-                          </Button>
-                          <Button variant="destructive" onClick={() => callId && endCallMutation.mutate({ id: callId, succeeded: true })} disabled={!callId} aria-label="End Call">
-                            <PhoneOff className="w-4 h-4 mr-2" /> End
-                          </Button>
-                          {activeCall && (
+                        <CallBar
+                          call={activeCall}
+                          incoming={incomingCall ? { remoteNumber: incomingCall.remoteNumber, onAnswer: answerIncoming, onDecline: rejectIncoming } : null}
+                          displayNumber={formatted || number}
+                          elapsedMs={elapsedMs}
+                          onMute={toggleMute}
+                          onHold={toggleHold}
+                          onHangup={() => callId && endCallMutation.mutate({ id: callId, succeeded: true })}
+                          onDTMF={(d) => {
+                            if (activeCall) sendDigits(d);
+                            else setNumber((prev) => prev + d);
+                          }}
+                          extraControls={
                             <>
-                              <Button variant="outline" onClick={toggleMute} aria-label="Mute">
-                                {activeCall.muted ? <MicOff className="w-4 h-4 mr-2" /> : <Mic className="w-4 h-4 mr-2" />}
-                                {activeCall.muted ? "Unmute" : "Mute"}
-                              </Button>
-                              <Button variant="outline" onClick={toggleHold} aria-label="Hold">
-                                {activeCall.state === "held" ? <Play className="w-4 h-4 mr-2" /> : <Pause className="w-4 h-4 mr-2" />}
-                                {activeCall.state === "held" ? "Resume" : "Hold"}
-                              </Button>
-                              <Button
-                                variant="outline"
-                                onClick={() => setTransferOpen((v) => !v)}
-                                disabled={transferBusy}
-                                aria-label="Transfer"
-                              >
-                                <PhoneForwarded className="w-4 h-4 mr-2" />
-                                Transfer
-                              </Button>
-                              {transferOpen && (
-                                <div className="flex items-center gap-2 w-full">
-                                  <Input
-                                    value={transferNumber}
-                                    onChange={(e) => setTransferNumber(e.target.value)}
-                                    placeholder="Destination number (E.164)"
-                                    className="font-mono text-sm"
-                                    aria-label="Transfer destination number"
-                                  />
+                              {!callActive ? (
+                                <Button
+                                  onClick={() => createCall.mutate({ direction: "outbound", number: formatted })}
+                                  disabled={!formatted || createCall.isPending || status === "dialing" || status === "connected"}
+                                  aria-label="Call"
+                                >
+                                  <Phone className="w-4 h-4 mr-2" /> Call
+                                </Button>
+                              ) : null}
+                              {activeCall ? (
+                                <>
                                   <Button
-                                    variant="secondary"
-                                    disabled={transferBusy || !transferNumber.trim()}
-                                    onClick={async () => {
-                                      setTransferBusy(true);
-                                      try {
-                                        await transferCall(transferNumber.trim());
-                                        toast.success("Call transferred");
-                                        setTransferOpen(false);
-                                        setTransferNumber("");
-                                      } catch (e: any) {
-                                        toast.error(e?.message || "Transfer failed");
-                                      } finally {
-                                        setTransferBusy(false);
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => setTransferOpen((v) => !v)}
+                                    disabled={transferBusy}
+                                    aria-label="Transfer"
+                                  >
+                                    <PhoneForwarded className="w-4 h-4 mr-2" />
+                                    Transfer
+                                  </Button>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                      if (aiAssistantBusy) return;
+                                      setAiAssistantBusy(true);
+                                      if (aiAssistantActive) {
+                                        stopAiAssistant().finally(() => setAiAssistantBusy(false));
+                                      } else {
+                                        startAiAssistant()
+                                          .catch((e: any) => toast.error(e?.message || "Failed to start AI Screener"))
+                                          .finally(() => setAiAssistantBusy(false));
                                       }
                                     }}
+                                    disabled={aiAssistantBusy}
+                                    aria-label="AI Screener"
                                   >
-                                    {transferBusy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PhoneForwarded className="w-4 h-4 mr-1" />}
-                                    Confirm
+                                    <Bot className="w-4 h-4 mr-2" />
+                                    {aiAssistantActive ? "Stop AI Screener" : "Start AI Screener"}
                                   </Button>
-                                </div>
-                              )}
-                              <Button
-                                variant="outline"
-                                onClick={() => {
-                                  if (aiAssistantBusy) return;
-                                  setAiAssistantBusy(true);
-                                  if (aiAssistantActive) {
-                                    stopAiAssistant().finally(() => setAiAssistantBusy(false));
-                                  } else {
-                                    startAiAssistant()
-                                      .catch((e: any) => toast.error(e?.message || "Failed to start AI Screener"))
-                                      .finally(() => setAiAssistantBusy(false));
-                                  }
-                                }}
-                                disabled={aiAssistantBusy}
-                                aria-label="AI Screener"
-                              >
-                                <Bot className="w-4 h-4 mr-2" />
-                                {aiAssistantActive ? "Stop AI Screener" : "Start AI Screener"}
-                              </Button>
+                                </>
+                              ) : null}
                             </>
-                          )}
-                        </div>
+                          }
+                        />
+                        {transferOpen && activeCall ? (
+                          <div className="flex items-center gap-2 w-full">
+                            <Input
+                              value={transferNumber}
+                              onChange={(e) => setTransferNumber(e.target.value)}
+                              placeholder="Destination number (E.164)"
+                              className="font-mono text-sm"
+                              aria-label="Transfer destination number"
+                            />
+                            <Button
+                              variant="secondary"
+                              disabled={transferBusy || !transferNumber.trim()}
+                              onClick={async () => {
+                                setTransferBusy(true);
+                                try {
+                                  await transferCall(transferNumber.trim());
+                                  toast.success("Call transferred");
+                                  setTransferOpen(false);
+                                  setTransferNumber("");
+                                } catch (e: any) {
+                                  toast.error(e?.message || "Transfer failed");
+                                } finally {
+                                  setTransferBusy(false);
+                                }
+                              }}
+                            >
+                              {transferBusy ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <PhoneForwarded className="w-4 h-4 mr-1" />}
+                              Confirm
+                            </Button>
+                          </div>
+                        ) : null}
 
                         <div className="text-sm text-muted-foreground mt-2 space-y-1" aria-live="polite">
                           <div>
@@ -486,6 +506,8 @@ export default function PhoneWorkspace() {
                           </div>
                           <TelnyxHealthStatus health={telnyxHealth?.telnyx} loading={healthLoading} onRetry={() => healthRefetch()} />
                         </div>
+
+                        <PhoneSettingsCard />
                       </div>
                     </CardContent>
                   </Card>

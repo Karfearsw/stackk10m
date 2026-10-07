@@ -2359,6 +2359,17 @@ export const agentPhoneSettings = pgTable("crm_agent_phone_settings", {
 export type AgentPhoneSetting = typeof agentPhoneSettings.$inferSelect;
 export type InsertAgentPhoneSetting = typeof agentPhoneSettings.$inferInsert;
 
+// 0082: per-user dialer widget layouts. Each row stores one user's drag/resize
+// arrangement for a workspace page (e.g. "dialer-workspace") as a JSONB array
+// of react-grid-layout items [{i,x,y,w,h}].
+export const userWidgetLayouts = pgTable("user_widget_layouts", {
+  userId: integer("user_id").notNull(),
+  page: varchar("page", { length: 64 }).notNull(),
+  layout: jsonb("layout").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type UserWidgetLayout = typeof userWidgetLayouts.$inferSelect;
+
 export const callDispositions = pgTable("crm_call_dispositions", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   sessionId: integer("session_id").notNull().unique(),
