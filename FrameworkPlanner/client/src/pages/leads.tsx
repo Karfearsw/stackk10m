@@ -1042,7 +1042,8 @@ export default function Leads() {
   };
 
   const filteredLeads = useMemo(() => {
-    return leads || [];
+    // Defensive: API may return null entries; filter them to prevent render crashes
+    return (leads || []).filter((l: any) => l != null && typeof l === "object");
   }, [leads]);
 
   const selectedLead = useMemo(() => {
@@ -2638,7 +2639,7 @@ export default function Leads() {
                 <p className="text-xs text-muted-foreground mb-3">Campaigns only send to opted-in recipients. Do Not Call hard-suppresses every channel.</p>
                 <div className="grid grid-cols-2 gap-2">
                   <label className="flex items-center gap-2 text-sm">
-                    <Checkbox checked={!!editingLead.smsConsent} onCheckedChange={(v) => setEditingLead({ ...editingLead, smsConsent: !!v })} data-testid="checkbox-sms-consent" />
+                    <Checkbox checked={!!editingLead?.smsConsent} onCheckedChange={(v) => setEditingLead({ ...editingLead, smsConsent: !!v })} data-testid="checkbox-sms-consent" />
                     SMS consent
                   </label>
                   <label className="flex items-center gap-2 text-sm">
