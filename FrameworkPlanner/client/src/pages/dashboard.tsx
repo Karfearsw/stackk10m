@@ -85,6 +85,12 @@ export default function Dashboard() {
     queryKey: ['/api/dashboard/stats'],
   });
 
+  // Single-call dashboard summary — replaces 9 separate queries for KPIs
+  const { data: summary } = useQuery<any>({
+    queryKey: ['/api/dashboard/summary'],
+    staleTime: 60000, // Cache for 1 minute
+  });
+
   const tasksKey = useMemo(() => {
     const now = new Date();
     const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -233,6 +239,9 @@ export default function Dashboard() {
   }, [leads, tasks, contractDocuments, contracts, stats]);
 
   const kpiData = useMemo(() => {
+    // Use summary endpoint when available (1 query vs 9) — fall back to client calc
+    const useSummary = !!summary?.leads;
+
     // N1: revenue comes from the shared metrics helper (same rule as Analytics)
     // so the two pages can't disagree on dollars.
     // DEV-002: the deal ledger feeds the helper too, so pipeline closes count.
@@ -242,20 +251,26 @@ export default function Dashboard() {
     // opportunities rows the pipeline board counts (stage === 'closed') —
     // the KPI and /opportunities can no longer disagree. Revenue stays
     // ledger-derived above.
-    const closedDeals = properties.filter((p: any) => String(p.stage || "") === "closed").length;
+    const closedDeals = useSummary
+      ? Number(summary.properties.closed || 0)
+      : properties.filter((p: any) => String(p.stage || "") === "closed").length;
 
-    const activeLeads = typeof stats?.activeLeads === "number"
-      ? stats.activeLeads
-      : leads.filter((lead: any) =>
-          lead.status === 'new' || lead.status === 'contacted' || lead.status === 'qualified'
-        ).length;
+    const activeLeads = useSummary
+      ? Number(summary.leads.active || 0)
+      : typeof stats?.activeLeads === "number"
+        ? stats.activeLeads
+        : leads.filter((lead: any) =>
+            lead.status === 'new' || lead.status === 'contacted' || lead.status === 'qualified'
+          ).length;
 
     const dealsInPipeline = contractDocuments.filter(doc => 
       doc.status === 'draft' || doc.status === 'sent' || doc.status === 'executed'
     );
 
-    // Pipeline value: sum of potential assignment fees from active deals
-    const pipelineValue = dealsInPipeline.reduce((sum: number, doc: any) => {
+    // Pipeline value: use summary when available, else client-side calc
+    const pipelineValue = useSummary
+      ? Number(summary.contracts.pipelineValue || 0)
+      : dealsInPipeline.reduce((sum: number, doc: any) => {
       try {
         const md = doc.mergeData
           ? typeof doc.mergeData === "string"

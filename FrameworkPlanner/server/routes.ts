@@ -3437,6 +3437,71 @@ export async function registerRoutes(
     }
   });
   // LEADS ENDPOINTS
+  reg("get", "/api/dashboard/summary"); app.get("/api/dashboard/summary", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+
+      // Single query for all dashboard KPIs — replaces 9 separate frontend queries
+      const [leadStats, propStats, contractStats, taskStats] = await Promise.all([
+        db.execute(sql`
+          SELECT
+            COUNT(*)::int as total,
+            COUNT(*) FILTER (WHERE status IN ('new','contacted','qualified'))::int as active,
+            COUNT(*) FILTER (WHERE archived_at IS NULL AND status NOT IN ('dead','voided','closed'))::int as unarchived
+          FROM leads
+        `),
+        db.execute(sql`
+          SELECT
+            COUNT(*)::int as total,
+            COUNT(*) FILTER (WHERE stage = 'closed')::int as closed
+          FROM properties
+        `),
+        db.execute(sql`
+          SELECT
+            COUNT(*)::int as total,
+            COUNT(*) FILTER (WHERE status IN ('draft','sent','executed'))::int as in_pipeline,
+            COALESCE(SUM(
+              CASE WHEN status IN ('draft','sent','executed')
+              THEN COALESCE(
+                NULLIF(regexp_replace(COALESCE(merge_data->>'assignmentFee', ''), '[^0-9.]', '', 'g'), '')::numeric,
+                0
+              ) ELSE 0 END
+            ), 0)::numeric as pipeline_value
+          FROM contract_documents
+        `),
+        db.execute(sql`
+          SELECT COUNT(*)::int as pending
+          FROM tasks
+          WHERE status = 'pending' AND (assigned_to = ${user.id} OR assigned_to IS NULL)
+        `),
+      ]);
+
+      res.json({
+        leads: {
+          total: Number(leadStats.rows?.[0]?.total || 0),
+          active: Number(leadStats.rows?.[0]?.active || 0),
+        },
+        properties: {
+          total: Number(propStats.rows?.[0]?.total || 0),
+          closed: Number(propStats.rows?.[0]?.closed || 0),
+        },
+        contracts: {
+          total: Number(contractStats.rows?.[0]?.total || 0),
+          inPipeline: Number(contractStats.rows?.[0]?.in_pipeline || 0),
+          pipelineValue: Number(contractStats.rows?.[0]?.pipeline_value || 0),
+        },
+        tasks: {
+          pending: Number(taskStats.rows?.[0]?.pending || 0),
+        },
+      });
+    } catch (error: any) {
+      if (isDbConnectivityError(error)) {
+        return res.status(503).json({ message: "Database is unavailable" });
+      }
+      res.status(500).json({ message: error.message });
+    }
+  });
   reg("get", "/api/dashboard/stats"); app.get("/api/dashboard/stats", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -9034,6 +9099,38 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
         console.error("Lead/contact DNC check failed (non-blocking):", e);
       }
 
+      // ── Auto-create lead on first text: if no lead exists for this number,
+      // create a lightweight one so the conversation has a home. This lets
+      // agents text any number without a separate "save as lead" step. ──
+      let autoLeadId: number | null = null;
+      try {
+        const digits = String(to).replace(/\D/g, "");
+        const last10 = digits.slice(-10);
+        if (last10.length >= 7 && !(metadata as any)?.leadId) {
+          const like = `%${last10}`;
+          const existing: any = await db.execute(sql`
+            SELECT id FROM leads
+            WHERE regexp_replace(COALESCE(owner_phone, ''), '\\D', '', 'g') LIKE ${like}
+            ORDER BY id DESC LIMIT 1
+          `);
+          const hit = (existing as any).rows?.[0];
+          if (hit?.id) {
+            autoLeadId = Number(hit.id);
+          } else {
+            // No lead exists — create a lightweight one
+            const teamId = await getOrInitActiveTeamId(req, user.id).catch(() => null);
+            const newLead: any = await db.execute(sql`
+              INSERT INTO leads (owner_phone, status, source, created_by_user_id, team_id, created_at, updated_at)
+              VALUES (${String(to)}, 'new', 'sms-auto-create', ${user.id}, ${teamId}, NOW(), NOW())
+              RETURNING id
+            `);
+            autoLeadId = Number((newLead as any).rows?.[0]?.id) || null;
+          }
+        }
+      } catch (e) {
+        console.error("SMS auto-create lead failed (non-blocking):", e);
+      }
+
       // ── Media attachments: MMS when carrier-safe, secure-link otherwise ──
       const rawMediaIds = Array.isArray((req.body as any)?.mediaIds) ? (req.body as any).mediaIds : [];
       const mediaIds = rawMediaIds
@@ -9093,6 +9190,8 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       let persistedMsgId: number | null = null;
       try {
         const metaLeadId = (metadata as any)?.leadId ? Number((metadata as any).leadId) : null;
+        // Prefer explicit leadId from metadata, fall back to auto-created lead
+        const effectiveLeadId = (metaLeadId && Number.isFinite(metaLeadId) && metaLeadId > 0 ? metaLeadId : null) || autoLeadId;
         const metaObj: Record<string, unknown> =
           metadata && typeof metadata === "object" ? { ...(metadata as any) } : {};
         if (mediaIds.length) {
@@ -9107,7 +9206,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
           body: finalBody,
           status: smsStatus,
           providerMessageId: sid || null,
-          leadId: metaLeadId && Number.isFinite(metaLeadId) && metaLeadId > 0 ? metaLeadId : null,
+          leadId: effectiveLeadId,
           buyerId: buyerId,
           metadata: JSON.stringify(metaObj),
         } as any);
