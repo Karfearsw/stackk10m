@@ -2727,6 +2727,29 @@ export async function registerRoutes(
         if (at) req.session.activeTeamId = at;
         else delete req.session.activeTeamId;
       }
+      // Auto-create the onboarding checklist for the new user.
+      // If they signed up with an @oceanluxe.org address, the business
+      // email is already provisioned.
+      try {
+        const store = await import("./email-provisioning/store.js");
+        const checklist = await store.ensureChecklist(newUser.id);
+        if (normalizedEmail.endsWith("@oceanluxe.org")) {
+          await store.updateChecklistItem(newUser.id, "email_provisioned", true);
+          // Also record the existing address as provisioned (no IONOS call needed).
+          await store.saveProvision({
+            userId: newUser.id,
+            email: normalizedEmail,
+            mailboxId: null,
+            forwardingTo: null,
+            status: "active",
+            error: null,
+          });
+        }
+        void checklist;
+      } catch (e: any) {
+        console.error("[Onboarding] Failed to create checklist on signup:", e?.message || e);
+        // Non-fatal — signup succeeds even if the checklist write fails.
+      }
       const { passwordHash: _, ...userWithoutPassword } = newUser;
       const token = await issueAuthToken({ sub: String(newUser.id), email: newUser.email });
       res.status(201).json({ user: userWithoutPassword, token });
@@ -16242,6 +16265,141 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     if (!user) return;
     const { emailDeliveryStats } = await import("./email/sender.js");
     res.json(await emailDeliveryStats());
+  });
+
+  // ------------------------------------------------------------------
+  // Business email auto-provisioning + onboarding checklist
+  // ------------------------------------------------------------------
+  // IONOS connection status (config state only — never exposes secrets).
+  reg("get", "/api/onboarding/ionos-status"); app.get("/api/onboarding/ionos-status", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const { ionosConfigStatus } = await import("./email-provisioning/ionos.js");
+    res.json(ionosConfigStatus());
+  });
+
+  // Trigger business email provisioning for a user (manager/admin only).
+  reg("post", "/api/onboarding/provision-email"); app.post("/api/onboarding/provision-email", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const targetUserId = Number(req.body?.userId);
+    if (!targetUserId) return res.status(400).json({ message: "userId is required" });
+    const target = await storage.getUserById(targetUserId);
+    if (!target) return res.status(404).json({ message: "User not found" });
+    const forwardingTo = String(req.body?.forwardingTo || "").trim() || undefined;
+    const { provisionBusinessEmail } = await import("./email-provisioning/provisioner.js");
+    const store = await import("./email-provisioning/store.js");
+    const outcome = await provisionBusinessEmail(
+      {
+        userId: targetUserId,
+        firstName: String((target as any).firstName || ""),
+        lastName: String((target as any).lastName || ""),
+        forwardingTo,
+      },
+      {
+        emailTaken: store.emailTaken,
+        getExistingProvision: store.getProvisionByUser,
+        saveProvision: store.saveProvision,
+        markChecklistEmailProvisioned: store.markChecklistEmailProvisioned,
+      }
+    );
+    if (!outcome.ok) {
+      return res.status(outcome.code === "NOT_CONFIGURED" ? 503 : 500).json({
+        ok: false, code: outcome.code, message: outcome.message,
+      });
+    }
+    res.json({ ok: true, email: outcome.email, mailboxId: outcome.mailboxId, alreadyExisted: outcome.alreadyExisted });
+  });
+
+  // Provisioning status for a user.
+  reg("get", "/api/onboarding/provision-email/status/:userId"); app.get("/api/onboarding/provision-email/status/:userId", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const targetUserId = Number(req.params.userId);
+    if (!isSameUserOrAdmin(user, targetUserId)) return res.status(403).json({ message: "Forbidden" });
+    const store = await import("./email-provisioning/store.js");
+    const provision = await store.getProvisionByUser(targetUserId);
+    res.json({ provision });
+  });
+
+  // All provisioned emails (manager/admin only).
+  reg("get", "/api/onboarding/provisioned-emails"); app.get("/api/onboarding/provisioned-emails", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const store = await import("./email-provisioning/store.js");
+    const status = typeof req.query?.status === "string" ? req.query.status : undefined;
+    res.json({ items: await store.listProvisions(status) });
+  });
+
+  // Pending provisioning queue + users needing email (manager/admin only).
+  reg("get", "/api/onboarding/provision-queue"); app.get("/api/onboarding/provision-queue", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const store = await import("./email-provisioning/store.js");
+    res.json({
+      pending: await store.pendingProvisionQueue(),
+      needing: await store.usersNeedingEmail(),
+    });
+  });
+
+  // Get onboarding checklist for a user.
+  reg("get", "/api/onboarding/checklist/:userId"); app.get("/api/onboarding/checklist/:userId", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const targetUserId = Number(req.params.userId);
+    if (!isSameUserOrAdmin(user, targetUserId)) return res.status(403).json({ message: "Forbidden" });
+    const store = await import("./email-provisioning/store.js");
+    const checklist = await store.ensureChecklist(targetUserId);
+    const { checklistComplete } = await import("./email-provisioning/provisioner.js");
+    const { complete, missing } = checklistComplete(checklist as any);
+    res.json({ checklist, complete, missing });
+  });
+
+  // Update a checklist item (manager/admin only).
+  reg("put", "/api/onboarding/checklist/:userId"); app.put("/api/onboarding/checklist/:userId", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const targetUserId = Number(req.params.userId);
+    const item = String(req.body?.item || "");
+    const value = Boolean(req.body?.value);
+    const store = await import("./email-provisioning/store.js");
+    const updated = await store.updateChecklistItem(targetUserId, item, value);
+    if (!updated) return res.status(400).json({ message: "Invalid checklist item." });
+    res.json({ checklist: updated });
+  });
+
+  // Grant live-lead access — only when every checklist item is complete.
+  reg("post", "/api/onboarding/grant-lead-access/:userId"); app.post("/api/onboarding/grant-lead-access/:userId", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const targetUserId = Number(req.params.userId);
+    const store = await import("./email-provisioning/store.js");
+    const result = await store.grantLiveLeadAccess(targetUserId, Number((user as any).id));
+    if (!result.ok) {
+      return res.status(422).json({
+        ok: false,
+        message: `Cannot grant live-lead access — ${result.missing!.length} checklist item(s) incomplete.`,
+        missing: result.missing,
+      });
+    }
+    res.json({ ok: true });
+  });
+
+  // Revoke live-lead access (manager/admin only).
+  reg("post", "/api/onboarding/revoke-lead-access/:userId"); app.post("/api/onboarding/revoke-lead-access/:userId", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const targetUserId = Number(req.params.userId);
+    const store = await import("./email-provisioning/store.js");
+    await store.revokeLiveLeadAccess(targetUserId);
+    res.json({ ok: true });
+  });
   // ------------------------------------------------------------------
   // Ticket 12 — Lead assignment & routing rules
   // ------------------------------------------------------------------
