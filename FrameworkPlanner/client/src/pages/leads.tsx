@@ -2562,12 +2562,12 @@ export default function Leads() {
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-phone" className="text-right">Phone</Label>
-                <Input id="edit-phone" className="col-span-3" value={editingLead.ownerPhone || ""} onChange={(e) => setEditingLead({...editingLead, ownerPhone: e.target.value})} data-testid="input-edit-phone" />
+                <Input id="edit-phone" className="col-span-3" value={editingLead?.ownerPhone || ""} onChange={(e) => setEditingLead({...editingLead, ownerPhone: e.target.value})} data-testid="input-edit-phone" />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-source" className="text-right">Lead Source</Label>
                 <Select
-                  value={String(editingLead.source || "")}
+                  value={String(editingLead?.source || "")}
                   onValueChange={(value) => {
                     if (value !== CUSTOM_SOURCE_VALUE) setEditLeadOtherSource("");
                     setEditingLead({ ...editingLead, source: value });
@@ -2586,7 +2586,7 @@ export default function Leads() {
                   </SelectContent>
                 </Select>
               </div>
-              {String(editingLead.source || "") === CUSTOM_SOURCE_VALUE && (
+              {String(editingLead?.source || "") === CUSTOM_SOURCE_VALUE && (
                 <div className="grid grid-cols-4 items-center gap-4">
                   <Label htmlFor="edit-source-other" className="text-right">Other</Label>
                   <Input
@@ -2618,7 +2618,7 @@ export default function Leads() {
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-assignedTo" className="text-right">Assigned To</Label>
-                <Select value={String(editingLead.assignedTo || "")} onValueChange={(value) => setEditingLead({ ...editingLead, assignedTo: value })}>
+                <Select value={String(editingLead?.assignedTo || "")} onValueChange={(value) => setEditingLead({ ...editingLead, assignedTo: value })}>
                   <SelectTrigger className="col-span-3" data-testid="select-edit-assigned-to">
                     <SelectValue placeholder="Unassigned" />
                   </SelectTrigger>
