@@ -933,10 +933,10 @@ export default function Opportunities() {
   };
 
   const filteredProperties = properties.filter((prop) => {
-    const matchesSearch = 
-      prop.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      prop.city.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      prop.state.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesSearch =
+      String(prop.address || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(prop.city || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+      String(prop.state || "").toLowerCase().includes(searchQuery.toLowerCase());
     // Match on the canonical stage (falling back to legacy status aliases) so the
     // filter dropdown and the board speak the same language.
     const propStage = String(prop.stage || statusFilterToStage(String(prop.status || "")) || "");
@@ -950,10 +950,12 @@ export default function Opportunities() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case "active": return "bg-green-600 text-white";
+      case "negotiation": return "bg-orange-600 text-white";
       case "under_contract": return "bg-blue-600 text-white";
       case "pending": return "bg-yellow-600 text-white";
       case "sold": return "bg-purple-600 text-white";
       case "withdrawn": return "bg-gray-600 text-white";
+      case "closed": return "bg-emerald-600 text-white";
       default: return "bg-primary text-primary-foreground";
     }
   };
