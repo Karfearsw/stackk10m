@@ -8,7 +8,7 @@ import { FileText } from "lucide-react";
  * so agents don't have to navigate to the Scripts page mid-conversation.
  */
 export function BuyerScriptsPanel() {
-  const { data, isLoading } = useQuery<{ scripts: any[] }>({
+  const { data, isLoading } = useQuery<{ items: any[] }>({
     queryKey: ["buyer-scripts"],
     queryFn: async () => {
       const res = await fetch("/api/scripts", { credentials: "include" });
@@ -17,7 +17,7 @@ export function BuyerScriptsPanel() {
     },
   });
 
-  const scripts = data?.scripts ?? [];
+  const scripts = data?.items ?? [];
   const relevant = scripts.filter((s: any) =>
     /buyer|cash|investor|offer|dispo/i.test(s.name || s.title || "")
   );

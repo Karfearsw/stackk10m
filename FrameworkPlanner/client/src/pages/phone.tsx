@@ -84,7 +84,10 @@ export default function PhoneWorkspace() {
     navigate(`/phone?${params.toString()}`);
   };
 
-  const [number, setNumber] = useState("");
+  const [number, setNumber] = useState(() => {
+    const p = new URLSearchParams(window.location.search);
+    return p.get("number") || "";
+  });
   const [status, setStatus] = useState<"idle" | "dialing" | "ringing" | "connected" | "ended" | "failed">("idle");
   const [callId, setCallId] = useState<number | null>(null);
   const [startTs, setStartTs] = useState<number | null>(null);

@@ -8,7 +8,7 @@ import { FileText } from "lucide-react";
  * so agents don't have to navigate away to find their talking points.
  */
 export function DispoScriptsPanel() {
-  const { data, isLoading } = useQuery<{ scripts: any[] }>({
+  const { data, isLoading } = useQuery<{ items: any[] }>({
     queryKey: ["dispo-scripts"],
     queryFn: async () => {
       const res = await fetch("/api/scripts", { credentials: "include" });
@@ -17,7 +17,7 @@ export function DispoScriptsPanel() {
     },
   });
 
-  const scripts = data?.scripts ?? [];
+  const scripts = data?.items ?? [];
   // Prefer buyer/disposition-related scripts, fall back to all
   const relevant = scripts.filter((s: any) =>
     /buyer|dispo|investor|offer/i.test(s.name || s.title || "")
