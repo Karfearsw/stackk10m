@@ -21,6 +21,7 @@ import { DIALER_KEYS } from "./dialerUtils";
 export function PhoneWidget() {
   const {
     telnyxHealth, healthLoading, healthRefetch, telnyxError,
+    rtcConnState, sipConnectionState,
     number, setNumber,
     session, SESSION_LABELS, status, elapsedMs, sessionError,
     aiAssistantActive, sessionAiActive,
@@ -53,6 +54,29 @@ export function PhoneWidget() {
           <TelnyxHealthStatus health={telnyxHealth?.telnyx} loading={healthLoading} onRetry={() => healthRefetch()} />
           {telnyxError ? <div className="text-xs text-destructive"> • {telnyxError}</div> : null}
         </div>
+
+        {/* Softphone connection status — prominent when not connected */}
+        {rtcConnState !== "ready" && (
+          <div className="rounded-md border border-yellow-500/30 bg-yellow-500/10 p-3 text-sm">
+            <div className="font-medium text-yellow-700 dark:text-yellow-300">Softphone not connected</div>
+            <div className="text-xs text-muted-foreground mt-1">
+              {rtcConnState === "error"
+                ? "Connection failed. Check your microphone permissions and click Re-check above."
+                : rtcConnState === "connecting"
+                  ? "Connecting your softphone…"
+                  : "Your browser softphone needs to connect before you can make calls."}
+            </div>
+            <div className="text-xs text-muted-foreground mt-1">
+              State: {rtcConnState || "idle"} {sipConnectionState ? `(${sipConnectionState})` : ""}
+            </div>
+          </div>
+        )}
+        {rtcConnState === "ready" && (
+          <div className="rounded-md border border-green-500/30 bg-green-500/10 px-3 py-2 text-sm flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            <span className="font-medium text-green-700 dark:text-green-300">Softphone connected — ready to dial</span>
+          </div>
+        )}
 
         <div className="space-y-2">
           <Label htmlFor="dialer-number">Phone Number</Label>

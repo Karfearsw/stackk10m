@@ -36,6 +36,8 @@ export function useDialerWorkspaceState() {
     aiAssistantActive,
     startAiAssistant,
     stopAiAssistant,
+    rtcConnState,
+    connectionState: sipConnectionState,
   } = useSignalWire();
   const { connected: telephonyWsConnected } = useTelephonyEvents({
     enabled: true,
@@ -851,6 +853,8 @@ export function useDialerWorkspaceState() {
     telnyxHealth,
     healthLoading,
     healthRefetch,
+    rtcConnState,
+    sipConnectionState,
     scriptsData,
     scripts,
     patchLead,
