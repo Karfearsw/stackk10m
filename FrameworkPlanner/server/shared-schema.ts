@@ -1,6 +1,6 @@
 
 import { sql } from "drizzle-orm";
-import { pgTable, serial, text, varchar, integer, decimal, timestamp, boolean, date, jsonb, numeric } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, varchar, integer, decimal, timestamp, boolean, date, jsonb, numeric, bigint } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -2439,3 +2439,58 @@ export type InsertDocsCategory = z.infer<typeof insertDocsCategorySchema>;
 export const insertDocsPageSchema = createInsertSchema(docsPages).omit({ id: true, createdAt: true } as any);
 export type DocsPage = typeof docsPages.$inferSelect;
 export type InsertDocsPage = z.infer<typeof insertDocsPageSchema>;
+
+// ── Ticket 18: durable object storage registry ────────────────────────────
+// Private-by-default file storage (S3-compatible). Migration: 0090_object_storage.sql
+
+export const storedFiles = pgTable("stored_files", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  originalName: varchar("original_name", { length: 255 }).notNull(),
+  storageKey: text("storage_key").notNull(),
+  bucket: varchar("bucket", { length: 255 }).notNull(),
+  sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+  mimeType: varchar("mime_type", { length: 120 }).notNull(),
+  checksumSha256: varchar("checksum_sha256", { length: 64 }).notNull(),
+  entityType: varchar("entity_type", { length: 50 }).notNull(),
+  entityId: varchar("entity_id", { length: 64 }).notNull().default("0"),
+  isImmutable: boolean("is_immutable").notNull().default(false),
+  sourceKind: varchar("source_kind", { length: 30 }),
+  sourceRef: text("source_ref"),
+  uploadedBy: integer("uploaded_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertStoredFileSchema = createInsertSchema(storedFiles).omit({ id: true, createdAt: true } as any);
+export type StoredFile = typeof storedFiles.$inferSelect;
+export type InsertStoredFile = z.infer<typeof insertStoredFileSchema>;
+
+export const storageConfig = pgTable("storage_config", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  environment: varchar("environment", { length: 20 }).notNull(),
+  backend: varchar("backend", { length: 20 }).notNull(),
+  bucket: varchar("bucket", { length: 255 }),
+  region: varchar("region", { length: 64 }),
+  endpoint: text("endpoint"),
+  isActive: boolean("is_active").notNull().default(true),
+  notes: text("notes"),
+  updatedBy: integer("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertStorageConfigSchema = createInsertSchema(storageConfig).omit({ id: true, updatedAt: true } as any);
+export type StorageConfigRow = typeof storageConfig.$inferSelect;
+export type InsertStorageConfigRow = z.infer<typeof insertStorageConfigSchema>;
+
+export const storageMigrations = pgTable("storage_migrations", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  dryRun: boolean("dry_run").notNull().default(true),
+  scanned: integer("scanned").notNull().default(0),
+  uploaded: integer("uploaded").notNull().default(0),
+  verified: integer("verified").notNull().default(0),
+  failed: integer("failed").notNull().default(0),
+  skipped: integer("skipped").notNull().default(0),
+  runBy: integer("run_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type StorageMigration = typeof storageMigrations.$inferSelect;

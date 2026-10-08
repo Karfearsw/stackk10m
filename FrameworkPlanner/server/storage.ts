@@ -23,7 +23,8 @@ import {
   type AgentPhoneSetting, type InsertAgentPhoneSetting, type CallDisposition, type InsertCallDisposition,
   type AiCallQualification, type InsertAiCallQualification,
   type PropertyUnit, type InsertPropertyUnit,
-  type CommissionSnapshot, type InsertCommissionSnapshot
+  type CommissionSnapshot, type InsertCommissionSnapshot,
+  storedFiles, type StoredFile, type InsertStoredFile
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -4856,6 +4857,35 @@ export class DatabaseStorage implements IStorage {
 
   async deleteDocsPage(id: number): Promise<void> {
     await db.delete(docsPages).where(eq(docsPages.id, id));
+  }
+}
+
+  // ── Ticket 18: stored_files registry ─────────────────
+  async createStoredFile(row: InsertStoredFile): Promise<StoredFile> {
+    const result = await db.insert(storedFiles).values(row as any).returning();
+    return result[0];
+  }
+
+  async getStoredFile(id: number): Promise<StoredFile | undefined> {
+    const result = await db.select().from(storedFiles).where(eq(storedFiles.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getStoredFileByKey(storageKey: string): Promise<StoredFile | undefined> {
+    const result = await db.select().from(storedFiles).where(eq(storedFiles.storageKey, storageKey)).limit(1);
+    return result[0];
+  }
+
+  async listStoredFiles(limit = 100, offset = 0): Promise<StoredFile[]> {
+    return db.select().from(storedFiles).orderBy(desc(storedFiles.createdAt)).limit(limit).offset(offset);
+  }
+
+  async listStoredFilesByEntity(entityType: string, entityId: string): Promise<StoredFile[]> {
+    return db
+      .select()
+      .from(storedFiles)
+      .where(and(eq(storedFiles.entityType, entityType), eq(storedFiles.entityId, entityId)))
+      .orderBy(desc(storedFiles.createdAt));
   }
 }
 

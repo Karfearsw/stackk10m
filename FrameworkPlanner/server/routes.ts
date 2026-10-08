@@ -8433,6 +8433,154 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.status(500).json({ success: false, error: "Migration failed" });
     }
   });
+  // ── Ticket 18: durable object storage ──────────────────────────────────
+  // Private-by-default file storage on S3-compatible object storage.
+  // Downloads go through expiring signed URLs only — never public.
+
+  // POST /api/files/upload — upload a file to durable object storage.
+  reg("post", "/api/files/upload"); app.post("/api/files/upload", upload.single("file"), async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const file = (req as any).file as Express.Multer.File | undefined;
+      if (!file) return res.status(400).json({ success: false, error: "file is required" });
+      const entityType = String(req.body.entityType || "misc").slice(0, 50);
+      const entityId = String(req.body.entityId || "0").slice(0, 64);
+      // Immutable flag: only managers may mark a file immutable (signed legal docs).
+      const immutable = String(req.body.immutable || "").toLowerCase() === "true" && isManagerUser(user);
+
+      const { getStorageProvider, makeStorageKey } = await import("./storage/provider.js");
+      const provider = getStorageProvider();
+      const key = makeStorageKey({ entityType, entityId, originalName: file.originalname });
+      const up = await provider.upload({
+        key,
+        body: file.buffer,
+        mimeType: file.mimetype,
+        immutable,
+      });
+
+      // Registry record (best-effort if migration 0090 not yet applied).
+      try {
+        await storage.createStoredFile({
+          originalName: file.originalname,
+          storageKey: up.key,
+          bucket: provider.bucket,
+          sizeBytes: up.sizeBytes,
+          mimeType: file.mimetype,
+          checksumSha256: up.sha256,
+          entityType,
+          entityId,
+          isImmutable: immutable,
+          sourceKind: "upload",
+          sourceRef: null,
+          uploadedBy: user.id,
+        } as any);
+      } catch { /* table may not exist yet */ }
+
+      res.json({
+        success: true,
+        key: up.key,
+        bucket: provider.bucket,
+        backend: provider.backend,
+        sizeBytes: up.sizeBytes,
+        sha256: up.sha256,
+        immutable,
+      });
+    } catch (e: any) {
+      console.error("[storage] upload failed:", e?.message || e);
+      res.status(500).json({ success: false, error: "Upload failed" });
+    }
+  });
+
+  // GET /api/files/:id/download — expiring signed URL (private by default).
+  // Also supports ?key= for local-dev fallback URLs.
+  reg("get", "/api/files/:id/download"); app.get("/api/files/:id/download", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { getStorageProvider } = await import("./storage/provider.js");
+      const provider = getStorageProvider();
+
+      let storageKey: string;
+      const id = String(req.params.id);
+      if (id === "by-key") {
+        storageKey = String(req.query.key || "");
+      } else {
+        const rec: any = await storage.getStoredFile(Number(id)).catch(() => null);
+        if (!rec) return res.status(404).json({ success: false, error: "File not found" });
+        storageKey = rec.storageKey;
+      }
+      if (!storageKey) return res.status(400).json({ success: false, error: "Missing key" });
+
+      // Local dev backend: stream through the API (auth enforced here).
+      if (provider.backend === "local") {
+        const buf = await provider.download(storageKey);
+        res.setHeader("Content-Type", "application/octet-stream");
+        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(storageKey.split("/").pop() || "file")}"`);
+        return res.send(buf);
+      }
+
+      const url = await provider.getSignedDownloadUrl(storageKey);
+      res.json({ success: false, downloadUrl: url, expiresInSeconds: 900 });
+    } catch (e: any) {
+      console.error("[storage] download failed:", e?.message || e);
+      res.status(500).json({ success: false, error: "Download failed" });
+    }
+  });
+
+  // GET /api/storage/inventory — list stored files + backend status (admin).
+  reg("get", "/api/storage/inventory"); app.get("/api/storage/inventory", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) {
+        res.status(403).json({ success: false, error: "Admin access required" });
+        return;
+      }
+      const { getStorageProvider, resolveStorageConfig } = await import("./storage/provider.js");
+      const { inventoryCandidates, storageUsage } = await import("./storage/migrator.js");
+      const provider = getStorageProvider();
+      const cfg = resolveStorageConfig();
+      const usage = await storageUsage();
+      const candidates = await inventoryCandidates().catch(() => []);
+      const files = await storage.listStoredFiles(100, 0).catch(() => []);
+      res.json({
+        success: true,
+        backend: provider.backend,
+        bucket: provider.bucket,
+        region: cfg.region,
+        endpoint: cfg.endpoint || null,
+        devBucketConfigured: Boolean(String(process.env.STORAGE_BUCKET_DEV || "").trim()),
+        usage,
+        pendingMigration: candidates.length,
+        recentFiles: files,
+      });
+    } catch (e: any) {
+      console.error("[storage] inventory failed:", e?.message || e);
+      res.status(500).json({ success: false, error: "Inventory failed" });
+    }
+  });
+
+  // POST /api/storage/migrate — run the storage migration (admin only).
+  // Body: { dryRun?: boolean } — dryRun defaults to TRUE. Sources are never deleted.
+  reg("post", "/api/storage/migrate"); app.post("/api/storage/migrate", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) {
+        res.status(403).json({ success: false, error: "Admin access required" });
+        return;
+      }
+      const dryRun = req.body?.dryRun !== false;
+      const { runMigration } = await import("./storage/migrator.js");
+      const result = await runMigration({ dryRun, uploadedBy: user.id });
+      res.json({ success: true, ...result });
+    } catch (e: any) {
+      console.error("[storage] migrate failed:", e?.message || e);
+      res.status(500).json({ success: false, error: "Migration failed" });
+    }
+  });
+
   // SYSTEM HEALTH (Aggregated diagnostics)
   // C6: route-bootstrap diagnostics — proves which API routes registered at
   // startup and when, so a partial bootstrap (C6-style outage) is detectable.
@@ -10098,6 +10246,25 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
           createdBy: user.id,
         } as any);
         documentId = doc.id;
+        // Ticket 18: register signed legal doc as immutable in durable storage registry.
+        try {
+          const { getStorageProvider } = await import("./storage/provider.js");
+          const sp = getStorageProvider();
+          await storage.createStoredFile({
+            originalName: String(file.originalname || "signed-copy"),
+            storageKey,
+            bucket: sp.bucket,
+            sizeBytes: typeof file.size === "number" ? file.size : buf.length,
+            mimeType: String(file.mimetype || "application/pdf"),
+            checksumSha256: sha,
+            entityType: "contract",
+            entityId: String(contract.id),
+            isImmutable: true,
+            sourceKind: "upload",
+            sourceRef: `contract:${contract.id}`,
+            uploadedBy: user.id,
+          } as any);
+        } catch { /* registry table may not exist yet */ }
       }
       // M51: uploading a signed copy means the contract was signed — never
       // regress an executed contract back to signed, and stamp signedAt when
