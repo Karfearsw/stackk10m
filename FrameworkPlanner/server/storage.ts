@@ -4861,7 +4861,6 @@ export class DatabaseStorage implements IStorage {
   async deleteDocsPage(id: number): Promise<void> {
     await db.delete(docsPages).where(eq(docsPages.id, id));
   }
-}
 
   // ── Ticket 18: stored_files registry ─────────────────
   async createStoredFile(row: InsertStoredFile): Promise<StoredFile> {

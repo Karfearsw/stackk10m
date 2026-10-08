@@ -15222,7 +15222,7 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
         WHERE b.is_suspected_test = false AND b.status = 'active'
           AND q.relationship_stage NOT IN ('inactive', 'deal_ready')
       `);
-      const gaps = (((gapRows as any).rows ?? [])[0] || { unassigned: 0, no_next_action: 0, overdue_actions: 0 };
+      const gaps = ((gapRows as any).rows ?? [])[0] || { unassigned: 0, no_next_action: 0, overdue_actions: 0 };
       // Market coverage: distinct buy-box markets vs markets with >=1 qualified/deal_ready buyer.
       const marketRows: any = await db.execute(sql`
         WITH markets AS (
@@ -15264,7 +15264,7 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
                COUNT(*) FILTER (WHERE occurred_at >= now() - interval '30 days')::int AS last30
         FROM buyer_outreach_log
       `);
-      const velocity = (((velRows as any).rows ?? [])[0] || { last7: 0, last30: 0 };
+      const velocity = ((velRows as any).rows ?? [])[0] || { last7: 0, last30: 0 };
       res.json({ byStage, gaps, markets, velocity });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -15362,7 +15362,7 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
         WHERE q.buyer_id = ${id}
         LIMIT 1
       `);
-      let qual = (((qRows as any).rows ?? [])[0] || null;
+      let qual = ((qRows as any).rows ?? [])[0] || null;
       if (!qual) {
         const ins: any = await db.execute(sql`
           INSERT INTO buyer_qualification (buyer_id, relationship_stage)
@@ -16300,15 +16300,6 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
   });
 
   // Cross-system email dedup check. Used by both the CRM and the
-<<<<<<< HEAD
-  // onboarding site before provisioning: "does this person already have
-  // an @oceanluxe.org address?" Checks the local provisioned_emails
-  // table (by address and by name) and IONOS directly. Never creates
-  // anything — read-only.
-  //
-  // Body: { email?: string, firstName?: string, lastName?: string }
-  // Response: { exists, email, source: "local"|"ionos"|null, checked: [...] }
-=======
   // onboarding site before requesting a forward: "does this person
   // already have an @oceanluxe.org address?" Checks the email_forwards
   // table and the legacy provisioned_emails table (by address and by
@@ -16316,7 +16307,6 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
   //
   // Body: { email?: string, firstName?: string, lastName?: string }
   // Response: { exists, email, source: "forwards"|"legacy"|null, checked: [...] }
->>>>>>> d4b2c77270ac3c11b2266c659729b0b8a2e01cae
   reg("post", "/api/onboarding/check-email"); app.post("/api/onboarding/check-email", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -16327,23 +16317,6 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     if (!email && !(firstName && lastName)) {
       return res.status(400).json({ message: "Provide email, or firstName + lastName." });
     }
-<<<<<<< HEAD
-    const { checkExistingMailbox, candidateEmails } = await import("./email-provisioning/provisioner.js");
-    const store = await import("./email-provisioning/store.js");
-    const deps = { getProvisionByEmail: store.getProvisionByEmail };
-    const checked: string[] = ["local"];
-
-    // 1. Direct address lookup (local + IONOS).
-    if (email) {
-      const hit = await checkExistingMailbox(email, deps);
-      if (hit.found) {
-        return res.json({ exists: true, email: hit.email, source: hit.source, checked: [...checked, "ionos"] });
-      }
-    }
-
-    // 2. Name-based lookup: match against users, then probe the likely
-    //    candidate addresses (base, base-2, ...) in both systems.
-=======
     const { candidateForwardAddresses } = await import("./email-provisioning/forwards.js");
     const store = await import("./email-provisioning/store.js");
 
@@ -16363,7 +16336,6 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
 
     // 2. Name-based lookup: legacy table first, then probe candidate
     //    addresses (base, base-2, ...) in both tables.
->>>>>>> d4b2c77270ac3c11b2266c659729b0b8a2e01cae
     if (firstName && lastName) {
       try {
         const byName = await store.findProvisionByName(firstName, lastName);
@@ -16371,35 +16343,14 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
           return res.json({
             exists: true,
             email: byName.email_address,
-<<<<<<< HEAD
-            source: "local",
-            matchedUserId: byName.matched_user_id,
-            checked,
-=======
             source: "legacy",
             matchedUserId: byName.matched_user_id,
             checked: ["forwards", "legacy"],
->>>>>>> d4b2c77270ac3c11b2266c659729b0b8a2e01cae
           });
         }
       } catch {
         // Name lookup is best-effort — fall through to candidate probing.
       }
-<<<<<<< HEAD
-      for (const candidate of candidateEmails(firstName, lastName)) {
-        const hit = await checkExistingMailbox(candidate, deps);
-        if (hit.found) {
-          return res.json({ exists: true, email: hit.email, source: hit.source, checked: [...checked, "ionos"] });
-        }
-      }
-    }
-
-    return res.json({ exists: false, email: null, source: null, checked: [...checked, "ionos"] });
-  });
-
-  // Trigger business email provisioning for a user (manager/admin only).
-  reg("post", "/api/onboarding/provision-email"); app.post("/api/onboarding/provision-email", async (req, res) => {
-=======
       for (const candidate of candidateForwardAddresses(firstName, lastName)) {
         const hit = await checkOne(candidate);
         if (hit) return res.json({ ...hit, checked: ["forwards", "legacy"] });
@@ -16414,7 +16365,6 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
   // the request. A manager then creates the forward manually in the IONOS
   // Control Panel and marks it active. Idempotent per user.
   reg("post", "/api/onboarding/request-forward"); app.post("/api/onboarding/request-forward", async (req, res) => {
->>>>>>> d4b2c77270ac3c11b2266c659729b0b8a2e01cae
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -16435,20 +16385,11 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
         source: "manual",
       },
       {
-<<<<<<< HEAD
-        emailTaken: store.emailTaken,
-        getExistingProvision: store.getProvisionByUser,
-        saveProvision: store.saveProvision,
-        getProvisionByEmail: store.getProvisionByEmail,
-        saveProvision: store.saveProvision,
-        linkExternalProvision: store.linkExternalProvision,
-=======
         addressTaken: store.forwardAddressTaken,
         getForwardByUser: store.getForwardByUser,
         getForwardByAddress: store.getForwardByAddress,
         createForwardRequest: (row) =>
           store.createForwardRequest({ ...row, requestedBy: Number((user as any).id) }),
->>>>>>> d4b2c77270ac3c11b2266c659729b0b8a2e01cae
         markChecklistEmailProvisioned: store.markChecklistEmailProvisioned,
       }
     );
