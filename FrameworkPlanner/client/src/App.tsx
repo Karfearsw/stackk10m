@@ -31,6 +31,7 @@ const ContractWizard = React.lazy(() => import("@/pages/contract-wizard"));
 const ContractDetail = React.lazy(() => import("@/pages/contract-detail"));
 const Analytics = React.lazy(() => import("@/pages/analytics"));
 const Settings = React.lazy(() => import("@/pages/settings"));
+const AssignmentSettings = React.lazy(() => import("@/pages/settings/assignment"));
 const Calculator = React.lazy(() => import("@/pages/calculator"));
 const Timesheet = React.lazy(() => import("@/pages/timesheet"));
 const Notifications = React.lazy(() => import("@/pages/notifications"));
@@ -183,6 +184,7 @@ function Router() {
       <Route path="/contracts/:id" component={() => <ProtectedRoute component={ContractDetail} />} />
       <Route path="/analytics" component={() => <ProtectedRoute component={Analytics} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
+      <Route path="/settings/assignment" component={() => <ProtectedRoute component={AssignmentSettings} />} />
       <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
       <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />
       <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />

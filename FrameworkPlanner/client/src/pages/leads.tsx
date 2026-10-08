@@ -51,7 +51,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Filter, Plus, Search, Building2, MoreHorizontal, Pencil, Trash2, Lightbulb, ListFilter, Columns2, Mic } from "lucide-react";
+import { Filter, Plus, Search, Building2, MoreHorizontal, Pencil, Trash2, Lightbulb, ListFilter, Columns2, Mic, UserPlus } from "lucide-react";
 import { useLocation } from "wouter";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
@@ -236,6 +236,9 @@ export default function Leads() {
     setExcludedIds(new Set());
   }, [selectionSignature]);
   const [selectedLeadId, setSelectedLeadId] = useState<number | null>(null);
+  const [isAssignOpen, setIsAssignOpen] = useState(false);
+  const [assignUserId, setAssignUserId] = useState("");
+  const [assignReason, setAssignReason] = useState("");
   const [isLeadSheetOpen, setIsLeadSheetOpen] = useState(false);
   // DEV-007: in-app delete confirmation. Native confirm() proved unreliable
   // (blocked/suppressed dialogs left the delete button looking inert), so the
@@ -1046,6 +1049,43 @@ export default function Leads() {
     if (!selectedLeadId) return null;
     return (leads || []).find((l: any) => l.id === selectedLeadId) || null;
   }, [leads, selectedLeadId]);
+
+  // Ticket 12 — manual lead assignment
+  const { data: assignUsersData } = useQuery({
+    queryKey: ["/api/users"],
+    queryFn: async () => (await apiRequest("GET", "/api/users")).json(),
+    enabled: isAssignOpen,
+  });
+  const assignUsers: any[] = (assignUsersData?.users || []).filter((u: any) => u.isActive !== false);
+
+  const assignLeadMutation = useMutation({
+    mutationFn: async ({ leadId, userId, reason }: { leadId: number; userId: number; reason: string }) =>
+      (await apiRequest("POST", `/api/leads/${leadId}/assign`, { userId, reason })).json(),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["leads"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assignment/unassigned"] });
+      setIsAssignOpen(false); setAssignUserId(""); setAssignReason("");
+      toast({ title: "Lead assigned" });
+    },
+    onError: (e: any) => toast({ title: "Assignment failed", description: e.message, variant: "destructive" }),
+  });
+
+  const autoAssignLeadMutation = useMutation({
+    mutationFn: async (leadId: number) => {
+      const dr = await (await apiRequest("POST", "/api/assignment/dry-run", { leadId })).json();
+      if (!dr.decision?.assignedToUserId) throw new Error(dr.decision?.reason || "No rule fired for this lead");
+      return (await apiRequest("POST", `/api/leads/${leadId}/assign`, {
+        userId: dr.decision.assignedToUserId,
+        reason: `Auto-assigned via rule "${dr.decision.ruleName}"`,
+      })).json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["leads"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/assignment/unassigned"] });
+      toast({ title: "Lead auto-assigned by routing rules" });
+    },
+    onError: (e: any) => toast({ title: "Auto-assign failed", description: e.message, variant: "destructive" }),
+  });
 
   const selectedCount = useMemo(() => {
     if (selectionMode === "all_filtered") return Math.max(0, leadsTotal - excludedIds.size);
@@ -2331,6 +2371,10 @@ export default function Leads() {
                   {pipelineColumnsWithMissing.find((s) => s.value === selectedLead.status)?.label || selectedLead.status}
                 </Badge>
                 <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => { setAssignUserId(""); setAssignReason(""); setIsAssignOpen(true); }}>
+                    <UserPlus className="mr-2 h-4 w-4" />
+                    {selectedLead.assignedTo ? "Reassign" : "Assign"}
+                  </Button>
                   <Button variant="outline" size="sm" onClick={() => openVoiceForLeadId(selectedLead.id)}>
                     <Mic className="mr-2 h-4 w-4" />
                     Voice
@@ -2436,6 +2480,53 @@ export default function Leads() {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Ticket 12 — manual lead assignment */}
+      <Dialog open={isAssignOpen} onOpenChange={setIsAssignOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{selectedLead?.assignedTo ? "Reassign lead" : "Assign lead"}</DialogTitle>
+            <DialogDescription>
+              {selectedLead ? `${selectedLead.address}, ${selectedLead.city}, ${selectedLead.state}` : ""} — reassignment is logged and preserves history.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Agent</Label>
+              <Select value={assignUserId} onValueChange={setAssignUserId}>
+                <SelectTrigger><SelectValue placeholder="Select an agent…" /></SelectTrigger>
+                <SelectContent>
+                  {assignUsers.map((u: any) => (
+                    <SelectItem key={u.id} value={String(u.id)}>
+                      {[u.firstName, u.lastName].filter(Boolean).join(" ") || u.email} ({u.email})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Reason (optional)</Label>
+              <Textarea value={assignReason} onChange={(e) => setAssignReason(e.target.value)}
+                placeholder="Why is this lead going to this agent?" rows={2} />
+            </div>
+          </div>
+          <DialogFooter className="flex-wrap gap-2">
+            <Button variant="outline" onClick={() => selectedLead && autoAssignLeadMutation.mutate(selectedLead.id)}
+              disabled={autoAssignLeadMutation.isPending}>
+              Auto (rules)
+            </Button>
+            <div className="flex-1" />
+            <Button variant="outline" onClick={() => setIsAssignOpen(false)}>Cancel</Button>
+            <Button
+              disabled={!assignUserId || assignLeadMutation.isPending}
+              onClick={() => selectedLead && assignLeadMutation.mutate({
+                leadId: selectedLead.id, userId: Number(assignUserId), reason: assignReason.trim(),
+              })}>
+              {assignLeadMutation.isPending ? "Assigning…" : "Assign"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={!!editingLead}

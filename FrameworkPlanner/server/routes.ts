@@ -14995,6 +14995,300 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     if (listing.status !== "published") return res.status(404).json({ message: "Not found" });
     res.json({ listingId: listing.id, slug: listing.slug });
   });
+  // ------------------------------------------------------------------
+  // Ticket 12 — Lead assignment & routing rules
+  // ------------------------------------------------------------------
+  reg("get", "/api/assignment/rules"); app.get("/api/assignment/rules", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { assignmentRules } = await import("./shared-schema.js");
+      const { asc } = await import("drizzle-orm");
+      const rows = await db.select().from(assignmentRules)
+        .orderBy(asc(assignmentRules.priorityOrder), asc(assignmentRules.id));
+      res.json({ rules: rows });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  reg("post", "/api/assignment/rules"); app.post("/api/assignment/rules", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+    try {
+      const { assignmentRules } = await import("./shared-schema.js");
+      const { validateRuleConfig, ASSIGNMENT_RULE_TYPES } = await import("./assignment/rules.js");
+      const { name, ruleType, config, priorityOrder } = req.body || {};
+      if (!name || !ruleType) return res.status(400).json({ message: "name and ruleType are required" });
+      if (!ASSIGNMENT_RULE_TYPES.includes(ruleType)) {
+        return res.status(400).json({ message: `Invalid ruleType. Must be one of: ${ASSIGNMENT_RULE_TYPES.join(", ")}` });
+      }
+      const v = validateRuleConfig(ruleType, config || {});
+      if (!v.ok) return res.status(400).json({ message: v.error });
+      const [row] = await db.insert(assignmentRules).values({
+        name: String(name).slice(0, 255),
+        ruleType,
+        config: config || {},
+        priorityOrder: Number.isInteger(priorityOrder) ? priorityOrder : 0,
+        createdBy: user.id,
+      }).returning();
+      res.status(201).json({ rule: row });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  reg("put", "/api/assignment/rules/:id"); app.put("/api/assignment/rules/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+    try {
+      const { assignmentRules } = await import("./shared-schema.js");
+      const { validateRuleConfig, ASSIGNMENT_RULE_TYPES } = await import("./assignment/rules.js");
+      const { eq, sql } = await import("drizzle-orm");
+      const id = Number(req.params.id);
+      const { name, ruleType, config, priorityOrder, isActive } = req.body || {};
+      const existing = await db.select().from(assignmentRules).where(eq(assignmentRules.id, id)).limit(1);
+      if (!existing.length) return res.status(404).json({ message: "Rule not found" });
+      const nextType = ruleType || existing[0].ruleType;
+      if (!ASSIGNMENT_RULE_TYPES.includes(nextType)) {
+        return res.status(400).json({ message: `Invalid ruleType. Must be one of: ${ASSIGNMENT_RULE_TYPES.join(", ")}` });
+      }
+      const v = validateRuleConfig(nextType, config !== undefined ? config : existing[0].config);
+      if (!v.ok) return res.status(400).json({ message: v.error });
+      const [row] = await db.update(assignmentRules).set({
+        name: name !== undefined ? String(name).slice(0, 255) : existing[0].name,
+        ruleType: nextType,
+        config: config !== undefined ? config : existing[0].config,
+        priorityOrder: Number.isInteger(priorityOrder) ? priorityOrder : existing[0].priorityOrder,
+        isActive: typeof isActive === "boolean" ? isActive : existing[0].isActive,
+        // Versioned: every edit bumps the version so audits can pin which version fired.
+        version: sql`${assignmentRules.version} + 1`,
+        updatedAt: new Date(),
+      }).where(eq(assignmentRules.id, id)).returning();
+      res.json({ rule: row });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  reg("delete", "/api/assignment/rules/:id"); app.delete("/api/assignment/rules/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+    try {
+      const { assignmentRules } = await import("./shared-schema.js");
+      const { eq } = await import("drizzle-orm");
+      const id = Number(req.params.id);
+      await db.delete(assignmentRules).where(eq(assignmentRules.id, id));
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Manual assignment — always logged, history preserved on reassign.
+  reg("post", "/api/leads/:id/assign"); app.post("/api/leads/:id/assign", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { leads, users, userCapacity, assignmentLog } = await import("./shared-schema.js");
+      const { eq } = await import("drizzle-orm");
+      const leadId = Number(req.params.id);
+      const { userId, reason } = req.body || {};
+      if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(400).json({ message: "userId is required" });
+      }
+      const leadRows = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+      if (!leadRows.length) return res.status(404).json({ message: "Lead not found" });
+      const target = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+      if (!target.length || !target[0].isActive) {
+        return res.status(400).json({ message: "Cannot assign to an inactive or missing user" });
+      }
+      await db.update(leads).set({ assignedTo: userId }).where(eq(leads.id, leadId));
+      await db.insert(assignmentLog).values({
+        leadId,
+        assignedToUserId: userId,
+        ruleId: null,
+        ruleName: "manual",
+        reason: `Manual assignment by ${user.email}${reason ? `: ${String(reason).slice(0, 500)}` : ""}`,
+        assignedBy: user.id,
+      });
+      res.json({ ok: true, leadId, assignedTo: userId });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Unassign (kept in history as an assignment_log row with null user).
+  reg("post", "/api/leads/:id/unassign"); app.post("/api/leads/:id/unassign", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { leads, assignmentLog } = await import("./shared-schema.js");
+      const { eq } = await import("drizzle-orm");
+      const leadId = Number(req.params.id);
+      const { reason } = req.body || {};
+      await db.update(leads).set({ assignedTo: null }).where(eq(leads.id, leadId));
+      await db.insert(assignmentLog).values({
+        leadId,
+        assignedToUserId: null,
+        ruleId: null,
+        ruleName: "manual-unassign",
+        reason: `Unassigned by ${user.email}${reason ? `: ${String(reason).slice(0, 500)}` : ""}`,
+        assignedBy: user.id,
+      });
+      res.json({ ok: true, leadId, assignedTo: null });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  reg("get", "/api/leads/:id/assignment-history"); app.get("/api/leads/:id/assignment-history", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { assignmentLog } = await import("./shared-schema.js");
+      const { eq, desc } = await import("drizzle-orm");
+      const leadId = Number(req.params.id);
+      const rows = await db.select().from(assignmentLog)
+        .where(eq(assignmentLog.leadId, leadId))
+        .orderBy(desc(assignmentLog.assignedAt))
+        .limit(50);
+      res.json({ history: rows });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Dry-run: which rule WOULD fire for a lead, without persisting.
+  reg("post", "/api/assignment/dry-run"); app.post("/api/assignment/dry-run", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { leads } = await import("./shared-schema.js");
+      const { eq } = await import("drizzle-orm");
+      const { evaluateAssignment } = await import("./assignment/engine.js");
+      const leadId = Number(req.body?.leadId);
+      if (!leadId) return res.status(400).json({ message: "leadId is required" });
+      const rows = await db.select({ id: leads.id, state: leads.state, assignedTo: leads.assignedTo })
+        .from(leads).where(eq(leads.id, leadId)).limit(1);
+      if (!rows.length) return res.status(404).json({ message: "Lead not found" });
+      const decision = await evaluateAssignment({ id: rows[0].id, state: rows[0].state, assignedTo: rows[0].assignedTo });
+      // Resolve winner email for display.
+      let winnerEmail: string | null = null;
+      if (decision.assignedToUserId) {
+        const { users } = await import("./shared-schema.js");
+        const u = await db.select({ email: users.email }).from(users)
+          .where(eq(users.id, decision.assignedToUserId)).limit(1);
+        winnerEmail = u[0]?.email || null;
+      }
+      res.json({ leadId, decision: { ...decision, winnerEmail }, persisted: false });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Auto-assign: run the engine over unassigned leads.
+  reg("post", "/api/assignment/auto-assign"); app.post("/api/assignment/auto-assign", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+    try {
+      const { evaluateAssignment, persistAssignment, getUnassignedLeads } = await import("./assignment/engine.js");
+      const limit = Math.min(Math.max(Number(req.body?.limit) || 100, 1), 1000);
+      const unassigned = await getUnassignedLeads(limit);
+      let assigned = 0;
+      let skipped = 0;
+      const results: Array<{ leadId: number; assignedTo: number | null; ruleName: string | null }> = [];
+      for (const lead of unassigned) {
+        const decision = await evaluateAssignment(lead);
+        if (decision.assignedToUserId != null) {
+          await persistAssignment(lead.id, decision, null);
+          assigned++;
+        } else {
+          skipped++;
+        }
+        results.push({ leadId: lead.id, assignedTo: decision.assignedToUserId, ruleName: decision.ruleName });
+      }
+      res.json({ ok: true, scanned: unassigned.length, assigned, skipped, results: results.slice(0, 100) });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Unassigned leads + alert count for the dashboard/settings panel.
+  reg("get", "/api/assignment/unassigned"); app.get("/api/assignment/unassigned", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { leads } = await import("./shared-schema.js");
+      const { eq, isNull, and, sql, asc } = await import("drizzle-orm");
+      const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+      const rows = await db.select({
+        id: leads.id, address: leads.address, city: leads.city, state: leads.state,
+        ownerName: leads.ownerName, status: leads.status, createdAt: leads.createdAt,
+      }).from(leads)
+        .where(and(isNull(leads.assignedTo), isNull(leads.archivedAt)))
+        .orderBy(asc(leads.id))
+        .limit(limit);
+      const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(leads)
+        .where(and(isNull(leads.assignedTo), isNull(leads.archivedAt)));
+      res.json({ count: Number(count) || 0, leads: rows });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Per-agent capacity / availability / markets.
+  reg("get", "/api/assignment/capacity"); app.get("/api/assignment/capacity", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+    try {
+      const { users, userCapacity, leads } = await import("./shared-schema.js");
+      const { eq, sql } = await import("drizzle-orm");
+      const agents = await db.select({
+        id: users.id, email: users.email, firstName: users.firstName,
+        lastName: users.lastName, isActive: users.isActive, role: users.role,
+      }).from(users).where(eq(users.isActive, true));
+      const caps = await db.select().from(userCapacity);
+      const capByUser = new Map(caps.map((c) => [c.userId, c]));
+      const counts = await db.select({
+        userId: leads.assignedTo, count: sql<number>`count(*)::int`,
+      }).from(leads)
+        .where(sql`${leads.assignedTo} IS NOT NULL AND ${leads.archivedAt} IS NULL`)
+        .groupBy(leads.assignedTo);
+      const countByUser = new Map<number, number>();
+      for (const r of counts) if (r.userId != null) countByUser.set(r.userId, Number(r.count) || 0);
+      res.json({
+        agents: agents.map((a) => {
+          const cap = capByUser.get(a.id);
+          return {
+            ...a,
+            maxLeads: cap?.maxLeads ?? 50,
+            isAvailable: cap?.isAvailable ?? true,
+            markets: cap?.markets ?? [],
+            currentLeads: countByUser.get(a.id) ?? 0,
+          };
+        }),
+      });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  reg("put", "/api/assignment/capacity/:userId"); app.put("/api/assignment/capacity/:userId", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+    try {
+      const { userCapacity } = await import("./shared-schema.js");
+      const targetId = Number(req.params.userId);
+      if (!targetId) return res.status(400).json({ message: "Invalid user id" });
+      const { maxLeads, isAvailable, markets } = req.body || {};
+      const values: Record<string, unknown> = { userId: targetId, updatedAt: new Date() };
+      if (maxLeads !== undefined) {
+        const m = Number(maxLeads);
+        if (!Number.isInteger(m) || m < 0 || m > 10000) return res.status(400).json({ message: "maxLeads must be 0–10000" });
+        values.maxLeads = m;
+      }
+      if (isAvailable !== undefined) {
+        if (typeof isAvailable !== "boolean") return res.status(400).json({ message: "isAvailable must be boolean" });
+        values.isAvailable = isAvailable;
+      }
+      if (markets !== undefined) {
+        if (!Array.isArray(markets) || !markets.every((m) => typeof m === "string")) {
+          return res.status(400).json({ message: "markets must be an array of state codes" });
+        }
+        values.markets = markets.map((m: string) => m.trim().toUpperCase()).filter(Boolean);
+      }
+      const { userId: _uid, ...setValues } = values;
+      await db.insert(userCapacity).values(values as any)
+        .onConflictDoUpdate({ target: userCapacity.userId, set: setValues as any });
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
   await registerMediaRoutes(app, { requireAuth, requireActiveTeam });
 
   if (mode === "serverless") return null;

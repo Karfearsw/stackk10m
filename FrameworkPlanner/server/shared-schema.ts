@@ -2439,3 +2439,52 @@ export type InsertDocsCategory = z.infer<typeof insertDocsCategorySchema>;
 export const insertDocsPageSchema = createInsertSchema(docsPages).omit({ id: true, createdAt: true } as any);
 export type DocsPage = typeof docsPages.$inferSelect;
 export type InsertDocsPage = z.infer<typeof insertDocsPageSchema>;
+
+// ---------------------------------------------------------------------------
+// LEAD ASSIGNMENT & ROUTING (Ticket 12 — P1 engine)
+// Deterministic assignment via ordered, versioned rules. Every decision is
+// logged in assignment_log so reassignment preserves full history.
+// ---------------------------------------------------------------------------
+export const assignmentRules = pgTable("assignment_rules", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 255 }).notNull(),
+  ruleType: varchar("rule_type", { length: 50 }).notNull(),
+  config: jsonb("config").notNull().default({}),
+  priorityOrder: integer("priority_order").notNull().default(0),
+  version: integer("version").notNull().default(1),
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAssignmentRuleSchema = createInsertSchema(assignmentRules).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type AssignmentRuleRow = typeof assignmentRules.$inferSelect;
+export type InsertAssignmentRule = z.infer<typeof insertAssignmentRuleSchema>;
+
+export const assignmentLog = pgTable("assignment_log", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  leadId: integer("lead_id").notNull(),
+  assignedToUserId: integer("assigned_to_user_id"),
+  ruleId: integer("rule_id"),
+  ruleName: varchar("rule_name", { length: 255 }),
+  assignedAt: timestamp("assigned_at").defaultNow(),
+  reason: text("reason"),
+  assignedBy: integer("assigned_by"),
+});
+
+export const insertAssignmentLogSchema = createInsertSchema(assignmentLog).omit({ id: true, assignedAt: true } as any);
+export type AssignmentLogRow = typeof assignmentLog.$inferSelect;
+export type InsertAssignmentLog = z.infer<typeof insertAssignmentLogSchema>;
+
+export const userCapacity = pgTable("user_capacity", {
+  userId: integer("user_id").primaryKey(),
+  maxLeads: integer("max_leads").notNull().default(50),
+  isAvailable: boolean("is_available").notNull().default(true),
+  markets: text("markets").array().notNull().default([]),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertUserCapacitySchema = createInsertSchema(userCapacity).omit({ updatedAt: true } as any);
+export type UserCapacityRow = typeof userCapacity.$inferSelect;
+export type InsertUserCapacity = z.infer<typeof insertUserCapacitySchema>;

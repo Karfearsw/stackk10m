@@ -1221,6 +1221,21 @@ function SettingsContent() {
             <>
               <Card>
                 <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="w-5 h-5" /> Lead Assignment & Routing
+                  </CardTitle>
+                  <CardDescription>
+                    Ordered routing rules automatically assign new leads to agents. Manage rules, test them, and set agent capacity.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Button onClick={() => setLocation("/settings/assignment")}>
+                    Open assignment settings
+                  </Button>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
                   <CardTitle>Teams</CardTitle>
                   <CardDescription>Join teams, switch active team, and manage membership.</CardDescription>
                 </CardHeader>
