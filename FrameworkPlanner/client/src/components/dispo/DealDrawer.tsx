@@ -18,7 +18,7 @@ import { OffersTracker } from "./OffersTracker";
 import { BroadcastComposer } from "./BroadcastComposer";
 import { DocsPanel } from "./DocsPanel";
 import { DispoScriptsPanel } from "./DispoScriptsPanel";
-import { BedDouble, Bath, Ruler, MapPin, Phone, FileText } from "lucide-react";
+import { BedDouble, Bath, Ruler, MapPin, Phone, FileText, Calculator } from "lucide-react";
 
 export interface DealCardData {
   id: number;
@@ -152,6 +152,14 @@ export function DealDrawer({
                   onClick={() => navigate(`/messages?dealId=${deal.id}`)}
                 >
                   <FileText className="h-4 w-4 mr-2" /> Message
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => navigate(`/calculator?address=${encodeURIComponent([deal.address, deal.city, deal.state, deal.zipCode].filter(Boolean).join(", "))}`)}
+                >
+                  <Calculator className="h-4 w-4 mr-2" /> Calculator
                 </Button>
               </div>
               <ScrollArea className="mt-3 h-[calc(100vh-430px)] pr-3">
