@@ -2643,19 +2643,19 @@ export default function Leads() {
                     SMS consent
                   </label>
                   <label className="flex items-center gap-2 text-sm">
-                    <Checkbox checked={!!editingLead.emailConsent} onCheckedChange={(v) => setEditingLead({ ...editingLead, emailConsent: !!v })} data-testid="checkbox-email-consent" />
+                    <Checkbox checked={!!editingLead?.emailConsent} onCheckedChange={(v) => setEditingLead({ ...editingLead, emailConsent: !!v })} data-testid="checkbox-email-consent" />
                     Email consent
                   </label>
                   <label className="flex items-center gap-2 text-sm">
-                    <Checkbox checked={!!editingLead.doNotCall} onCheckedChange={(v) => setEditingLead({ ...editingLead, doNotCall: !!v })} data-testid="checkbox-dnc" />
+                    <Checkbox checked={!!editingLead?.doNotCall} onCheckedChange={(v) => setEditingLead({ ...editingLead, doNotCall: !!v })} data-testid="checkbox-dnc" />
                     Do Not Call
                   </label>
                   <label className="flex items-center gap-2 text-sm">
-                    <Checkbox checked={!!editingLead.doNotText} onCheckedChange={(v) => setEditingLead({ ...editingLead, doNotText: !!v })} data-testid="checkbox-dnt" />
+                    <Checkbox checked={!!editingLead?.doNotText} onCheckedChange={(v) => setEditingLead({ ...editingLead, doNotText: !!v })} data-testid="checkbox-dnt" />
                     Do Not Text
                   </label>
                   <label className="flex items-center gap-2 text-sm">
-                    <Checkbox checked={!!editingLead.doNotEmail} onCheckedChange={(v) => setEditingLead({ ...editingLead, doNotEmail: !!v })} data-testid="checkbox-dne" />
+                    <Checkbox checked={!!editingLead?.doNotEmail} onCheckedChange={(v) => setEditingLead({ ...editingLead, doNotEmail: !!v })} data-testid="checkbox-dne" />
                     Do Not Email
                   </label>
                 </div>
