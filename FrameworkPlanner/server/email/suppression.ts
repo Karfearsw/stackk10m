@@ -5,7 +5,7 @@
  * send path checks this list first. Suppression is permanent until manually
  * removed — a bounced address never gets retried by automation.
  */
-import { db } from "../../db.js";
+import { db } from "../db.js";
 import { sql } from "drizzle-orm";
 
 export type SuppressionReason = "bounce" | "complaint" | "optout";
