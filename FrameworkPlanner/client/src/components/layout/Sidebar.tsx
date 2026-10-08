@@ -21,6 +21,7 @@ import {
   PhoneCall,
   Send,
   Voicemail,
+  Repeat,
   CheckSquare,
   CalendarDays,
   CalendarCheck2,
@@ -75,6 +76,8 @@ const menuGroups = [
       { name: "Dialer Workspace", href: "/dialer-workspace", icon: Phone },
       { name: "Video Meetings", href: "/workspace/communications", icon: Video },
       { name: "Messages", href: "/messages", icon: MessageSquare },
+      // TICKET-14: Follow-up sequences
+      { name: "Sequences", href: "/sequences", icon: Repeat },
       { name: "Voicemail", href: "/voicemail", icon: Voicemail },
       { name: "Communications", href: "/workspace/communications", icon: PhoneCall },
     ],

@@ -626,6 +626,12 @@ await pool.query(`
   const { registerDispositionRoutes } = await import("./routes/dispo.js");
   registerDispositionRoutes(app);
   // DISPO-PHASE1-END
+  // TICKET-14 (feat/ticket-14-followup-sequences): Follow-up sequence routes.
+  // Mounted outside registerRoutes (server/routes.ts) to avoid conflicts
+  // with parallel ticket work. See server/routes/sequences.ts.
+  const { registerSequenceRoutes } = await import("./routes/sequences.js");
+  registerSequenceRoutes(app);
+  // TICKET-14-END
 
   const isServerless = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
 

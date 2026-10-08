@@ -32,6 +32,8 @@ const ContractDetail = React.lazy(() => import("@/pages/contract-detail"));
 const Analytics = React.lazy(() => import("@/pages/analytics"));
 const Settings = React.lazy(() => import("@/pages/settings"));
 const Calculator = React.lazy(() => import("@/pages/calculator"));
+// TICKET-14 (feat/ticket-14-followup-sequences): Follow-up sequences page.
+const Sequences = React.lazy(() => import("@/pages/sequences"));
 const Timesheet = React.lazy(() => import("@/pages/timesheet"));
 const Notifications = React.lazy(() => import("@/pages/notifications"));
 const MessagesPage = React.lazy(() => import("@/pages/messages"));
@@ -184,6 +186,8 @@ function Router() {
       <Route path="/analytics" component={() => <ProtectedRoute component={Analytics} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
       <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
+      {/* TICKET-14: Follow-up sequences */}
+      <Route path="/sequences" component={() => <ProtectedRoute component={Sequences} />} />
       <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />
       <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
       <Route path="/messages" component={() => <ProtectedRoute component={MessagesPage} />} />
