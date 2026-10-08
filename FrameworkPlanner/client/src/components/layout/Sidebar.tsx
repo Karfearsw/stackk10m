@@ -28,6 +28,7 @@ import {
   Zap,
   ScrollText,
   FileSignature,
+  PenLine,
   Shield,
   ActivitySquare,
   MoreHorizontal,
@@ -50,54 +51,52 @@ const primaryNavigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Leads Pipeline", href: "/leads", icon: Users },
   { name: "Opportunities", href: "/opportunities", icon: Building2 },
-  { name: "Contacts", href: "/contacts", icon: Users },
-  { name: "Team", href: "/team", icon: UsersRound },
-  { name: "Settings", href: "/settings", icon: Settings },
+  { name: "Buyers", href: "/buyers", icon: UserCheck },
+  { name: "Disposition", href: "/disposition", icon: Handshake },
+  { name: "Contracts", href: "/contracts", icon: FileText },
 ];
 
 const menuGroups = [
+  {
+    name: "Find Deals",
+    icon: Briefcase,
+    items: [
+      { name: "Campaigns", href: "/campaigns", icon: Send },
+      { name: "Contacts", href: "/contacts", icon: Users },
+      { name: "Companies", href: "/companies", icon: Building2 },
+    ],
+  },
   {
     name: "Communication",
     icon: MessageSquare,
     items: [
       { name: "Phone", href: "/phone", icon: Phone },
       { name: "Dialer Workspace", href: "/dialer-workspace", icon: Phone },
-      { name: "Communications", href: "/workspace/communications", icon: PhoneCall },
-      { name: "Voicemail", href: "/voicemail", icon: Voicemail },
       { name: "Messages", href: "/messages", icon: MessageSquare },
+      { name: "Voicemail", href: "/voicemail", icon: Voicemail },
+      { name: "Communications", href: "/workspace/communications", icon: PhoneCall },
     ],
   },
   {
-    name: "Schedule",
+    name: "Closing",
+    icon: FolderOpen,
+    items: [
+      { name: "LOIs", href: "/lois", icon: FileSignature },
+      { name: "E-Sign", href: "/contracts", icon: PenLine },
+      { name: "Documents", href: "/documents", icon: FolderOpen },
+      { name: "Documentation", href: "/docs", icon: BookOpen },
+    ],
+  },
+  {
+    name: "Team & Schedule",
     icon: CalendarDays,
     items: [
       { name: "Today", href: "/today", icon: CalendarCheck2 },
       { name: "Tasks", href: "/tasks", icon: CheckSquare },
       { name: "Calendar", href: "/calendar", icon: CalendarDays },
+      { name: "Team", href: "/team", icon: UsersRound },
+      { name: "Timesheet", href: "/timesheet", icon: Clock },
       { name: "XP Booking", href: "/xp", icon: Ticket },
-    ],
-  },
-  {
-    name: "Workflows",
-    icon: Briefcase,
-    items: [
-      { name: "Campaigns", href: "/campaigns", icon: Send },
-      { name: "Buyers", href: "/buyers", icon: UserCheck },
-      // DISPO-PHASE1 (feat/dispo-phase1): Disposition workspace. Note: a
-      // parallel builder is removing RVM + Field Mode from this same
-      // Workflows section — different lines, no overlap expected.
-      { name: "Disposition", href: "/disposition", icon: Handshake },
-      { name: "Contracts", href: "/contracts", icon: FileText },
-    ],
-  },
-  {
-    name: "Documents",
-    icon: FolderOpen,
-    items: [
-      { name: "Companies", href: "/companies", icon: Building2 },
-      { name: "Documents", href: "/documents", icon: FolderOpen },
-      { name: "LOIs", href: "/lois", icon: FileSignature },
-      { name: "Documentation", href: "/docs", icon: BookOpen },
     ],
   },
   {
@@ -106,22 +105,22 @@ const menuGroups = [
     items: [
       { name: "Analytics", href: "/analytics", icon: PieChart },
       { name: "Automations", href: "/automations", icon: Zap },
-      { name: "Audit Log", href: "/audit-log", icon: ScrollText },
-      { name: "Audit", href: "/audit", icon: Shield },
+      { name: "Scripts", href: "/scripts", icon: FileText },
+      { name: "Call Audit", href: "/call-audit", icon: ScrollText },
     ],
   },
   {
-    name: "Tools",
+    name: "System",
     icon: Wrench,
     items: [
-      { name: "Calculator", href: "/calculator", icon: Calculator },
-      { name: "Timesheet", href: "/timesheet", icon: Clock },
+      { name: "Settings", href: "/settings", icon: Settings },
       { name: "Notifications", href: "/notifications", icon: Bell },
       { name: "System Health", href: "/system-health", icon: ActivitySquare },
+      { name: "Audit Log", href: "/audit-log", icon: ScrollText },
+      { name: "Audit", href: "/audit", icon: Shield },
+      { name: "Calculator", href: "/calculator", icon: Calculator },
       // Owner decision Oct 7: Voice Playground is dev-only — not in prod nav.
       ...(import.meta.env.DEV ? [{ name: "Playground", href: "/playground", icon: Lightbulb }] : []),
-      { name: "Scripts", href: "/scripts", icon: FileText },
-      { name: "Call Audit", href: "/call-audit", icon: ScrollText },
     ],
   },
 ];

@@ -4,6 +4,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   DISPO_STAGES,
   DISPO_STAGE_LABELS,
@@ -12,7 +13,7 @@ import {
 } from "@shared/dispo-stages";
 import { MetricsStrip } from "@/components/dispo/MetricsStrip";
 import { DealDrawer, type DealCardData } from "@/components/dispo/DealDrawer";
-import { BedDouble, Clock, Users } from "lucide-react";
+import { BedDouble, Clock, Users, LayoutGrid, List } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -145,6 +146,17 @@ export default function DispositionPage() {
         </div>
       )}
 
+      <Tabs defaultValue="board" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="board" className="gap-2">
+            <LayoutGrid className="h-4 w-4" /> Board
+          </TabsTrigger>
+          <TabsTrigger value="list" className="gap-2">
+            <List className="h-4 w-4" /> All Deals
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="board">
       <div className="grid auto-cols-[280px] grid-flow-col gap-3 overflow-x-auto pb-4 lg:grid-flow-col">
         {DISPO_STAGES.map((stage) => {
           const columnDeals = filterDealsByDispoStage(deals, stage);
@@ -198,6 +210,49 @@ export default function DispositionPage() {
           );
         })}
       </div>
+        </TabsContent>
+
+        <TabsContent value="list">
+          <Card>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b text-left text-muted-foreground">
+                      <th className="p-3 font-medium">Property</th>
+                      <th className="p-3 font-medium">Stage</th>
+                      <th className="p-3 font-medium">Asking</th>
+                      <th className="p-3 font-medium">Offers</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoading && (
+                      <tr><td colSpan={4} className="p-6 text-center text-muted-foreground">Loading…</td></tr>
+                    )}
+                    {!isLoading && deals.map((deal) => (
+                      <tr
+                        key={deal.id}
+                        className="border-b last:border-0 hover:bg-muted/50 cursor-pointer"
+                        onClick={() => setOpenDeal(deal)}
+                      >
+                        <td className="p-3 font-medium">{deal.address || `Deal #${deal.id}`}</td>
+                        <td className="p-3">
+                          <Badge variant="secondary">{DISPO_STAGE_LABELS[deal.stage as DispoStage] || deal.stage}</Badge>
+                        </td>
+                        <td className="p-3">{money(deal.askingPrice ?? null)}</td>
+                        <td className="p-3">{deal.offerCount ?? 0}</td>
+                      </tr>
+                    ))}
+                    {!isLoading && deals.length === 0 && (
+                      <tr><td colSpan={4} className="p-6 text-center text-muted-foreground">No deals yet.</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       <DealDrawer deal={openDeal} onClose={() => setOpenDeal(null)} />
     </div>
