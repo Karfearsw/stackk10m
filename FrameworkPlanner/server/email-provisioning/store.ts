@@ -1,12 +1,35 @@
 /**
- * Database access for email provisioning + onboarding checklist.
+ * Database access for email forward workflow + onboarding checklist.
  *
  * Uses the shared drizzle `db` handle with raw SQL — same pattern as
- * server/email/suppression.ts. Tables are created by migration
- * 0091_email_provisioning.sql.
+ * server/email/suppression.ts.
+ *
+ * Tables:
+ *  - email_forwards (migration 0093): the forward-request workflow.
+ *    IONOS has no email API, so forwards are created manually in the
+ *    IONOS Control Panel and tracked here.
+ *  - provisioned_emails (migrations 0091/0092): legacy mailbox-based
+ *    records. Kept for dedup lookups — check-email consults both.
+ *  - onboarding_checklist (migration 0091): gates live-lead access.
  */
 import { db } from "../db.js";
 import { sql } from "drizzle-orm";
+import type { ForwardStatus, ForwardSource } from "./forwards.js";
+
+export type EmailForwardRow = {
+  id: number;
+  user_id: number;
+  forward_address: string;
+  target_email: string;
+  status: ForwardStatus;
+  source: ForwardSource | null;
+  requested_by: number | null;
+  created_in_ionos_by: number | null;
+  created_in_ionos_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+};
 
 export type ProvisionedEmailRow = {
   id: number;
@@ -41,6 +64,130 @@ export type ChecklistRow = {
 function rowsOf(r: any): any[] {
   return (r as any)?.rows ?? (r as any) ?? [];
 }
+
+// ---------------------------------------------------------------------------
+// Email forwards (migration 0093) — the manual forward workflow.
+// ---------------------------------------------------------------------------
+
+/** True if a forward address is already taken (forward table OR legacy provisioned table). */
+export async function forwardAddressTaken(address: string): Promise<boolean> {
+  const key = String(address || "").toLowerCase().trim();
+  const r = await db.execute(sql`
+    SELECT 1 FROM email_forwards WHERE lower(forward_address) = ${key} LIMIT 1
+  `);
+  if (rowsOf(r).length > 0) return true;
+  const r2 = await db.execute(sql`
+    SELECT 1 FROM provisioned_emails WHERE lower(email_address) = ${key} LIMIT 1
+  `);
+  return rowsOf(r2).length > 0;
+}
+
+export async function getForwardByUser(userId: number): Promise<EmailForwardRow | null> {
+  const r = await db.execute(sql`SELECT * FROM email_forwards WHERE user_id = ${userId} LIMIT 1`);
+  return rowsOf(r)[0] || null;
+}
+
+/** Find a forward by address (case-insensitive) — dedup. */
+export async function getForwardByAddress(address: string): Promise<EmailForwardRow | null> {
+  const r = await db.execute(sql`SELECT * FROM email_forwards WHERE lower(forward_address) = lower(${address}) LIMIT 1`);
+  return rowsOf(r)[0] || null;
+}
+
+export async function createForwardRequest(row: {
+  userId: number;
+  address: string;
+  targetEmail: string;
+  source: ForwardSource;
+  requestedBy?: number | null;
+}): Promise<EmailForwardRow> {
+  const r = await db.execute(sql`
+    INSERT INTO email_forwards (user_id, forward_address, target_email, status, source, requested_by)
+    VALUES (${row.userId}, ${row.address}, ${row.targetEmail}, 'requested', ${row.source}, ${row.requestedBy ?? null})
+    RETURNING *
+  `);
+  return rowsOf(r)[0];
+}
+
+/** Move a forward to pending_creation (manager acknowledged the request). */
+export async function markForwardPendingCreation(id: number): Promise<EmailForwardRow | null> {
+  const r = await db.execute(sql`
+    UPDATE email_forwards
+    SET status = 'pending_creation', updated_at = now()
+    WHERE id = ${id} AND status = 'requested'
+    RETURNING *
+  `);
+  return rowsOf(r)[0] || null;
+}
+
+/**
+ * Mark a forward active — the manager created it in the IONOS panel.
+ * Flips the onboarding checklist's email_provisioned flag.
+ */
+export async function markForwardActive(id: number, createdBy: number, notes?: string | null): Promise<EmailForwardRow | null> {
+  const r = await db.execute(sql`
+    UPDATE email_forwards
+    SET status = 'active',
+        created_in_ionos_by = ${createdBy},
+        created_in_ionos_at = now(),
+        notes = COALESCE(${notes ?? null}, notes),
+        updated_at = now()
+    WHERE id = ${id} AND status IN ('requested', 'pending_creation')
+    RETURNING *
+  `);
+  const row = rowsOf(r)[0] || null;
+  if (row) {
+    await markChecklistEmailProvisioned(row.user_id, true);
+  }
+  return row;
+}
+
+/** Mark a forward failed with a reason. */
+export async function markForwardFailed(id: number, reason: string): Promise<EmailForwardRow | null> {
+  const r = await db.execute(sql`
+    UPDATE email_forwards
+    SET status = 'failed', notes = ${reason}, updated_at = now()
+    WHERE id = ${id}
+    RETURNING *
+  `);
+  return rowsOf(r)[0] || null;
+}
+
+export async function listForwards(status?: string): Promise<EmailForwardRow[]> {
+  const r = status
+    ? await db.execute(sql`SELECT * FROM email_forwards WHERE status = ${status} ORDER BY created_at DESC`)
+    : await db.execute(sql`SELECT * FROM email_forwards ORDER BY created_at DESC`);
+  return rowsOf(r);
+}
+
+/** Queue of forwards needing manual IONOS creation (manager view). */
+export async function forwardCreationQueue(): Promise<Array<EmailForwardRow & { first_name: string | null; last_name: string | null; signup_email: string }>> {
+  const r = await db.execute(sql`
+    SELECT ef.*, u.first_name, u.last_name, u.email AS signup_email
+    FROM email_forwards ef
+    JOIN users u ON u.id = ef.user_id
+    WHERE ef.status IN ('requested', 'pending_creation')
+    ORDER BY ef.created_at ASC
+  `);
+  return rowsOf(r);
+}
+
+/** Users who have no forward (and no legacy provisioned email) yet. */
+export async function usersNeedingForward(): Promise<Array<{ id: number; first_name: string | null; last_name: string | null; email: string; role: string | null }>> {
+  const r = await db.execute(sql`
+    SELECT u.id, u.first_name, u.last_name, u.email, u.role
+    FROM users u
+    LEFT JOIN email_forwards ef ON ef.user_id = u.id
+    LEFT JOIN provisioned_emails pe ON pe.user_id = u.id
+    WHERE ef.id IS NULL AND pe.id IS NULL AND u.is_active = true
+      AND u.email NOT LIKE '%@oceanluxe.org'
+    ORDER BY u.created_at ASC
+  `);
+  return rowsOf(r);
+}
+
+// ---------------------------------------------------------------------------
+// Legacy provisioned_emails (migrations 0091/0092) — kept for dedup lookups.
+// ---------------------------------------------------------------------------
 
 export async function emailTaken(email: string): Promise<boolean> {
   const r = await db.execute(sql`SELECT 1 FROM provisioned_emails WHERE email_address = ${email} LIMIT 1`);

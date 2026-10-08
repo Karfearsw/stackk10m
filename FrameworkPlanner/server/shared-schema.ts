@@ -2715,6 +2715,26 @@ export const provisionedEmails = pgTable("provisioned_emails", {
 
 export type ProvisionedEmail = typeof provisionedEmails.$inferSelect;
 
+// EMAIL FORWARD WORKFLOW (migration 0093)
+// IONOS has no email API — forwards are created manually in the IONOS
+// Control Panel and tracked here. Requested → pending_creation → active.
+export const emailForwards = pgTable("email_forwards", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull().unique(),
+  forwardAddress: varchar("forward_address", { length: 255 }).notNull().unique(),
+  targetEmail: varchar("target_email", { length: 255 }).notNull(),
+  status: varchar("status", { length: 30 }).notNull().default("requested"),
+  source: varchar("source", { length: 30 }),
+  requestedBy: integer("requested_by"),
+  createdInIonosBy: integer("created_in_ionos_by"),
+  createdInIonosAt: timestamp("created_in_ionos_at"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type EmailForward = typeof emailForwards.$inferSelect;
+
 export const onboardingChecklist = pgTable("onboarding_checklist", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   userId: integer("user_id").notNull().unique(),

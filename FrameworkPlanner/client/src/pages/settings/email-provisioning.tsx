@@ -1,11 +1,16 @@
 /**
- * Settings → Email Provisioning & Onboarding.
+ * Settings → Email Forwards & Onboarding.
  *
- * Business email auto-provisioning through IONOS:
- *   - IONOS connection status (configured / what's missing)
- *   - Pending provisioning queue (users without a business email)
- *   - Provisioned emails list
- *   - Per-user onboarding checklist with live-lead access gate
+ * IONOS has no email API — forwards are created manually in the IONOS
+ * Control Panel and tracked here:
+ *
+ *   requested → pending_creation → active
+ *                                    ↘ failed
+ *
+ *   - Forward Management card explains the manual workflow.
+ *   - Creation queue shows pending forwards with copy-paste values and
+ *     step-by-step IONOS instructions.
+ *   - Per-user onboarding checklist with live-lead access gate.
  */
 import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
@@ -20,42 +25,48 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
-  Mail, Server, AlertTriangle, CheckCircle2, XCircle, Clock,
-  UserPlus, ShieldCheck, RefreshCw, Send, FileText,
+  Mail, Info, AlertTriangle, CheckCircle2, XCircle, Clock,
+  UserPlus, ShieldCheck, Copy, Check, Send, FileText, ExternalLink,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 
-type IonosStatus = {
-  configured: boolean;
-  missing: string[];
-  hasApiKey: boolean;
-  hasApiSecret: boolean;
-  hasContractId: boolean;
+type ForwardInfo = {
+  workflow: string;
+  domain: string;
+  steps: string[];
+  note: string;
 };
 
-type QueuedUser = {
+type QueuedForward = {
+  id: number;
+  user_id: number;
+  forward_address: string;
+  target_email: string;
+  status: "requested" | "pending_creation" | "active" | "failed";
+  notes: string | null;
+  created_at: string;
+  first_name: string | null;
+  last_name: string | null;
+  signup_email: string;
+};
+
+type NeedingUser = {
   id: number;
   first_name: string | null;
   last_name: string | null;
   email: string;
   role: string | null;
-  // from pendingProvisionQueue join
-  email_address?: string;
-  status?: string;
-  error?: string | null;
-  signup_email?: string;
 };
 
-type ProvisionedEmail = {
+type EmailForward = {
   id: number;
   user_id: number;
-  email_address: string;
-  ionos_mailbox_id: string | null;
-  forwarding_to: string | null;
-  status: "pending" | "active" | "failed";
-  error: string | null;
+  forward_address: string;
+  target_email: string;
+  status: "requested" | "pending_creation" | "active" | "failed";
+  notes: string | null;
   created_at: string;
-  provisioned_at: string | null;
+  created_in_ionos_at: string | null;
 };
 
 type Checklist = {
@@ -78,7 +89,7 @@ const CHECKLIST_LABELS: Array<{ key: keyof Checklist; label: string }> = [
   { key: "id_verified", label: "ID verified" },
   { key: "payout_setup", label: "Payout method set up" },
   { key: "training_completed", label: "Training completed" },
-  { key: "email_provisioned", label: "Business email provisioned" },
+  { key: "email_provisioned", label: "Business email forward active" },
 ];
 
 function StatusBadge({ status }: { status: string }) {
@@ -86,28 +97,56 @@ function StatusBadge({ status }: { status: string }) {
     return <Badge className="bg-green-600 text-white"><CheckCircle2 className="h-3 w-3 mr-1" /> Active</Badge>;
   if (status === "failed")
     return <Badge variant="destructive"><XCircle className="h-3 w-3 mr-1" /> Failed</Badge>;
-  return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" /> Pending</Badge>;
+  if (status === "pending_creation")
+    return <Badge variant="secondary"><Clock className="h-3 w-3 mr-1" /> Pending creation</Badge>;
+  return <Badge variant="outline"><Clock className="h-3 w-3 mr-1" /> Requested</Badge>;
+}
+
+function CopyButton({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      className="h-7 px-2"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        } catch {
+          toast.error("Could not copy to clipboard");
+        }
+      }}
+      title={`Copy ${label}`}
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-green-600" /> : <Copy className="h-3.5 w-3.5" />}
+      <span className="ml-1 text-xs">{label}</span>
+    </Button>
+  );
 }
 
 export default function EmailProvisioningSettings() {
   const queryClient = useQueryClient();
-  const [provisionTarget, setProvisionTarget] = useState<QueuedUser | null>(null);
-  const [forwardingTo, setForwardingTo] = useState("");
+  const [requestTarget, setRequestTarget] = useState<NeedingUser | null>(null);
+  const [targetEmail, setTargetEmail] = useState("");
   const [checklistUserId, setChecklistUserId] = useState<number | null>(null);
+  const [failTarget, setFailTarget] = useState<EmailForward | null>(null);
+  const [failReason, setFailReason] = useState("");
 
-  const { data: ionos, isLoading: ionosLoading } = useQuery<IonosStatus>({
-    queryKey: ["/api/onboarding/ionos-status"],
-    queryFn: async () => (await apiRequest("GET", "/api/onboarding/ionos-status")).json(),
+  const { data: info } = useQuery<ForwardInfo>({
+    queryKey: ["/api/onboarding/forward-info"],
+    queryFn: async () => (await apiRequest("GET", "/api/onboarding/forward-info")).json(),
   });
 
-  const { data: queueData, isLoading: queueLoading } = useQuery<{ pending: QueuedUser[]; needing: QueuedUser[] }>({
-    queryKey: ["/api/onboarding/provision-queue"],
-    queryFn: async () => (await apiRequest("GET", "/api/onboarding/provision-queue")).json(),
+  const { data: queueData, isLoading: queueLoading } = useQuery<{ queue: QueuedForward[]; needing: NeedingUser[] }>({
+    queryKey: ["/api/onboarding/forward-queue"],
+    queryFn: async () => (await apiRequest("GET", "/api/onboarding/forward-queue")).json(),
   });
 
-  const { data: provisionedData, isLoading: provLoading } = useQuery<{ items: ProvisionedEmail[] }>({
-    queryKey: ["/api/onboarding/provisioned-emails"],
-    queryFn: async () => (await apiRequest("GET", "/api/onboarding/provisioned-emails")).json(),
+  const { data: forwardsData, isLoading: fwLoading } = useQuery<{ items: EmailForward[] }>({
+    queryKey: ["/api/onboarding/forwards"],
+    queryFn: async () => (await apiRequest("GET", "/api/onboarding/forwards")).json(),
   });
 
   const { data: checklistData, isLoading: checklistLoading } = useQuery<{ checklist: Checklist; complete: boolean; missing: string[] }>({
@@ -116,21 +155,47 @@ export default function EmailProvisioningSettings() {
     enabled: checklistUserId !== null,
   });
 
-  const provision = useMutation({
-    mutationFn: async ({ userId, forwardingTo }: { userId: number; forwardingTo?: string }) =>
-      (await apiRequest("POST", "/api/onboarding/provision-email", { userId, forwardingTo })).json(),
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/onboarding/forward-queue"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/onboarding/forwards"] });
+  };
+
+  const requestForward = useMutation({
+    mutationFn: async ({ userId, targetEmail }: { userId: number; targetEmail: string }) =>
+      (await apiRequest("POST", "/api/onboarding/request-forward", { userId, targetEmail })).json(),
     onSuccess: (d: any) => {
       if (d.ok) {
-        toast.success(`Provisioned ${d.email}`);
+        toast.success(d.alreadyExisted ? `Forward already exists: ${d.address}` : `Forward requested: ${d.address}`);
       } else {
-        toast.error(d.message || "Provisioning failed");
+        toast.error(d.message || "Request failed");
       }
-      queryClient.invalidateQueries({ queryKey: ["/api/onboarding/provision-queue"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/onboarding/provisioned-emails"] });
-      setProvisionTarget(null);
-      setForwardingTo("");
+      invalidate();
+      setRequestTarget(null);
+      setTargetEmail("");
     },
-    onError: (e: any) => toast.error(e?.message || "Provisioning failed"),
+    onError: (e: any) => toast.error(e?.message || "Request failed"),
+  });
+
+  const markActive = useMutation({
+    mutationFn: async (id: number) =>
+      (await apiRequest("POST", `/api/onboarding/forwards/${id}/mark-active`, {})).json(),
+    onSuccess: () => {
+      toast.success("Forward marked active — checklist updated");
+      invalidate();
+    },
+    onError: (e: any) => toast.error(e?.message || "Failed"),
+  });
+
+  const markFailed = useMutation({
+    mutationFn: async ({ id, reason }: { id: number; reason: string }) =>
+      (await apiRequest("POST", `/api/onboarding/forwards/${id}/mark-failed`, { reason })).json(),
+    onSuccess: () => {
+      toast.success("Forward marked failed");
+      invalidate();
+      setFailTarget(null);
+      setFailReason("");
+    },
+    onError: (e: any) => toast.error(e?.message || "Failed"),
   });
 
   const updateChecklist = useMutation({
@@ -159,18 +224,19 @@ export default function EmailProvisioningSettings() {
     onError: (e: any) => toast.error(e?.message || "Failed"),
   });
 
+  const queue = queueData?.queue || [];
   const needing = queueData?.needing || [];
-  const pending = queueData?.pending || [];
-  const provisioned = provisionedData?.items || [];
+  const forwards = forwardsData?.items || [];
+  const activeForwards = forwards.filter((f) => f.status === "active");
 
   return (
     <Layout>
       <div className="space-y-6 p-6">
         <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold">Email Provisioning & Onboarding</h1>
+            <h1 className="text-2xl font-bold">Email Forwards & Onboarding</h1>
             <p className="text-muted-foreground">
-              Auto-create @oceanluxe.org mailboxes through IONOS and track onboarding before granting live-lead access.
+              Manage @oceanluxe.org email forwards and track onboarding before granting live-lead access.
             </p>
           </div>
           <Button variant="outline" onClick={() => (window.location.href = "/settings/onboarding-docs")}>
@@ -178,57 +244,49 @@ export default function EmailProvisioningSettings() {
           </Button>
         </div>
 
-        {/* IONOS status */}
+        {/* Forward workflow explainer */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Server className="h-5 w-5" /> IONOS Connection
+              <Info className="h-5 w-5" /> Forward Management
             </CardTitle>
             <CardDescription>
-              Credentials live in env vars only — this page shows config state, never secrets.
+              IONOS has no email API — each forward is created manually in the IONOS Control Panel, then tracked here.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {ionosLoading ? (
-              <Skeleton className="h-16 w-full" />
-            ) : ionos?.configured ? (
-              <div className="flex items-center gap-2 text-green-600">
-                <CheckCircle2 className="h-5 w-5" />
-                <span className="font-medium">Connected — automatic provisioning is enabled.</span>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-amber-600">
-                  <AlertTriangle className="h-5 w-5" />
-                  <span className="font-medium">Not configured — provisioning will queue as pending.</span>
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  Set these env vars in Vercel to enable automatic IONOS mailbox creation:
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {(ionos?.missing || []).map((v) => (
-                    <Badge key={v} variant="outline" className="font-mono">{v}</Badge>
-                  ))}
-                </div>
-              </div>
-            )}
+            <ol className="list-decimal list-inside space-y-1.5 text-sm">
+              {(info?.steps || [
+                "Sign in to the IONOS Control Panel",
+                "Go to Email in the main navigation",
+                'Click "Set up a new email address" → choose "Forward"',
+                "Paste the forward address and target email below",
+                'Save, then click "Mark Active" in the CRM',
+              ]).map((step, i) => (
+                <li key={i} className="text-muted-foreground">{step}</li>
+              ))}
+            </ol>
+            <p className="mt-3 text-xs text-muted-foreground flex items-center gap-1">
+              <AlertTriangle className="h-3.5 w-3.5" />
+              {info?.note || "Create each forward in IONOS first — the CRM only tracks, it cannot create forwards automatically."}
+            </p>
           </CardContent>
         </Card>
 
-        {/* Users needing email */}
+        {/* Users needing a forward */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <UserPlus className="h-5 w-5" /> Users Needing a Business Email
               {needing.length > 0 && <Badge variant="secondary">{needing.length}</Badge>}
             </CardTitle>
-            <CardDescription>Active users without an @oceanluxe.org address.</CardDescription>
+            <CardDescription>Active users without an @oceanluxe.org forward.</CardDescription>
           </CardHeader>
           <CardContent>
             {queueLoading ? (
               <Skeleton className="h-24 w-full" />
             ) : needing.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Everyone has a business email. 🎉</p>
+              <p className="text-sm text-muted-foreground">Everyone has a business email forward. 🎉</p>
             ) : (
               <div className="space-y-2">
                 {needing.map((u) => (
@@ -241,8 +299,14 @@ export default function EmailProvisioningSettings() {
                       <Button size="sm" variant="outline" onClick={() => setChecklistUserId(u.id)}>
                         Checklist
                       </Button>
-                      <Button size="sm" onClick={() => setProvisionTarget(u)}>
-                        <Mail className="h-4 w-4 mr-1" /> Provision
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          setRequestTarget(u);
+                          setTargetEmail(u.email || "");
+                        }}
+                      >
+                        <Mail className="h-4 w-4 mr-1" /> Request Forward
                       </Button>
                     </div>
                   </div>
@@ -252,67 +316,108 @@ export default function EmailProvisioningSettings() {
           </CardContent>
         </Card>
 
-        {/* Pending / failed queue */}
-        {pending.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Clock className="h-5 w-5" /> Pending / Failed Provisions
-                <Badge variant="secondary">{pending.length}</Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {pending.map((p: any) => (
-                  <div key={p.id} className="flex items-center justify-between rounded-lg border p-3">
-                    <div>
-                      <p className="font-medium">{p.first_name} {p.last_name}</p>
-                      <p className="text-sm text-muted-foreground font-mono">{p.email_address}</p>
-                      {p.error && <p className="text-xs text-destructive mt-1">{p.error}</p>}
+        {/* Creation queue */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Clock className="h-5 w-5" /> Forward Creation Queue
+              {queue.length > 0 && <Badge variant="secondary">{queue.length}</Badge>}
+            </CardTitle>
+            <CardDescription>
+              Create each of these in the IONOS Control Panel (Email → new address → Forward), then mark active.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {queueLoading ? (
+              <Skeleton className="h-24 w-full" />
+            ) : queue.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Queue is clear — nothing waiting for IONOS creation.</p>
+            ) : (
+              <div className="space-y-3">
+                {queue.map((q) => (
+                  <div key={q.id} className="rounded-lg border p-4 space-y-3">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="font-medium">{q.first_name} {q.last_name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Requested {new Date(q.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <StatusBadge status={q.status} />
                     </div>
-                    <div className="flex items-center gap-2">
-                      <StatusBadge status={p.status} />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="rounded-md bg-muted/50 p-3">
+                        <p className="text-xs text-muted-foreground mb-1">Forward address (paste into IONOS)</p>
+                        <div className="flex items-center justify-between gap-2">
+                          <code className="text-sm font-mono break-all">{q.forward_address}</code>
+                          <CopyButton value={q.forward_address} label="Copy" />
+                        </div>
+                      </div>
+                      <div className="rounded-md bg-muted/50 p-3">
+                        <p className="text-xs text-muted-foreground mb-1">Forward target</p>
+                        <div className="flex items-center justify-between gap-2">
+                          <code className="text-sm font-mono break-all">{q.target_email}</code>
+                          <CopyButton value={q.target_email} label="Copy" />
+                        </div>
+                      </div>
+                    </div>
+                    {q.notes && <p className="text-xs text-destructive">{q.notes}</p>}
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={() => markActive.mutate(q.id)}
+                        disabled={markActive.isPending}
+                      >
+                        <CheckCircle2 className="h-4 w-4 mr-1" /> Mark Active
+                      </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => setProvisionTarget({ id: p.user_id, first_name: p.first_name, last_name: p.last_name, email: p.signup_email, role: null })}
+                        onClick={() => setFailTarget({ id: q.id, user_id: q.user_id, forward_address: q.forward_address, target_email: q.target_email, status: q.status, notes: q.notes, created_at: q.created_at, created_in_ionos_at: null })}
                       >
-                        <RefreshCw className="h-4 w-4 mr-1" /> Retry
+                        <XCircle className="h-4 w-4 mr-1" /> Mark Failed
+                      </Button>
+                      <Button size="sm" variant="ghost" asChild>
+                        <a href="https://www.ionos.com/login" target="_blank" rel="noreferrer">
+                          <ExternalLink className="h-4 w-4 mr-1" /> Open IONOS
+                        </a>
                       </Button>
                     </div>
                   </div>
                 ))}
               </div>
-            </CardContent>
-          </Card>
-        )}
+            )}
+          </CardContent>
+        </Card>
 
-        {/* Provisioned emails */}
+        {/* Active forwards */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Mail className="h-5 w-5" /> Provisioned Emails
-              {provisioned.length > 0 && <Badge variant="secondary">{provisioned.length}</Badge>}
+              <Mail className="h-5 w-5" /> Active Forwards
+              {activeForwards.length > 0 && <Badge variant="secondary">{activeForwards.length}</Badge>}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {provLoading ? (
+            {fwLoading ? (
               <Skeleton className="h-24 w-full" />
-            ) : provisioned.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No business emails provisioned yet.</p>
+            ) : activeForwards.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No active forwards yet.</p>
             ) : (
               <div className="space-y-2">
-                {provisioned.map((p) => (
-                  <div key={p.id} className="flex items-center justify-between rounded-lg border p-3">
+                {activeForwards.map((f) => (
+                  <div key={f.id} className="flex items-center justify-between rounded-lg border p-3">
                     <div>
-                      <p className="font-mono font-medium">{p.email_address}</p>
+                      <p className="font-mono font-medium text-sm">{f.forward_address}</p>
                       <p className="text-xs text-muted-foreground">
-                        User #{p.user_id}
-                        {p.forwarding_to && ` · forwards to ${p.forwarding_to}`}
-                        {p.provisioned_at && ` · ${new Date(p.provisioned_at).toLocaleDateString()}`}
+                        → {f.target_email}
+                        {f.created_in_ionos_at && ` · active since ${new Date(f.created_in_ionos_at).toLocaleDateString()}`}
                       </p>
                     </div>
-                    <StatusBadge status={p.status} />
+                    <div className="flex items-center gap-2">
+                      <CopyButton value={f.forward_address} label="Copy" />
+                      <StatusBadge status={f.status} />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -376,52 +481,78 @@ export default function EmailProvisioningSettings() {
           </DialogContent>
         </Dialog>
 
-        {/* Provision dialog */}
-        <Dialog open={provisionTarget !== null} onOpenChange={(o) => !o && setProvisionTarget(null)}>
+        {/* Request forward dialog */}
+        <Dialog open={requestTarget !== null} onOpenChange={(o) => !o && setRequestTarget(null)}>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>Provision Business Email</DialogTitle>
+              <DialogTitle>Request Email Forward</DialogTitle>
             </DialogHeader>
-            {provisionTarget && (
+            {requestTarget && (
               <div className="space-y-4">
                 <p className="text-sm text-muted-foreground">
-                  This will generate an @oceanluxe.org address for{" "}
+                  This will generate an @oceanluxe.org forward address for{" "}
                   <span className="font-medium text-foreground">
-                    {provisionTarget.first_name} {provisionTarget.last_name}
-                  </span>{" "}
-                  and create the mailbox through IONOS.
+                    {requestTarget.first_name} {requestTarget.last_name}
+                  </span>
+                  . You'll create it manually in the IONOS Control Panel, then mark it active here.
                 </p>
-                {!ionos?.configured && (
-                  <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
-                    <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
-                    IONOS is not configured — the address will be reserved and queued as pending until IONOS is set up.
-                  </div>
-                )}
                 <div className="space-y-2">
-                  <Label htmlFor="forwarding">Forward to (optional)</Label>
+                  <Label htmlFor="target">Forward target (personal email)</Label>
                   <Input
-                    id="forwarding"
+                    id="target"
                     type="email"
                     placeholder="personal@gmail.com"
-                    value={forwardingTo}
-                    onChange={(e) => setForwardingTo(e.target.value)}
+                    value={targetEmail}
+                    onChange={(e) => setTargetEmail(e.target.value)}
                   />
                   <p className="text-xs text-muted-foreground">
-                    New mailbox mail will also forward to this personal address.
+                    Mail to the new @oceanluxe.org address will forward to this inbox.
                   </p>
                 </div>
                 <DialogFooter>
-                  <Button variant="outline" onClick={() => setProvisionTarget(null)}>Cancel</Button>
+                  <Button variant="outline" onClick={() => setRequestTarget(null)}>Cancel</Button>
                   <Button
-                    disabled={provision.isPending}
+                    disabled={requestForward.isPending || !targetEmail.trim()}
                     onClick={() =>
-                      provision.mutate({
-                        userId: provisionTarget.id,
-                        forwardingTo: forwardingTo.trim() || undefined,
-                      })
+                      requestForward.mutate({ userId: requestTarget.id, targetEmail: targetEmail.trim() })
                     }
                   >
-                    {provision.isPending ? "Provisioning…" : "Provision Email"}
+                    {requestForward.isPending ? "Requesting…" : "Request Forward"}
+                  </Button>
+                </DialogFooter>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Mark failed dialog */}
+        <Dialog open={failTarget !== null} onOpenChange={(o) => !o && setFailTarget(null)}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Mark Forward Failed</DialogTitle>
+            </DialogHeader>
+            {failTarget && (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Marking <code className="font-mono">{failTarget.forward_address}</code> as failed.
+                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="reason">Reason</Label>
+                  <Input
+                    id="reason"
+                    placeholder="e.g. Address already exists in IONOS"
+                    value={failReason}
+                    onChange={(e) => setFailReason(e.target.value)}
+                  />
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setFailTarget(null)}>Cancel</Button>
+                  <Button
+                    variant="destructive"
+                    disabled={markFailed.isPending}
+                    onClick={() => markFailed.mutate({ id: failTarget.id, reason: failReason.trim() || "No reason given" })}
+                  >
+                    Mark Failed
                   </Button>
                 </DialogFooter>
               </div>
