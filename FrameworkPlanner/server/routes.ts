@@ -14995,6 +14995,128 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     if (listing.status !== "published") return res.status(404).json({ message: "Not found" });
     res.json({ listingId: listing.id, slug: listing.slug });
   });
+  // TICKET-09: Background job queue API.
+  reg("get", "/api/jobs"); app.get("/api/jobs", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { listJobs } = await import("./jobs/queue.js");
+      const result = await listJobs({
+        status: typeof req.query.status === "string" ? req.query.status : undefined,
+        type: typeof req.query.type === "string" ? req.query.type : undefined,
+        limit: typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : undefined,
+        offset: typeof req.query.offset === "string" ? parseInt(req.query.offset, 10) : undefined,
+      });
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(500).json({ message: e?.message || "Failed to list jobs" });
+    }
+  });
+  reg("get", "/api/jobs/health"); app.get("/api/jobs/health", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { getJobCounts, getQueueVitals, getRepeatedFailureCount } = await import("./jobs/queue.js");
+      const [counts, vitals, repeatedFailures] = await Promise.all([
+        getJobCounts(),
+        getQueueVitals(),
+        getRepeatedFailureCount(),
+      ]);
+      const backlogThresholdMs = 15 * 60 * 1000;
+      const alerts: Array<{ kind: string; message: string }> = [];
+      if (vitals.lastSuccessAt == null && (counts.succeeded > 0 || counts.failed > 0 || counts.dead_lettered > 0)) {
+        alerts.push({ kind: "worker_stopped", message: "No successful job completion recorded — the worker may be stopped." });
+      }
+      if (vitals.oldestQueuedAgeMs != null && vitals.oldestQueuedAgeMs > backlogThresholdMs) {
+        alerts.push({ kind: "backlog", message: `Oldest queued job is waiting ${Math.round(vitals.oldestQueuedAgeMs / 60000)} minutes — backlog building up.` });
+      }
+      if (repeatedFailures > 0) {
+        alerts.push({ kind: "repeated_failures", message: `${repeatedFailures} job(s) failed 3+ times in the last 24 hours.` });
+      }
+      if (counts.dead_lettered > 0) {
+        alerts.push({ kind: "dead_letter", message: `${counts.dead_lettered} job(s) in the dead-letter queue need attention.` });
+      }
+      return res.json({ counts, vitals, alerts });
+    } catch (e: any) {
+      return res.status(500).json({ message: e?.message || "Failed to load job health" });
+    }
+  });
+  reg("get", "/api/jobs/dead-letters"); app.get("/api/jobs/dead-letters", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { listDeadLetters } = await import("./jobs/dead-letter.js");
+      const result = await listDeadLetters(
+        typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 50,
+        typeof req.query.offset === "string" ? parseInt(req.query.offset, 10) : 0,
+      );
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(500).json({ message: e?.message || "Failed to list dead letters" });
+    }
+  });
+  reg("post", "/api/jobs"); app.post("/api/jobs", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { enqueueJob } = await import("./jobs/queue.js");
+      const job = await enqueueJob({
+        type: String(req.body?.type || ""),
+        payload: (req.body?.payload as Record<string, unknown>) || {},
+        priority: typeof req.body?.priority === "number" ? req.body.priority : 0,
+        scheduledAt: req.body?.scheduledAt ? new Date(String(req.body.scheduledAt)) : undefined,
+        maxAttempts: typeof req.body?.maxAttempts === "number" ? req.body.maxAttempts : 5,
+        idempotencyKey: typeof req.body?.idempotencyKey === "string" ? req.body.idempotencyKey : undefined,
+      });
+      return res.status(201).json({ job });
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Failed to enqueue job" });
+    }
+  });
+  reg("post", "/api/jobs/:id/retry"); app.post("/api/jobs/:id/retry", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { retryJob } = await import("./jobs/queue.js");
+      const job = await retryJob(parseInt(String(req.params.id), 10));
+      return res.json({ job });
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Failed to retry job" });
+    }
+  });
+  reg("post", "/api/jobs/:id/cancel"); app.post("/api/jobs/:id/cancel", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { cancelJob } = await import("./jobs/queue.js");
+      const job = await cancelJob(parseInt(String(req.params.id), 10));
+      return res.json({ job });
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Failed to cancel job" });
+    }
+  });
+  reg("post", "/api/jobs/dead-letters/:id/retry"); app.post("/api/jobs/dead-letters/:id/retry", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { retryDeadLetter } = await import("./jobs/dead-letter.js");
+      const job = await retryDeadLetter(parseInt(String(req.params.id), 10));
+      return res.json({ job });
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Failed to retry dead-letter job" });
+    }
+  });
+  reg("delete", "/api/jobs/dead-letters/:id"); app.delete("/api/jobs/dead-letters/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { purgeDeadLetter } = await import("./jobs/dead-letter.js");
+      await purgeDeadLetter(parseInt(String(req.params.id), 10));
+      return res.json({ ok: true });
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Failed to purge dead letter" });
+    }
+  });
   await registerMediaRoutes(app, { requireAuth, requireActiveTeam });
 
   if (mode === "serverless") return null;

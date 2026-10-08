@@ -39,6 +39,7 @@ import {
   Wrench,
   UsersRound,
   Handshake,
+  ListChecks,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -118,6 +119,8 @@ const menuGroups = [
       { name: "Settings", href: "/settings", icon: Settings },
       { name: "Notifications", href: "/notifications", icon: Bell },
       { name: "System Health", href: "/system-health", icon: ActivitySquare },
+      {/* TICKET-09: Background job queue health dashboard. */}
+      { name: "Job Queue", href: "/jobs", icon: ListChecks },
       { name: "Audit Log", href: "/audit-log", icon: ScrollText },
       { name: "Audit", href: "/audit", icon: Shield },
       { name: "Calculator", href: "/calculator", icon: Calculator },

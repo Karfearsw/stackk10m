@@ -55,6 +55,7 @@ const CallAuditPage = React.lazy(() => import("@/pages/call-audit"));
 const LoisPage = React.lazy(() => import("@/pages/lois"));
 const VoicemailPage = React.lazy(() => import("@/pages/voicemail"));
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
+const JobsPage = React.lazy(() => import("@/pages/jobs"));
 const TeamsPage = React.lazy(() => import("@/pages/teams"));
 const XpLandingPage = React.lazy(() => import("@/pages/xp/index"));
 const XpExperiencePage = React.lazy(() => import("@/pages/xp/experience"));
@@ -212,6 +213,8 @@ function Router() {
           standalone route so the lifecycle is reachable and /lois doesn't 404. */}
       <Route path="/lois" component={() => <ProtectedRoute component={LoisPage} />} />
       <Route path="/system-health" component={() => <ProtectedRoute component={SystemHealthPage} />} />
+      {/* TICKET-09: Background job queue health dashboard. */}
+      <Route path="/jobs" component={() => <ProtectedRoute component={JobsPage} />} />
       <Route path="/teams" component={() => <ProtectedRoute component={TeamsPage} />} />
       {/* Team Pulse — simplified daily standup (replaces the activity-feed wall) */}
       <Route path="/team" component={() => <ProtectedRoute component={TeamPulsePage} />} />
