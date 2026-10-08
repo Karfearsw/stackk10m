@@ -252,7 +252,22 @@ export default function Dashboard() {
 
     const dealsInPipeline = contractDocuments.filter(doc => 
       doc.status === 'draft' || doc.status === 'sent' || doc.status === 'executed'
-    ).length;
+    );
+
+    // Pipeline value: sum of potential assignment fees from active deals
+    const pipelineValue = dealsInPipeline.reduce((sum: number, doc: any) => {
+      try {
+        const md = doc.mergeData
+          ? typeof doc.mergeData === "string"
+            ? JSON.parse(doc.mergeData)
+            : doc.mergeData
+          : {};
+        const fee = parseFloat(String(md?.closingData?.assignmentFee ?? md?.assignmentFee ?? doc.assignmentFee ?? "0"));
+        return sum + (Number.isFinite(fee) ? fee : 0);
+      } catch {
+        return sum;
+      }
+    }, 0);
 
     const totalLeads = typeof stats?.activeLeads === "number" ? stats.activeLeads : leads.length;
     const conversionRate = totalLeads > 0 
@@ -283,10 +298,19 @@ export default function Dashboard() {
       },
       {
         title: "Deals in Pipeline",
-        value: dealsInPipeline.toString(),
-        change: `${contractDocuments.length} total contracts`,
+        value: dealsInPipeline.length.toString(),
+        change: pipelineValue > 0 ? `$${pipelineValue.toLocaleString()} potential` : `${contractDocuments.length} total contracts`,
         trend: "neutral",
         icon: Briefcase,
+        description: "",
+        href: "/contracts?tab=list&statusIn=draft,sent,executed",
+      },
+      {
+        title: "Pipeline Value",
+        value: pipelineValue > 0 ? `$${pipelineValue.toLocaleString()}` : "$0",
+        change: dealsInPipeline.length > 0 ? `${dealsInPipeline.length} active deals` : "No active deals",
+        trend: "up",
+        icon: DollarSign,
         description: "",
         href: "/contracts?tab=list&statusIn=draft,sent,executed",
       },

@@ -551,16 +551,42 @@ export default function CommunicationsWorkspace() {
                 </div>
               ) : (
                 <div>
-                  <CardTitle className="text-lg">Select a lead or conversation</CardTitle>
-                  <CardDescription className="text-xs">Pick an item from the left panel to load the workspace.</CardDescription>
+                  <CardTitle className="text-lg">Quick call or text</CardTitle>
+                  <CardDescription className="text-xs">Enter a number above, or pick a lead/conversation from the left.</CardDescription>
                 </div>
               )}
             </CardHeader>
             <CardContent>
               {!lead && !selectedThreadPhone ? (
-                <div className="flex flex-col items-center justify-center py-24 text-muted-foreground">
-                  <Phone className="w-10 h-10 mb-2 opacity-40" />
-                  <p className="text-sm">Nothing selected yet</p>
+                <div className="space-y-4 py-6">
+                  <div className="text-center text-muted-foreground">
+                    <Phone className="w-10 h-10 mb-2 opacity-40 mx-auto" />
+                    <p className="text-sm font-medium">Quick call or text</p>
+                    <p className="text-xs">Enter any number — no need to pick a lead first.</p>
+                  </div>
+                  <div className="max-w-md mx-auto space-y-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="quick-comm-number">Phone number</Label>
+                      <Input
+                        id="quick-comm-number"
+                        value={number}
+                        onChange={(e) => setNumber(e.target.value)}
+                        placeholder="+1 (321) 294-0738"
+                        className="font-mono"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button className="flex-1" onClick={() => handleDial(number)} disabled={!number.trim()}>
+                        <Phone className="w-4 h-4 mr-2" /> Call
+                      </Button>
+                      <Button variant="outline" className="flex-1" onClick={() => { if (number.trim()) { setSelectedThreadPhone(formatE164(number.trim())); setCenterTab("sms"); } }} disabled={!number.trim()}>
+                        <MessageSquare className="w-4 h-4 mr-2" /> Text
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground text-center">
+                      Or pick a lead, call, or SMS thread from the left panel.
+                    </p>
+                  </div>
                 </div>
               ) : (
                 <Tabs value={centerTab} onValueChange={(v) => setCenterTab(v as CenterTab)}>
