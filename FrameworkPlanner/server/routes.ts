@@ -8508,7 +8508,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       const telnyxReady = telnyxResult.status === "reachable";
       // Feature flag state matrix (Phase 7)
       const pf = (v: string | undefined): boolean => {
-        if (!v) return false;
+        if (!v) return true;
         const s = v.trim().toLowerCase();
         return s === '1' || s === 'true' || s === 'yes' || s === 'on';
       };
