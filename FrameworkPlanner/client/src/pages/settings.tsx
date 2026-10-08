@@ -1994,6 +1994,13 @@ function SettingsContent() {
                 </Button>
                 <Button
                   variant="outline"
+                  onClick={() => window.location.assign('/settings/email')}
+                  data-testid="button-email-settings"
+                >
+                  Email Delivery
+                </Button>
+                <Button
+                  variant="outline"
                   onClick={() => { refetchTelephony(); refetchCore(); }}
                   disabled={telephonyFetching || coreFetching}
                   data-testid="button-refresh-all"

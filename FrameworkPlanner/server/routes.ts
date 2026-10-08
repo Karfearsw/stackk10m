@@ -115,6 +115,10 @@ import { validateManualCompInput } from "./services/comps/manual.js";
 import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
 import { telnyx, TelnyxConfigError, createTelnyxWebhookRouter } from "./services/telecom/telnyx-client.js";
 import { sendEmail } from "./services/messaging/email-router.js";
+import { emailProviderReadiness } from "./email/provider.js";
+import { sendCrmEmail } from "./email/sender.js";
+import { isSuppressed, addSuppression, removeSuppression, listSuppressions } from "./email/suppression.js";
+import { verifyWebhookSecret, ingestWebhookBatch } from "./email/webhooks.js";
 import { getAuthStatusSnapshot, getEmailProviderMissing } from "./auth/config.js";
 import { isEmailNotConfiguredError, sendAuthError } from "./auth/errors.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
@@ -14995,6 +14999,127 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     if (listing.status !== "published") return res.status(404).json({ message: "Not found" });
     res.json({ listingId: listing.id, slug: listing.slug });
   });
+  // ── Ticket 10: Business email delivery ──────────────────────────────
+  // Provider readiness (no secrets exposed — config state only).
+  reg("get", "/api/email/readiness"); app.get("/api/email/readiness", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    res.json(emailProviderReadiness());
+  });
+
+  // List sending identities for the current user (admins see all).
+  reg("get", "/api/email/identities"); app.get("/api/email/identities", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const admin = isAdminUser(user);
+    const rows = await db.execute(sql`
+      SELECT id, user_id, email, name, is_default, spf_pass, dkim_pass, dmarc_status, verified_at, created_at
+      FROM email_identities
+      ${admin ? sql`` : sql`WHERE user_id = ${user.id}`}
+      ORDER BY is_default DESC, created_at ASC
+    `);
+    const items: any[] = (rows as any)?.rows ?? (rows as any) ?? [];
+    res.json({ items });
+  });
+
+  // Add a sending identity (from-address) for the current user.
+  reg("post", "/api/email/identities"); app.post("/api/email/identities", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const name = String(req.body?.name || "").trim() || null;
+    const isDefault = req.body?.is_default === true;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ message: "A valid email address is required." });
+    }
+    if (isDefault) {
+      await db.execute(sql`UPDATE email_identities SET is_default = false WHERE user_id = ${user.id}`);
+    }
+    const rows = await db.execute(sql`
+      INSERT INTO email_identities (user_id, email, name, is_default)
+      VALUES (${user.id}, ${email}, ${name}, ${isDefault})
+      ON CONFLICT (user_id, email) DO UPDATE SET name = EXCLUDED.name, is_default = EXCLUDED.is_default
+      RETURNING id, user_id, email, name, is_default, spf_pass, dkim_pass, dmarc_status, verified_at, created_at
+    `);
+    const r: any = (rows as any)?.rows?.[0] ?? (rows as any)?.[0];
+    res.status(201).json({ identity: r });
+  });
+
+  // Delete a sending identity.
+  reg("delete", "/api/email/identities/:id"); app.delete("/api/email/identities/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid identity id." });
+    const admin = isAdminUser(user);
+    await db.execute(sql`
+      DELETE FROM email_identities WHERE id = ${id} ${admin ? sql`` : sql`AND user_id = ${user.id}`}
+    `);
+    res.json({ ok: true });
+  });
+
+  // Send an email (suppression-checked, idempotent, dev-guarded).
+  reg("post", "/api/email/send"); app.post("/api/email/send", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const outcome = await sendCrmEmail({
+      to: String(req.body?.to || ""),
+      subject: String(req.body?.subject || ""),
+      text: req.body?.text ?? null,
+      html: req.body?.html ?? null,
+      from: req.body?.from ?? null,
+      leadId: req.body?.leadId != null ? Number(req.body.leadId) : null,
+      userId: user.id,
+      idempotencyKey: req.body?.idempotencyKey ?? null,
+    });
+    if (!outcome.ok) return res.status(422).json({ ok: false, code: outcome.code, message: outcome.message, outboxId: outcome.outboxId });
+    res.json({ ok: true, outboxId: outcome.outboxId, replayed: outcome.replayed, provider: outcome.provider, providerMessageId: outcome.providerMessageId });
+  });
+
+  // Delivery event webhook (idempotent; secret-protected when configured).
+  reg("post", "/api/email/webhook"); app.post("/api/email/webhook", async (req, res) => {
+    if (!verifyWebhookSecret(req)) return res.status(401).json({ message: "Invalid webhook secret." });
+    try {
+      const result = await ingestWebhookBatch(req.body);
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, message: String(e?.message || "Webhook processing failed") });
+    }
+  });
+
+  // Suppression list (admin only for writes; reads for authenticated users).
+  reg("get", "/api/email/suppressions"); app.get("/api/email/suppressions", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const limit = parseInt(String(req.query?.limit || "100"), 10);
+    const offset = parseInt(String(req.query?.offset || "0"), 10);
+    res.json(await listSuppressions(limit, offset));
+  });
+  reg("post", "/api/email/suppressions"); app.post("/api/email/suppressions", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const email = String(req.body?.email || "").trim();
+    const reason = String(req.body?.reason || "optout");
+    if (!["bounce", "complaint", "optout"].includes(reason)) return res.status(400).json({ message: "Invalid reason." });
+    res.status(201).json({ suppression: await addSuppression(email, reason as any) });
+  });
+  reg("delete", "/api/email/suppressions"); app.delete("/api/email/suppressions", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const email = String(req.query?.email || req.body?.email || "").trim();
+    res.json({ removed: await removeSuppression(email) });
+  });
+
+  // Delivery stats for the Settings → Email dashboard.
+  reg("get", "/api/email/stats"); app.get("/api/email/stats", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const { emailDeliveryStats } = await import("./email/sender.js");
+    res.json(await emailDeliveryStats());
+  });
+
   await registerMediaRoutes(app, { requireAuth, requireActiveTeam });
 
   if (mode === "serverless") return null;
