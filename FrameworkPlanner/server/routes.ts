@@ -2729,13 +2729,27 @@ export async function registerRoutes(
       }
       // Auto-create the onboarding checklist for the new user.
       // If they signed up with an @oceanluxe.org address, the business
-      // email is already provisioned.
+      // email is already provisioned (forward exists in IONOS).
       try {
         const store = await import("./email-provisioning/store.js");
         const checklist = await store.ensureChecklist(newUser.id);
         if (normalizedEmail.endsWith("@oceanluxe.org")) {
           await store.updateChecklistItem(newUser.id, "email_provisioned", true);
-          // Also record the existing address as provisioned (no IONOS call needed).
+          // Record the existing address as an active forward (no IONOS call —
+          // the forward must already exist for them to have the address).
+          try {
+            await store.createForwardRequest({
+              userId: newUser.id,
+              address: normalizedEmail,
+              targetEmail: normalizedEmail,
+              source: "crm_signup",
+            });
+            const fwd = await store.getForwardByUser(newUser.id);
+            if (fwd) await store.markForwardActive(fwd.id, newUser.id, "Auto-linked on signup with @oceanluxe.org address");
+          } catch {
+            // Forward row may already exist — non-fatal.
+          }
+          // Legacy record for dedup reference.
           await store.saveProvision({
             userId: newUser.id,
             email: normalizedEmail,
@@ -16270,15 +16284,23 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
   // ------------------------------------------------------------------
   // Business email auto-provisioning + onboarding checklist
   // ------------------------------------------------------------------
-  // IONOS connection status (config state only — never exposes secrets).
-  reg("get", "/api/onboarding/ionos-status"); app.get("/api/onboarding/ionos-status", async (req, res) => {
+  // Forward workflow info. IONOS has no email API — forwards are created
+  // manually in the IONOS Control Panel and tracked here. This endpoint
+  // describes the workflow (no secrets involved).
+  reg("get", "/api/onboarding/forward-info"); app.get("/api/onboarding/forward-info", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
-    const { ionosConfigStatus } = await import("./email-provisioning/ionos.js");
-    res.json(ionosConfigStatus());
+    const { IONOS_FORWARD_STEPS, BUSINESS_DOMAIN } = await import("./email-provisioning/forwards.js");
+    res.json({
+      workflow: "manual",
+      domain: BUSINESS_DOMAIN,
+      steps: IONOS_FORWARD_STEPS,
+      note: "IONOS has no email API. Create each forward in the IONOS Control Panel (Email → new address → Forward), then mark it active here.",
+    });
   });
 
   // Cross-system email dedup check. Used by both the CRM and the
+<<<<<<< HEAD
   // onboarding site before provisioning: "does this person already have
   // an @oceanluxe.org address?" Checks the local provisioned_emails
   // table (by address and by name) and IONOS directly. Never creates
@@ -16286,6 +16308,15 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
   //
   // Body: { email?: string, firstName?: string, lastName?: string }
   // Response: { exists, email, source: "local"|"ionos"|null, checked: [...] }
+=======
+  // onboarding site before requesting a forward: "does this person
+  // already have an @oceanluxe.org address?" Checks the email_forwards
+  // table and the legacy provisioned_emails table (by address and by
+  // name). Never creates anything — read-only.
+  //
+  // Body: { email?: string, firstName?: string, lastName?: string }
+  // Response: { exists, email, source: "forwards"|"legacy"|null, checked: [...] }
+>>>>>>> d4b2c77270ac3c11b2266c659729b0b8a2e01cae
   reg("post", "/api/onboarding/check-email"); app.post("/api/onboarding/check-email", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -16296,6 +16327,7 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     if (!email && !(firstName && lastName)) {
       return res.status(400).json({ message: "Provide email, or firstName + lastName." });
     }
+<<<<<<< HEAD
     const { checkExistingMailbox, candidateEmails } = await import("./email-provisioning/provisioner.js");
     const store = await import("./email-provisioning/store.js");
     const deps = { getProvisionByEmail: store.getProvisionByEmail };
@@ -16311,6 +16343,27 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
 
     // 2. Name-based lookup: match against users, then probe the likely
     //    candidate addresses (base, base-2, ...) in both systems.
+=======
+    const { candidateForwardAddresses } = await import("./email-provisioning/forwards.js");
+    const store = await import("./email-provisioning/store.js");
+
+    const checkOne = async (addr: string) => {
+      const fwd = await store.getForwardByAddress(addr);
+      if (fwd) return { exists: true, email: fwd.forward_address, source: "forwards" };
+      const leg = await store.getProvisionByEmail(addr);
+      if (leg) return { exists: true, email: leg.email_address, source: "legacy" };
+      return null;
+    };
+
+    // 1. Direct address lookup.
+    if (email) {
+      const hit = await checkOne(email);
+      if (hit) return res.json({ ...hit, checked: ["forwards", "legacy"] });
+    }
+
+    // 2. Name-based lookup: legacy table first, then probe candidate
+    //    addresses (base, base-2, ...) in both tables.
+>>>>>>> d4b2c77270ac3c11b2266c659729b0b8a2e01cae
     if (firstName && lastName) {
       try {
         const byName = await store.findProvisionByName(firstName, lastName);
@@ -16318,14 +16371,21 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
           return res.json({
             exists: true,
             email: byName.email_address,
+<<<<<<< HEAD
             source: "local",
             matchedUserId: byName.matched_user_id,
             checked,
+=======
+            source: "legacy",
+            matchedUserId: byName.matched_user_id,
+            checked: ["forwards", "legacy"],
+>>>>>>> d4b2c77270ac3c11b2266c659729b0b8a2e01cae
           });
         }
       } catch {
         // Name lookup is best-effort — fall through to candidate probing.
       }
+<<<<<<< HEAD
       for (const candidate of candidateEmails(firstName, lastName)) {
         const hit = await checkExistingMailbox(candidate, deps);
         if (hit.found) {
@@ -16339,6 +16399,22 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
 
   // Trigger business email provisioning for a user (manager/admin only).
   reg("post", "/api/onboarding/provision-email"); app.post("/api/onboarding/provision-email", async (req, res) => {
+=======
+      for (const candidate of candidateForwardAddresses(firstName, lastName)) {
+        const hit = await checkOne(candidate);
+        if (hit) return res.json({ ...hit, checked: ["forwards", "legacy"] });
+      }
+    }
+
+    return res.json({ exists: false, email: null, source: null, checked: ["forwards", "legacy"] });
+  });
+
+  // Request an email forward for a user (manager/admin only).
+  // Generates a unique firstname.lastname@oceanluxe.org address and records
+  // the request. A manager then creates the forward manually in the IONOS
+  // Control Panel and marks it active. Idempotent per user.
+  reg("post", "/api/onboarding/request-forward"); app.post("/api/onboarding/request-forward", async (req, res) => {
+>>>>>>> d4b2c77270ac3c11b2266c659729b0b8a2e01cae
     const user = await requireAuth(req, res);
     if (!user) return;
     if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
@@ -16346,46 +16422,117 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     if (!targetUserId) return res.status(400).json({ message: "userId is required" });
     const target = await storage.getUserById(targetUserId);
     if (!target) return res.status(404).json({ message: "User not found" });
-    const forwardingTo = String(req.body?.forwardingTo || "").trim() || undefined;
-    const { provisionBusinessEmail } = await import("./email-provisioning/provisioner.js");
+    const targetEmail = String(req.body?.targetEmail || (target as any).email || "").trim().toLowerCase();
+    if (!targetEmail) return res.status(400).json({ message: "targetEmail is required (the personal email the forward should target)." });
+    const { requestEmailForward } = await import("./email-provisioning/provisioner.js");
     const store = await import("./email-provisioning/store.js");
-    const outcome = await provisionBusinessEmail(
+    const outcome = await requestEmailForward(
       {
         userId: targetUserId,
-        firstName: String((target as any).firstName || ""),
-        lastName: String((target as any).lastName || ""),
-        forwardingTo,
+        firstName: String((target as any).firstName || (target as any).first_name || ""),
+        lastName: String((target as any).lastName || (target as any).last_name || ""),
+        targetEmail,
+        source: "manual",
       },
       {
+<<<<<<< HEAD
         emailTaken: store.emailTaken,
         getExistingProvision: store.getProvisionByUser,
         saveProvision: store.saveProvision,
         getProvisionByEmail: store.getProvisionByEmail,
         saveProvision: store.saveProvision,
         linkExternalProvision: store.linkExternalProvision,
+=======
+        addressTaken: store.forwardAddressTaken,
+        getForwardByUser: store.getForwardByUser,
+        getForwardByAddress: store.getForwardByAddress,
+        createForwardRequest: (row) =>
+          store.createForwardRequest({ ...row, requestedBy: Number((user as any).id) }),
+>>>>>>> d4b2c77270ac3c11b2266c659729b0b8a2e01cae
         markChecklistEmailProvisioned: store.markChecklistEmailProvisioned,
       }
     );
     if (!outcome.ok) {
-      return res.status(outcome.code === "NOT_CONFIGURED" ? 503 : 500).json({
+      return res.status(outcome.code === "INVALID_INPUT" ? 400 : 500).json({
         ok: false, code: outcome.code, message: outcome.message,
       });
     }
-    res.json({ ok: true, email: outcome.email, mailboxId: outcome.mailboxId, alreadyExisted: outcome.alreadyExisted });
+    res.json({ ok: true, forwardId: outcome.forwardId, address: outcome.address, alreadyExisted: outcome.alreadyExisted });
   });
 
-  // Provisioning status for a user.
-  reg("get", "/api/onboarding/provision-email/status/:userId"); app.get("/api/onboarding/provision-email/status/:userId", async (req, res) => {
+  // Forward status for a user.
+  reg("get", "/api/onboarding/forward/status/:userId"); app.get("/api/onboarding/forward/status/:userId", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
     const targetUserId = Number(req.params.userId);
     if (!isSameUserOrAdmin(user, targetUserId)) return res.status(403).json({ message: "Forbidden" });
     const store = await import("./email-provisioning/store.js");
-    const provision = await store.getProvisionByUser(targetUserId);
-    res.json({ provision });
+    const forward = await store.getForwardByUser(targetUserId);
+    res.json({ forward });
   });
 
-  // All provisioned emails (manager/admin only).
+  // All forwards (manager/admin only).
+  reg("get", "/api/onboarding/forwards"); app.get("/api/onboarding/forwards", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const store = await import("./email-provisioning/store.js");
+    const status = typeof req.query?.status === "string" ? req.query.status : undefined;
+    res.json({ items: await store.listForwards(status) });
+  });
+
+  // Forward creation queue — forwards needing manual IONOS creation (manager/admin only).
+  reg("get", "/api/onboarding/forward-queue"); app.get("/api/onboarding/forward-queue", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const store = await import("./email-provisioning/store.js");
+    res.json({
+      queue: await store.forwardCreationQueue(),
+      needing: await store.usersNeedingForward(),
+    });
+  });
+
+  // Mark a forward active — the manager created it in the IONOS panel.
+  // Flips the onboarding checklist's email_provisioned flag.
+  reg("post", "/api/onboarding/forwards/:id/mark-active"); app.post("/api/onboarding/forwards/:id/mark-active", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = Number(req.params.id);
+    const notes = typeof req.body?.notes === "string" ? req.body.notes.slice(0, 500) : null;
+    const store = await import("./email-provisioning/store.js");
+    const row = await store.markForwardActive(id, Number((user as any).id), notes);
+    if (!row) return res.status(404).json({ message: "Forward not found or not in a markable state." });
+    res.json({ ok: true, forward: row });
+  });
+
+  // Mark a forward pending_creation — manager acknowledged the request.
+  reg("post", "/api/onboarding/forwards/:id/mark-pending"); app.post("/api/onboarding/forwards/:id/mark-pending", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = Number(req.params.id);
+    const store = await import("./email-provisioning/store.js");
+    const row = await store.markForwardPendingCreation(id);
+    if (!row) return res.status(404).json({ message: "Forward not found or not in requested state." });
+    res.json({ ok: true, forward: row });
+  });
+
+  // Mark a forward failed with a reason (manager/admin only).
+  reg("post", "/api/onboarding/forwards/:id/mark-failed"); app.post("/api/onboarding/forwards/:id/mark-failed", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const id = Number(req.params.id);
+    const reason = String(req.body?.reason || "").trim().slice(0, 500) || "No reason given";
+    const store = await import("./email-provisioning/store.js");
+    const row = await store.markForwardFailed(id, reason);
+    if (!row) return res.status(404).json({ message: "Forward not found." });
+    res.json({ ok: true, forward: row });
+  });
+
+  // Legacy: provisioned emails list (mailbox-era records, kept for dedup reference).
   reg("get", "/api/onboarding/provisioned-emails"); app.get("/api/onboarding/provisioned-emails", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
@@ -16393,18 +16540,6 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     const store = await import("./email-provisioning/store.js");
     const status = typeof req.query?.status === "string" ? req.query.status : undefined;
     res.json({ items: await store.listProvisions(status) });
-  });
-
-  // Pending provisioning queue + users needing email (manager/admin only).
-  reg("get", "/api/onboarding/provision-queue"); app.get("/api/onboarding/provision-queue", async (req, res) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
-    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
-    const store = await import("./email-provisioning/store.js");
-    res.json({
-      pending: await store.pendingProvisionQueue(),
-      needing: await store.usersNeedingEmail(),
-    });
   });
 
   // Get onboarding checklist for a user.
