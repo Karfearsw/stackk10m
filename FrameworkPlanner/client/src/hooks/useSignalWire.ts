@@ -74,65 +74,16 @@ export function useSignalWire() {
           }));
           return { callControlId: null, callLogId: started.callLogId || null, transport: "webrtc" };
         }
-        // WebRTC dial failed to start — fall through to PSTN so the call
-        // still happens (click-to-dial to the agent's configured phone).
+        // WebRTC was ready but the call failed to start — surface the error.
+        // Do NOT fall through to PSTN: the PSTN fallback dials the destination
+        // without bridging the agent (lead hears silence). Fail fast instead.
+        throw new Error("WebRTC call failed to start. Check your microphone and try again.");
       }
 
-      // ── PSTN fallback: click-to-dial via Call Control. ──
-      setConnectionState("connecting");
-      clearRingTimer();
-
-      try {
-        const res = await apiRequest("POST", "/api/telephony/outbound/dispatch", {
-          toNumber: number,
-          fromNumber: opts?.fromNumber || null,
-          metadata: opts?.metadata || null,
-        });
-
-        const data = await res.json();
-        const callControlId = data.callControlId;
-        if (!callControlId) throw new Error("Missing callControlId from server");
-
-        callControlIdRef.current = callControlId;
-        setAiAssistantActive(false);
-        setCallBoth((prev) => {
-          const next: SignalWireCall = {
-            id: callControlId,
-            remoteNumber: number,
-            state: "ringing",
-            muted: false,
-          };
-          return prev && (prev.state === "active" || prev.state === "held") ? prev : next;
-        });
-        setConnectionState("ready");
-
-        // Safety net: never leave the UI stuck on "ringing" if the provider never
-        // reports an answer, hangup, or failure (no webhook / WS available).
-        const timeoutMs = opts?.ringingTimeoutMs ?? DEFAULT_RINGING_TIMEOUT_MS;
-        ringTimerRef.current = window.setTimeout(() => {
-          ringTimerRef.current = null;
-          const current = callRef.current;
-          if (!current || current.state === "active" || current.state === "held" || current.state === "finished" || current.state === "failed") return;
-          const ccId = callControlIdRef.current;
-          setCallBoth((prev) => (prev && (prev.state === "ringing" || prev.state === "new") ? { ...prev, state: "failed" } : prev));
-          const msg = `Call timed out while ringing after ${Math.round(timeoutMs / 1000)}s`;
-          setError(msg);
-          setLastError(msg);
-          if (ccId) {
-            apiRequest("POST", `/api/telephony/outbound/${encodeURIComponent(ccId)}/hangup`).catch(() => {});
-          }
-          callControlIdRef.current = null;
-        }, timeoutMs);
-
-        return data;
-      } catch (e: any) {
-        clearRingTimer();
-        setConnectionState("error");
-        const msg = String(e?.message || e || "Telnyx call failed");
-        setError(msg);
-        setLastError(msg);
-        throw e;
-      }
+      // ── WebRTC not connected: fail fast with a clear message. ──
+      // The old PSTN fallback has been removed (2026-10-08) because it placed
+      // dead calls. The agent must connect their softphone first.
+      throw new Error("Softphone not connected. Click the microphone icon to enable your softphone, then try again.");
     },
     [clearRingTimer, setCallBoth, rtc],
   );

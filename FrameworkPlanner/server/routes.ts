@@ -9377,6 +9377,18 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
 
       let callControlId: string | null = null;
       let callLog: any = null;
+      // ── ARCHITECTURE FIX (2026-10-08): The PSTN fallback dials the destination
+      // but never bridges the agent in — the lead hears silence. WebRTC is now
+      // the required path. If the browser softphone isn't connected, fail fast
+      // with a clear message instead of placing a dead call. ──
+      const webrtcConnected = (req.body as any)?.webrtcConnected === true;
+      if (!webrtcConnected) {
+        return res.status(428).json({
+          error: "Softphone not connected. Connect your microphone and WebRTC softphone before dialing.",
+          code: "WEBRTC_REQUIRED",
+          detail: "The PSTN fallback was removed because it placed calls without bridging the agent. Use the WebRTC softphone.",
+        });
+      }
       try {
         const result = await telnyx.dial({
           to: String(toNumber),
