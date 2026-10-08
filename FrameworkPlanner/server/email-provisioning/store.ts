@@ -16,6 +16,8 @@ export type ProvisionedEmailRow = {
   forwarding_to: string | null;
   status: "pending" | "active" | "failed";
   error: string | null;
+  /** Where provisioning was initiated. Added in migration 0092; null on older rows. */
+  source: "crm_signup" | "onboarding_site" | "manual" | null;
   created_at: string;
   provisioned_at: string | null;
 };
@@ -48,6 +50,62 @@ export async function emailTaken(email: string): Promise<boolean> {
 export async function getProvisionByUser(userId: number): Promise<ProvisionedEmailRow | null> {
   const r = await db.execute(sql`SELECT * FROM provisioned_emails WHERE user_id = ${userId} LIMIT 1`);
   return rowsOf(r)[0] || null;
+}
+
+/** Find a provisioned email by address (case-insensitive) — cross-system dedup. */
+export async function getProvisionByEmail(email: string): Promise<ProvisionedEmailRow | null> {
+  const r = await db.execute(sql`SELECT * FROM provisioned_emails WHERE lower(email_address) = lower(${email}) LIMIT 1`);
+  return rowsOf(r)[0] || null;
+}
+
+/**
+ * Find a provisioned email for a person by name. Joins against users so
+ * the onboarding site can ask "does Jane Doe already have an address?"
+ * Returns the most recently provisioned match.
+ */
+export async function findProvisionByName(
+  firstName: string,
+  lastName: string
+): Promise<(ProvisionedEmailRow & { matched_user_id: number }) | null> {
+  const r = await db.execute(sql`
+    SELECT pe.*, pe.user_id AS matched_user_id
+    FROM provisioned_emails pe
+    JOIN users u ON u.id = pe.user_id
+    WHERE lower(trim(u.first_name)) = lower(trim(${firstName}))
+      AND lower(trim(u.last_name)) = lower(trim(${lastName}))
+    ORDER BY pe.provisioned_at DESC NULLS LAST, pe.created_at DESC
+    LIMIT 1
+  `);
+  return rowsOf(r)[0] || null;
+}
+
+/**
+ * Link a mailbox that already exists in IONOS (e.g. created via the
+ * onboarding site) to a CRM user, instead of creating a duplicate.
+ * Upserts on user_id; the source column is stamped best-effort so this
+ * keeps working even if migration 0092 hasn't run yet.
+ */
+export async function linkExternalProvision(row: {
+  userId: number;
+  email: string;
+  mailboxId: string | null;
+  forwardingTo: string | null;
+  source: "crm_signup" | "onboarding_site" | "manual";
+}): Promise<ProvisionedEmailRow> {
+  const saved = await saveProvision({
+    userId: row.userId,
+    email: row.email,
+    mailboxId: row.mailboxId,
+    forwardingTo: row.forwardingTo,
+    status: "active",
+    error: null,
+  });
+  try {
+    await db.execute(sql`UPDATE provisioned_emails SET source = ${row.source} WHERE id = ${saved.id}`);
+  } catch {
+    // Column added in migration 0092 — ignore if it doesn't exist yet.
+  }
+  return { ...saved, source: row.source };
 }
 
 export async function saveProvision(row: {

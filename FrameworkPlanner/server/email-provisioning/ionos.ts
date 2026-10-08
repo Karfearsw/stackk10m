@@ -173,3 +173,61 @@ export async function resetMailboxPassword(
   if (!r.ok) return r;
   return { ok: true, data: { mailboxId } };
 }
+
+// ---------------------------------------------------------------------------
+// Existence checks (cross-system dedup).
+//
+// The onboarding site can provision mailboxes outside the CRM. Before the
+// CRM creates a mailbox it must check IONOS directly so it never creates
+// a duplicate. Results are cached briefly (60s TTL) so dedup checks stay
+// fast during bulk operations.
+// ---------------------------------------------------------------------------
+
+const existsCache = new Map<string, { at: number; exists: boolean; mailboxId: string | null }>();
+const EXISTS_CACHE_TTL_MS = 60_000;
+
+export function clearMailboxExistsCache(): void {
+  existsCache.clear();
+}
+
+/**
+ * Check whether a mailbox already exists on the IONOS contract.
+ * Read-only — never creates anything.
+ */
+export async function mailboxExists(
+  email: string
+): Promise<IonosResult<{ exists: boolean; mailboxId: string | null }>> {
+  const key = String(email || "").toLowerCase().trim();
+  if (!key) {
+    return { ok: false, code: "API_ERROR", message: "Email address is required to check mailbox existence." };
+  }
+  const cached = existsCache.get(key);
+  if (cached && Date.now() - cached.at < EXISTS_CACHE_TTL_MS) {
+    return { ok: true, data: { exists: cached.exists, mailboxId: cached.mailboxId } };
+  }
+  const status = ionosConfigStatus();
+  if (!status.configured) {
+    return {
+      ok: false,
+      code: "NOT_CONFIGURED",
+      message: `IONOS API is not configured. Missing: ${status.missing.join(", ")}.`,
+    };
+  }
+  const contractId = String(process.env.IONOS_CONTRACT_ID || "").trim();
+  const r = await ionosFetch(
+    `/email/v1/contracts/${encodeURIComponent(contractId)}/mailboxes?email=${encodeURIComponent(key)}`,
+    { method: "GET" }
+  );
+  if (!r.ok) return r;
+  // Normalize list-response shapes across IONOS API versions.
+  const items: any[] = Array.isArray(r.data)
+    ? r.data
+    : (r.data?.items || r.data?.mailboxes || r.data?.data || []);
+  const match = items.find(
+    (m: any) => String(m?.email || m?.emailAddress || m?.address || "").toLowerCase() === key
+  );
+  const exists = Boolean(match);
+  const mailboxId = match ? String(match.id || match.mailboxId || "") || null : null;
+  existsCache.set(key, { at: Date.now(), exists, mailboxId });
+  return { ok: true, data: { exists, mailboxId } };
+}

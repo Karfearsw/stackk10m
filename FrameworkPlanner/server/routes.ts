@@ -16278,6 +16278,65 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     res.json(ionosConfigStatus());
   });
 
+  // Cross-system email dedup check. Used by both the CRM and the
+  // onboarding site before provisioning: "does this person already have
+  // an @oceanluxe.org address?" Checks the local provisioned_emails
+  // table (by address and by name) and IONOS directly. Never creates
+  // anything — read-only.
+  //
+  // Body: { email?: string, firstName?: string, lastName?: string }
+  // Response: { exists, email, source: "local"|"ionos"|null, checked: [...] }
+  reg("post", "/api/onboarding/check-email"); app.post("/api/onboarding/check-email", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const firstName = String(req.body?.firstName || "").trim();
+    const lastName = String(req.body?.lastName || "").trim();
+    if (!email && !(firstName && lastName)) {
+      return res.status(400).json({ message: "Provide email, or firstName + lastName." });
+    }
+    const { checkExistingMailbox, candidateEmails } = await import("./email-provisioning/provisioner.js");
+    const store = await import("./email-provisioning/store.js");
+    const deps = { getProvisionByEmail: store.getProvisionByEmail };
+    const checked: string[] = ["local"];
+
+    // 1. Direct address lookup (local + IONOS).
+    if (email) {
+      const hit = await checkExistingMailbox(email, deps);
+      if (hit.found) {
+        return res.json({ exists: true, email: hit.email, source: hit.source, checked: [...checked, "ionos"] });
+      }
+    }
+
+    // 2. Name-based lookup: match against users, then probe the likely
+    //    candidate addresses (base, base-2, ...) in both systems.
+    if (firstName && lastName) {
+      try {
+        const byName = await store.findProvisionByName(firstName, lastName);
+        if (byName) {
+          return res.json({
+            exists: true,
+            email: byName.email_address,
+            source: "local",
+            matchedUserId: byName.matched_user_id,
+            checked,
+          });
+        }
+      } catch {
+        // Name lookup is best-effort — fall through to candidate probing.
+      }
+      for (const candidate of candidateEmails(firstName, lastName)) {
+        const hit = await checkExistingMailbox(candidate, deps);
+        if (hit.found) {
+          return res.json({ exists: true, email: hit.email, source: hit.source, checked: [...checked, "ionos"] });
+        }
+      }
+    }
+
+    return res.json({ exists: false, email: null, source: null, checked: [...checked, "ionos"] });
+  });
+
   // Trigger business email provisioning for a user (manager/admin only).
   reg("post", "/api/onboarding/provision-email"); app.post("/api/onboarding/provision-email", async (req, res) => {
     const user = await requireAuth(req, res);
@@ -16301,6 +16360,9 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
         emailTaken: store.emailTaken,
         getExistingProvision: store.getProvisionByUser,
         saveProvision: store.saveProvision,
+        getProvisionByEmail: store.getProvisionByEmail,
+        saveProvision: store.saveProvision,
+        linkExternalProvision: store.linkExternalProvision,
         markChecklistEmailProvisioned: store.markChecklistEmailProvisioned,
       }
     );
@@ -16399,6 +16461,163 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     const store = await import("./email-provisioning/store.js");
     await store.revokeLiveLeadAccess(targetUserId);
     res.json({ ok: true });
+  });
+  // ------------------------------------------------------------------
+  // Onboarding documents: Offer Letter, ICA, W-9
+  // ------------------------------------------------------------------
+  // List available templates (offer letter + ICA from contract_templates; W-9 is a form).
+  reg("get", "/api/onboarding/docs/templates"); app.get("/api/onboarding/docs/templates", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const t = await import("./onboarding-docs/templates.js");
+      const [offerLetter, ica] = await Promise.all([
+        t.getOnboardingTemplate("offer_letter"),
+        t.getOnboardingTemplate("ica"),
+      ]);
+      res.json({
+        templates: [
+          { docType: "offer_letter", label: t.DOC_LABELS.offer_letter, sender: "company", signer: "agent", template: offerLetter },
+          { docType: "ica", label: t.DOC_LABELS.ica, sender: "company", signer: "agent", template: ica },
+          { docType: "w9", label: t.DOC_LABELS.w9, sender: "agent", signer: "agent", template: null, formFields: t.W9_FIELDS },
+        ],
+      });
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Failed to load templates" }); }
+  });
+
+  // Send a document to an agent (manager/admin). Offer letter + ICA render from template.
+  reg("post", "/api/onboarding/docs/send/:userId"); app.post("/api/onboarding/docs/send/:userId", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    try {
+      const targetUserId = Number(req.params.userId);
+      const { docType, mergeData } = req.body as { docType: string; mergeData?: Record<string, any> };
+      if (!["offer_letter", "ica"].includes(docType)) {
+        return res.status(400).json({ message: "docType must be offer_letter or ica (W-9 is agent-filled)" });
+      }
+      const target = await storage.getUser(targetUserId);
+      if (!target) return res.status(404).json({ message: "User not found" });
+      const t = await import("./onboarding-docs/templates.js");
+      const store = await import("./onboarding-docs/store.js");
+      // Idempotency: don't double-send an active document.
+      const existing = await store.getActiveDocument(targetUserId, docType as any);
+      if (existing) return res.status(409).json({ message: "An active document of this type already exists", document: existing });
+      const template = await t.getOnboardingTemplate(docType as "offer_letter" | "ica");
+      if (!template) return res.status(404).json({ message: "Template not found — run migration 0092" });
+      const body = await t.getTemplateBody(template.id);
+      const { mergeTemplate } = await import("./services/esign/merge.js");
+      const defaults = t.defaultMergeData(
+        docType as "offer_letter" | "ica",
+        { firstName: (target as any).firstName || "", lastName: (target as any).lastName || "", email: (target as any).email || "", phone: (target as any).phone },
+        { name: `${(user as any).firstName || ""} ${(user as any).lastName || ""}`.trim() || "OceanLuxe", title: (user as any).role || "Manager" },
+      );
+      const merged = mergeTemplate(String(body || ""), { ...defaults, ...(mergeData || {}) });
+      const doc = await store.createDocument({
+        userId: targetUserId,
+        docType: docType as any,
+        templateId: template.id,
+        templateVersion: template.version,
+        mergeData: { ...defaults, ...(mergeData || {}) },
+        renderedBody: merged,
+        sentBy: (user as any).id,
+      });
+      res.json({ ok: true, document: doc });
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Failed to send document" }); }
+  });
+
+  // List documents for a user (agent sees own; managers see anyone's).
+  reg("get", "/api/onboarding/docs/:userId"); app.get("/api/onboarding/docs/:userId", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const targetUserId = Number(req.params.userId);
+    if (targetUserId !== (user as any).id && !isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    try {
+      const store = await import("./onboarding-docs/store.js");
+      const docs = await store.listDocumentsForUser(targetUserId);
+      // Never expose full TIN to non-managers; mask for the agent view too after submit.
+      const safe = docs.map((d: any) => {
+        if (d.doc_type === "w9" && d.form_data?.tin && !isManagerUser(user)) {
+          return { ...d, form_data: { ...d.form_data, tin: "***-**-" + String(d.form_data.tin).slice(-4) } };
+        }
+        return d;
+      });
+      res.json({ documents: safe });
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Failed to list documents" }); }
+  });
+
+  // Agent: get a single document to view/sign (marks viewed).
+  reg("get", "/api/onboarding/docs/view/:docId"); app.get("/api/onboarding/docs/view/:docId", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const store = await import("./onboarding-docs/store.js");
+      const doc = await store.getDocument(Number(req.params.docId));
+      if (!doc) return res.status(404).json({ message: "Not found" });
+      if (doc.user_id !== (user as any).id && !isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+      if (doc.user_id === (user as any).id && ["sent", "viewed"].includes(doc.status)) {
+        await store.markViewed(doc.id);
+        doc.status = "viewed" as any;
+      }
+      res.json({ document: doc });
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Failed to load document" }); }
+  });
+
+  // Agent: sign a document (offer letter / ICA) or submit W-9.
+  reg("post", "/api/onboarding/docs/:docId/sign"); app.post("/api/onboarding/docs/:docId/sign", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const store = await import("./onboarding-docs/store.js");
+      const t = await import("./onboarding-docs/templates.js");
+      const doc = await store.getDocument(Number(req.params.docId));
+      if (!doc) return res.status(404).json({ message: "Not found" });
+      if (doc.user_id !== (user as any).id) return res.status(403).json({ message: "Only the assigned agent can sign" });
+      if (!["sent", "viewed"].includes(doc.status)) return res.status(409).json({ message: `Document is ${doc.status}, cannot sign` });
+      const { signatureType, signatureData, formData } = req.body as { signatureType: string; signatureData: string; formData?: Record<string, any> };
+      if (!["typed", "drawn", "uploaded"].includes(signatureType)) return res.status(400).json({ message: "signatureType must be typed, drawn, or uploaded" });
+      if (!signatureData || String(signatureData).trim().length < 2) return res.status(400).json({ message: "Signature is required" });
+      if (doc.doc_type === "w9") {
+        const v = t.validateW9FormData(formData || {});
+        if (!v.ok) return res.status(422).json({ message: "W-9 is incomplete", missing: v.missing });
+        if (v && (formData as any)?.certification !== true) return res.status(422).json({ message: "You must certify under penalties of perjury" });
+      }
+      const signed = await store.markSigned({
+        id: doc.id,
+        signatureType: signatureType as any,
+        signatureData: String(signatureData).slice(0, 20000),
+        formData: doc.doc_type === "w9" ? formData : undefined,
+        ip: (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() || (req as any).ip || null,
+        userAgent: req.headers["user-agent"] || null,
+      });
+      res.json({ ok: true, document: signed });
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Failed to sign document" }); }
+  });
+
+  // Manager: mark a signed document as completed (updates checklist automatically).
+  reg("post", "/api/onboarding/docs/:docId/complete"); app.post("/api/onboarding/docs/:docId/complete", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    try {
+      const store = await import("./onboarding-docs/store.js");
+      const doc = await store.getDocument(Number(req.params.docId));
+      if (!doc) return res.status(404).json({ message: "Not found" });
+      if (doc.status !== "signed") return res.status(409).json({ message: `Document is ${doc.status}; must be signed first` });
+      const completed = await store.markCompleted(doc.id, (user as any).id);
+      res.json({ ok: true, document: completed });
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Failed to complete document" }); }
+  });
+
+  // Agent: pending documents needing action (for the dashboard banner).
+  reg("get", "/api/onboarding/docs/pending/mine"); app.get("/api/onboarding/docs/pending/mine", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const store = await import("./onboarding-docs/store.js");
+      const docs = await store.getPendingForUser((user as any).id);
+      res.json({ pending: docs.map((d: any) => ({ id: d.id, doc_type: d.doc_type, status: d.status, sent_at: d.sent_at })) });
+    } catch (e: any) { res.status(500).json({ message: e?.message || "Failed to load pending documents" }); }
   });
   // ------------------------------------------------------------------
   // Ticket 12 — Lead assignment & routing rules

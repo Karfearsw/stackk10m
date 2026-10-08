@@ -9,9 +9,11 @@
  * All IONOS credentials come from env vars via ionos.ts — nothing here
  * touches secrets directly.
  */
-import { createIonosMailbox, ionosConfigStatus, type IonosResult } from "./ionos.js";
+import { createIonosMailbox, mailboxExists, ionosConfigStatus, type IonosResult } from "./ionos.js";
 
 export const BUSINESS_DOMAIN = "oceanluxe.org";
+
+export type ProvisionSource = "crm_signup" | "onboarding_site" | "manual";
 
 export type ProvisionInput = {
   userId: number;
@@ -32,6 +34,22 @@ function slug(s: string): string {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "")
     .slice(0, 30);
+}
+
+/**
+ * Candidate @oceanluxe.org addresses for a name, in the order the
+ * provisioner would try them (base, base-2, base-3, ...). Used by the
+ * cross-system dedup check so both the CRM and the onboarding site can
+ * ask "does this person already have an address?" without knowing which
+ * suffix was used.
+ */
+export function candidateEmails(firstName: string, lastName: string, max = 6): string[] {
+  const first = slug(firstName) || "agent";
+  const last = slug(lastName) || "oceanluxe";
+  const base = `${first}.${last}`;
+  const out = [`${base}@${BUSINESS_DOMAIN}`];
+  for (let n = 2; n <= max; n++) out.push(`${base}-${n}@${BUSINESS_DOMAIN}`);
+  return out;
 }
 
 /**
@@ -70,6 +88,7 @@ export function generateMailboxPassword(): string {
 export type ProvisionDeps = {
   emailTaken: (email: string) => Promise<boolean>;
   getExistingProvision: (userId: number) => Promise<{ email_address: string; status: string; ionos_mailbox_id: string | null } | null>;
+  getProvisionByEmail: (email: string) => Promise<{ email_address: string; status: string; ionos_mailbox_id: string | null } | null>;
   saveProvision: (row: {
     userId: number;
     email: string;
@@ -78,13 +97,62 @@ export type ProvisionDeps = {
     status: "pending" | "active" | "failed";
     error?: string | null;
   }) => Promise<void>;
+  /** Link a mailbox that already exists in IONOS (e.g. created via the onboarding site). */
+  linkExternalProvision: (row: {
+    userId: number;
+    email: string;
+    mailboxId: string | null;
+    forwardingTo: string | null;
+    source: ProvisionSource;
+  }) => Promise<void>;
   markChecklistEmailProvisioned: (userId: number, provisioned: boolean) => Promise<void>;
 };
 
+export type ExistingCheck = {
+  found: boolean;
+  /** Where the existing mailbox was found. */
+  source: "local" | "ionos" | null;
+  email: string | null;
+  mailboxId: string | null;
+};
+
 /**
- * Full provisioning flow. Safe to retry — if a provisioned_emails row
- * already exists for the user, it returns the existing address without
- * creating a duplicate mailbox.
+ * Cross-system dedup check for a single address. Consults the local
+ * provisioned_emails table first, then IONOS directly (the onboarding
+ * site can create mailboxes outside the CRM). Never throws — an
+ * unreachable IONOS API is treated as "unknown", not "absent", so a
+ * failed read never causes a duplicate write.
+ */
+export async function checkExistingMailbox(
+  email: string,
+  deps: Pick<ProvisionDeps, "getProvisionByEmail">
+): Promise<ExistingCheck> {
+  const key = String(email || "").toLowerCase().trim();
+  if (!key) return { found: false, source: null, email: null, mailboxId: null };
+  const local = await deps.getProvisionByEmail(key);
+  if (local) {
+    return { found: true, source: "local", email: local.email_address, mailboxId: local.ionos_mailbox_id };
+  }
+  const status = ionosConfigStatus();
+  if (!status.configured) {
+    return { found: false, source: null, email: null, mailboxId: null };
+  }
+  const r = await mailboxExists(key);
+  if (!r.ok || !r.data.exists) {
+    return { found: false, source: null, email: null, mailboxId: null };
+  }
+  return { found: true, source: "ionos", email: key, mailboxId: r.data.mailboxId };
+}
+
+/**
+ * Full provisioning flow. Safe to retry and safe across systems:
+ * - If a provisioned_emails row already exists for the user, the existing
+ *   address is returned without creating a duplicate mailbox.
+ * - If the generated address already exists in IONOS (e.g. created via
+ *   the onboarding site), the existing mailbox is linked instead of
+ *   creating a duplicate.
+ * - If IONOS reports ALREADY_EXISTS on create (race), the existing
+ *   mailbox is linked rather than failing.
  */
 export async function provisionBusinessEmail(
   input: ProvisionInput,
@@ -97,6 +165,23 @@ export async function provisionBusinessEmail(
   }
 
   const email = existing?.email_address || (await generateBusinessEmail(input.firstName, input.lastName, deps.emailTaken));
+
+  // Cross-system dedup: the mailbox may already exist in IONOS without a
+  // local record (created via the onboarding site). Link it instead of
+  // creating a duplicate.
+  const crossCheck = await checkExistingMailbox(email, deps);
+  if (crossCheck.found && crossCheck.source === "ionos") {
+    await deps.linkExternalProvision({
+      userId: input.userId,
+      email: crossCheck.email!,
+      mailboxId: crossCheck.mailboxId,
+      forwardingTo: input.forwardingTo || null,
+      source: "onboarding_site",
+    });
+    await deps.markChecklistEmailProvisioned(input.userId, true);
+    return { ok: true, email: crossCheck.email!, mailboxId: crossCheck.mailboxId, alreadyExisted: true };
+  }
+
   const status = ionosConfigStatus();
 
   if (!status.configured) {
@@ -126,6 +211,22 @@ export async function provisionBusinessEmail(
   });
 
   if (!created.ok) {
+    // Race safety: if IONOS says the mailbox already exists (created
+    // concurrently, e.g. by the onboarding site), link it instead of
+    // failing or creating a duplicate.
+    if (created.code === "ALREADY_EXISTS") {
+      const recheck = await mailboxExists(email);
+      const mailboxId = recheck.ok && recheck.data.exists ? recheck.data.mailboxId : null;
+      await deps.linkExternalProvision({
+        userId: input.userId,
+        email,
+        mailboxId,
+        forwardingTo: input.forwardingTo || null,
+        source: "onboarding_site",
+      });
+      await deps.markChecklistEmailProvisioned(input.userId, true);
+      return { ok: true, email, mailboxId, alreadyExisted: true };
+    }
     await deps.saveProvision({
       userId: input.userId,
       email,

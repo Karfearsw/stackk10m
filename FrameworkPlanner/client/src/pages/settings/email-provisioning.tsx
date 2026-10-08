@@ -21,7 +21,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import {
   Mail, Server, AlertTriangle, CheckCircle2, XCircle, Clock,
-  UserPlus, ShieldCheck, RefreshCw, Send,
+  UserPlus, ShieldCheck, RefreshCw, Send, FileText,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 
@@ -166,11 +166,16 @@ export default function EmailProvisioningSettings() {
   return (
     <Layout>
       <div className="space-y-6 p-6">
-        <div>
-          <h1 className="text-2xl font-bold">Email Provisioning & Onboarding</h1>
-          <p className="text-muted-foreground">
-            Auto-create @oceanluxe.org mailboxes through IONOS and track onboarding before granting live-lead access.
-          </p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">Email Provisioning & Onboarding</h1>
+            <p className="text-muted-foreground">
+              Auto-create @oceanluxe.org mailboxes through IONOS and track onboarding before granting live-lead access.
+            </p>
+          </div>
+          <Button variant="outline" onClick={() => (window.location.href = "/settings/onboarding-docs")}>
+            <FileText className="h-4 w-4 mr-2" /> Onboarding Documents
+          </Button>
         </div>
 
         {/* IONOS status */}
