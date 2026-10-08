@@ -793,6 +793,30 @@ export async function setDisposition(
       await createActivity(s, "do_not_call", "Marked Do Not Call from call disposition", { source: "agent" });
     } catch (e) { console.error("DNC update failed:", e); }
   }
+  // ── Auto-SMS follow-up on no-answer/voicemail (2026-10-08): the highest-ROI
+  // dialer automation — send a quick text after a missed call so the lead knows
+  // who called. Non-blocking; failures are logged but don't fail the disposition.
+  if ((input.disposition === "no_answer" || input.disposition === "voicemail") && s.leadId) {
+    try {
+      const lead = await storage.getLeadById(s.leadId);
+      const phone = lead?.ownerPhone;
+      // Respect DNC: never auto-text a DNC lead
+      if (phone && !lead?.doNotCall && !lead?.doNotText) {
+        const firstName = String(lead?.ownerName || "").split(" ")[0] || "there";
+        const fromNumber = process.env.TELNYX_DEFAULT_FROM_NUMBER || "";
+        if (fromNumber) {
+          const smsBody = `Hi ${firstName}, this is Ocean Luxe — just tried calling about your property. Text me back when you have a moment!`;
+          await telnyx.sendSms({ to: phone, from: fromNumber, body: smsBody });
+          await storage.createSmsMessage({
+            userId, direction: "outbound", fromNumber, toNumber: phone,
+            body: smsBody, status: "sent", leadId: s.leadId,
+            metadata: JSON.stringify({ autoFollowUp: true, disposition: input.disposition }),
+          } as any).catch(() => {});
+          await createActivity(s, "auto_sms_sent", `Auto-SMS sent after ${input.disposition}`, { phone });
+        }
+      }
+    } catch (e) { console.error("Auto-SMS follow-up failed (non-blocking):", e); }
+  }
   await storage.updateCallSession(s.id, { finalDisposition: input.disposition });
   await recordEvent(s.id, "disposition_set", s.status, s.status, { disposition: input.disposition, note: input.note || null }, userId);
   await createActivity(s, "call_dispositioned", `Call dispositioned: ${input.disposition}`, { disposition: input.disposition });
