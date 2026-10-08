@@ -16278,6 +16278,65 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     res.json(ionosConfigStatus());
   });
 
+  // Cross-system email dedup check. Used by both the CRM and the
+  // onboarding site before provisioning: "does this person already have
+  // an @oceanluxe.org address?" Checks the local provisioned_emails
+  // table (by address and by name) and IONOS directly. Never creates
+  // anything — read-only.
+  //
+  // Body: { email?: string, firstName?: string, lastName?: string }
+  // Response: { exists, email, source: "local"|"ionos"|null, checked: [...] }
+  reg("post", "/api/onboarding/check-email"); app.post("/api/onboarding/check-email", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const firstName = String(req.body?.firstName || "").trim();
+    const lastName = String(req.body?.lastName || "").trim();
+    if (!email && !(firstName && lastName)) {
+      return res.status(400).json({ message: "Provide email, or firstName + lastName." });
+    }
+    const { checkExistingMailbox, candidateEmails } = await import("./email-provisioning/provisioner.js");
+    const store = await import("./email-provisioning/store.js");
+    const deps = { getProvisionByEmail: store.getProvisionByEmail };
+    const checked: string[] = ["local"];
+
+    // 1. Direct address lookup (local + IONOS).
+    if (email) {
+      const hit = await checkExistingMailbox(email, deps);
+      if (hit.found) {
+        return res.json({ exists: true, email: hit.email, source: hit.source, checked: [...checked, "ionos"] });
+      }
+    }
+
+    // 2. Name-based lookup: match against users, then probe the likely
+    //    candidate addresses (base, base-2, ...) in both systems.
+    if (firstName && lastName) {
+      try {
+        const byName = await store.findProvisionByName(firstName, lastName);
+        if (byName) {
+          return res.json({
+            exists: true,
+            email: byName.email_address,
+            source: "local",
+            matchedUserId: byName.matched_user_id,
+            checked,
+          });
+        }
+      } catch {
+        // Name lookup is best-effort — fall through to candidate probing.
+      }
+      for (const candidate of candidateEmails(firstName, lastName)) {
+        const hit = await checkExistingMailbox(candidate, deps);
+        if (hit.found) {
+          return res.json({ exists: true, email: hit.email, source: hit.source, checked: [...checked, "ionos"] });
+        }
+      }
+    }
+
+    return res.json({ exists: false, email: null, source: null, checked: [...checked, "ionos"] });
+  });
+
   // Trigger business email provisioning for a user (manager/admin only).
   reg("post", "/api/onboarding/provision-email"); app.post("/api/onboarding/provision-email", async (req, res) => {
     const user = await requireAuth(req, res);
@@ -16300,7 +16359,9 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
       {
         emailTaken: store.emailTaken,
         getExistingProvision: store.getProvisionByUser,
+        getProvisionByEmail: store.getProvisionByEmail,
         saveProvision: store.saveProvision,
+        linkExternalProvision: store.linkExternalProvision,
         markChecklistEmailProvisioned: store.markChecklistEmailProvisioned,
       }
     );
