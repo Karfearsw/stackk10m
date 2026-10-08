@@ -13,7 +13,7 @@
  * Provider routing: SMTP sends go direct via nodemailer; resend/telnyx go
  * through the existing messaging/email-router.ts (no duplicated logic).
  */
-import { db } from "../../db.js";
+import { db } from "../db.js";
 import { sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import {

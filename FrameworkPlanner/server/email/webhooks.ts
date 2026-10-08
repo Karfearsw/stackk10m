@@ -12,7 +12,7 @@
  * Webhook authentication: if EMAIL_WEBHOOK_SECRET is set, the request must
  * carry it as `?secret=` or an `x-webhook-secret` header.
  */
-import { db } from "../../db.js";
+import { db } from "../db.js";
 import { sql } from "drizzle-orm";
 import { addSuppression } from "./suppression.js";
 
