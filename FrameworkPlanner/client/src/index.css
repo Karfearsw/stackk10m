@@ -269,3 +269,22 @@
     }
   }
 }
+
+@layer base {
+  /* Mobile chat bubble safety: never let message content escape its bubble. */
+  @media (max-width: 767px) {
+    [data-chat-thread] {
+      overflow-x: hidden;
+    }
+    [data-chat-bubble] {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      min-width: 0;
+    }
+    [data-chat-bubble] img,
+    [data-chat-bubble] video {
+      max-width: 100%;
+      height: auto;
+    }
+  }
+}
