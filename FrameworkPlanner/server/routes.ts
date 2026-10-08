@@ -8,7 +8,7 @@ import { storage } from "./storage.js";
 import { seedDocsForTeam, docsSlugify } from "./docs-seed.js";
 import { computeManualTimeEntry, MAX_TIME_ENTRY_HOURS } from "./lib/time-entry-math.js";
 import { db, pool } from "./db.js";
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql, lt, isNull, isNotNull, ne, or, notInArray } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
 import { publishTelephonyEvent } from "./telephony/pubsub.js";
 import { getTelephonyMediaSignedUrl, uploadTelephonyMediaFromUrl } from "./telephony/objectStorage.js";
@@ -93,7 +93,8 @@ import {
   insertOpportunityEventSchema,
   globalActivityLogs,
   opportunityParties, publicListings, buyerInquiries, opportunityEvents,
-  defaultNotificationCategories, insertInternalMessageSchema, insertCalendarEventSchema
+  defaultNotificationCategories, insertInternalMessageSchema, insertCalendarEventSchema,
+  tasks, taskSlaRules, taskAudit, quarantinedRecords, insertTaskSlaRuleSchema
 } from "./shared-schema.js";
 import { z } from "zod";
 import { computeArvFromComps, computeCommissionMath, computeDealMath, computeRepairTotal, commissionSnapshotInputSchema, underwritingSchemaV1, underwritingTemplateConfigSchema } from "../shared/underwriting.js";
@@ -13606,6 +13607,298 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.status(500).json({ message: error.message });
     }
   });
+
+  // ============ TICKET 13: Task triage + SLA enforcement ============
+  // Helper: subquery of quarantined (entityType, entityId) pairs to exclude from workload.
+  function quarantinedTaskExclusion() {
+    // Returns a SQL fragment: tasks whose (related_entity_type, related_entity_id)
+    // is NOT in the quarantined_records table (active quarantines only).
+    return sql`NOT EXISTS (
+      SELECT 1 FROM quarantined_records qr
+      WHERE qr.status = 'quarantined'
+        AND qr.entity_type = ${tasks.relatedEntityType}
+        AND qr.entity_id = ${tasks.relatedEntityId}
+        AND ${tasks.relatedEntityType} IS NOT NULL
+        AND ${tasks.relatedEntityId} IS NOT NULL
+    )`;
+  }
+
+  reg("get", "/api/tasks/overdue"); app.get("/api/tasks/overdue", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const schema = z.object({
+        assignedToUserId: z.coerce.number().int().positive().optional(),
+        type: z.string().trim().min(1).optional(),
+        stage: z.string().trim().min(1).optional(),
+        minAgeDays: z.coerce.number().int().min(0).optional(),
+        maxAgeDays: z.coerce.number().int().min(0).optional(),
+        limit: z.coerce.number().int().min(1).max(500).optional(),
+        offset: z.coerce.number().int().min(0).optional(),
+      });
+      const q = schema.parse(req.query || {});
+      const now = new Date();
+      const whereParts: any[] = [
+        lt(tasks.dueAt, now),
+        ne(tasks.status, "completed"),
+        quarantinedTaskExclusion(),
+      ];
+      if (!isManagerUser(user)) {
+        whereParts.push(
+          or(eq(tasks.isPrivate, false), eq(tasks.createdBy, user.id), eq(tasks.assignedToUserId, user.id)),
+        );
+      }
+      if (typeof q.assignedToUserId === "number") whereParts.push(eq(tasks.assignedToUserId, q.assignedToUserId));
+      if (q.type) whereParts.push(eq(tasks.type, q.type));
+      if (q.stage) whereParts.push(eq(tasks.relatedEntityType, q.stage));
+      if (typeof q.minAgeDays === "number") {
+        whereParts.push(sql`${tasks.dueAt} < ${new Date(now.getTime() - q.minAgeDays * 86400000)}`);
+      }
+      if (typeof q.maxAgeDays === "number") {
+        whereParts.push(sql`${tasks.dueAt} >= ${new Date(now.getTime() - q.maxAgeDays * 86400000)}`);
+      }
+      const whereClause = and(...whereParts);
+      const limit = q.limit ?? 100;
+      const offset = q.offset ?? 0;
+      const items = await db.select().from(tasks).where(whereClause)
+        .orderBy(tasks.dueAt).limit(limit).offset(offset);
+      const countRows = await db.select({ count: sql<number>`count(*)::int` }).from(tasks).where(whereClause);
+      res.json({ items, total: Number((countRows as any)?.[0]?.count || 0) });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/tasks/bulk-triage"); app.post("/api/tasks/bulk-triage", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const schema = z.object({
+        taskIds: z.array(z.coerce.number().int().positive()).min(1).max(200),
+        action: z.enum(["complete", "reschedule", "cancel", "merge", "archive"]),
+        reason: z.string().trim().min(3).max(2000),
+        newDueAt: z.coerce.date().optional(),
+        mergeIntoTaskId: z.coerce.number().int().positive().optional(),
+        preview: z.boolean().optional(),
+        confirm: z.boolean().optional(),
+      });
+      const body = schema.parse(req.body || {});
+
+      // Load tasks + permission check each one.
+      const targets: any[] = [];
+      for (const id of body.taskIds) {
+        const t = await storage.getTaskById(id);
+        if (!t) return res.status(404).json({ message: `Task ${id} not found` });
+        if (!canViewTask(user, t)) return res.status(404).json({ message: `Task ${id} not found` });
+        if (!canMutateTask(user, t)) return res.status(403).json({ message: `Forbidden on task ${id}` });
+        targets.push(t);
+      }
+
+      // Action-specific validation.
+      if (body.action === "reschedule" && !body.newDueAt) {
+        return res.status(400).json({ message: "newDueAt is required for reschedule" });
+      }
+      if (body.action === "merge" && !body.mergeIntoTaskId) {
+        return res.status(400).json({ message: "mergeIntoTaskId is required for merge" });
+      }
+
+      // Preview mode: return what WOULD happen without doing it.
+      if (body.preview && !body.confirm) {
+        return res.json({
+          preview: true,
+          action: body.action,
+          taskCount: targets.length,
+          tasks: targets.map((t) => ({ id: t.id, title: t.title, status: t.status, dueAt: t.dueAt })),
+          requiresReason: true,
+          requiresConfirm: true,
+        });
+      }
+      if (!body.confirm) {
+        return res.status(400).json({ message: "Confirmation required: set confirm=true after reviewing preview" });
+      }
+
+      // Execute: one audit event per task.
+      const results: any[] = [];
+      for (const t of targets) {
+        const oldStatus = t.status;
+        let newStatus = oldStatus;
+        const patch: any = { triageStatus: "triaged" };
+        if (body.action === "complete") { newStatus = "completed"; patch.status = "completed"; patch.completedAt = new Date(); }
+        else if (body.action === "cancel") { newStatus = "cancelled"; patch.status = "cancelled"; }
+        else if (body.action === "archive") { newStatus = "archived"; patch.status = "archived"; }
+        else if (body.action === "reschedule") { patch.dueAt = body.newDueAt; patch.reminderSentAt = null; patch.overdueAlertSentAt = null; }
+        else if (body.action === "merge") { newStatus = "merged"; patch.status = "merged"; }
+
+        // No conflicting open next-actions per lead: when completing/cancelling a task
+        // linked to a lead, clear stale next_action references handled by caller.
+        const updated = await storage.updateTask(t.id, patch);
+        await db.insert(taskAudit).values({
+          taskId: t.id,
+          action: `bulk_${body.action}`,
+          oldValue: oldStatus,
+          newValue: newStatus,
+          reason: body.reason,
+          performedBy: user.id,
+        });
+        results.push({ id: t.id, action: body.action, oldStatus, newStatus });
+      }
+      res.json({ ok: true, action: body.action, processed: results.length, results });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/tasks/sla-dashboard"); app.get("/api/tasks/sla-dashboard", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const now = new Date();
+      const baseFilter = sql`${tasks.status} <> 'completed' AND ${tasks.dueAt} < ${now} AND ${quarantinedTaskExclusion()}`;
+      const visFilter = isManagerUser(user)
+        ? sql`TRUE`
+        : sql`(${tasks.isPrivate} = false OR ${tasks.createdBy} = ${user.id} OR ${tasks.assignedToUserId} = ${user.id})`;
+
+      const byAssignee = await db.select({
+        assignedToUserId: tasks.assignedToUserId,
+        count: sql<number>`count(*)::int`,
+      }).from(tasks).where(and(baseFilter, visFilter)).groupBy(tasks.assignedToUserId);
+
+      const byType = await db.select({
+        type: tasks.type,
+        count: sql<number>`count(*)::int`,
+      }).from(tasks).where(and(baseFilter, visFilter)).groupBy(tasks.type);
+
+      const byStage = await db.select({
+        stage: tasks.relatedEntityType,
+        count: sql<number>`count(*)::int`,
+      }).from(tasks).where(and(baseFilter, visFilter)).groupBy(tasks.relatedEntityType);
+
+      // Age buckets: 0-1d, 2-7d, 8-30d, 30d+
+      const ageBuckets = await db.select({
+        bucket: sql<string>`CASE
+          WHEN ${tasks.dueAt} >= ${new Date(now.getTime() - 86400000)} THEN '0-1d'
+          WHEN ${tasks.dueAt} >= ${new Date(now.getTime() - 7 * 86400000)} THEN '2-7d'
+          WHEN ${tasks.dueAt} >= ${new Date(now.getTime() - 30 * 86400000)} THEN '8-30d'
+          ELSE '30d+' END`,
+        count: sql<number>`count(*)::int`,
+      }).from(tasks).where(and(baseFilter, visFilter)).groupBy(sql`1`);
+
+      const totalRows = await db.select({ count: sql<number>`count(*)::int` }).from(tasks).where(and(baseFilter, visFilter));
+      res.json({
+        total: Number((totalRows as any)?.[0]?.count || 0),
+        byAssignee, byType, byStage, ageBuckets,
+        generatedAt: now.toISOString(),
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/tasks/sla-rules"); app.get("/api/tasks/sla-rules", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const rules = await db.select().from(taskSlaRules).orderBy(taskSlaRules.taskType);
+      res.json({ items: rules });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/tasks/sla-rules"); app.post("/api/tasks/sla-rules", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+      const parsed = insertTaskSlaRuleSchema.parse({ ...req.body, createdBy: user.id });
+      const rows = await db.insert(taskSlaRules).values(parsed as any).returning();
+      res.status(201).json(rows[0]);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  reg("put", "/api/tasks/sla-rules/:id"); app.put("/api/tasks/sla-rules/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+      const id = parseInt(req.params.id);
+      const patch = insertTaskSlaRuleSchema.partial().parse(req.body || {});
+      const rows = await db.update(taskSlaRules).set({ ...(patch as any), updatedAt: new Date() }).where(eq(taskSlaRules.id, id)).returning();
+      if (!rows.length) return res.status(404).json({ message: "Rule not found" });
+      res.json(rows[0]);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  reg("delete", "/api/tasks/sla-rules/:id"); app.delete("/api/tasks/sla-rules/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+      const id = parseInt(req.params.id);
+      await db.delete(taskSlaRules).where(eq(taskSlaRules.id, id));
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/tasks/check-sla"); app.post("/api/tasks/check-sla", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+      const now = new Date();
+      const rules = await db.select().from(taskSlaRules).where(eq(taskSlaRules.isActive, true));
+
+      let checked = 0, escalated = 0, slaSet = 0;
+      // Only tasks not already escalated and not completed, excluding quarantined.
+      const candidates = await db.select().from(tasks).where(and(
+        ne(tasks.status, "completed"),
+        isNull(tasks.escalatedAt),
+        quarantinedTaskExclusion(),
+      )).limit(500);
+
+      for (const t of candidates as any[]) {
+        checked++;
+        const rule = rules.find((r: any) => r.taskType === (t.type || "general"))
+          || rules.find((r: any) => r.taskType === "general");
+        if (!rule) continue;
+        // Compute SLA due from creation (or existing slaDueAt).
+        if (!t.slaDueAt) {
+          const slaDue = new Date(new Date(t.createdAt).getTime() + rule.slaHours * 3600000);
+          await db.update(tasks).set({ slaDueAt: slaDue }).where(eq(tasks.id, t.id));
+          slaSet++;
+          if (slaDue > now) continue;
+        } else if (new Date(t.slaDueAt) > now) {
+          continue;
+        }
+        // SLA breached and not yet escalated -> escalate once (no duplicates: escalatedAt gate).
+        const escalateTo = rule.escalationUserId || t.assignedToUserId;
+        await db.update(tasks).set({
+          escalatedAt: now,
+          escalatedToUserId: escalateTo,
+          triageStatus: "escalated",
+        }).where(eq(tasks.id, t.id));
+        await db.insert(taskAudit).values({
+          taskId: t.id,
+          action: "sla_escalated",
+          oldValue: t.status,
+          newValue: t.status,
+          reason: `SLA breached: ${rule.name} (${rule.slaHours}h)`,
+          performedBy: user.id,
+        });
+        escalated++;
+      }
+      res.json({ ok: true, checked, slaDueSet: slaSet, escalated });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // ============ END TICKET 13 ============
   async function listEntityTasks(req: any, res: any, entity: { type: string; id: number }) {
     const user = await requireAuth(req, res);
     if (!user) return null;

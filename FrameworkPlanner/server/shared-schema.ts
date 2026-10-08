@@ -1346,9 +1346,45 @@ export const tasks = pgTable("tasks", {
   isPrivate: boolean("is_private").notNull().default(false),
   reminderSentAt: timestamp("reminder_sent_at"),
   overdueAlertSentAt: timestamp("overdue_alert_sent_at"),
+  // Ticket 13 — triage + SLA columns
+  slaDueAt: timestamp("sla_due_at"),
+  escalatedAt: timestamp("escalated_at"),
+  escalatedToUserId: integer("escalated_to_user_id"),
+  triageStatus: varchar("triage_status", { length: 24 }).notNull().default("pending"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+// Ticket 13 — SLA rules: per task-type response targets with escalation routing.
+export const taskSlaRules = pgTable("task_sla_rules", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 120 }).notNull(),
+  taskType: varchar("task_type", { length: 80 }).notNull(),
+  slaHours: integer("sla_hours").notNull(),
+  escalationUserId: integer("escalation_user_id"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertTaskSlaRuleSchema = createInsertSchema(taskSlaRules).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type TaskSlaRule = typeof taskSlaRules.$inferSelect;
+export type InsertTaskSlaRule = z.infer<typeof insertTaskSlaRuleSchema>;
+
+// Ticket 13 — task audit: one immutable event per triage/escalation action.
+export const taskAudit = pgTable("task_audit", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  taskId: integer("task_id").notNull(),
+  action: varchar("action", { length: 40 }).notNull(),
+  oldValue: text("old_value"),
+  newValue: text("new_value"),
+  reason: text("reason"),
+  performedBy: integer("performed_by"),
+  performedAt: timestamp("performed_at").defaultNow(),
+});
+export const insertTaskAuditSchema = createInsertSchema(taskAudit).omit({ id: true, performedAt: true } as any);
+export type TaskAudit = typeof taskAudit.$inferSelect;
+export type InsertTaskAudit = z.infer<typeof insertTaskAuditSchema>;
 
 export const insertTaskSchema = createInsertSchema(tasks).omit({
   id: true,

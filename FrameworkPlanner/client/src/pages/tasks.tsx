@@ -15,7 +15,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { apiRequest } from "@/lib/queryClient";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { addDays, endOfDay, format, startOfDay } from "date-fns";
-import { CheckSquare, Loader2, Plus, RefreshCw, UserPlus } from "lucide-react";
+import { AlertTriangle, CheckSquare, Loader2, Plus, RefreshCw, UserPlus } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation, useSearch } from "wouter";
@@ -434,6 +434,10 @@ export default function TasksPage() {
             <Badge variant="secondary">{list?.total ?? 0}</Badge>
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setLocation("/tasks/triage")} data-testid="button-task-triage">
+              <AlertTriangle className="h-4 w-4 mr-2" />
+              Triage & SLA
+            </Button>
             <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>
               <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? "animate-spin" : ""}`} />
               Refresh

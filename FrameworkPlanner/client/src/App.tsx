@@ -40,6 +40,7 @@ const Buyers = React.lazy(() => import("@/pages/buyers"));
 // DISPO-PHASE1 (feat/dispo-phase1): Disposition workspace page.
 const Disposition = React.lazy(() => import("@/pages/disposition"));
 const TasksPage = React.lazy(() => import("@/pages/tasks"));
+const TasksTriagePage = React.lazy(() => import("@/pages/tasks-triage"));
 const CalendarPage = React.lazy(() => import("@/pages/calendar"));
 const TodayPage = React.lazy(() => import("@/pages/today"));
 const Contacts = React.lazy(() => import("@/pages/contacts"));
@@ -193,6 +194,7 @@ function Router() {
       {/* DISPO-PHASE1 (feat/dispo-phase1): Disposition workspace. */}
       <Route path="/disposition" component={() => <ProtectedRoute component={Disposition} />} />
       <Route path="/tasks" component={() => <ProtectedRoute component={TasksPage} />} />
+      <Route path="/tasks/triage" component={() => <ProtectedRoute component={TasksTriagePage} />} />
       <Route path="/calendar" component={() => <ProtectedRoute component={CalendarPage} />} />
       <Route path="/today" component={() => <ProtectedRoute component={TodayPage} />} />
       <Route path="/contacts" component={() => <ProtectedRoute component={Contacts} />} />
