@@ -967,6 +967,10 @@ export const lois = pgTable("lois", {
   responseDate: timestamp("response_date"),
   content: text("content"),
   pdfUrl: varchar("pdf_url", { length: 500 }),
+  opportunityId: integer("opportunity_id"),
+  envelopeId: integer("envelope_id"),
+  pdfStorageKey: varchar("pdf_storage_key", { length: 500 }),
+  expiresAt: timestamp("expires_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

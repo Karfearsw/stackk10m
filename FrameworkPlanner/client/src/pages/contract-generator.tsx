@@ -621,6 +621,32 @@ function TemplatesManager({ templates, isLoading, onUseTemplate }: { templates: 
                 <div className="flex justify-between items-center">
                   <span className="text-xs text-muted-foreground capitalize">{template.status}</span>
                   <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      title="Download as professional PDF"
+                      onClick={async () => {
+                        try {
+                          const res = await fetch(`/api/contract-templates/${template.id}/pdf`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({}),
+                          });
+                          if (!res.ok) throw new Error("PDF generation failed");
+                          const blob = await res.blob();
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `${template.name.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.pdf`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        } catch (e: any) {
+                          toast({ title: e?.message || "PDF download failed", variant: "destructive" });
+                        }
+                      }}
+                    >
+                      PDF
+                    </Button>
                     <Button variant="outline" size="sm" data-testid={`button-edit-${template.id}`} onClick={() => setEditing({ ...template, mergeFields: Array.isArray(template.mergeFields) ? template.mergeFields.join(", ") : (template.mergeFields || "") })}>
                       Edit
                     </Button>

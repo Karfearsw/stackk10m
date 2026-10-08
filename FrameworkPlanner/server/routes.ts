@@ -10250,6 +10250,134 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     }
   });
 
+  // ── LOI PDF Generation ─────────────────────────────────────────────
+  reg("get", "/api/lois/:id/pdf"); app.get("/api/lois/:id/pdf", async (req, res) => {
+    try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
+      const loi = await storage.getLoiById(parseInt(req.params.id, 10));
+      if (!loi) return res.status(404).json({ message: "LOI not found" });
+
+      const { generateLoiPdf } = await import("./loi/pdf-generator.js");
+
+      // Get property address
+      let propertyAddress = `Property #${loi.propertyId}`;
+      try {
+        const prop = await storage.getPropertyById?.(loi.propertyId);
+        if (prop) propertyAddress = prop.address || propertyAddress;
+      } catch {}
+
+      const pdfBytes = await generateLoiPdf({
+        buyerName: loi.buyerName,
+        sellerName: loi.sellerName,
+        propertyAddress,
+        offerAmount: Number(loi.offerAmount),
+        earnestMoney: loi.earnestMoney ? Number(loi.earnestMoney) : null,
+        closingDate: loi.closingDate ? new Date(loi.closingDate).toISOString() : null,
+        contingencies: loi.contingencies || [],
+        specialTerms: loi.specialTerms || null,
+        expiresAt: loi.expiresAt ? new Date(loi.expiresAt).toISOString() : null,
+        createdAt: loi.createdAt ? new Date(loi.createdAt).toISOString() : null,
+      });
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="LOI-${loi.id}.pdf"`);
+      res.setHeader("Content-Length", pdfBytes.length);
+      res.send(Buffer.from(pdfBytes));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ── LOI → E-sign Bridge ────────────────────────────────────────────
+  // Creates a v2 e-sign envelope from an LOI and links it back.
+  reg("post", "/api/lois/:id/send-for-signature"); app.post("/api/lois/:id/send-for-signature", async (req, res) => {
+    try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
+      const userId = (authCtx as any).id || (authCtx as any).userId;
+
+      const loiId = parseInt(req.params.id, 10);
+      const loi = await storage.getLoiById(loiId);
+      if (!loi) return res.status(404).json({ message: "LOI not found" });
+      if ((loi as any).envelopeId) {
+        return res.status(400).json({ message: "LOI already sent for signature", envelopeId: (loi as any).envelopeId });
+      }
+
+      const { signers, signingMode, expiresInDays } = req.body || {};
+      if (!signers || !Array.isArray(signers) || signers.length === 0) {
+        return res.status(400).json({ message: "At least one signer (name + email) is required" });
+      }
+
+      // Find the LOI template
+      const { db } = await import("./db.js");
+      const { contractTemplates } = await import("./shared-schema.js");
+      const { eq } = await import("drizzle-orm");
+      const [template] = await db.select().from(contractTemplates)
+        .where(eq(contractTemplates.name, "Letter of Intent (LOI)"))
+        .limit(1);
+      if (!template) {
+        return res.status(500).json({ message: "LOI template not found. Run migration 0095." });
+      }
+
+      // Get property address
+      let propertyAddress = `Property #${loi.propertyId}`;
+      try {
+        const prop = await (storage as any).getPropertyById?.(loi.propertyId);
+        if (prop) propertyAddress = prop.address || propertyAddress;
+      } catch {}
+
+      const fmtMoney = (n: any) => n == null ? "—" :
+        new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(Number(n));
+      const fmtDate = (d: any) => { try { return new Date(d).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }); } catch { return "—"; } };
+
+      // Create v2 envelope from the LOI template
+      const { createEnvelopeFromTemplate } = await import("./esign/envelopes.js");
+      const envelope = await createEnvelopeFromTemplate({
+        templateId: template.id,
+        title: `LOI - ${propertyAddress}`,
+        mergeData: {
+          buyerName: loi.buyerName,
+          sellerName: loi.sellerName,
+          propertyAddress,
+          offerAmount: fmtMoney(loi.offerAmount),
+          earnestMoney: fmtMoney(loi.earnestMoney),
+          closingDate: loi.closingDate ? fmtDate(loi.closingDate) : "—",
+          expiresAt: (loi as any).expiresAt ? fmtDate((loi as any).expiresAt) : "—",
+          contingencies: (loi.contingencies || []).map((c: string) => `<li>${c}</li>`).join(""),
+          specialTerms: loi.specialTerms || "None specified.",
+          date: fmtDate(loi.createdAt),
+          propertyId: loi.propertyId,
+        },
+        signers,
+        signingMode: signingMode || "sequential",
+        expiresInDays: expiresInDays || 14,
+      }, userId);
+
+      // Link envelope back to LOI
+      await storage.updateLoi(loiId, { envelopeId: (envelope as any).id || (envelope as any).envelope?.id, status: "sent" } as any);
+
+      res.status(201).json({ envelope, loiId });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ── Get LOIs for an opportunity/deal ───────────────────────────────
+  reg("get", "/api/opportunities/:id/lois"); app.get("/api/opportunities/:id/lois", async (req, res) => {
+    try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
+      const { db } = await import("./db.js");
+      const { lois } = await import("./shared-schema.js");
+      const { eq } = await import("drizzle-orm");
+      const items = await db.select().from(lois).where(eq(lois.opportunityId, parseInt(req.params.id, 10)));
+      res.json(items);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   reg("get", "/api/contracts"); app.get("/api/contracts", async (req, res) => {
     try {
       const actor = await requireAuth(req, res);
@@ -11426,6 +11554,37 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.json({ ok: true, signedPdfBase64 });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
+    }
+  });
+  // ── Contract Template PDF ──────────────────────────────────────────
+  // Renders a contract template as a professional PDF (not raw HTML).
+  reg("post", "/api/contract-templates/:id/pdf"); app.post("/api/contract-templates/:id/pdf", async (req, res) => {
+    try {
+      const authCtx = await requireAuth(req, res);
+      if (!authCtx) return;
+      const template = await storage.getContractTemplateById(parseInt(req.params.id));
+      if (!template) return res.status(404).json({ message: "Template not found" });
+      const { propertyId, buyerId, sellerContactId, leadId, mergeData: overrideData } = req.body || {};
+      const [property, buyer, seller, lead] = await Promise.all([
+        propertyId ? storage.getPropertyById(parseInt(propertyId)) : null,
+        buyerId ? storage.getBuyerById(parseInt(buyerId)) : null,
+        sellerContactId ? storage.getContactById(parseInt(sellerContactId)) : null,
+        leadId ? storage.getLeadById(parseInt(leadId)) : null,
+      ]);
+      const mergeData = { ...buildMergeData({ property: property || undefined, buyer: buyer || undefined, seller: seller || undefined, lead: lead || undefined }), ...(overrideData || {}) };
+      const content = applyTemplateToContract({}, template, mergeData);
+
+      const { renderContractHtmlToPdf, toPrintableHtml } = await import("./esign/pdf.js");
+      const html = toPrintableHtml(template.name || "Contract", content);
+      const pdfBytes = await renderContractHtmlToPdf(html);
+
+      const safeName = String(template.name || "contract").replace(/[^a-z0-9]+/gi, "-").toLowerCase();
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${safeName}.pdf"`);
+      res.setHeader("Content-Length", pdfBytes.length);
+      res.send(Buffer.from(pdfBytes));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   });
   reg("post", "/api/contract-templates/:id/preview"); app.post("/api/contract-templates/:id/preview", async (req, res) => {

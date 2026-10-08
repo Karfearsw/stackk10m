@@ -89,7 +89,7 @@ const menuGroups = [
     icon: FolderOpen,
     items: [
       { name: "LOIs", href: "/lois", icon: FileSignature },
-      { name: "E-Sign", href: "/contracts", icon: PenLine },
+      { name: "E-Sign", href: "/esign", icon: PenLine },
       { name: "Documents", href: "/documents", icon: FolderOpen },
       { name: "Documentation", href: "/docs", icon: BookOpen },
     ],

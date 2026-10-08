@@ -28,7 +28,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { format } from "date-fns";
-import { FileText, Plus, Trash2 } from "lucide-react";
+import { FileText, Plus, Trash2, Download, FileSignature, Send } from "lucide-react";
 
 // M22/M29: LOIs could be created inside Document Management but then
 // dead-ended at Draft with no lifecycle UI and no standalone route
@@ -55,13 +55,18 @@ export default function LoisPage() {
   // that never rendered in-context — the button looked dead. Delete intent now
   // flows through this state into an AlertDialog, same as lead delete.
   const [loiToDelete, setLoiToDelete] = useState<any>(null);
+  const [loiToSign, setLoiToSign] = useState<any>(null);
+  const [signers, setSigners] = useState([{ name: "", email: "", phone: "" }]);
+  const [signingMode, setSigningMode] = useState<"sequential" | "parallel">("sequential");
   const [form, setForm] = useState({
     propertyId: "",
+    opportunityId: "",
     buyerName: "",
     sellerName: "",
     offerAmount: "",
     earnestMoney: "",
     closingDate: "",
+    expiresAt: "",
     specialTerms: "",
   });
 
@@ -77,6 +82,10 @@ export default function LoisPage() {
     queryKey: ["/api/properties"],
   });
 
+  const { data: opportunities = [] } = useQuery<any[]>({
+    queryKey: ["/api/opportunities"],
+  });
+
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["/api/lois"] });
 
   const createMutation = useMutation({
@@ -87,7 +96,7 @@ export default function LoisPage() {
     onSuccess: () => {
       toast({ title: "LOI created" });
       setCreateOpen(false);
-      setForm({ propertyId: "", buyerName: "", sellerName: "", offerAmount: "", earnestMoney: "", closingDate: "", specialTerms: "" });
+      setForm({ propertyId: "", opportunityId: "", buyerName: "", sellerName: "", offerAmount: "", earnestMoney: "", closingDate: "", expiresAt: "", specialTerms: "" });
       invalidate();
     },
     onError: (e: any) => toast({ title: e?.message || "Failed to create LOI", variant: "destructive" }),
@@ -109,6 +118,24 @@ export default function LoisPage() {
     onError: (e: any) => toast({ title: e?.message || "Failed to update LOI", variant: "destructive" }),
   });
 
+  const sendForSignatureMutation = useMutation({
+    mutationFn: async ({ id, signers, signingMode }: any) => {
+      const res = await apiRequest("POST", `/api/lois/${id}/send-for-signature`, {
+        signers: signers.filter((s: any) => s.name.trim() && s.email.trim()),
+        signingMode,
+        expiresInDays: 14,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "LOI sent for signature", description: "Signers have been notified by email/SMS." });
+      setLoiToSign(null);
+      setSigners([{ name: "", email: "", phone: "" }]);
+      invalidate();
+    },
+    onError: (e: any) => toast({ title: e?.message || "Failed to send for signature", variant: "destructive" }),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async (id: number) => {
       const res = await apiRequest("DELETE", `/api/lois/${id}`);
@@ -128,11 +155,13 @@ export default function LoisPage() {
     }
     createMutation.mutate({
       propertyId: parseInt(form.propertyId, 10),
+      opportunityId: form.opportunityId ? parseInt(form.opportunityId, 10) : null,
       buyerName: form.buyerName.trim(),
       sellerName: form.sellerName.trim(),
       offerAmount: form.offerAmount,
       earnestMoney: form.earnestMoney || null,
       closingDate: form.closingDate || null,
+      expiresAt: form.expiresAt || null,
       specialTerms: form.specialTerms.trim() || null,
       status: "draft",
     });
@@ -203,7 +232,42 @@ export default function LoisPage() {
                         <div className="text-xs text-muted-foreground mt-1 truncate" title={loi.specialTerms}>{loi.specialTerms}</div>
                       ) : null}
                     </div>
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        title="Download LOI as PDF"
+                        onClick={() => window.open(`/api/lois/${loi.id}/pdf`, "_blank")}
+                      >
+                        <Download className="h-4 w-4 mr-1" /> PDF
+                      </Button>
+                      {!loi.envelopeId && loi.status === "draft" && (
+                        <Button
+                          size="sm"
+                          variant="default"
+                          title="Send LOI for electronic signature"
+                          onClick={() => {
+                            setLoiToSign(loi);
+                            // Pre-fill buyer and seller as signers
+                            setSigners([
+                              { name: loi.buyerName || "", email: "", phone: "" },
+                              { name: loi.sellerName || "", email: "", phone: "" },
+                            ]);
+                          }}
+                        >
+                          <FileSignature className="h-4 w-4 mr-1" /> Send for Signature
+                        </Button>
+                      )}
+                      {loi.envelopeId && (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          title="View e-sign envelope"
+                          onClick={() => window.location.href = "/esign"}
+                        >
+                          <Send className="h-4 w-4 mr-1" /> In E-Sign
+                        </Button>
+                      )}
                       {transition(loi).map((t) => (
                         <Button
                           key={t.status}
@@ -272,8 +336,27 @@ export default function LoisPage() {
                 <Input type="number" value={form.earnestMoney} onChange={(e) => setForm({ ...form, earnestMoney: e.target.value })} placeholder="5000" data-testid="input-loi-earnest" />
               </div>
               <div className="space-y-1.5 sm:col-span-2">
+                <Label>Linked Deal / Opportunity (optional)</Label>
+                <Select value={form.opportunityId} onValueChange={(v) => setForm({ ...form, opportunityId: v })}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a deal (optional)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {opportunities.map((o: any) => (
+                      <SelectItem key={o.id} value={String(o.id)}>
+                        {o.title || o.name || `Deal #${o.id}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
                 <Label>Closing Date</Label>
                 <Input type="date" value={form.closingDate} onChange={(e) => setForm({ ...form, closingDate: e.target.value })} data-testid="input-loi-closing" />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Offer Expires</Label>
+                <Input type="date" value={form.expiresAt} onChange={(e) => setForm({ ...form, expiresAt: e.target.value })} />
               </div>
               <div className="space-y-1.5 sm:col-span-2">
                 <Label>Special Terms</Label>
@@ -284,6 +367,72 @@ export default function LoisPage() {
               <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
               <Button onClick={submit} disabled={createMutation.isPending} data-testid="button-create-loi">
                 {createMutation.isPending ? "Creating…" : "Create LOI"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Send for Signature Dialog */}
+        <Dialog open={!!loiToSign} onOpenChange={(open) => { if (!open) setLoiToSign(null); }}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Send LOI for Electronic Signature</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <p className="text-sm text-muted-foreground">
+                This will create an e-sign envelope from the LOI and notify each signer by email and SMS.
+              </p>
+              <div>
+                <Label>Signing Order</Label>
+                <Select value={signingMode} onValueChange={(v: any) => setSigningMode(v)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="sequential">Sequential (buyer signs first, then seller)</SelectItem>
+                    <SelectItem value="parallel">Parallel (everyone at once)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-3">
+                <Label>Signers</Label>
+                {signers.map((s, idx) => (
+                  <div key={idx} className="grid grid-cols-1 gap-2 p-3 border rounded-lg">
+                    <Input
+                      placeholder={`Signer ${idx + 1} name *`}
+                      value={s.name}
+                      onChange={(e) => {
+                        const u = [...signers]; u[idx] = { ...u[idx], name: e.target.value }; setSigners(u);
+                      }}
+                    />
+                    <Input
+                      placeholder="Email *"
+                      type="email"
+                      value={s.email}
+                      onChange={(e) => {
+                        const u = [...signers]; u[idx] = { ...u[idx], email: e.target.value }; setSigners(u);
+                      }}
+                    />
+                    <Input
+                      placeholder="Phone (for SMS notification)"
+                      value={s.phone}
+                      onChange={(e) => {
+                        const u = [...signers]; u[idx] = { ...u[idx], phone: e.target.value }; setSigners(u);
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setLoiToSign(null)}>Cancel</Button>
+              <Button
+                onClick={() => loiToSign && sendForSignatureMutation.mutate({
+                  id: loiToSign.id,
+                  signers: signers.map((s, i) => ({ ...s, order: i + 1 })),
+                  signingMode,
+                })}
+                disabled={sendForSignatureMutation.isPending || !signers.some((s) => s.name.trim() && s.email.trim())}
+              >
+                {sendForSignatureMutation.isPending ? "Sending..." : "Send for Signature"}
               </Button>
             </DialogFooter>
           </DialogContent>

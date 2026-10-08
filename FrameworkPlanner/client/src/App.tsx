@@ -61,6 +61,7 @@ const CommunicationsWorkspace = React.lazy(() => import("@/pages/workspace-commu
 const ScriptsPage = React.lazy(() => import("@/pages/scripts"));
 const CallAuditPage = React.lazy(() => import("@/pages/call-audit"));
 const LoisPage = React.lazy(() => import("@/pages/lois"));
+const EsignPage = React.lazy(() => import("@/pages/esign"));
 const VoicemailPage = React.lazy(() => import("@/pages/voicemail"));
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
 const JobsPage = React.lazy(() => import("@/pages/jobs"));
@@ -229,6 +230,7 @@ function Router() {
       {/* M22/M29: LOIs live in the Document Management tabs; give them a real
           standalone route so the lifecycle is reachable and /lois doesn't 404. */}
       <Route path="/lois" component={() => <ProtectedRoute component={LoisPage} />} />
+      <Route path="/esign" component={() => <ProtectedRoute component={EsignPage} />} />
       <Route path="/system-health" component={() => <ProtectedRoute component={SystemHealthPage} />} />
       {/* TICKET-09: Background job queue health dashboard. */}
       <Route path="/jobs" component={() => <ProtectedRoute component={JobsPage} />} />
