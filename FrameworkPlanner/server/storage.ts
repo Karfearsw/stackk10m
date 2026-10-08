@@ -14,7 +14,7 @@ export function generateXpBookingReference(): string {
 import { 
   leads, leadNotes, savedViews, leadBulkActionJobs, aiActionLogs, aiActionUndo, appAuditRuns, appAuditFindings, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, contractSigners, contractEvents, contractFields, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, workCategories, timesheetEntries, timeClockSessions, workerProfiles, categoryRateOverrides, payPeriods, approvalEvents, commissionEvents, dealParticipants, commissionLedgerEntries, globalActivityLogs,
-  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents,
+  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, campaignRecipients, campaignMessages, campaignRuns, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents,
   companies, companyPeople, companyLinks, documents, documentLinks, vaultDocumentVersions, automations, automationTriggers, automationConditions, automationActions, automationRuns, auditEvents,
   opportunityParties, publicListings, buyerInquiries, opportunityEvents, buyerOffers, propertyUnits, commissionSnapshots,
   internalMessages, calendarEvents, appSettings, smsMessages, callSessions, callSessionEvents, agentPhoneSettings, callDispositions, aiCallQualifications,
@@ -1509,6 +1509,9 @@ export class DatabaseStorage implements IStorage {
     await db.delete(campaignDeliveries).where(eq(campaignDeliveries.campaignId, id));
     await db.delete(campaignEnrollments).where(eq(campaignEnrollments.campaignId, id));
     await db.delete(campaignSteps).where(eq(campaignSteps.campaignId, id));
+    await db.delete(campaignRuns).where(eq(campaignRuns.campaignId, id));
+    await db.delete(campaignRecipients).where(eq(campaignRecipients.campaignId, id));
+    await db.delete(campaignMessages).where(eq(campaignMessages.campaignId, id));
     await db.delete(campaigns).where(eq(campaigns.id, id));
   }
 

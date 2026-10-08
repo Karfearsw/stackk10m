@@ -5175,7 +5175,226 @@ export async function registerRoutes(
       if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const id = parseInt(req.params.id);
       const stats = await storage.getCampaignStats(id);
+      // Ticket 15: enrich with broadcast recipient + cost stats.
+      try {
+        const b: any = await db.execute(sql`
+          SELECT
+            COUNT(*)::int AS recipients,
+            SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END)::int AS b_sent,
+            SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END)::int AS b_failed,
+            SUM(CASE WHEN status IN ('opted_out','skipped') THEN 1 ELSE 0 END)::int AS b_excluded,
+            SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END)::int AS b_pending,
+            COALESCE(SUM(cost_cents),0)::int AS b_cost_cents
+          FROM campaign_recipients WHERE campaign_id = ${id}
+        `);
+        const br = ((b as any).rows || [])[0] || {};
+        (stats as any).broadcast = {
+          recipients: Number(br.recipients || 0),
+          sent: Number(br.b_sent || 0),
+          failed: Number(br.b_failed || 0),
+          excluded: Number(br.b_excluded || 0),
+          pending: Number(br.b_pending || 0),
+          costCents: Number(br.b_cost_cents || 0),
+        };
+      } catch {}
       res.json(stats);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ── Ticket 15: Broadcast campaign endpoints ──────────────────────────
+  // PUT alias for campaign update (PATCH already exists above).
+  reg("put", "/api/campaigns/:id"); app.put("/api/campaigns/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const schema = z.object({
+        name: z.string().trim().min(1).max(120).optional(),
+        description: z.string().max(2000).nullable().optional(),
+        channel: z.enum(["sms", "email"]).optional(),
+        status: z.string().trim().min(1).max(20).optional(),
+        scheduledAt: z.string().nullable().optional(),
+        audienceFilters: z.array(z.object({ field: z.string(), value: z.string() })).optional(),
+        audience: z.enum(["leads", "buyers", "both"]).optional(),
+        pilotMode: z.boolean().optional(),
+        pilotLimit: z.number().int().min(1).max(500).optional(),
+      });
+      const payload = schema.parse(req.body || {});
+      const patch: any = {};
+      if (payload.name !== undefined) patch.name = payload.name;
+      if (payload.description !== undefined) patch.description = payload.description;
+      if (payload.channel !== undefined) patch.channel = payload.channel;
+      if (payload.status !== undefined) patch.status = payload.status;
+      if (payload.scheduledAt !== undefined) patch.scheduledAt = payload.scheduledAt ? new Date(payload.scheduledAt) : null;
+      if (payload.audienceFilters !== undefined) patch.audienceFilters = payload.audienceFilters;
+      if (payload.audience !== undefined) patch.audience = payload.audience;
+      if (payload.pilotMode !== undefined) patch.pilotMode = payload.pilotMode;
+      if (payload.pilotLimit !== undefined) patch.pilotLimit = payload.pilotLimit;
+      const row = await storage.updateCampaign(id, patch);
+      res.json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // Exact-recipient preview: the FULL list with per-recipient exclusion reasons.
+  // Nothing is sent from this endpoint; it also persists the recipient list.
+  reg("post", "/api/campaigns/:id/audience/preview"); app.post("/api/campaigns/:id/audience/preview", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const schema = z.object({
+        channel: z.enum(["sms", "email"]).default("sms"),
+        audience: z.enum(["leads", "buyers", "both"]).default("leads"),
+        filters: z.array(z.object({ field: z.string(), value: z.string() })).default([]),
+      });
+      const { channel, audience: aud, filters } = schema.parse(req.body || {});
+      const { buildAudience, persistRecipients, estimateCost } = await import("./campaigns/audience.js");
+      const preview = await buildAudience({ channel, audience: aud, filters });
+      const persisted = await persistRecipients(id, preview);
+      await db.execute(sql`UPDATE campaigns SET channel=${channel}, audience_filters=${JSON.stringify(filters)}::jsonb, updated_at=now() WHERE id=${id}`);
+      const cost = estimateCost(channel, preview.eligible);
+      res.json({ ...preview, persisted, cost });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // Save/update the broadcast message body.
+  reg("put", "/api/campaigns/:id/message"); app.put("/api/campaigns/:id/message", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const schema = z.object({
+        subject: z.string().max(255).nullable().optional(),
+        body: z.string().min(1).max(5000),
+      });
+      const { subject, body } = schema.parse(req.body || {});
+      await db.execute(sql`
+        INSERT INTO campaign_messages (campaign_id, subject, body)
+        VALUES (${id}, ${subject || null}, ${body})
+        ON CONFLICT (campaign_id) DO UPDATE SET subject=${subject || null}, body=${body}
+      `);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // Schedule a broadcast for a future time.
+  reg("post", "/api/campaigns/:id/schedule"); app.post("/api/campaigns/:id/schedule", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const schema = z.object({ scheduledAt: z.string().min(1) });
+      const { scheduledAt } = schema.parse(req.body || {});
+      const when = new Date(scheduledAt);
+      if (!Number.isFinite(when.getTime()) || when.getTime() <= Date.now()) {
+        return res.status(400).json({ message: "scheduledAt must be a future date/time" });
+      }
+      await db.execute(sql`UPDATE campaigns SET scheduled_at=${when.toISOString()}, status='scheduled', updated_at=now() WHERE id=${id}`);
+      res.json({ ok: true, scheduledAt: when.toISOString(), status: "scheduled" });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // Start a broadcast send now (runs in background; pause/cancel take effect immediately).
+  reg("post", "/api/campaigns/:id/send"); app.post("/api/campaigns/:id/send", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const cur: any = await db.execute(sql`SELECT status FROM campaigns WHERE id=${id} LIMIT 1`);
+      const status = ((cur as any).rows || [])[0]?.status;
+      if (status === "sending") return res.status(409).json({ message: "Campaign is already sending" });
+      if (!["draft", "scheduled", "paused", "failed"].includes(String(status))) {
+        return res.status(409).json({ message: `Cannot send from status '${status}'` });
+      }
+      const { runBroadcast } = await import("./campaigns/sender.js");
+      // Fire-and-forget: the run checks pause/cancel before every message.
+      runBroadcast(id, user.id).catch((e) => console.error(`[campaign ${id}] broadcast failed:`, e?.message || e));
+      res.json({ ok: true, message: "Broadcast started" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Immediate pause — the sender checks status before every message.
+  reg("post", "/api/campaigns/:id/pause"); app.post("/api/campaigns/:id/pause", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      await db.execute(sql`UPDATE campaigns SET status='paused', updated_at=now() WHERE id=${id}`);
+      res.json({ ok: true, status: "paused" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/campaigns/:id/resume"); app.post("/api/campaigns/:id/resume", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const { runBroadcast } = await import("./campaigns/sender.js");
+      runBroadcast(id, user.id).catch((e) => console.error(`[campaign ${id}] resume failed:`, e?.message || e));
+      res.json({ ok: true, message: "Broadcast resumed" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/campaigns/:id/cancel"); app.post("/api/campaigns/:id/cancel", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      await db.execute(sql`UPDATE campaigns SET status='cancelled', updated_at=now() WHERE id=${id}`);
+      await db.execute(sql`UPDATE campaign_recipients SET status='skipped', error='Campaign cancelled' WHERE campaign_id=${id} AND status='pending'`);
+      res.json({ ok: true, status: "cancelled" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Paginated recipient list for the exact-recipient preview UI.
+  reg("get", "/api/campaigns/:id/recipients"); app.get("/api/campaigns/:id/recipients", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const limit = Math.min(parseInt(String(req.query.limit || "100"), 10) || 100, 500);
+      const offset = Math.max(parseInt(String(req.query.offset || "0"), 10) || 0, 0);
+      const statusFilter = String(req.query.status || "").trim();
+      const where = statusFilter ? sql`AND status = ${statusFilter}` : sql``;
+      const out: any = await db.execute(sql`
+        SELECT cr.id, cr.recipient_type, cr.lead_id, cr.buyer_id, cr.phone, cr.email,
+               cr.status, cr.sent_at, cr.error, cr.cost_cents,
+               COALESCE(l.owner_name, b.name, 'Unknown') AS name
+        FROM campaign_recipients cr
+        LEFT JOIN leads l ON cr.lead_id = l.id
+        LEFT JOIN buyers b ON cr.buyer_id = b.id
+        WHERE cr.campaign_id = ${id} ${where}
+        ORDER BY cr.id ASC LIMIT ${limit} OFFSET ${offset}
+      `);
+      const cnt: any = await db.execute(sql`SELECT COUNT(*)::int AS c FROM campaign_recipients WHERE campaign_id=${id} ${where}`);
+      res.json({ recipients: ((out as any).rows || []), total: Number((((cnt as any).rows || [])[0] || {}).c || 0) });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }

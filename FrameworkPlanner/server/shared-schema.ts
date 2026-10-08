@@ -457,7 +457,15 @@ export const campaigns = pgTable("campaigns", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   userId: integer("user_id").notNull(),
   name: varchar("name", { length: 120 }).notNull(),
+  description: text("description"),
+  channel: varchar("channel", { length: 10 }).notNull().default("sms"),
   status: varchar("status", { length: 20 }).notNull().default("active"),
+  scheduledAt: timestamp("scheduled_at"),
+  createdBy: integer("created_by"),
+  audience: varchar("audience", { length: 10 }).notNull().default("leads"),
+  audienceFilters: jsonb("audience_filters").notNull().default([]),
+  pilotMode: boolean("pilot_mode").notNull().default(false),
+  pilotLimit: integer("pilot_limit").notNull().default(10),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -465,6 +473,51 @@ export const campaigns = pgTable("campaigns", {
 export const insertCampaignSchema = createInsertSchema(campaigns).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type Campaign = typeof campaigns.$inferSelect;
 export type InsertCampaign = z.infer<typeof insertCampaignSchema>;
+
+// Ticket 15: broadcast recipient tracking (exact list resolved at preview time).
+export const campaignRecipients = pgTable("campaign_recipients", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  campaignId: integer("campaign_id").notNull(),
+  leadId: integer("lead_id"),
+  buyerId: integer("buyer_id"),
+  recipientType: varchar("recipient_type", { length: 10 }).notNull().default("lead"),
+  phone: varchar("phone", { length: 32 }),
+  email: varchar("email", { length: 255 }),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
+  sentAt: timestamp("sent_at"),
+  error: text("error"),
+  costCents: integer("cost_cents").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export type CampaignRecipient = typeof campaignRecipients.$inferSelect;
+
+// Ticket 15: broadcast message content (one row per campaign).
+export const campaignMessages = pgTable("campaign_messages", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  campaignId: integer("campaign_id").notNull(),
+  subject: varchar("subject", { length: 255 }),
+  body: text("body").notNull().default(""),
+  templateId: integer("template_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export type CampaignMessage = typeof campaignMessages.$inferSelect;
+
+// Ticket 15: send-run audit trail.
+export const campaignRuns = pgTable("campaign_runs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  campaignId: integer("campaign_id").notNull(),
+  startedAt: timestamp("started_at").defaultNow(),
+  finishedAt: timestamp("finished_at"),
+  status: varchar("status", { length: 20 }).notNull().default("running"),
+  totalRecipients: integer("total_recipients").notNull().default(0),
+  sentCount: integer("sent_count").notNull().default(0),
+  failedCount: integer("failed_count").notNull().default(0),
+  skippedCount: integer("skipped_count").notNull().default(0),
+  totalCostCents: integer("total_cost_cents").notNull().default(0),
+  startedBy: integer("started_by"),
+  stopReason: text("stop_reason"),
+});
+export type CampaignRun = typeof campaignRuns.$inferSelect;
 
 export const campaignSteps = pgTable("campaign_steps", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
