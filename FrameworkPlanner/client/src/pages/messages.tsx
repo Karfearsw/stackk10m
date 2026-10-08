@@ -4,12 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { MessageSquare, Send, Loader2, Users, Paperclip, X, Video } from "lucide-react";
+import { MessageSquare, Send, Loader2, Users, Paperclip, X, Video, ExternalLink, Download } from "lucide-react";
 import { MediaUploader } from "@/components/media/MediaUploader";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { formatBytes, isVideoAsset, isImageAsset, mediaPreviewUrl, type MediaAsset } from "@/lib/media";
 import { VideoCallDialog } from "@/components/video/VideoCallDialog";
 import { apiRequest } from "@/lib/queryClient";
-import { formatBytes, isVideoAsset, mediaPreviewUrl, type MediaAsset } from "@/lib/media";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -43,35 +43,11 @@ export default function MessagesPage() {
   const [body, setBody] = useState("");
   const [pendingMedia, setPendingMedia] = useState<MediaAsset[]>([]);
   const [lightboxAsset, setLightboxAsset] = useState<MediaAsset | null>(null);
-  // ── Internal team video call state ──
+  // Video call state — internal team video, unified with the chat.
   const [videoOpen, setVideoOpen] = useState(false);
   const [videoRoomId, setVideoRoomId] = useState("");
   const [videoRoomName, setVideoRoomName] = useState("");
   const [videoBusy, setVideoBusy] = useState(false);
-
-  const startTeamVideoCall = async () => {
-    if (withUserId == null) return;
-    setVideoBusy(true);
-    try {
-      const res = await apiRequest("POST", "/api/video/rooms", {
-        name: `Team call: ${user?.name || user?.email || "Team"} ↔ ${userName(withUserId)}`,
-        maxParticipants: 4,
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "Failed to create video room");
-      const room = json?.room || json;
-      const roomId = room?.room_id || room?.roomId || room?.id;
-      if (!roomId) throw new Error("No room id returned");
-      setVideoRoomId(roomId);
-      setVideoRoomName(room?.name || "Team Video Call");
-      setVideoOpen(true);
-      toast.success("Video room created — share it in chat to invite");
-    } catch (e: any) {
-      toast.error(e?.message || "Failed to start video call");
-    } finally {
-      setVideoBusy(false);
-    }
-  };
 
   const { data: conversations = [], isLoading: convLoading, isError: convError, refetch: refetchConvs } = useQuery<Conversation[]>({
     queryKey: ["/api/messages/conversations"],
@@ -151,6 +127,30 @@ export default function MessagesPage() {
     [users, user?.id],
   );
 
+  // Start an internal team video call with the current conversation partner.
+  const startVideoCall = async () => {
+    if (withUserId == null) return;
+    setVideoBusy(true);
+    try {
+      const res = await apiRequest("POST", "/api/video/rooms", {
+        name: `Team call: ${userName(user?.id)} & ${userName(withUserId)}`,
+        maxParticipants: 4,
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || json?.message || "Failed to create video room");
+      const room = json?.room || json;
+      const roomId = room?.room_id || room?.roomId || room?.id;
+      if (!roomId) throw new Error("No room id returned");
+      setVideoRoomId(roomId);
+      setVideoRoomName(room?.name || `Call with ${userName(withUserId)}`);
+      setVideoOpen(true);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to start video call");
+    } finally {
+      setVideoBusy(false);
+    }
+  };
+
   return (
     <Layout>
       <div className="space-y-1 mb-6">
@@ -215,23 +215,23 @@ export default function MessagesPage() {
               </div>
             ) : (
               <>
-                <div className="flex items-center justify-between">
-                  <h2 className="font-semibold">{userName(withUserId)}</h2>
-                  <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h2 className="font-semibold truncate">{userName(withUserId)}</h2>
+                  <div className="flex items-center gap-2 shrink-0">
                     <Badge variant="outline">Internal</Badge>
                     <Button
-                      size="sm"
                       variant="outline"
-                      onClick={startTeamVideoCall}
+                      size="sm"
+                      onClick={startVideoCall}
                       disabled={videoBusy}
-                      data-testid="button-start-video-call"
+                      title={`Start video call with ${userName(withUserId)}`}
                     >
-                      {videoBusy ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Video className="h-4 w-4 mr-1" />}
-                      Video Call
+                      {videoBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Video className="h-4 w-4" />}
+                      <span className="hidden sm:inline ml-1">Video call</span>
                     </Button>
                   </div>
                 </div>
-                <div className="space-y-2 max-h-[55vh] overflow-y-auto rounded-md border p-3 bg-muted/30">
+                <div data-chat-thread className="space-y-2 max-h-[55vh] overflow-y-auto overflow-x-hidden rounded-md border p-3 bg-muted/30">
                   {msgLoading ? (
                     <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin text-primary" /></div>
                   ) : msgError ? (
@@ -244,43 +244,75 @@ export default function MessagesPage() {
                     sortedMessages.map((m) => {
                       const mine = Number(m.senderUserId) === Number(user?.id);
                       return (
-                        <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
-                          <div className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${mine ? "bg-primary text-primary-foreground" : "bg-card border"}`}>
+                        <div key={m.id} className={`flex ${mine ? "justify-end" : "justify-start"} min-w-0`}>
+                          <div data-chat-bubble className={`min-w-0 max-w-[85%] sm:max-w-[75%] rounded-lg px-3 py-2 text-sm break-words [overflow-wrap:anywhere] ${mine ? "bg-primary text-primary-foreground" : "bg-card border"}`}>
                             {Array.isArray(m.media) && m.media.length > 0 && (
-                              <div className="mb-1.5 flex flex-wrap gap-1.5">
+                              <div className="mb-1.5 flex flex-col gap-2 min-w-0">
                                 {m.media.map((asset) => (
                                   isVideoAsset(asset) ? (
-                                    <div key={asset.id} className="w-[240px] max-w-full">
+                                    <div key={asset.id} className="w-full max-w-[280px] min-w-0">
                                       <video
                                         controls
                                         preload="metadata"
                                         src={mediaPreviewUrl(asset.id)}
-                                        className="w-full rounded-md border bg-black"
+                                        className="w-full rounded-md border bg-black max-h-48"
                                       />
-                                      <div className="mt-0.5 flex items-center justify-between text-[10px] text-muted-foreground">
+                                      <div className="mt-0.5 flex items-center justify-between gap-2 text-[10px] text-muted-foreground min-w-0">
                                         <span className="truncate" title={asset.originalFilename}>{asset.originalFilename}</span>
                                         {asset.durationSeconds != null && (
                                           <span className="shrink-0">{Math.round(asset.durationSeconds)}s</span>
                                         )}
                                       </div>
-                                      <a href={`/api/media/${asset.id}/download`} download className="text-[10px] underline">Download</a>
+                                      <a href={`/api/media/${asset.id}/download`} download className="text-[10px] underline inline-flex items-center gap-0.5">
+                                        <Download className="h-3 w-3" /> Download ({formatBytes(asset.fileSizeBytes)})
+                                      </a>
+                                    </div>
+                                  ) : isImageAsset(asset) ? (
+                                    <div key={asset.id} className="min-w-0">
+                                      <button
+                                        type="button"
+                                        onClick={() => setLightboxAsset(asset)}
+                                        className="block max-w-[280px] w-full overflow-hidden rounded-md border bg-muted transition-opacity hover:opacity-90"
+                                        title={`${asset.originalFilename} — click to view full size`}
+                                        aria-label={`Open image ${asset.originalFilename}`}
+                                      >
+                                        <img
+                                          src={mediaPreviewUrl(asset.id)}
+                                          alt={asset.originalFilename}
+                                          className="w-full h-auto max-h-56 object-contain"
+                                          loading="lazy"
+                                        />
+                                      </button>
+                                      <div className="mt-0.5 flex items-center gap-2 text-[10px] text-muted-foreground min-w-0">
+                                        <span className="truncate" title={asset.originalFilename}>{asset.originalFilename}</span>
+                                        <span className="shrink-0">({formatBytes(asset.fileSizeBytes)})</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setLightboxAsset(asset)}
+                                          className="shrink-0 underline inline-flex items-center gap-0.5 hover:opacity-80"
+                                        >
+                                          <ExternalLink className="h-3 w-3" /> View full size
+                                        </button>
+                                      </div>
                                     </div>
                                   ) : (
-                                    <button
-                                      key={asset.id}
-                                      type="button"
-                                      onClick={() => setLightboxAsset(asset)}
-                                      className="block h-20 w-20 overflow-hidden rounded-md border bg-muted transition-opacity hover:opacity-90"
-                                      title={asset.originalFilename}
-                                      aria-label="Open image"
-                                    >
-                                      <img src={mediaPreviewUrl(asset.id)} alt={asset.originalFilename} className="h-full w-full object-cover" />
-                                    </button>
+                                    <div key={asset.id} className="min-w-0">
+                                      <a
+                                        href={`/api/media/${asset.id}/download`}
+                                        download
+                                        className="inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs hover:bg-muted max-w-full"
+                                        title={asset.originalFilename}
+                                      >
+                                        <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                                        <span className="truncate">{asset.originalFilename}</span>
+                                        <span className="shrink-0 text-muted-foreground">({formatBytes(asset.fileSizeBytes)})</span>
+                                      </a>
+                                    </div>
                                   )
                                 ))}
                               </div>
                             )}
-                            <p>{m.body}</p>
+                            {m.body ? <p className="break-words [overflow-wrap:anywhere] whitespace-pre-wrap">{m.body}</p> : null}
                             <p className={`text-[10px] mt-1 ${mine ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
                               {new Date(m.createdAt).toLocaleString()}
                             </p>
@@ -344,21 +376,33 @@ export default function MessagesPage() {
         <DialogContent className="max-w-3xl p-2">
           <DialogTitle className="sr-only">Image preview</DialogTitle>
           {lightboxAsset && (
-            <img
-              src={mediaPreviewUrl(lightboxAsset.id)}
-              alt={lightboxAsset.originalFilename}
-              className="max-h-[80vh] w-full rounded-md object-contain"
-            />
+            <>
+              <img
+                src={mediaPreviewUrl(lightboxAsset.id)}
+                alt={lightboxAsset.originalFilename}
+                className="max-h-[75vh] w-full rounded-md object-contain bg-black"
+              />
+              <div className="flex items-center justify-between px-1 pt-1 text-xs text-muted-foreground">
+                <span className="truncate" title={lightboxAsset.originalFilename}>{lightboxAsset.originalFilename}</span>
+                <a
+                  href={`/api/media/${lightboxAsset.id}/download`}
+                  download
+                  className="shrink-0 underline inline-flex items-center gap-1 ml-2"
+                >
+                  <Download className="h-3 w-3" /> Download ({formatBytes(lightboxAsset.fileSizeBytes)})
+                </a>
+              </div>
+            </>
           )}
         </DialogContent>
       </Dialog>
-      {/* Internal team video call — peer-to-peer between team members, not tied to any lead */}
+      {/* Unified internal video call — launched from the team chat header. */}
       <VideoCallDialog
         open={videoOpen}
         onOpenChange={setVideoOpen}
         roomId={videoRoomId}
         roomName={videoRoomName}
-        participantName={user?.name || user?.email}
+        participantName={withUserId != null ? userName(withUserId) : undefined}
       />
     </Layout>
   );
