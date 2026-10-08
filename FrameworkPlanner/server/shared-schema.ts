@@ -2695,3 +2695,40 @@ export const storageMigrations = pgTable("storage_migrations", {
 });
 
 export type StorageMigration = typeof storageMigrations.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// BUSINESS EMAIL PROVISIONING + ONBOARDING CHECKLIST
+// Auto-provision @oceanluxe.org mailboxes through IONOS on agent approval.
+// Live-lead access is gated on every checklist item being true.
+// ---------------------------------------------------------------------------
+export const provisionedEmails = pgTable("provisioned_emails", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull().unique(),
+  emailAddress: varchar("email_address", { length: 255 }).notNull().unique(),
+  ionosMailboxId: varchar("ionos_mailbox_id", { length: 255 }),
+  forwardingTo: varchar("forwarding_to", { length: 255 }),
+  status: varchar("status", { length: 30 }).notNull().default("pending"),
+  error: text("error"),
+  createdAt: timestamp("created_at").defaultNow(),
+  provisionedAt: timestamp("provisioned_at"),
+});
+
+export type ProvisionedEmail = typeof provisionedEmails.$inferSelect;
+
+export const onboardingChecklist = pgTable("onboarding_checklist", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull().unique(),
+  offerLetterSigned: boolean("offer_letter_signed").notNull().default(false),
+  icaSigned: boolean("ica_signed").notNull().default(false),
+  w9Submitted: boolean("w9_submitted").notNull().default(false),
+  idVerified: boolean("id_verified").notNull().default(false),
+  payoutSetup: boolean("payout_setup").notNull().default(false),
+  trainingCompleted: boolean("training_completed").notNull().default(false),
+  emailProvisioned: boolean("email_provisioned").notNull().default(false),
+  liveLeadAccessGranted: boolean("live_lead_access_granted").notNull().default(false),
+  liveLeadAccessGrantedAt: timestamp("live_lead_access_granted_at"),
+  liveLeadAccessGrantedBy: integer("live_lead_access_granted_by"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type OnboardingChecklistRow = typeof onboardingChecklist.$inferSelect;
