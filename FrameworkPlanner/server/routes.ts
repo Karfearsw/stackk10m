@@ -8414,7 +8414,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
 
       // Acquire advisory lock to prevent concurrent migration runs.
       const LOCK_KEY = 83749201;
-      const lockResult = await pool.query("SELECT pg_try_advisory_lock()", [LOCK_KEY]);
+      const lockResult = await pool.query("SELECT pg_try_advisory_lock($1)", [LOCK_KEY]);
       const acquired = lockResult?.rows?.[0]?.pg_try_advisory_lock;
       if (!acquired) {
         res.status(409).json({ success: false, error: "Migration already in progress by another instance" });
@@ -8426,7 +8426,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
         await applyMigrations();
         res.json({ success: true, message: "Migrations applied successfully." });
       } finally {
-        await pool.query("SELECT pg_advisory_unlock()", [LOCK_KEY]).catch(() => {});
+        await pool.query("SELECT pg_advisory_unlock($1)", [LOCK_KEY]).catch(() => {});
       }
     } catch (e: any) {
       console.error("Admin migrate failed:", e?.message || e);
