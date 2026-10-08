@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import {
   Sheet,
   SheetContent,
@@ -10,12 +11,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
 import { DISPO_STAGE_LABELS, type DispoStage } from "@shared/dispo-stages";
 import { MatchedBuyersPanel } from "./MatchedBuyersPanel";
 import { OffersTracker } from "./OffersTracker";
 import { BroadcastComposer } from "./BroadcastComposer";
 import { DocsPanel } from "./DocsPanel";
-import { BedDouble, Bath, Ruler, MapPin } from "lucide-react";
+import { DispoScriptsPanel } from "./DispoScriptsPanel";
+import { BedDouble, Bath, Ruler, MapPin, Phone, FileText } from "lucide-react";
 
 export interface DealCardData {
   id: number;
@@ -48,6 +51,7 @@ export function DealDrawer({
   onClose: () => void;
 }) {
   const dealId = deal?.id ?? 0;
+  const [, navigate] = useLocation();
 
   // Pre-warm the tabs' queries while the drawer is open.
   useQuery({
@@ -125,13 +129,32 @@ export function DealDrawer({
             </div>
 
             <Tabs defaultValue="buyers" className="mt-4">
-              <TabsList className="grid w-full grid-cols-4">
+              <TabsList className="grid w-full grid-cols-5">
                 <TabsTrigger value="buyers">Buyers</TabsTrigger>
                 <TabsTrigger value="offers">Offers</TabsTrigger>
                 <TabsTrigger value="broadcast">Broadcast</TabsTrigger>
+                <TabsTrigger value="scripts">Scripts</TabsTrigger>
                 <TabsTrigger value="docs">Docs</TabsTrigger>
               </TabsList>
-              <ScrollArea className="mt-3 h-[calc(100vh-380px)] pr-3">
+              <div className="mt-3 flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => navigate(`/phone?dealId=${deal.id}`)}
+                >
+                  <Phone className="h-4 w-4 mr-2" /> Call
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="flex-1"
+                  onClick={() => navigate(`/messages?dealId=${deal.id}`)}
+                >
+                  <FileText className="h-4 w-4 mr-2" /> Message
+                </Button>
+              </div>
+              <ScrollArea className="mt-3 h-[calc(100vh-430px)] pr-3">
                 <TabsContent value="buyers">
                   <MatchedBuyersPanel dealId={deal.id} />
                 </TabsContent>
@@ -140,6 +163,9 @@ export function DealDrawer({
                 </TabsContent>
                 <TabsContent value="broadcast">
                   <BroadcastComposer dealId={deal.id} />
+                </TabsContent>
+                <TabsContent value="scripts">
+                  <DispoScriptsPanel />
                 </TabsContent>
                 <TabsContent value="docs">
                   <DocsPanel dealId={deal.id} />

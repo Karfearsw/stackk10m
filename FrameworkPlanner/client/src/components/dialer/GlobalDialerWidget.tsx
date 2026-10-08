@@ -1,12 +1,14 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
-import { Phone, X, Delete } from "lucide-react";
+import { Phone, X, Delete, UserPlus, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { toast } from "sonner";
 
 /**
  * GlobalDialerWidget — persistent floating dialer available on every page.
  * Provides quick-dial access; tapping Call navigates to /phone with the number prefilled.
+ * Can also create a lead from the number or jump to SMS.
  */
 export function GlobalDialerWidget() {
   const [open, setOpen] = useState(false);
@@ -18,6 +20,31 @@ export function GlobalDialerWidget() {
   const handleCall = () => {
     if (!number.trim()) return;
     navigate(`/phone?number=${encodeURIComponent(number.trim())}`);
+    setOpen(false);
+  };
+
+  const handleAddLead = async () => {
+    if (!number.trim()) return;
+    try {
+      const res = await fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ phone: number.trim(), source: "dialer-widget" }),
+      });
+      if (!res.ok) throw new Error("Failed to create lead");
+      const lead = await res.json();
+      toast.success("Lead created");
+      navigate(`/leads?highlight=${lead.id}`);
+      setOpen(false);
+    } catch (e: any) {
+      toast.error(e.message || "Could not create lead");
+    }
+  };
+
+  const handleSms = () => {
+    if (!number.trim()) return;
+    navigate(`/messages?to=${encodeURIComponent(number.trim())}`);
     setOpen(false);
   };
 
@@ -64,6 +91,26 @@ export function GlobalDialerWidget() {
             </Button>
             <Button variant="outline" className="flex-1" onClick={handleFullDialer}>
               Full Dialer
+            </Button>
+          </div>
+          <div className="mt-2 flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="flex-1"
+              onClick={handleAddLead}
+              disabled={!number.trim()}
+            >
+              <UserPlus className="h-4 w-4 mr-2" /> Save as Lead
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="flex-1"
+              onClick={handleSms}
+              disabled={!number.trim()}
+            >
+              <MessageSquare className="h-4 w-4 mr-2" /> Text
             </Button>
           </div>
         </Card>

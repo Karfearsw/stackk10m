@@ -37,6 +37,7 @@ import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from
 import { apiRequest } from "@/lib/queryClient";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 import { QuickLogCallDialog } from "@/components/buyers/QuickLogCallDialog";
+import { BuyerScriptsPanel } from "@/components/buyers/BuyerScriptsPanel";
 import { BUYER_PIPELINE, formatBuyerStatus, buyerStatusColor, formatDisposition } from "@/lib/dispositions";
 import { useLocation } from "wouter";
 
@@ -949,6 +950,7 @@ export default function Buyers() {
                       ) : null}
                     </TabsTrigger>
                     <TabsTrigger value="tasks" className="flex-1">Tasks</TabsTrigger>
+                    <TabsTrigger value="scripts" className="flex-1">Scripts</TabsTrigger>
                   </TabsList>
 
                   <TabsContent value="info" className="mt-4 space-y-4">
@@ -1150,6 +1152,9 @@ export default function Buyers() {
 
                   <TabsContent value="tasks" className="mt-4">
                     <EntityTasksWidget entityType="buyer" entityId={selectedBuyer.id} />
+                  </TabsContent>
+                  <TabsContent value="scripts" className="mt-4">
+                    <BuyerScriptsPanel />
                   </TabsContent>
                 </Tabs>
               </CardContent>
