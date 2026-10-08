@@ -431,6 +431,9 @@ export default function CommunicationsWorkspace() {
                     {f}
                   </Button>
                 ))}
+                <Button size="sm" variant="outline" className="h-7 px-2 text-xs" onClick={() => window.location.href = "/messages"}>
+                  <MessageSquare className="w-3 h-3 mr-1" /> Team Chat
+                </Button>
               </div>
             </CardHeader>
             <CardContent className="p-0">
