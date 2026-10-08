@@ -405,7 +405,9 @@ async function handleCallEvent(event: any) {
 
   // Parked-outbound WebRTC dialer: when the parked browser leg arrives, dial
   // the PSTN leg now; bridge the two when the PSTN leg answers (below).
+  console.log(`[webhook] event=${event?.data?.event_type} state=${state} cc=${callControlId}`);
   if (eventTypeIs("call.initiated", event) && String(state || "").toLowerCase() === "parked") {
+    console.log(`[webhook] parked WebRTC leg detected, dialing PSTN`);
     await handleParkedWebrtcLeg(payload, callControlId);
     return;
   }
