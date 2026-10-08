@@ -124,7 +124,7 @@ const menuGroups = [
       { name: "Settings", href: "/settings", icon: Settings },
       { name: "Notifications", href: "/notifications", icon: Bell },
       { name: "System Health", href: "/system-health", icon: ActivitySquare },
-      {/* TICKET-09: Background job queue health dashboard. */}
+      // TICKET-09: Background job queue health dashboard.
       { name: "Job Queue", href: "/jobs", icon: ListChecks },
       { name: "Audit Log", href: "/audit-log", icon: ScrollText },
       { name: "Audit", href: "/audit", icon: Shield },
