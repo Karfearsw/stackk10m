@@ -5615,10 +5615,15 @@ export async function registerRoutes(
       const remaining = Math.max(0, dailyCap - todayCount);
       if (remaining <= 0) return res.status(400).json({ message: "Daily RVM cap reached" });
       const toLaunch = payload.leadIds.slice(0, remaining);
+      // NOTE: do not use `= ANY(${toLaunch})` — the Neon serverless driver does not
+      // serialize JS arrays as Postgres arrays (code 42809). Explicit IN list instead.
       const leadsRows: any = await db.execute(sql`
         SELECT id, owner_phone, do_not_call, do_not_text
         FROM leads
-        WHERE id = ANY(${toLaunch})
+        WHERE id IN (${sql.join(
+          toLaunch.map((id: number) => sql`${id}`),
+          sql`, `,
+        )})
       `);
       const leadRows = (leadsRows as any).rows || [];
       const eligible: { leadId: number; to: string }[] = [];

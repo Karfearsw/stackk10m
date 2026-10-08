@@ -282,6 +282,9 @@ export async function listMediaByAttachments(input: {
 }): Promise<Record<number, MediaAsset[]>> {
   const ids = (input.entityIds || []).map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0);
   if (!ids.length) return {};
+  // NOTE: do not use `= ANY(${ids})` here — the Neon serverless driver does not
+  // serialize JS arrays as Postgres arrays, which 500s the query (code 42809).
+  // An explicit IN list is driver-agnostic.
   const result: any = await db.execute(sql`
     SELECT a.entity_id, m.*
     FROM media_attachments a
@@ -289,7 +292,10 @@ export async function listMediaByAttachments(input: {
     WHERE m.team_id = ${input.teamId}
       AND m.deleted_at IS NULL
       AND a.entity_type = ${input.entityType}
-      AND a.entity_id = ANY(${ids})
+      AND a.entity_id IN (${sql.join(
+        ids.map((id) => sql`${id}`),
+        sql`, `,
+      )})
     ${input.role ? sql`AND a.attachment_role = ${input.role}` : sql``}
     ORDER BY a.created_at ASC, m.id ASC
   `);

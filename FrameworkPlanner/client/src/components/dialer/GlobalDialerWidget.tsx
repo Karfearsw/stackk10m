@@ -32,7 +32,20 @@ export function GlobalDialerWidget() {
         credentials: "include",
         body: JSON.stringify({ phone: number.trim(), source: "dialer-widget" }),
       });
-      if (!res.ok) throw new Error("Failed to create lead");
+      if (res.status === 409) {
+        // Phone-only saves share an empty dedupe key — a matching lead already exists.
+        // Take the user to it instead of failing.
+        const data = await res.json().catch(() => ({}));
+        toast.info("Lead already exists");
+        if (data?.leadId) navigate(`/leads?highlight=${data.leadId}`);
+        else navigate("/leads");
+        setOpen(false);
+        return;
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.message || "Failed to create lead");
+      }
       const lead = await res.json();
       toast.success("Lead created");
       navigate(`/leads?highlight=${lead.id}`);

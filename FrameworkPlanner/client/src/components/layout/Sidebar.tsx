@@ -30,7 +30,6 @@ import {
   ScrollText,
   FileSignature,
   PenLine,
-  Video,
   Shield,
   ActivitySquare,
   MoreHorizontal,
@@ -76,12 +75,11 @@ const menuGroups = [
     items: [
       { name: "Phone", href: "/phone", icon: Phone },
       { name: "Dialer Workspace", href: "/dialer-workspace", icon: Phone },
-      { name: "Video Meetings", href: "/workspace/communications", icon: Video },
       { name: "Messages", href: "/messages", icon: MessageSquare },
       // TICKET-14: Follow-up sequences
       { name: "Sequences", href: "/sequences", icon: Repeat },
       { name: "Voicemail", href: "/voicemail", icon: Voicemail },
-      { name: "Communications", href: "/workspace/communications", icon: PhoneCall },
+      { name: "Communication Hub", href: "/workspace/communications", icon: PhoneCall },
     ],
   },
   {
