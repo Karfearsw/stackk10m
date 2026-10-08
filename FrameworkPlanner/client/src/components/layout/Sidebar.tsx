@@ -39,6 +39,7 @@ import {
   Wrench,
   UsersRound,
   Handshake,
+  BadgeCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -109,6 +110,7 @@ const menuGroups = [
       { name: "Automations", href: "/automations", icon: Zap },
       { name: "Scripts", href: "/scripts", icon: FileText },
       { name: "Call Audit", href: "/call-audit", icon: ScrollText },
+      { name: "Buyer Qualification", href: "/buyers/qualify", icon: BadgeCheck },
     ],
   },
   {

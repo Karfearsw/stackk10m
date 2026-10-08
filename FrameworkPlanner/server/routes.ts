@@ -14470,6 +14470,329 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
       res.status(400).json({ message: error.message });
     }
   });
+  // TICKET 17 — BUYER QUALIFICATION WORKFLOW ENDPOINTS.
+  // NOTE: /api/buyers/review-queue, /api/buyers/deal-ready, and
+  // /api/buyers/qualification/dashboard MUST be registered before
+  // /api/buyers/:id so Express does not treat them as an :id.
+  const QUAL_STAGES = ["new", "contacted", "responded", "qualified", "deal_ready", "inactive"] as const;
+
+  reg("get", "/api/buyers/qualification/dashboard"); app.get("/api/buyers/qualification/dashboard", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      // Funnel counts by relationship stage (all non-test buyers).
+      const stageRows: any = await db.execute(sql`
+        SELECT q.relationship_stage AS stage, COUNT(*)::int AS count
+        FROM buyer_qualification q
+        JOIN buyers b ON b.id = q.buyer_id
+        WHERE b.is_suspected_test = false
+        GROUP BY q.relationship_stage
+      `);
+      const byStage: Record<string, number> = {};
+      for (const s of QUAL_STAGES) byStage[s] = 0;
+      for (const r of ((stageRows as any).rows ?? [])) byStage[String(r.stage)] = Number(r.count);
+      // Actionability gaps.
+      const gapRows: any = await db.execute(sql`
+        SELECT
+          COUNT(*) FILTER (WHERE q.owner_user_id IS NULL)::int AS unassigned,
+          COUNT(*) FILTER (WHERE q.next_action IS NULL OR btrim(q.next_action) = '')::int AS no_next_action,
+          COUNT(*) FILTER (WHERE q.next_action_at IS NOT NULL AND q.next_action_at < now())::int AS overdue_actions
+        FROM buyer_qualification q
+        JOIN buyers b ON b.id = q.buyer_id
+        WHERE b.is_suspected_test = false AND b.status = 'active'
+          AND q.relationship_stage NOT IN ('inactive', 'deal_ready')
+      `);
+      const gaps = (((gapRows as any).rows ?? [])[0] || { unassigned: 0, no_next_action: 0, overdue_actions: 0 };
+      // Market coverage: distinct buy-box markets vs markets with >=1 qualified/deal_ready buyer.
+      const marketRows: any = await db.execute(sql`
+        WITH markets AS (
+          SELECT DISTINCT btrim(m) AS market
+          FROM buyer_buybox bb, unnest(bb.markets) AS m
+          WHERE btrim(m) <> ''
+        ),
+        covered AS (
+          SELECT DISTINCT btrim(m) AS market
+          FROM buyer_buybox bb
+          JOIN buyer_qualification q ON q.buyer_id = bb.buyer_id
+          JOIN buyers b ON b.id = bb.buyer_id
+          CROSS JOIN unnest(bb.markets) AS m
+          WHERE b.is_suspected_test = false
+            AND q.relationship_stage IN ('qualified', 'deal_ready')
+            AND btrim(m) <> ''
+        )
+        SELECT mk.market,
+               (c.market IS NOT NULL) AS covered,
+               (SELECT COUNT(*)::int FROM buyer_qualification q2
+                 JOIN buyers b2 ON b2.id = q2.buyer_id
+                 WHERE b2.is_suspected_test = false
+                   AND q2.relationship_stage IN ('qualified', 'deal_ready')
+                   AND EXISTS (SELECT 1 FROM buyer_buybox bb2
+                               WHERE bb2.buyer_id = q2.buyer_id
+                                 AND mk.market = ANY(bb2.markets))) AS qualified_count
+        FROM markets mk
+        LEFT JOIN covered c ON c.market = mk.market
+        ORDER BY covered ASC, mk.market ASC
+      `);
+      const markets = (((marketRows as any).rows ?? [])).map((r: any) => ({
+        market: r.market,
+        covered: r.covered === true || r.covered === "t",
+        qualifiedCount: Number(r.qualified_count),
+      }));
+      // Outreach velocity: attempts in the last 7 and 30 days.
+      const velRows: any = await db.execute(sql`
+        SELECT COUNT(*) FILTER (WHERE occurred_at >= now() - interval '7 days')::int AS last7,
+               COUNT(*) FILTER (WHERE occurred_at >= now() - interval '30 days')::int AS last30
+        FROM buyer_outreach_log
+      `);
+      const velocity = (((velRows as any).rows ?? [])[0] || { last7: 0, last30: 0 };
+      res.json({ byStage, gaps, markets, velocity });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/buyers/review-queue"); app.get("/api/buyers/review-queue", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const rows: any = await db.execute(sql`
+        SELECT b.id, b.name, b.company, b.email, b.phone, b.created_at,
+               b.is_suspected_test, b.duplicate_of, b.review_decision,
+               k.name AS duplicate_of_name,
+               (SELECT COUNT(*)::int FROM buyer_outreach_log o WHERE o.buyer_id = b.id) AS outreach_count
+        FROM buyers b
+        LEFT JOIN buyers k ON k.id = b.duplicate_of
+        WHERE b.is_suspected_test = true AND b.review_decision IS NULL
+        ORDER BY b.created_at DESC
+        LIMIT 200
+      `);
+      res.json((rows as any).rows ?? []);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/buyers/:id/review"); app.post("/api/buyers/:id/review", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const decision = String(req.body?.decision || "").toLowerCase();
+      if (!["approved", "rejected", "merged"].includes(decision)) {
+        return res.status(400).json({ message: "decision must be approved, rejected, or merged" });
+      }
+      // approved = legit buyer, clear the flag. rejected = confirmed test data (stays flagged).
+      // merged = duplicate folded into duplicate_of; stays flagged but out of the queue.
+      const clearFlag = decision === "approved";
+      await db.execute(sql`
+        UPDATE buyers
+        SET review_decision = ${decision},
+            reviewed_at = now(),
+            reviewed_by = ${user.id},
+            is_suspected_test = ${!clearFlag}
+        WHERE id = ${id}
+      `);
+      res.json({ id, decision });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/buyers/deal-ready"); app.get("/api/buyers/deal-ready", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      // Deal alerts target ONLY confirmed buy-box buyers. Never the full list.
+      const market = String(req.query?.market || "").trim() || null;
+      const maxPrice = req.query?.max_price ? Number(req.query.max_price) : null;
+      const rows: any = await db.execute(sql`
+        SELECT b.id, b.name, b.company, b.email, b.phone,
+               b.min_budget, b.max_budget,
+               bb.markets, bb.asset_types, bb.min_price, bb.max_price, bb.strategy,
+               bb.buybox_confirmed, bb.proof_of_funds_verified,
+               q.relationship_stage, q.owner_user_id,
+               u.first_name, u.last_name
+        FROM buyers b
+        JOIN buyer_buybox bb ON bb.buyer_id = b.id
+        LEFT JOIN buyer_qualification q ON q.buyer_id = b.id
+        LEFT JOIN users u ON u.id = q.owner_user_id
+        WHERE b.is_suspected_test = false
+          AND b.do_not_call = false
+          AND bb.buybox_confirmed = true
+          AND (${market}::text IS NULL OR ${market}::text = ANY(bb.markets))
+          AND (${maxPrice}::numeric IS NULL OR bb.max_price IS NULL OR bb.max_price >= ${maxPrice}::numeric)
+        ORDER BY bb.proof_of_funds_verified DESC, b.name ASC
+        LIMIT 500
+      `);
+      res.json((rows as any).rows ?? []);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/buyers/:id/qualification"); app.get("/api/buyers/:id/qualification", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const qRows: any = await db.execute(sql`
+        SELECT q.*, u.first_name AS owner_first_name, u.last_name AS owner_last_name, u.email AS owner_email
+        FROM buyer_qualification q
+        LEFT JOIN users u ON u.id = q.owner_user_id
+        WHERE q.buyer_id = ${id}
+        LIMIT 1
+      `);
+      let qual = (((qRows as any).rows ?? [])[0] || null;
+      if (!qual) {
+        const ins: any = await db.execute(sql`
+          INSERT INTO buyer_qualification (buyer_id, relationship_stage)
+          VALUES (${id}, 'new')
+          ON CONFLICT (buyer_id) DO NOTHING
+          RETURNING *
+        `);
+        qual = (((ins as any).rows ?? [])[0] || null);
+      }
+      const bbRows: any = await db.execute(sql`
+        SELECT * FROM buyer_buybox WHERE buyer_id = ${id} LIMIT 1
+      `);
+      const buybox = (((bbRows as any).rows ?? [])[0] || null);
+      const logRows: any = await db.execute(sql`
+        SELECT o.*, u.first_name, u.last_name
+        FROM buyer_outreach_log o
+        LEFT JOIN users u ON u.id = o.user_id
+        WHERE o.buyer_id = ${id}
+        ORDER BY o.occurred_at DESC
+        LIMIT 100
+      `);
+      res.json({ qualification: qual, buybox, outreachLog: ((logRows as any).rows ?? []) });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/buyers/:id/qualify"); app.post("/api/buyers/:id/qualify", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const { relationship_stage, next_action, next_action_at, notes, buybox } = req.body || {};
+      if (relationship_stage && !(QUAL_STAGES as readonly string[]).includes(String(relationship_stage))) {
+        return res.status(400).json({ message: `relationship_stage must be one of: ${QUAL_STAGES.join(", ")}` });
+      }
+      const up: any = await db.execute(sql`
+        INSERT INTO buyer_qualification (buyer_id, relationship_stage, next_action, next_action_at, notes, updated_at)
+        VALUES (${id},
+                ${relationship_stage || "new"},
+                ${next_action ?? null},
+                ${next_action_at ? new Date(next_action_at) : null},
+                ${notes ?? null},
+                now())
+        ON CONFLICT (buyer_id) DO UPDATE SET
+          relationship_stage = COALESCE(${relationship_stage || null}, buyer_qualification.relationship_stage),
+          next_action = COALESCE(${next_action ?? null}, buyer_qualification.next_action),
+          next_action_at = COALESCE(${next_action_at ? new Date(next_action_at) : null}, buyer_qualification.next_action_at),
+          notes = COALESCE(${notes ?? null}, buyer_qualification.notes),
+          updated_at = now()
+        RETURNING *
+      `);
+      // Optional inline buy-box update.
+      if (buybox && typeof buybox === "object") {
+        const { markets, asset_types, min_price, max_price, strategy, buybox_confirmed, proof_of_funds_verified, notes: bbNotes } = buybox;
+        // Normalize: null = "leave unchanged", value = "set".
+        const marketsParam = Array.isArray(markets) ? markets : null;
+        const assetTypesParam = Array.isArray(asset_types) ? asset_types : null;
+        const confirmedParam = buybox_confirmed === true ? true : buybox_confirmed === false ? false : null;
+        const pofParam = proof_of_funds_verified === true ? true : proof_of_funds_verified === false ? false : null;
+        await db.execute(sql`
+          INSERT INTO buyer_buybox (buyer_id, markets, asset_types, min_price, max_price, strategy, buybox_confirmed, proof_of_funds_verified, proof_of_funds_at, notes, updated_at)
+          VALUES (${id},
+                  ${marketsParam ?? []},
+                  ${assetTypesParam ?? []},
+                  ${min_price ?? null}, ${max_price ?? null},
+                  ${strategy ?? null},
+                  ${confirmedParam ?? false},
+                  ${pofParam ?? false},
+                  ${pofParam === true ? new Date() : null},
+                  ${bbNotes ?? null},
+                  now())
+          ON CONFLICT (buyer_id) DO UPDATE SET
+            markets = COALESCE(${marketsParam}, buyer_buybox.markets),
+            asset_types = COALESCE(${assetTypesParam}, buyer_buybox.asset_types),
+            min_price = COALESCE(${min_price ?? null}, buyer_buybox.min_price),
+            max_price = COALESCE(${max_price ?? null}, buyer_buybox.max_price),
+            strategy = COALESCE(${strategy ?? null}, buyer_buybox.strategy),
+            buybox_confirmed = COALESCE(${confirmedParam}, buyer_buybox.buybox_confirmed),
+            proof_of_funds_verified = COALESCE(${pofParam}, buyer_buybox.proof_of_funds_verified),
+            proof_of_funds_at = CASE WHEN ${pofParam} IS NOT NULL AND ${pofParam} = true THEN now() ELSE buyer_buybox.proof_of_funds_at END,
+            notes = COALESCE(${bbNotes ?? null}, buyer_buybox.notes),
+            updated_at = now()
+        `);
+      }
+      res.json((((up as any).rows ?? [])[0]));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/buyers/:id/log-outreach"); app.post("/api/buyers/:id/log-outreach", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const channel = String(req.body?.channel || "").toLowerCase();
+      if (!["call", "sms", "email", "meeting", "other"].includes(channel)) {
+        return res.status(400).json({ message: "channel must be call, sms, email, meeting, or other" });
+      }
+      const occurredAt = req.body?.occurred_at ? new Date(req.body.occurred_at) : new Date();
+      const ins: any = await db.execute(sql`
+        INSERT INTO buyer_outreach_log (buyer_id, user_id, channel, outcome, notes, occurred_at)
+        VALUES (${id}, ${user.id}, ${channel}, ${req.body?.outcome ?? null}, ${req.body?.notes ?? null}, ${occurredAt})
+        RETURNING *
+      `);
+      // Every attempt updates last contact; first-ever outreach advances new -> contacted.
+      await db.execute(sql`
+        INSERT INTO buyer_qualification (buyer_id, relationship_stage, last_contact_at, updated_at)
+        VALUES (${id}, 'contacted', ${occurredAt}, now())
+        ON CONFLICT (buyer_id) DO UPDATE SET
+          last_contact_at = GREATEST(buyer_qualification.last_contact_at, ${occurredAt}),
+          relationship_stage = CASE WHEN buyer_qualification.relationship_stage = 'new' THEN 'contacted' ELSE buyer_qualification.relationship_stage END,
+          updated_at = now()
+      `);
+      await db.execute(sql`
+        UPDATE buyers SET last_contact_date = GREATEST(COALESCE(last_contact_date, ${occurredAt}), ${occurredAt})
+        WHERE id = ${id}
+      `);
+      res.status(201).json((((ins as any).rows ?? [])[0]));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/buyers/:id/assign-owner"); app.post("/api/buyers/:id/assign-owner", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const ownerUserId = req.body?.owner_user_id ? parseInt(req.body.owner_user_id) : null;
+      if (ownerUserId !== null) {
+        const uRows: any = await db.execute(sql`SELECT id FROM users WHERE id = ${ownerUserId} LIMIT 1`);
+        if (((((uRows as any).rows ?? [])).length || 0) === 0) {
+          return res.status(400).json({ message: "owner_user_id does not match a user" });
+        }
+      }
+      await db.execute(sql`
+        INSERT INTO buyer_qualification (buyer_id, owner_user_id, updated_at)
+        VALUES (${id}, ${ownerUserId}, now())
+        ON CONFLICT (buyer_id) DO UPDATE SET owner_user_id = ${ownerUserId}, updated_at = now()
+      `);
+      // Keep the legacy buyers.owner_user_id column in sync for existing UI.
+      await db.execute(sql`UPDATE buyers SET owner_user_id = ${ownerUserId} WHERE id = ${id}`);
+      res.json({ id, owner_user_id: ownerUserId });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // BUYERS ENDPOINTS
   reg("get", "/api/buyers"); app.get("/api/buyers", async (req, res) => {
     try {

@@ -1719,6 +1719,12 @@ export const buyers = pgTable("buyers", {
   dedupeKey: varchar("dedupe_key", { length: 400 }),
   doNotCall: boolean("do_not_call").notNull().default(false),
   dncUpdatedAt: timestamp("dnc_updated_at", { withTimezone: true }),
+  // Ticket 17: review-queue flags for suspected test/duplicate entries.
+  isSuspectedTest: boolean("is_suspected_test").notNull().default(false),
+  duplicateOf: integer("duplicate_of"),
+  reviewDecision: varchar("review_decision", { length: 16 }),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  reviewedBy: integer("reviewed_by"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1742,6 +1748,64 @@ export const buyerCommunications = pgTable("buyer_communications", {
 export const insertBuyerCommunicationSchema = createInsertSchema(buyerCommunications).omit({ id: true, createdAt: true } as any);
 export type BuyerCommunication = typeof buyerCommunications.$inferSelect;
 export type InsertBuyerCommunication = z.infer<typeof insertBuyerCommunicationSchema>;
+
+// TICKET 17 — BUYER QUALIFICATION WORKFLOW TABLES
+// Per-buyer qualification state. relationship_stage is the qualification funnel,
+// distinct from buyers.buyer_status (the 0074 buyer pipeline).
+export const buyerQualification = pgTable("buyer_qualification", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  buyerId: integer("buyer_id").notNull().unique(),
+  ownerUserId: integer("owner_user_id"),
+  relationshipStage: varchar("relationship_stage", { length: 32 }).notNull().default("new"),
+  lastContactAt: timestamp("last_contact_at", { withTimezone: true }),
+  nextAction: text("next_action"),
+  nextActionAt: timestamp("next_action_at", { withTimezone: true }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertBuyerQualificationSchema = createInsertSchema(buyerQualification).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type BuyerQualification = typeof buyerQualification.$inferSelect;
+export type InsertBuyerQualification = z.infer<typeof insertBuyerQualificationSchema>;
+
+// Log of every outreach attempt and its result.
+export const buyerOutreachLog = pgTable("buyer_outreach_log", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  buyerId: integer("buyer_id").notNull(),
+  userId: integer("user_id"),
+  channel: varchar("channel", { length: 16 }).notNull(),
+  outcome: varchar("outcome", { length: 64 }),
+  notes: text("notes"),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertBuyerOutreachLogSchema = createInsertSchema(buyerOutreachLog).omit({ id: true, createdAt: true } as any);
+export type BuyerOutreachLog = typeof buyerOutreachLog.$inferSelect;
+export type InsertBuyerOutreachLog = z.infer<typeof insertBuyerOutreachLogSchema>;
+
+// Confirmed buy-box criteria. Deal alerts may ONLY target buyers with a
+// confirmed buy-box — never the full list.
+export const buyerBuybox = pgTable("buyer_buybox", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  buyerId: integer("buyer_id").notNull().unique(),
+  markets: text("markets").array().notNull().default([]),
+  assetTypes: text("asset_types").array().notNull().default([]),
+  minPrice: decimal("min_price", { precision: 12, scale: 2 }),
+  maxPrice: decimal("max_price", { precision: 12, scale: 2 }),
+  strategy: varchar("strategy", { length: 64 }),
+  buyboxConfirmed: boolean("buybox_confirmed").notNull().default(false),
+  proofOfFundsVerified: boolean("proof_of_funds_verified").notNull().default(false),
+  proofOfFundsAt: timestamp("proof_of_funds_at", { withTimezone: true }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertBuyerBuyboxSchema = createInsertSchema(buyerBuybox).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type BuyerBuybox = typeof buyerBuybox.$inferSelect;
+export type InsertBuyerBuybox = z.infer<typeof insertBuyerBuyboxSchema>;
 
 // DEAL ASSIGNMENTS TABLE (Linking buyers to properties for closing)
 export const dealAssignments = pgTable("deal_assignments", {

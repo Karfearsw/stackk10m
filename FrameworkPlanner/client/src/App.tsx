@@ -37,6 +37,7 @@ const Notifications = React.lazy(() => import("@/pages/notifications"));
 const MessagesPage = React.lazy(() => import("@/pages/messages"));
 const Playground = React.lazy(() => import("@/pages/playground"));
 const Buyers = React.lazy(() => import("@/pages/buyers"));
+const BuyerQualify = React.lazy(() => import("@/pages/buyers/qualify"));
 // DISPO-PHASE1 (feat/dispo-phase1): Disposition workspace page.
 const Disposition = React.lazy(() => import("@/pages/disposition"));
 const TasksPage = React.lazy(() => import("@/pages/tasks"));
@@ -190,6 +191,8 @@ function Router() {
       {/* Owner decision Oct 7: Voice Playground is dev-only — unreachable in prod builds. */}
       {import.meta.env.DEV && <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />}
       <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />
+      {/* TICKET 17: Buyer qualification workflow (funnel, review queue, deal-ready). */}
+      <Route path="/buyers/qualify" component={() => <ProtectedRoute component={BuyerQualify} />} />
       {/* DISPO-PHASE1 (feat/dispo-phase1): Disposition workspace. */}
       <Route path="/disposition" component={() => <ProtectedRoute component={Disposition} />} />
       <Route path="/tasks" component={() => <ProtectedRoute component={TasksPage} />} />
