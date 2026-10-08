@@ -117,11 +117,11 @@ export function GlobalDialerWidget() {
       )}
       <Button
         size="icon"
-        className="h-14 w-14 rounded-full shadow-xl"
+        className="h-16 w-16 rounded-full shadow-2xl bg-[#D4AF37] hover:bg-[#D4AF37]/90 text-black ring-4 ring-[#D4AF37]/20 hover:ring-[#D4AF37]/40 transition-all hover:scale-105"
         onClick={() => setOpen(!open)}
         aria-label="Open dialer"
       >
-        {open ? <X className="h-6 w-6" /> : <Phone className="h-6 w-6" />}
+        {open ? <X className="h-7 w-7" /> : <Phone className="h-7 w-7" />}
       </Button>
     </div>
   );

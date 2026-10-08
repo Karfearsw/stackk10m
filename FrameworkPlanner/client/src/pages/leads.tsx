@@ -1792,7 +1792,7 @@ export default function Leads() {
 
           <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
             <DialogTrigger asChild>
-              <Button size="sm" className="bg-primary hover:bg-primary/90" data-testid="button-add-lead">
+              <Button size="default" className="bg-[#D4AF37] hover:bg-[#D4AF37]/90 text-black font-semibold shadow-lg" data-testid="button-add-lead">
                 <Plus className="mr-2 h-4 w-4" />
                 Add Lead
               </Button>

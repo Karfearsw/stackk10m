@@ -4,6 +4,7 @@ import { SidebarProvider, useSidebar } from "@/contexts/SidebarContext";
 import { MobileBottomNav } from "./MobileBottomNav";
 import { MobileNavDrawer } from "./MobileNavDrawer";
 import { GlobalDialerWidget } from "@/components/dialer/GlobalDialerWidget";
+import { OnboardingTour } from "@/components/onboarding/OnboardingTour";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -30,6 +31,7 @@ function LayoutContent({ children }: LayoutProps) {
       <MobileBottomNav onMore={() => setMobileOpen(true)} />
       <MobileNavDrawer open={mobileOpen} onOpenChange={setMobileOpen} />
       <GlobalDialerWidget />
+      <OnboardingTour />
     </div>
   );
 }
