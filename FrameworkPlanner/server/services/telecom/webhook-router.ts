@@ -558,6 +558,43 @@ async function handleCallEvent(event: any) {
     emitTelephonyEventToAll({ type: "inbound_call_ended", payload: { callControlId, status: internalStatus } } as any);
   }
 
+  // ── Missed-call text-back (2026-10-08): highest-ROI automation — when an
+  // inbound call is missed (no agent answered), immediately text the caller.
+  // Non-blocking; respects DNC.
+  if (direction === "inbound" && internalStatus === "missed" && from) {
+    try {
+      const { pool } = await import("../../db.js");
+      const digits = String(from).replace(/\D/g, "");
+      const last10 = digits.slice(-10);
+      let dncBlocked = false;
+      let leadId: number | null = null;
+      if (last10.length >= 7) {
+        const rows: any = await pool.query(
+          `SELECT id, do_not_call, do_not_text, owner_name FROM leads
+           WHERE regexp_replace(COALESCE(owner_phone, ''), '\\D', '', 'g') LIKE $1
+           ORDER BY id DESC LIMIT 1`,
+          [`%${last10}`]
+        );
+        const hit = rows?.rows?.[0];
+        if (hit) {
+          leadId = Number(hit.id);
+          if (hit.do_not_call || hit.do_not_text) dncBlocked = true;
+        }
+      }
+      if (!dncBlocked) {
+        const fromNumber = process.env.TELNYX_DEFAULT_FROM_NUMBER || "";
+        if (fromNumber) {
+          const smsBody = `Hi, this is Ocean Luxe — sorry we missed your call! How can we help you today?`;
+          const { telnyx } = await import("./telnyx-client.js");
+          await telnyx.sendSms({ to: String(from), from: fromNumber, body: smsBody });
+          console.log(`[missed-call-textback] Sent to ${from}`);
+        }
+      }
+    } catch (e) {
+      console.error("[missed-call-textback] Failed (non-blocking):", e);
+    }
+  }
+
   // Inbound accept flow: when the claimed agent's leg answers, bridge to the inbound leg
   if (internalStatus === "answered" && direction === "outbound") {
     try {
