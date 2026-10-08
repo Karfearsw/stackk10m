@@ -331,6 +331,30 @@ export default function CommunicationsWorkspace() {
     onError: (e: any) => toast.error(e?.message || "Failed to create task"),
   });
 
+  const createTeamMeeting = async () => {
+    setVideoBusy(true);
+    try {
+      const res = await apiRequest("POST", "/api/video/rooms", {
+        name: `Internal team video call`,
+        maxParticipants: 8,
+        propertyId: undefined,
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to create meeting");
+      const room = json?.room || json;
+      const roomId = room?.room_id || room?.roomId || room?.id;
+      if (!roomId) throw new Error("No room id returned");
+      setVideoRoomId(roomId);
+      setVideoRoomName(room?.name || "Team Video Call");
+      setVideoOpen(true);
+      toast.success("Team video room created");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to create meeting");
+    } finally {
+      setVideoBusy(false);
+    }
+  };
+
   const createMeeting = async () => {
     if (!selectedLeadId && !selectedThreadPhone) return;
     setVideoBusy(true);
@@ -666,14 +690,18 @@ export default function CommunicationsWorkspace() {
 
                   <TabsContent value="video" className="space-y-3 mt-3">
                     <div className="rounded-md border p-4 text-sm space-y-2">
-                      <p className="font-medium flex items-center gap-2"><Video className="w-4 h-4" /> Video Meeting</p>
+                      <p className="font-medium flex items-center gap-2"><Video className="w-4 h-4" /> Team Video Meeting</p>
                       <p className="text-xs text-muted-foreground">
-                        Creates a secure Telnyx room. Join with a short-lived token — no API keys are exposed to the browser.
+                        Internal only — video chat with team members. Creates a secure Telnyx room.
+                        Join with a short-lived token — no API keys are exposed to the browser.
                       </p>
-                      <Button onClick={createMeeting} disabled={videoBusy || (!selectedLeadId && !selectedThreadPhone)}>
+                      <Button onClick={createTeamMeeting} disabled={videoBusy}>
                         {videoBusy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Video className="w-4 h-4 mr-2" />}
-                        {selectedLeadId ? `Create meeting with ${lead?.ownerName || "lead"}` : "Create meeting"}
+                        Start Team Video Call
                       </Button>
+                      <p className="text-xs text-muted-foreground">
+                        Tip: use <span className="font-medium">Team Chat</span> (/messages) for 1-on-1 video calls with a teammate.
+                      </p>
                     </div>
                   </TabsContent>
 

@@ -4,9 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { MessageSquare, Send, Loader2, Users, Paperclip, X } from "lucide-react";
+import { MessageSquare, Send, Loader2, Users, Paperclip, X, Video } from "lucide-react";
 import { MediaUploader } from "@/components/media/MediaUploader";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { VideoCallDialog } from "@/components/video/VideoCallDialog";
+import { apiRequest } from "@/lib/queryClient";
 import { formatBytes, isVideoAsset, mediaPreviewUrl, type MediaAsset } from "@/lib/media";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -41,6 +43,35 @@ export default function MessagesPage() {
   const [body, setBody] = useState("");
   const [pendingMedia, setPendingMedia] = useState<MediaAsset[]>([]);
   const [lightboxAsset, setLightboxAsset] = useState<MediaAsset | null>(null);
+  // ── Internal team video call state ──
+  const [videoOpen, setVideoOpen] = useState(false);
+  const [videoRoomId, setVideoRoomId] = useState("");
+  const [videoRoomName, setVideoRoomName] = useState("");
+  const [videoBusy, setVideoBusy] = useState(false);
+
+  const startTeamVideoCall = async () => {
+    if (withUserId == null) return;
+    setVideoBusy(true);
+    try {
+      const res = await apiRequest("POST", "/api/video/rooms", {
+        name: `Team call: ${user?.name || user?.email || "Team"} ↔ ${userName(withUserId)}`,
+        maxParticipants: 4,
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Failed to create video room");
+      const room = json?.room || json;
+      const roomId = room?.room_id || room?.roomId || room?.id;
+      if (!roomId) throw new Error("No room id returned");
+      setVideoRoomId(roomId);
+      setVideoRoomName(room?.name || "Team Video Call");
+      setVideoOpen(true);
+      toast.success("Video room created — share it in chat to invite");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to start video call");
+    } finally {
+      setVideoBusy(false);
+    }
+  };
 
   const { data: conversations = [], isLoading: convLoading, isError: convError, refetch: refetchConvs } = useQuery<Conversation[]>({
     queryKey: ["/api/messages/conversations"],
@@ -186,7 +217,19 @@ export default function MessagesPage() {
               <>
                 <div className="flex items-center justify-between">
                   <h2 className="font-semibold">{userName(withUserId)}</h2>
-                  <Badge variant="outline">Internal</Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline">Internal</Badge>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={startTeamVideoCall}
+                      disabled={videoBusy}
+                      data-testid="button-start-video-call"
+                    >
+                      {videoBusy ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Video className="h-4 w-4 mr-1" />}
+                      Video Call
+                    </Button>
+                  </div>
                 </div>
                 <div className="space-y-2 max-h-[55vh] overflow-y-auto rounded-md border p-3 bg-muted/30">
                   {msgLoading ? (
@@ -309,6 +352,14 @@ export default function MessagesPage() {
           )}
         </DialogContent>
       </Dialog>
+      {/* Internal team video call — peer-to-peer between team members, not tied to any lead */}
+      <VideoCallDialog
+        open={videoOpen}
+        onOpenChange={setVideoOpen}
+        roomId={videoRoomId}
+        roomName={videoRoomName}
+        participantName={user?.name || user?.email}
+      />
     </Layout>
   );
 }

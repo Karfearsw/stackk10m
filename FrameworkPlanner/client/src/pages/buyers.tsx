@@ -941,21 +941,22 @@ export default function Buyers() {
               </CardHeader>
               <CardContent>
                 <Tabs defaultValue="info">
-                  <TabsList className="w-full">
-                    <TabsTrigger value="info" className="flex-1">Info</TabsTrigger>
-                    <TabsTrigger value="comms" className="flex-1">Communications</TabsTrigger>
-                    <TabsTrigger value="sms" className="flex-1">
+                  <TabsList className="w-full grid grid-cols-3 sm:grid-cols-6 gap-1 p-1">
+                    <TabsTrigger value="info" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Info</TabsTrigger>
+                    <TabsTrigger value="comms" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Communications</TabsTrigger>
+                    <TabsTrigger value="sms" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                       SMS
                       {selectedBuyer.doNotCall ? (
                         <Badge variant="destructive" className="ml-1 text-[10px] px-1 py-0">DNC</Badge>
                       ) : null}
                     </TabsTrigger>
-                    <TabsTrigger value="tasks" className="flex-1">Tasks</TabsTrigger>
-                    <TabsTrigger value="scripts" className="flex-1">Scripts</TabsTrigger>
-                    <TabsTrigger value="qualify" className="flex-1">Qualify</TabsTrigger>
+                    <TabsTrigger value="tasks" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Tasks</TabsTrigger>
+                    <TabsTrigger value="scripts" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Scripts</TabsTrigger>
+                    <TabsTrigger value="qualify" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Qualify</TabsTrigger>
                   </TabsList>
 
-                  <TabsContent value="info" className="mt-4 space-y-4">
+                  <div className="relative mt-4 min-h-[200px] rounded-lg border border-border/50 bg-card p-4">
+                  <TabsContent value="info" className="mt-0 space-y-4">
                     <div>
                       <h3 className="font-semibold flex items-center gap-2">
                         {selectedBuyer.name}
@@ -1080,7 +1081,7 @@ export default function Buyers() {
                     )}
                   </TabsContent>
 
-                  <TabsContent value="comms" className="mt-4">
+                  <TabsContent value="comms" className="mt-0">
                     <div className="space-y-4">
                       <div className="space-y-2">
                         <div className="flex gap-2">
@@ -1148,19 +1149,20 @@ export default function Buyers() {
                     </div>
                   </TabsContent>
 
-                  <TabsContent value="sms" className="mt-4">
+                  <TabsContent value="sms" className="mt-0">
                     <BuyerSmsPanel buyer={selectedBuyer} onBuyerChange={setSelectedBuyer} />
                   </TabsContent>
 
-                  <TabsContent value="tasks" className="mt-4">
+                  <TabsContent value="tasks" className="mt-0">
                     <EntityTasksWidget entityType="buyer" entityId={selectedBuyer.id} />
                   </TabsContent>
-                  <TabsContent value="scripts" className="mt-4">
+                  <TabsContent value="scripts" className="mt-0">
                     <BuyerScriptsPanel />
                   </TabsContent>
-                  <TabsContent value="qualify" className="mt-4">
+                  <TabsContent value="qualify" className="mt-0">
                     <BuyerQualificationPanel buyerId={selectedBuyer.id} />
                   </TabsContent>
+                  </div>
                 </Tabs>
               </CardContent>
             </Card>
