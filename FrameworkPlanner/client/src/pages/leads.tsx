@@ -2546,19 +2546,19 @@ export default function Leads() {
             <div className="grid gap-4 py-4">
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-address" className="text-right">Address</Label>
-                <Input id="edit-address" className="col-span-3" value={editingLead.address} onChange={(e) => setEditingLead({...editingLead, address: e.target.value})} data-testid="input-edit-address" />
+                <Input id="edit-address" className="col-span-3" value={editingLead?.address || ""} onChange={(e) => setEditingLead({...editingLead, address: e.target.value})} data-testid="input-edit-address" />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-city" className="text-right">City</Label>
-                <Input id="edit-city" className="col-span-3" value={editingLead.city} onChange={(e) => setEditingLead({...editingLead, city: e.target.value})} data-testid="input-edit-city" />
+                <Input id="edit-city" className="col-span-3" value={editingLead?.city || ""} onChange={(e) => setEditingLead({...editingLead, city: e.target.value})} data-testid="input-edit-city" />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-zip" className="text-right">Zip Code</Label>
-                <Input id="edit-zip" className="col-span-3" value={editingLead.zipCode} onChange={(e) => setEditingLead({...editingLead, zipCode: e.target.value})} data-testid="input-edit-zip" />
+                <Input id="edit-zip" className="col-span-3" value={editingLead?.zipCode || ""} onChange={(e) => setEditingLead({...editingLead, zipCode: e.target.value})} data-testid="input-edit-zip" />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-owner" className="text-right">Owner</Label>
-                <Input id="edit-owner" className="col-span-3" value={editingLead.ownerName} onChange={(e) => setEditingLead({...editingLead, ownerName: e.target.value})} data-testid="input-edit-owner" />
+                <Input id="edit-owner" className="col-span-3" value={editingLead?.ownerName || ""} onChange={(e) => setEditingLead({...editingLead, ownerName: e.target.value})} data-testid="input-edit-owner" />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-phone" className="text-right">Phone</Label>
@@ -2601,11 +2601,11 @@ export default function Leads() {
               )}
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-estimatedValue" className="text-right">Est. Value</Label>
-                <Input id="edit-estimatedValue" type="number" min="0" step="1000" placeholder="250000" className="col-span-3" value={editingLead.estimatedValue || ""} onChange={(e) => setEditingLead({...editingLead, estimatedValue: e.target.value})} data-testid="input-edit-value" />
+                <Input id="edit-estimatedValue" type="number" min="0" step="1000" placeholder="250000" className="col-span-3" value={editingLead?.estimatedValue || ""} onChange={(e) => setEditingLead({...editingLead, estimatedValue: e.target.value})} data-testid="input-edit-value" />
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="edit-status" className="text-right">Status</Label>
-                <Select value={editingLead.status} onValueChange={(value) => setEditingLead({...editingLead, status: value})}>
+                <Select value={editingLead?.status || ""} onValueChange={(value) => setEditingLead({...editingLead, status: value})}>
                   <SelectTrigger className="col-span-3" data-testid="select-edit-status">
                     <SelectValue placeholder="Select status" />
                   </SelectTrigger>
