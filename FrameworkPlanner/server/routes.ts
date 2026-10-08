@@ -8,7 +8,7 @@ import { storage } from "./storage.js";
 import { seedDocsForTeam, docsSlugify } from "./docs-seed.js";
 import { computeManualTimeEntry, MAX_TIME_ENTRY_HOURS } from "./lib/time-entry-math.js";
 import { db, pool } from "./db.js";
-import { and, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lte, sql, lt, isNull, isNotNull, ne, or, notInArray } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
 import { publishTelephonyEvent } from "./telephony/pubsub.js";
 import { getTelephonyMediaSignedUrl, uploadTelephonyMediaFromUrl } from "./telephony/objectStorage.js";
@@ -93,7 +93,8 @@ import {
   insertOpportunityEventSchema,
   globalActivityLogs,
   opportunityParties, publicListings, buyerInquiries, opportunityEvents,
-  defaultNotificationCategories, insertInternalMessageSchema, insertCalendarEventSchema
+  defaultNotificationCategories, insertInternalMessageSchema, insertCalendarEventSchema,
+  tasks, taskSlaRules, taskAudit, quarantinedRecords, insertTaskSlaRuleSchema
 } from "./shared-schema.js";
 import { z } from "zod";
 import { computeArvFromComps, computeCommissionMath, computeDealMath, computeRepairTotal, commissionSnapshotInputSchema, underwritingSchemaV1, underwritingTemplateConfigSchema } from "../shared/underwriting.js";
@@ -115,6 +116,10 @@ import { validateManualCompInput } from "./services/comps/manual.js";
 import { getSkipTraceProvider } from "./services/skipTrace/provider.js";
 import { telnyx, TelnyxConfigError, createTelnyxWebhookRouter } from "./services/telecom/telnyx-client.js";
 import { sendEmail } from "./services/messaging/email-router.js";
+import { emailProviderReadiness } from "./email/provider.js";
+import { sendCrmEmail } from "./email/sender.js";
+import { isSuppressed, addSuppression, removeSuppression, listSuppressions } from "./email/suppression.js";
+import { verifyWebhookSecret, ingestWebhookBatch } from "./email/webhooks.js";
 import { getAuthStatusSnapshot, getEmailProviderMissing } from "./auth/config.js";
 import { isEmailNotConfiguredError, sendAuthError } from "./auth/errors.js";
 import { completeTaskWithRecurrence, createTask, onContractSigned, onLeadCreated, onLeadStatusChanged } from "./services/tasks/task-service.js";
@@ -5175,7 +5180,226 @@ export async function registerRoutes(
       if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
       const id = parseInt(req.params.id);
       const stats = await storage.getCampaignStats(id);
+      // Ticket 15: enrich with broadcast recipient + cost stats.
+      try {
+        const b: any = await db.execute(sql`
+          SELECT
+            COUNT(*)::int AS recipients,
+            SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END)::int AS b_sent,
+            SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END)::int AS b_failed,
+            SUM(CASE WHEN status IN ('opted_out','skipped') THEN 1 ELSE 0 END)::int AS b_excluded,
+            SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END)::int AS b_pending,
+            COALESCE(SUM(cost_cents),0)::int AS b_cost_cents
+          FROM campaign_recipients WHERE campaign_id = ${id}
+        `);
+        const br = ((b as any).rows || [])[0] || {};
+        (stats as any).broadcast = {
+          recipients: Number(br.recipients || 0),
+          sent: Number(br.b_sent || 0),
+          failed: Number(br.b_failed || 0),
+          excluded: Number(br.b_excluded || 0),
+          pending: Number(br.b_pending || 0),
+          costCents: Number(br.b_cost_cents || 0),
+        };
+      } catch {}
       res.json(stats);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ── Ticket 15: Broadcast campaign endpoints ──────────────────────────
+  // PUT alias for campaign update (PATCH already exists above).
+  reg("put", "/api/campaigns/:id"); app.put("/api/campaigns/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const schema = z.object({
+        name: z.string().trim().min(1).max(120).optional(),
+        description: z.string().max(2000).nullable().optional(),
+        channel: z.enum(["sms", "email"]).optional(),
+        status: z.string().trim().min(1).max(20).optional(),
+        scheduledAt: z.string().nullable().optional(),
+        audienceFilters: z.array(z.object({ field: z.string(), value: z.string() })).optional(),
+        audience: z.enum(["leads", "buyers", "both"]).optional(),
+        pilotMode: z.boolean().optional(),
+        pilotLimit: z.number().int().min(1).max(500).optional(),
+      });
+      const payload = schema.parse(req.body || {});
+      const patch: any = {};
+      if (payload.name !== undefined) patch.name = payload.name;
+      if (payload.description !== undefined) patch.description = payload.description;
+      if (payload.channel !== undefined) patch.channel = payload.channel;
+      if (payload.status !== undefined) patch.status = payload.status;
+      if (payload.scheduledAt !== undefined) patch.scheduledAt = payload.scheduledAt ? new Date(payload.scheduledAt) : null;
+      if (payload.audienceFilters !== undefined) patch.audienceFilters = payload.audienceFilters;
+      if (payload.audience !== undefined) patch.audience = payload.audience;
+      if (payload.pilotMode !== undefined) patch.pilotMode = payload.pilotMode;
+      if (payload.pilotLimit !== undefined) patch.pilotLimit = payload.pilotLimit;
+      const row = await storage.updateCampaign(id, patch);
+      res.json(row);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // Exact-recipient preview: the FULL list with per-recipient exclusion reasons.
+  // Nothing is sent from this endpoint; it also persists the recipient list.
+  reg("post", "/api/campaigns/:id/audience/preview"); app.post("/api/campaigns/:id/audience/preview", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const schema = z.object({
+        channel: z.enum(["sms", "email"]).default("sms"),
+        audience: z.enum(["leads", "buyers", "both"]).default("leads"),
+        filters: z.array(z.object({ field: z.string(), value: z.string() })).default([]),
+      });
+      const { channel, audience: aud, filters } = schema.parse(req.body || {});
+      const { buildAudience, persistRecipients, estimateCost } = await import("./campaigns/audience.js");
+      const preview = await buildAudience({ channel, audience: aud, filters });
+      const persisted = await persistRecipients(id, preview);
+      await db.execute(sql`UPDATE campaigns SET channel=${channel}, audience_filters=${JSON.stringify(filters)}::jsonb, updated_at=now() WHERE id=${id}`);
+      const cost = estimateCost(channel, preview.eligible);
+      res.json({ ...preview, persisted, cost });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // Save/update the broadcast message body.
+  reg("put", "/api/campaigns/:id/message"); app.put("/api/campaigns/:id/message", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const schema = z.object({
+        subject: z.string().max(255).nullable().optional(),
+        body: z.string().min(1).max(5000),
+      });
+      const { subject, body } = schema.parse(req.body || {});
+      await db.execute(sql`
+        INSERT INTO campaign_messages (campaign_id, subject, body)
+        VALUES (${id}, ${subject || null}, ${body})
+        ON CONFLICT (campaign_id) DO UPDATE SET subject=${subject || null}, body=${body}
+      `);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // Schedule a broadcast for a future time.
+  reg("post", "/api/campaigns/:id/schedule"); app.post("/api/campaigns/:id/schedule", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const schema = z.object({ scheduledAt: z.string().min(1) });
+      const { scheduledAt } = schema.parse(req.body || {});
+      const when = new Date(scheduledAt);
+      if (!Number.isFinite(when.getTime()) || when.getTime() <= Date.now()) {
+        return res.status(400).json({ message: "scheduledAt must be a future date/time" });
+      }
+      await db.execute(sql`UPDATE campaigns SET scheduled_at=${when.toISOString()}, status='scheduled', updated_at=now() WHERE id=${id}`);
+      res.json({ ok: true, scheduledAt: when.toISOString(), status: "scheduled" });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  // Start a broadcast send now (runs in background; pause/cancel take effect immediately).
+  reg("post", "/api/campaigns/:id/send"); app.post("/api/campaigns/:id/send", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const cur: any = await db.execute(sql`SELECT status FROM campaigns WHERE id=${id} LIMIT 1`);
+      const status = ((cur as any).rows || [])[0]?.status;
+      if (status === "sending") return res.status(409).json({ message: "Campaign is already sending" });
+      if (!["draft", "scheduled", "paused", "failed"].includes(String(status))) {
+        return res.status(409).json({ message: `Cannot send from status '${status}'` });
+      }
+      const { runBroadcast } = await import("./campaigns/sender.js");
+      // Fire-and-forget: the run checks pause/cancel before every message.
+      runBroadcast(id, user.id).catch((e) => console.error(`[campaign ${id}] broadcast failed:`, e?.message || e));
+      res.json({ ok: true, message: "Broadcast started" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Immediate pause — the sender checks status before every message.
+  reg("post", "/api/campaigns/:id/pause"); app.post("/api/campaigns/:id/pause", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      await db.execute(sql`UPDATE campaigns SET status='paused', updated_at=now() WHERE id=${id}`);
+      res.json({ ok: true, status: "paused" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/campaigns/:id/resume"); app.post("/api/campaigns/:id/resume", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const { runBroadcast } = await import("./campaigns/sender.js");
+      runBroadcast(id, user.id).catch((e) => console.error(`[campaign ${id}] resume failed:`, e?.message || e));
+      res.json({ ok: true, message: "Broadcast resumed" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/campaigns/:id/cancel"); app.post("/api/campaigns/:id/cancel", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      await db.execute(sql`UPDATE campaigns SET status='cancelled', updated_at=now() WHERE id=${id}`);
+      await db.execute(sql`UPDATE campaign_recipients SET status='skipped', error='Campaign cancelled' WHERE campaign_id=${id} AND status='pending'`);
+      res.json({ ok: true, status: "cancelled" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Paginated recipient list for the exact-recipient preview UI.
+  reg("get", "/api/campaigns/:id/recipients"); app.get("/api/campaigns/:id/recipients", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "campaigns", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const id = parseInt(req.params.id);
+      const limit = Math.min(parseInt(String(req.query.limit || "100"), 10) || 100, 500);
+      const offset = Math.max(parseInt(String(req.query.offset || "0"), 10) || 0, 0);
+      const statusFilter = String(req.query.status || "").trim();
+      const where = statusFilter ? sql`AND status = ${statusFilter}` : sql``;
+      const out: any = await db.execute(sql`
+        SELECT cr.id, cr.recipient_type, cr.lead_id, cr.buyer_id, cr.phone, cr.email,
+               cr.status, cr.sent_at, cr.error, cr.cost_cents,
+               COALESCE(l.owner_name, b.name, 'Unknown') AS name
+        FROM campaign_recipients cr
+        LEFT JOIN leads l ON cr.lead_id = l.id
+        LEFT JOIN buyers b ON cr.buyer_id = b.id
+        WHERE cr.campaign_id = ${id} ${where}
+        ORDER BY cr.id ASC LIMIT ${limit} OFFSET ${offset}
+      `);
+      const cnt: any = await db.execute(sql`SELECT COUNT(*)::int AS c FROM campaign_recipients WHERE campaign_id=${id} ${where}`);
+      res.json({ recipients: ((out as any).rows || []), total: Number((((cnt as any).rows || [])[0] || {}).c || 0) });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -8433,6 +8657,154 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.status(500).json({ success: false, error: "Migration failed" });
     }
   });
+  // ── Ticket 18: durable object storage ──────────────────────────────────
+  // Private-by-default file storage on S3-compatible object storage.
+  // Downloads go through expiring signed URLs only — never public.
+
+  // POST /api/files/upload — upload a file to durable object storage.
+  reg("post", "/api/files/upload"); app.post("/api/files/upload", upload.single("file"), async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const file = (req as any).file as Express.Multer.File | undefined;
+      if (!file) return res.status(400).json({ success: false, error: "file is required" });
+      const entityType = String(req.body.entityType || "misc").slice(0, 50);
+      const entityId = String(req.body.entityId || "0").slice(0, 64);
+      // Immutable flag: only managers may mark a file immutable (signed legal docs).
+      const immutable = String(req.body.immutable || "").toLowerCase() === "true" && isManagerUser(user);
+
+      const { getStorageProvider, makeStorageKey } = await import("./storage/provider.js");
+      const provider = getStorageProvider();
+      const key = makeStorageKey({ entityType, entityId, originalName: file.originalname });
+      const up = await provider.upload({
+        key,
+        body: file.buffer,
+        mimeType: file.mimetype,
+        immutable,
+      });
+
+      // Registry record (best-effort if migration 0090 not yet applied).
+      try {
+        await storage.createStoredFile({
+          originalName: file.originalname,
+          storageKey: up.key,
+          bucket: provider.bucket,
+          sizeBytes: up.sizeBytes,
+          mimeType: file.mimetype,
+          checksumSha256: up.sha256,
+          entityType,
+          entityId,
+          isImmutable: immutable,
+          sourceKind: "upload",
+          sourceRef: null,
+          uploadedBy: user.id,
+        } as any);
+      } catch { /* table may not exist yet */ }
+
+      res.json({
+        success: true,
+        key: up.key,
+        bucket: provider.bucket,
+        backend: provider.backend,
+        sizeBytes: up.sizeBytes,
+        sha256: up.sha256,
+        immutable,
+      });
+    } catch (e: any) {
+      console.error("[storage] upload failed:", e?.message || e);
+      res.status(500).json({ success: false, error: "Upload failed" });
+    }
+  });
+
+  // GET /api/files/:id/download — expiring signed URL (private by default).
+  // Also supports ?key= for local-dev fallback URLs.
+  reg("get", "/api/files/:id/download"); app.get("/api/files/:id/download", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { getStorageProvider } = await import("./storage/provider.js");
+      const provider = getStorageProvider();
+
+      let storageKey: string;
+      const id = String(req.params.id);
+      if (id === "by-key") {
+        storageKey = String(req.query.key || "");
+      } else {
+        const rec: any = await storage.getStoredFile(Number(id)).catch(() => null);
+        if (!rec) return res.status(404).json({ success: false, error: "File not found" });
+        storageKey = rec.storageKey;
+      }
+      if (!storageKey) return res.status(400).json({ success: false, error: "Missing key" });
+
+      // Local dev backend: stream through the API (auth enforced here).
+      if (provider.backend === "local") {
+        const buf = await provider.download(storageKey);
+        res.setHeader("Content-Type", "application/octet-stream");
+        res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(storageKey.split("/").pop() || "file")}"`);
+        return res.send(buf);
+      }
+
+      const url = await provider.getSignedDownloadUrl(storageKey);
+      res.json({ success: false, downloadUrl: url, expiresInSeconds: 900 });
+    } catch (e: any) {
+      console.error("[storage] download failed:", e?.message || e);
+      res.status(500).json({ success: false, error: "Download failed" });
+    }
+  });
+
+  // GET /api/storage/inventory — list stored files + backend status (admin).
+  reg("get", "/api/storage/inventory"); app.get("/api/storage/inventory", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) {
+        res.status(403).json({ success: false, error: "Admin access required" });
+        return;
+      }
+      const { getStorageProvider, resolveStorageConfig } = await import("./storage/provider.js");
+      const { inventoryCandidates, storageUsage } = await import("./storage/migrator.js");
+      const provider = getStorageProvider();
+      const cfg = resolveStorageConfig();
+      const usage = await storageUsage();
+      const candidates = await inventoryCandidates().catch(() => []);
+      const files = await storage.listStoredFiles(100, 0).catch(() => []);
+      res.json({
+        success: true,
+        backend: provider.backend,
+        bucket: provider.bucket,
+        region: cfg.region,
+        endpoint: cfg.endpoint || null,
+        devBucketConfigured: Boolean(String(process.env.STORAGE_BUCKET_DEV || "").trim()),
+        usage,
+        pendingMigration: candidates.length,
+        recentFiles: files,
+      });
+    } catch (e: any) {
+      console.error("[storage] inventory failed:", e?.message || e);
+      res.status(500).json({ success: false, error: "Inventory failed" });
+    }
+  });
+
+  // POST /api/storage/migrate — run the storage migration (admin only).
+  // Body: { dryRun?: boolean } — dryRun defaults to TRUE. Sources are never deleted.
+  reg("post", "/api/storage/migrate"); app.post("/api/storage/migrate", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) {
+        res.status(403).json({ success: false, error: "Admin access required" });
+        return;
+      }
+      const dryRun = req.body?.dryRun !== false;
+      const { runMigration } = await import("./storage/migrator.js");
+      const result = await runMigration({ dryRun, uploadedBy: user.id });
+      res.json({ success: true, ...result });
+    } catch (e: any) {
+      console.error("[storage] migrate failed:", e?.message || e);
+      res.status(500).json({ success: false, error: "Migration failed" });
+    }
+  });
+
   // SYSTEM HEALTH (Aggregated diagnostics)
   // C6: route-bootstrap diagnostics — proves which API routes registered at
   // startup and when, so a partial bootstrap (C6-style outage) is detectable.
@@ -10098,6 +10470,25 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
           createdBy: user.id,
         } as any);
         documentId = doc.id;
+        // Ticket 18: register signed legal doc as immutable in durable storage registry.
+        try {
+          const { getStorageProvider } = await import("./storage/provider.js");
+          const sp = getStorageProvider();
+          await storage.createStoredFile({
+            originalName: String(file.originalname || "signed-copy"),
+            storageKey,
+            bucket: sp.bucket,
+            sizeBytes: typeof file.size === "number" ? file.size : buf.length,
+            mimeType: String(file.mimetype || "application/pdf"),
+            checksumSha256: sha,
+            entityType: "contract",
+            entityId: String(contract.id),
+            isImmutable: true,
+            sourceKind: "upload",
+            sourceRef: `contract:${contract.id}`,
+            uploadedBy: user.id,
+          } as any);
+        } catch { /* registry table may not exist yet */ }
       }
       // M51: uploading a signed copy means the contract was signed — never
       // regress an executed contract back to signed, and stamp signedAt when
@@ -13606,6 +13997,298 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.status(500).json({ message: error.message });
     }
   });
+
+  // ============ TICKET 13: Task triage + SLA enforcement ============
+  // Helper: subquery of quarantined (entityType, entityId) pairs to exclude from workload.
+  function quarantinedTaskExclusion() {
+    // Returns a SQL fragment: tasks whose (related_entity_type, related_entity_id)
+    // is NOT in the quarantined_records table (active quarantines only).
+    return sql`NOT EXISTS (
+      SELECT 1 FROM quarantined_records qr
+      WHERE qr.status = 'quarantined'
+        AND qr.entity_type = ${tasks.relatedEntityType}
+        AND qr.entity_id = ${tasks.relatedEntityId}
+        AND ${tasks.relatedEntityType} IS NOT NULL
+        AND ${tasks.relatedEntityId} IS NOT NULL
+    )`;
+  }
+
+  reg("get", "/api/tasks/overdue"); app.get("/api/tasks/overdue", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const schema = z.object({
+        assignedToUserId: z.coerce.number().int().positive().optional(),
+        type: z.string().trim().min(1).optional(),
+        stage: z.string().trim().min(1).optional(),
+        minAgeDays: z.coerce.number().int().min(0).optional(),
+        maxAgeDays: z.coerce.number().int().min(0).optional(),
+        limit: z.coerce.number().int().min(1).max(500).optional(),
+        offset: z.coerce.number().int().min(0).optional(),
+      });
+      const q = schema.parse(req.query || {});
+      const now = new Date();
+      const whereParts: any[] = [
+        lt(tasks.dueAt, now),
+        ne(tasks.status, "completed"),
+        quarantinedTaskExclusion(),
+      ];
+      if (!isManagerUser(user)) {
+        whereParts.push(
+          or(eq(tasks.isPrivate, false), eq(tasks.createdBy, user.id), eq(tasks.assignedToUserId, user.id)),
+        );
+      }
+      if (typeof q.assignedToUserId === "number") whereParts.push(eq(tasks.assignedToUserId, q.assignedToUserId));
+      if (q.type) whereParts.push(eq(tasks.type, q.type));
+      if (q.stage) whereParts.push(eq(tasks.relatedEntityType, q.stage));
+      if (typeof q.minAgeDays === "number") {
+        whereParts.push(sql`${tasks.dueAt} < ${new Date(now.getTime() - q.minAgeDays * 86400000)}`);
+      }
+      if (typeof q.maxAgeDays === "number") {
+        whereParts.push(sql`${tasks.dueAt} >= ${new Date(now.getTime() - q.maxAgeDays * 86400000)}`);
+      }
+      const whereClause = and(...whereParts);
+      const limit = q.limit ?? 100;
+      const offset = q.offset ?? 0;
+      const items = await db.select().from(tasks).where(whereClause)
+        .orderBy(tasks.dueAt).limit(limit).offset(offset);
+      const countRows = await db.select({ count: sql<number>`count(*)::int` }).from(tasks).where(whereClause);
+      res.json({ items, total: Number((countRows as any)?.[0]?.count || 0) });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/tasks/bulk-triage"); app.post("/api/tasks/bulk-triage", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const schema = z.object({
+        taskIds: z.array(z.coerce.number().int().positive()).min(1).max(200),
+        action: z.enum(["complete", "reschedule", "cancel", "merge", "archive"]),
+        reason: z.string().trim().min(3).max(2000),
+        newDueAt: z.coerce.date().optional(),
+        mergeIntoTaskId: z.coerce.number().int().positive().optional(),
+        preview: z.boolean().optional(),
+        confirm: z.boolean().optional(),
+      });
+      const body = schema.parse(req.body || {});
+
+      // Load tasks + permission check each one.
+      const targets: any[] = [];
+      for (const id of body.taskIds) {
+        const t = await storage.getTaskById(id);
+        if (!t) return res.status(404).json({ message: `Task ${id} not found` });
+        if (!canViewTask(user, t)) return res.status(404).json({ message: `Task ${id} not found` });
+        if (!canMutateTask(user, t)) return res.status(403).json({ message: `Forbidden on task ${id}` });
+        targets.push(t);
+      }
+
+      // Action-specific validation.
+      if (body.action === "reschedule" && !body.newDueAt) {
+        return res.status(400).json({ message: "newDueAt is required for reschedule" });
+      }
+      if (body.action === "merge" && !body.mergeIntoTaskId) {
+        return res.status(400).json({ message: "mergeIntoTaskId is required for merge" });
+      }
+
+      // Preview mode: return what WOULD happen without doing it.
+      if (body.preview && !body.confirm) {
+        return res.json({
+          preview: true,
+          action: body.action,
+          taskCount: targets.length,
+          tasks: targets.map((t) => ({ id: t.id, title: t.title, status: t.status, dueAt: t.dueAt })),
+          requiresReason: true,
+          requiresConfirm: true,
+        });
+      }
+      if (!body.confirm) {
+        return res.status(400).json({ message: "Confirmation required: set confirm=true after reviewing preview" });
+      }
+
+      // Execute: one audit event per task.
+      const results: any[] = [];
+      for (const t of targets) {
+        const oldStatus = t.status;
+        let newStatus = oldStatus;
+        const patch: any = { triageStatus: "triaged" };
+        if (body.action === "complete") { newStatus = "completed"; patch.status = "completed"; patch.completedAt = new Date(); }
+        else if (body.action === "cancel") { newStatus = "cancelled"; patch.status = "cancelled"; }
+        else if (body.action === "archive") { newStatus = "archived"; patch.status = "archived"; }
+        else if (body.action === "reschedule") { patch.dueAt = body.newDueAt; patch.reminderSentAt = null; patch.overdueAlertSentAt = null; }
+        else if (body.action === "merge") { newStatus = "merged"; patch.status = "merged"; }
+
+        // No conflicting open next-actions per lead: when completing/cancelling a task
+        // linked to a lead, clear stale next_action references handled by caller.
+        const updated = await storage.updateTask(t.id, patch);
+        await db.insert(taskAudit).values({
+          taskId: t.id,
+          action: `bulk_${body.action}`,
+          oldValue: oldStatus,
+          newValue: newStatus,
+          reason: body.reason,
+          performedBy: user.id,
+        });
+        results.push({ id: t.id, action: body.action, oldStatus, newStatus });
+      }
+      res.json({ ok: true, action: body.action, processed: results.length, results });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/tasks/sla-dashboard"); app.get("/api/tasks/sla-dashboard", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const now = new Date();
+      const baseFilter = sql`${tasks.status} <> 'completed' AND ${tasks.dueAt} < ${now} AND ${quarantinedTaskExclusion()}`;
+      const visFilter = isManagerUser(user)
+        ? sql`TRUE`
+        : sql`(${tasks.isPrivate} = false OR ${tasks.createdBy} = ${user.id} OR ${tasks.assignedToUserId} = ${user.id})`;
+
+      const byAssignee = await db.select({
+        assignedToUserId: tasks.assignedToUserId,
+        count: sql<number>`count(*)::int`,
+      }).from(tasks).where(and(baseFilter, visFilter)).groupBy(tasks.assignedToUserId);
+
+      const byType = await db.select({
+        type: tasks.type,
+        count: sql<number>`count(*)::int`,
+      }).from(tasks).where(and(baseFilter, visFilter)).groupBy(tasks.type);
+
+      const byStage = await db.select({
+        stage: tasks.relatedEntityType,
+        count: sql<number>`count(*)::int`,
+      }).from(tasks).where(and(baseFilter, visFilter)).groupBy(tasks.relatedEntityType);
+
+      // Age buckets: 0-1d, 2-7d, 8-30d, 30d+
+      const ageBuckets = await db.select({
+        bucket: sql<string>`CASE
+          WHEN ${tasks.dueAt} >= ${new Date(now.getTime() - 86400000)} THEN '0-1d'
+          WHEN ${tasks.dueAt} >= ${new Date(now.getTime() - 7 * 86400000)} THEN '2-7d'
+          WHEN ${tasks.dueAt} >= ${new Date(now.getTime() - 30 * 86400000)} THEN '8-30d'
+          ELSE '30d+' END`,
+        count: sql<number>`count(*)::int`,
+      }).from(tasks).where(and(baseFilter, visFilter)).groupBy(sql`1`);
+
+      const totalRows = await db.select({ count: sql<number>`count(*)::int` }).from(tasks).where(and(baseFilter, visFilter));
+      res.json({
+        total: Number((totalRows as any)?.[0]?.count || 0),
+        byAssignee, byType, byStage, ageBuckets,
+        generatedAt: now.toISOString(),
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/tasks/sla-rules"); app.get("/api/tasks/sla-rules", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const rules = await db.select().from(taskSlaRules).orderBy(taskSlaRules.taskType);
+      res.json({ items: rules });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/tasks/sla-rules"); app.post("/api/tasks/sla-rules", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+      const parsed = insertTaskSlaRuleSchema.parse({ ...req.body, createdBy: user.id });
+      const rows = await db.insert(taskSlaRules).values(parsed as any).returning();
+      res.status(201).json(rows[0]);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  reg("put", "/api/tasks/sla-rules/:id"); app.put("/api/tasks/sla-rules/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+      const id = parseInt(req.params.id);
+      const patch = insertTaskSlaRuleSchema.partial().parse(req.body || {});
+      const rows = await db.update(taskSlaRules).set({ ...(patch as any), updatedAt: new Date() }).where(eq(taskSlaRules.id, id)).returning();
+      if (!rows.length) return res.status(404).json({ message: "Rule not found" });
+      res.json(rows[0]);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
+
+  reg("delete", "/api/tasks/sla-rules/:id"); app.delete("/api/tasks/sla-rules/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+      const id = parseInt(req.params.id);
+      await db.delete(taskSlaRules).where(eq(taskSlaRules.id, id));
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/tasks/check-sla"); app.post("/api/tasks/check-sla", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+      const now = new Date();
+      const rules = await db.select().from(taskSlaRules).where(eq(taskSlaRules.isActive, true));
+
+      let checked = 0, escalated = 0, slaSet = 0;
+      // Only tasks not already escalated and not completed, excluding quarantined.
+      const candidates = await db.select().from(tasks).where(and(
+        ne(tasks.status, "completed"),
+        isNull(tasks.escalatedAt),
+        quarantinedTaskExclusion(),
+      )).limit(500);
+
+      for (const t of candidates as any[]) {
+        checked++;
+        const rule = rules.find((r: any) => r.taskType === (t.type || "general"))
+          || rules.find((r: any) => r.taskType === "general");
+        if (!rule) continue;
+        // Compute SLA due from creation (or existing slaDueAt).
+        if (!t.slaDueAt) {
+          const slaDue = new Date(new Date(t.createdAt).getTime() + rule.slaHours * 3600000);
+          await db.update(tasks).set({ slaDueAt: slaDue }).where(eq(tasks.id, t.id));
+          slaSet++;
+          if (slaDue > now) continue;
+        } else if (new Date(t.slaDueAt) > now) {
+          continue;
+        }
+        // SLA breached and not yet escalated -> escalate once (no duplicates: escalatedAt gate).
+        const escalateTo = rule.escalationUserId || t.assignedToUserId;
+        await db.update(tasks).set({
+          escalatedAt: now,
+          escalatedToUserId: escalateTo,
+          triageStatus: "escalated",
+        }).where(eq(tasks.id, t.id));
+        await db.insert(taskAudit).values({
+          taskId: t.id,
+          action: "sla_escalated",
+          oldValue: t.status,
+          newValue: t.status,
+          reason: `SLA breached: ${rule.name} (${rule.slaHours}h)`,
+          performedBy: user.id,
+        });
+        escalated++;
+      }
+      res.json({ ok: true, checked, slaDueSet: slaSet, escalated });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // ============ END TICKET 13 ============
   async function listEntityTasks(req: any, res: any, entity: { type: string; id: number }) {
     const user = await requireAuth(req, res);
     if (!user) return null;
@@ -14470,6 +15153,329 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
       res.status(400).json({ message: error.message });
     }
   });
+  // TICKET 17 — BUYER QUALIFICATION WORKFLOW ENDPOINTS.
+  // NOTE: /api/buyers/review-queue, /api/buyers/deal-ready, and
+  // /api/buyers/qualification/dashboard MUST be registered before
+  // /api/buyers/:id so Express does not treat them as an :id.
+  const QUAL_STAGES = ["new", "contacted", "responded", "qualified", "deal_ready", "inactive"] as const;
+
+  reg("get", "/api/buyers/qualification/dashboard"); app.get("/api/buyers/qualification/dashboard", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      // Funnel counts by relationship stage (all non-test buyers).
+      const stageRows: any = await db.execute(sql`
+        SELECT q.relationship_stage AS stage, COUNT(*)::int AS count
+        FROM buyer_qualification q
+        JOIN buyers b ON b.id = q.buyer_id
+        WHERE b.is_suspected_test = false
+        GROUP BY q.relationship_stage
+      `);
+      const byStage: Record<string, number> = {};
+      for (const s of QUAL_STAGES) byStage[s] = 0;
+      for (const r of ((stageRows as any).rows ?? [])) byStage[String(r.stage)] = Number(r.count);
+      // Actionability gaps.
+      const gapRows: any = await db.execute(sql`
+        SELECT
+          COUNT(*) FILTER (WHERE q.owner_user_id IS NULL)::int AS unassigned,
+          COUNT(*) FILTER (WHERE q.next_action IS NULL OR btrim(q.next_action) = '')::int AS no_next_action,
+          COUNT(*) FILTER (WHERE q.next_action_at IS NOT NULL AND q.next_action_at < now())::int AS overdue_actions
+        FROM buyer_qualification q
+        JOIN buyers b ON b.id = q.buyer_id
+        WHERE b.is_suspected_test = false AND b.status = 'active'
+          AND q.relationship_stage NOT IN ('inactive', 'deal_ready')
+      `);
+      const gaps = (((gapRows as any).rows ?? [])[0] || { unassigned: 0, no_next_action: 0, overdue_actions: 0 };
+      // Market coverage: distinct buy-box markets vs markets with >=1 qualified/deal_ready buyer.
+      const marketRows: any = await db.execute(sql`
+        WITH markets AS (
+          SELECT DISTINCT btrim(m) AS market
+          FROM buyer_buybox bb, unnest(bb.markets) AS m
+          WHERE btrim(m) <> ''
+        ),
+        covered AS (
+          SELECT DISTINCT btrim(m) AS market
+          FROM buyer_buybox bb
+          JOIN buyer_qualification q ON q.buyer_id = bb.buyer_id
+          JOIN buyers b ON b.id = bb.buyer_id
+          CROSS JOIN unnest(bb.markets) AS m
+          WHERE b.is_suspected_test = false
+            AND q.relationship_stage IN ('qualified', 'deal_ready')
+            AND btrim(m) <> ''
+        )
+        SELECT mk.market,
+               (c.market IS NOT NULL) AS covered,
+               (SELECT COUNT(*)::int FROM buyer_qualification q2
+                 JOIN buyers b2 ON b2.id = q2.buyer_id
+                 WHERE b2.is_suspected_test = false
+                   AND q2.relationship_stage IN ('qualified', 'deal_ready')
+                   AND EXISTS (SELECT 1 FROM buyer_buybox bb2
+                               WHERE bb2.buyer_id = q2.buyer_id
+                                 AND mk.market = ANY(bb2.markets))) AS qualified_count
+        FROM markets mk
+        LEFT JOIN covered c ON c.market = mk.market
+        ORDER BY covered ASC, mk.market ASC
+      `);
+      const markets = (((marketRows as any).rows ?? [])).map((r: any) => ({
+        market: r.market,
+        covered: r.covered === true || r.covered === "t",
+        qualifiedCount: Number(r.qualified_count),
+      }));
+      // Outreach velocity: attempts in the last 7 and 30 days.
+      const velRows: any = await db.execute(sql`
+        SELECT COUNT(*) FILTER (WHERE occurred_at >= now() - interval '7 days')::int AS last7,
+               COUNT(*) FILTER (WHERE occurred_at >= now() - interval '30 days')::int AS last30
+        FROM buyer_outreach_log
+      `);
+      const velocity = (((velRows as any).rows ?? [])[0] || { last7: 0, last30: 0 };
+      res.json({ byStage, gaps, markets, velocity });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/buyers/review-queue"); app.get("/api/buyers/review-queue", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const rows: any = await db.execute(sql`
+        SELECT b.id, b.name, b.company, b.email, b.phone, b.created_at,
+               b.is_suspected_test, b.duplicate_of, b.review_decision,
+               k.name AS duplicate_of_name,
+               (SELECT COUNT(*)::int FROM buyer_outreach_log o WHERE o.buyer_id = b.id) AS outreach_count
+        FROM buyers b
+        LEFT JOIN buyers k ON k.id = b.duplicate_of
+        WHERE b.is_suspected_test = true AND b.review_decision IS NULL
+        ORDER BY b.created_at DESC
+        LIMIT 200
+      `);
+      res.json((rows as any).rows ?? []);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/buyers/:id/review"); app.post("/api/buyers/:id/review", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const decision = String(req.body?.decision || "").toLowerCase();
+      if (!["approved", "rejected", "merged"].includes(decision)) {
+        return res.status(400).json({ message: "decision must be approved, rejected, or merged" });
+      }
+      // approved = legit buyer, clear the flag. rejected = confirmed test data (stays flagged).
+      // merged = duplicate folded into duplicate_of; stays flagged but out of the queue.
+      const clearFlag = decision === "approved";
+      await db.execute(sql`
+        UPDATE buyers
+        SET review_decision = ${decision},
+            reviewed_at = now(),
+            reviewed_by = ${user.id},
+            is_suspected_test = ${!clearFlag}
+        WHERE id = ${id}
+      `);
+      res.json({ id, decision });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/buyers/deal-ready"); app.get("/api/buyers/deal-ready", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      // Deal alerts target ONLY confirmed buy-box buyers. Never the full list.
+      const market = String(req.query?.market || "").trim() || null;
+      const maxPrice = req.query?.max_price ? Number(req.query.max_price) : null;
+      const rows: any = await db.execute(sql`
+        SELECT b.id, b.name, b.company, b.email, b.phone,
+               b.min_budget, b.max_budget,
+               bb.markets, bb.asset_types, bb.min_price, bb.max_price, bb.strategy,
+               bb.buybox_confirmed, bb.proof_of_funds_verified,
+               q.relationship_stage, q.owner_user_id,
+               u.first_name, u.last_name
+        FROM buyers b
+        JOIN buyer_buybox bb ON bb.buyer_id = b.id
+        LEFT JOIN buyer_qualification q ON q.buyer_id = b.id
+        LEFT JOIN users u ON u.id = q.owner_user_id
+        WHERE b.is_suspected_test = false
+          AND b.do_not_call = false
+          AND bb.buybox_confirmed = true
+          AND (${market}::text IS NULL OR ${market}::text = ANY(bb.markets))
+          AND (${maxPrice}::numeric IS NULL OR bb.max_price IS NULL OR bb.max_price >= ${maxPrice}::numeric)
+        ORDER BY bb.proof_of_funds_verified DESC, b.name ASC
+        LIMIT 500
+      `);
+      res.json((rows as any).rows ?? []);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("get", "/api/buyers/:id/qualification"); app.get("/api/buyers/:id/qualification", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const qRows: any = await db.execute(sql`
+        SELECT q.*, u.first_name AS owner_first_name, u.last_name AS owner_last_name, u.email AS owner_email
+        FROM buyer_qualification q
+        LEFT JOIN users u ON u.id = q.owner_user_id
+        WHERE q.buyer_id = ${id}
+        LIMIT 1
+      `);
+      let qual = (((qRows as any).rows ?? [])[0] || null;
+      if (!qual) {
+        const ins: any = await db.execute(sql`
+          INSERT INTO buyer_qualification (buyer_id, relationship_stage)
+          VALUES (${id}, 'new')
+          ON CONFLICT (buyer_id) DO NOTHING
+          RETURNING *
+        `);
+        qual = (((ins as any).rows ?? [])[0] || null);
+      }
+      const bbRows: any = await db.execute(sql`
+        SELECT * FROM buyer_buybox WHERE buyer_id = ${id} LIMIT 1
+      `);
+      const buybox = (((bbRows as any).rows ?? [])[0] || null);
+      const logRows: any = await db.execute(sql`
+        SELECT o.*, u.first_name, u.last_name
+        FROM buyer_outreach_log o
+        LEFT JOIN users u ON u.id = o.user_id
+        WHERE o.buyer_id = ${id}
+        ORDER BY o.occurred_at DESC
+        LIMIT 100
+      `);
+      res.json({ qualification: qual, buybox, outreachLog: ((logRows as any).rows ?? []) });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/buyers/:id/qualify"); app.post("/api/buyers/:id/qualify", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const { relationship_stage, next_action, next_action_at, notes, buybox } = req.body || {};
+      if (relationship_stage && !(QUAL_STAGES as readonly string[]).includes(String(relationship_stage))) {
+        return res.status(400).json({ message: `relationship_stage must be one of: ${QUAL_STAGES.join(", ")}` });
+      }
+      const up: any = await db.execute(sql`
+        INSERT INTO buyer_qualification (buyer_id, relationship_stage, next_action, next_action_at, notes, updated_at)
+        VALUES (${id},
+                ${relationship_stage || "new"},
+                ${next_action ?? null},
+                ${next_action_at ? new Date(next_action_at) : null},
+                ${notes ?? null},
+                now())
+        ON CONFLICT (buyer_id) DO UPDATE SET
+          relationship_stage = COALESCE(${relationship_stage || null}, buyer_qualification.relationship_stage),
+          next_action = COALESCE(${next_action ?? null}, buyer_qualification.next_action),
+          next_action_at = COALESCE(${next_action_at ? new Date(next_action_at) : null}, buyer_qualification.next_action_at),
+          notes = COALESCE(${notes ?? null}, buyer_qualification.notes),
+          updated_at = now()
+        RETURNING *
+      `);
+      // Optional inline buy-box update.
+      if (buybox && typeof buybox === "object") {
+        const { markets, asset_types, min_price, max_price, strategy, buybox_confirmed, proof_of_funds_verified, notes: bbNotes } = buybox;
+        // Normalize: null = "leave unchanged", value = "set".
+        const marketsParam = Array.isArray(markets) ? markets : null;
+        const assetTypesParam = Array.isArray(asset_types) ? asset_types : null;
+        const confirmedParam = buybox_confirmed === true ? true : buybox_confirmed === false ? false : null;
+        const pofParam = proof_of_funds_verified === true ? true : proof_of_funds_verified === false ? false : null;
+        await db.execute(sql`
+          INSERT INTO buyer_buybox (buyer_id, markets, asset_types, min_price, max_price, strategy, buybox_confirmed, proof_of_funds_verified, proof_of_funds_at, notes, updated_at)
+          VALUES (${id},
+                  ${marketsParam ?? []},
+                  ${assetTypesParam ?? []},
+                  ${min_price ?? null}, ${max_price ?? null},
+                  ${strategy ?? null},
+                  ${confirmedParam ?? false},
+                  ${pofParam ?? false},
+                  ${pofParam === true ? new Date() : null},
+                  ${bbNotes ?? null},
+                  now())
+          ON CONFLICT (buyer_id) DO UPDATE SET
+            markets = COALESCE(${marketsParam}, buyer_buybox.markets),
+            asset_types = COALESCE(${assetTypesParam}, buyer_buybox.asset_types),
+            min_price = COALESCE(${min_price ?? null}, buyer_buybox.min_price),
+            max_price = COALESCE(${max_price ?? null}, buyer_buybox.max_price),
+            strategy = COALESCE(${strategy ?? null}, buyer_buybox.strategy),
+            buybox_confirmed = COALESCE(${confirmedParam}, buyer_buybox.buybox_confirmed),
+            proof_of_funds_verified = COALESCE(${pofParam}, buyer_buybox.proof_of_funds_verified),
+            proof_of_funds_at = CASE WHEN ${pofParam} IS NOT NULL AND ${pofParam} = true THEN now() ELSE buyer_buybox.proof_of_funds_at END,
+            notes = COALESCE(${bbNotes ?? null}, buyer_buybox.notes),
+            updated_at = now()
+        `);
+      }
+      res.json((((up as any).rows ?? [])[0]));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/buyers/:id/log-outreach"); app.post("/api/buyers/:id/log-outreach", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const channel = String(req.body?.channel || "").toLowerCase();
+      if (!["call", "sms", "email", "meeting", "other"].includes(channel)) {
+        return res.status(400).json({ message: "channel must be call, sms, email, meeting, or other" });
+      }
+      const occurredAt = req.body?.occurred_at ? new Date(req.body.occurred_at) : new Date();
+      const ins: any = await db.execute(sql`
+        INSERT INTO buyer_outreach_log (buyer_id, user_id, channel, outcome, notes, occurred_at)
+        VALUES (${id}, ${user.id}, ${channel}, ${req.body?.outcome ?? null}, ${req.body?.notes ?? null}, ${occurredAt})
+        RETURNING *
+      `);
+      // Every attempt updates last contact; first-ever outreach advances new -> contacted.
+      await db.execute(sql`
+        INSERT INTO buyer_qualification (buyer_id, relationship_stage, last_contact_at, updated_at)
+        VALUES (${id}, 'contacted', ${occurredAt}, now())
+        ON CONFLICT (buyer_id) DO UPDATE SET
+          last_contact_at = GREATEST(buyer_qualification.last_contact_at, ${occurredAt}),
+          relationship_stage = CASE WHEN buyer_qualification.relationship_stage = 'new' THEN 'contacted' ELSE buyer_qualification.relationship_stage END,
+          updated_at = now()
+      `);
+      await db.execute(sql`
+        UPDATE buyers SET last_contact_date = GREATEST(COALESCE(last_contact_date, ${occurredAt}), ${occurredAt})
+        WHERE id = ${id}
+      `);
+      res.status(201).json((((ins as any).rows ?? [])[0]));
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/buyers/:id/assign-owner"); app.post("/api/buyers/:id/assign-owner", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const id = parseInt(req.params.id);
+      const ownerUserId = req.body?.owner_user_id ? parseInt(req.body.owner_user_id) : null;
+      if (ownerUserId !== null) {
+        const uRows: any = await db.execute(sql`SELECT id FROM users WHERE id = ${ownerUserId} LIMIT 1`);
+        if (((((uRows as any).rows ?? [])).length || 0) === 0) {
+          return res.status(400).json({ message: "owner_user_id does not match a user" });
+        }
+      }
+      await db.execute(sql`
+        INSERT INTO buyer_qualification (buyer_id, owner_user_id, updated_at)
+        VALUES (${id}, ${ownerUserId}, now())
+        ON CONFLICT (buyer_id) DO UPDATE SET owner_user_id = ${ownerUserId}, updated_at = now()
+      `);
+      // Keep the legacy buyers.owner_user_id column in sync for existing UI.
+      await db.execute(sql`UPDATE buyers SET owner_user_id = ${ownerUserId} WHERE id = ${id}`);
+      res.json({ id, owner_user_id: ownerUserId });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // BUYERS ENDPOINTS
   reg("get", "/api/buyers"); app.get("/api/buyers", async (req, res) => {
     try {
@@ -14995,6 +16001,541 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     if (listing.status !== "published") return res.status(404).json({ message: "Not found" });
     res.json({ listingId: listing.id, slug: listing.slug });
   });
+  // TICKET-09: Background job queue API.
+  reg("get", "/api/jobs"); app.get("/api/jobs", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { listJobs } = await import("./jobs/queue.js");
+      const result = await listJobs({
+        status: typeof req.query.status === "string" ? req.query.status : undefined,
+        type: typeof req.query.type === "string" ? req.query.type : undefined,
+        limit: typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : undefined,
+        offset: typeof req.query.offset === "string" ? parseInt(req.query.offset, 10) : undefined,
+      });
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(500).json({ message: e?.message || "Failed to list jobs" });
+    }
+  });
+  reg("get", "/api/jobs/health"); app.get("/api/jobs/health", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { getJobCounts, getQueueVitals, getRepeatedFailureCount } = await import("./jobs/queue.js");
+      const [counts, vitals, repeatedFailures] = await Promise.all([
+        getJobCounts(),
+        getQueueVitals(),
+        getRepeatedFailureCount(),
+      ]);
+      const backlogThresholdMs = 15 * 60 * 1000;
+      const alerts: Array<{ kind: string; message: string }> = [];
+      if (vitals.lastSuccessAt == null && (counts.succeeded > 0 || counts.failed > 0 || counts.dead_lettered > 0)) {
+        alerts.push({ kind: "worker_stopped", message: "No successful job completion recorded — the worker may be stopped." });
+      }
+      if (vitals.oldestQueuedAgeMs != null && vitals.oldestQueuedAgeMs > backlogThresholdMs) {
+        alerts.push({ kind: "backlog", message: `Oldest queued job is waiting ${Math.round(vitals.oldestQueuedAgeMs / 60000)} minutes — backlog building up.` });
+      }
+      if (repeatedFailures > 0) {
+        alerts.push({ kind: "repeated_failures", message: `${repeatedFailures} job(s) failed 3+ times in the last 24 hours.` });
+      }
+      if (counts.dead_lettered > 0) {
+        alerts.push({ kind: "dead_letter", message: `${counts.dead_lettered} job(s) in the dead-letter queue need attention.` });
+      }
+      return res.json({ counts, vitals, alerts });
+    } catch (e: any) {
+      return res.status(500).json({ message: e?.message || "Failed to load job health" });
+    }
+  });
+  reg("get", "/api/jobs/dead-letters"); app.get("/api/jobs/dead-letters", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { listDeadLetters } = await import("./jobs/dead-letter.js");
+      const result = await listDeadLetters(
+        typeof req.query.limit === "string" ? parseInt(req.query.limit, 10) : 50,
+        typeof req.query.offset === "string" ? parseInt(req.query.offset, 10) : 0,
+      );
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(500).json({ message: e?.message || "Failed to list dead letters" });
+    }
+  });
+  reg("post", "/api/jobs"); app.post("/api/jobs", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { enqueueJob } = await import("./jobs/queue.js");
+      const job = await enqueueJob({
+        type: String(req.body?.type || ""),
+        payload: (req.body?.payload as Record<string, unknown>) || {},
+        priority: typeof req.body?.priority === "number" ? req.body.priority : 0,
+        scheduledAt: req.body?.scheduledAt ? new Date(String(req.body.scheduledAt)) : undefined,
+        maxAttempts: typeof req.body?.maxAttempts === "number" ? req.body.maxAttempts : 5,
+        idempotencyKey: typeof req.body?.idempotencyKey === "string" ? req.body.idempotencyKey : undefined,
+      });
+      return res.status(201).json({ job });
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Failed to enqueue job" });
+    }
+  });
+  reg("post", "/api/jobs/:id/retry"); app.post("/api/jobs/:id/retry", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { retryJob } = await import("./jobs/queue.js");
+      const job = await retryJob(parseInt(String(req.params.id), 10));
+      return res.json({ job });
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Failed to retry job" });
+    }
+  });
+  reg("post", "/api/jobs/:id/cancel"); app.post("/api/jobs/:id/cancel", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { cancelJob } = await import("./jobs/queue.js");
+      const job = await cancelJob(parseInt(String(req.params.id), 10));
+      return res.json({ job });
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Failed to cancel job" });
+    }
+  });
+  reg("post", "/api/jobs/dead-letters/:id/retry"); app.post("/api/jobs/dead-letters/:id/retry", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { retryDeadLetter } = await import("./jobs/dead-letter.js");
+      const job = await retryDeadLetter(parseInt(String(req.params.id), 10));
+      return res.json({ job });
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Failed to retry dead-letter job" });
+    }
+  });
+  reg("delete", "/api/jobs/dead-letters/:id"); app.delete("/api/jobs/dead-letters/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { purgeDeadLetter } = await import("./jobs/dead-letter.js");
+      await purgeDeadLetter(parseInt(String(req.params.id), 10));
+      return res.json({ ok: true });
+    } catch (e: any) {
+      return res.status(400).json({ message: e?.message || "Failed to purge dead letter" });
+    }
+  });
+  // ── Ticket 10: Business email delivery ──────────────────────────────
+  // Provider readiness (no secrets exposed — config state only).
+  reg("get", "/api/email/readiness"); app.get("/api/email/readiness", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    res.json(emailProviderReadiness());
+  });
+
+  // List sending identities for the current user (admins see all).
+  reg("get", "/api/email/identities"); app.get("/api/email/identities", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const admin = isAdminUser(user);
+    const rows = await db.execute(sql`
+      SELECT id, user_id, email, name, is_default, spf_pass, dkim_pass, dmarc_status, verified_at, created_at
+      FROM email_identities
+      ${admin ? sql`` : sql`WHERE user_id = ${user.id}`}
+      ORDER BY is_default DESC, created_at ASC
+    `);
+    const items: any[] = (rows as any)?.rows ?? (rows as any) ?? [];
+    res.json({ items });
+  });
+
+  // Add a sending identity (from-address) for the current user.
+  reg("post", "/api/email/identities"); app.post("/api/email/identities", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const name = String(req.body?.name || "").trim() || null;
+    const isDefault = req.body?.is_default === true;
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ message: "A valid email address is required." });
+    }
+    if (isDefault) {
+      await db.execute(sql`UPDATE email_identities SET is_default = false WHERE user_id = ${user.id}`);
+    }
+    const rows = await db.execute(sql`
+      INSERT INTO email_identities (user_id, email, name, is_default)
+      VALUES (${user.id}, ${email}, ${name}, ${isDefault})
+      ON CONFLICT (user_id, email) DO UPDATE SET name = EXCLUDED.name, is_default = EXCLUDED.is_default
+      RETURNING id, user_id, email, name, is_default, spf_pass, dkim_pass, dmarc_status, verified_at, created_at
+    `);
+    const r: any = (rows as any)?.rows?.[0] ?? (rows as any)?.[0];
+    res.status(201).json({ identity: r });
+  });
+
+  // Delete a sending identity.
+  reg("delete", "/api/email/identities/:id"); app.delete("/api/email/identities/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "Invalid identity id." });
+    const admin = isAdminUser(user);
+    await db.execute(sql`
+      DELETE FROM email_identities WHERE id = ${id} ${admin ? sql`` : sql`AND user_id = ${user.id}`}
+    `);
+    res.json({ ok: true });
+  });
+
+  // Send an email (suppression-checked, idempotent, dev-guarded).
+  reg("post", "/api/email/send"); app.post("/api/email/send", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const outcome = await sendCrmEmail({
+      to: String(req.body?.to || ""),
+      subject: String(req.body?.subject || ""),
+      text: req.body?.text ?? null,
+      html: req.body?.html ?? null,
+      from: req.body?.from ?? null,
+      leadId: req.body?.leadId != null ? Number(req.body.leadId) : null,
+      userId: user.id,
+      idempotencyKey: req.body?.idempotencyKey ?? null,
+    });
+    if (!outcome.ok) return res.status(422).json({ ok: false, code: outcome.code, message: outcome.message, outboxId: outcome.outboxId });
+    res.json({ ok: true, outboxId: outcome.outboxId, replayed: outcome.replayed, provider: outcome.provider, providerMessageId: outcome.providerMessageId });
+  });
+
+  // Delivery event webhook (idempotent; secret-protected when configured).
+  reg("post", "/api/email/webhook"); app.post("/api/email/webhook", async (req, res) => {
+    if (!verifyWebhookSecret(req)) return res.status(401).json({ message: "Invalid webhook secret." });
+    try {
+      const result = await ingestWebhookBatch(req.body);
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, message: String(e?.message || "Webhook processing failed") });
+    }
+  });
+
+  // Suppression list (admin only for writes; reads for authenticated users).
+  reg("get", "/api/email/suppressions"); app.get("/api/email/suppressions", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const limit = parseInt(String(req.query?.limit || "100"), 10);
+    const offset = parseInt(String(req.query?.offset || "0"), 10);
+    res.json(await listSuppressions(limit, offset));
+  });
+  reg("post", "/api/email/suppressions"); app.post("/api/email/suppressions", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const email = String(req.body?.email || "").trim();
+    const reason = String(req.body?.reason || "optout");
+    if (!["bounce", "complaint", "optout"].includes(reason)) return res.status(400).json({ message: "Invalid reason." });
+    res.status(201).json({ suppression: await addSuppression(email, reason as any) });
+  });
+  reg("delete", "/api/email/suppressions"); app.delete("/api/email/suppressions", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isAdminUser(user)) return res.status(403).json({ message: "Forbidden" });
+    const email = String(req.query?.email || req.body?.email || "").trim();
+    res.json({ removed: await removeSuppression(email) });
+  });
+
+  // Delivery stats for the Settings → Email dashboard.
+  reg("get", "/api/email/stats"); app.get("/api/email/stats", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const { emailDeliveryStats } = await import("./email/sender.js");
+    res.json(await emailDeliveryStats());
+  // ------------------------------------------------------------------
+  // Ticket 12 — Lead assignment & routing rules
+  // ------------------------------------------------------------------
+  reg("get", "/api/assignment/rules"); app.get("/api/assignment/rules", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { assignmentRules } = await import("./shared-schema.js");
+      const { asc } = await import("drizzle-orm");
+      const rows = await db.select().from(assignmentRules)
+        .orderBy(asc(assignmentRules.priorityOrder), asc(assignmentRules.id));
+      res.json({ rules: rows });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  reg("post", "/api/assignment/rules"); app.post("/api/assignment/rules", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+    try {
+      const { assignmentRules } = await import("./shared-schema.js");
+      const { validateRuleConfig, ASSIGNMENT_RULE_TYPES } = await import("./assignment/rules.js");
+      const { name, ruleType, config, priorityOrder } = req.body || {};
+      if (!name || !ruleType) return res.status(400).json({ message: "name and ruleType are required" });
+      if (!ASSIGNMENT_RULE_TYPES.includes(ruleType)) {
+        return res.status(400).json({ message: `Invalid ruleType. Must be one of: ${ASSIGNMENT_RULE_TYPES.join(", ")}` });
+      }
+      const v = validateRuleConfig(ruleType, config || {});
+      if (!v.ok) return res.status(400).json({ message: v.error });
+      const [row] = await db.insert(assignmentRules).values({
+        name: String(name).slice(0, 255),
+        ruleType,
+        config: config || {},
+        priorityOrder: Number.isInteger(priorityOrder) ? priorityOrder : 0,
+        createdBy: user.id,
+      }).returning();
+      res.status(201).json({ rule: row });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  reg("put", "/api/assignment/rules/:id"); app.put("/api/assignment/rules/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+    try {
+      const { assignmentRules } = await import("./shared-schema.js");
+      const { validateRuleConfig, ASSIGNMENT_RULE_TYPES } = await import("./assignment/rules.js");
+      const { eq, sql } = await import("drizzle-orm");
+      const id = Number(req.params.id);
+      const { name, ruleType, config, priorityOrder, isActive } = req.body || {};
+      const existing = await db.select().from(assignmentRules).where(eq(assignmentRules.id, id)).limit(1);
+      if (!existing.length) return res.status(404).json({ message: "Rule not found" });
+      const nextType = ruleType || existing[0].ruleType;
+      if (!ASSIGNMENT_RULE_TYPES.includes(nextType)) {
+        return res.status(400).json({ message: `Invalid ruleType. Must be one of: ${ASSIGNMENT_RULE_TYPES.join(", ")}` });
+      }
+      const v = validateRuleConfig(nextType, config !== undefined ? config : existing[0].config);
+      if (!v.ok) return res.status(400).json({ message: v.error });
+      const [row] = await db.update(assignmentRules).set({
+        name: name !== undefined ? String(name).slice(0, 255) : existing[0].name,
+        ruleType: nextType,
+        config: config !== undefined ? config : existing[0].config,
+        priorityOrder: Number.isInteger(priorityOrder) ? priorityOrder : existing[0].priorityOrder,
+        isActive: typeof isActive === "boolean" ? isActive : existing[0].isActive,
+        // Versioned: every edit bumps the version so audits can pin which version fired.
+        version: sql`${assignmentRules.version} + 1`,
+        updatedAt: new Date(),
+      }).where(eq(assignmentRules.id, id)).returning();
+      res.json({ rule: row });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  reg("delete", "/api/assignment/rules/:id"); app.delete("/api/assignment/rules/:id", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+    try {
+      const { assignmentRules } = await import("./shared-schema.js");
+      const { eq } = await import("drizzle-orm");
+      const id = Number(req.params.id);
+      await db.delete(assignmentRules).where(eq(assignmentRules.id, id));
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Manual assignment — always logged, history preserved on reassign.
+  reg("post", "/api/leads/:id/assign"); app.post("/api/leads/:id/assign", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { leads, users, userCapacity, assignmentLog } = await import("./shared-schema.js");
+      const { eq } = await import("drizzle-orm");
+      const leadId = Number(req.params.id);
+      const { userId, reason } = req.body || {};
+      if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(400).json({ message: "userId is required" });
+      }
+      const leadRows = await db.select().from(leads).where(eq(leads.id, leadId)).limit(1);
+      if (!leadRows.length) return res.status(404).json({ message: "Lead not found" });
+      const target = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+      if (!target.length || !target[0].isActive) {
+        return res.status(400).json({ message: "Cannot assign to an inactive or missing user" });
+      }
+      await db.update(leads).set({ assignedTo: userId }).where(eq(leads.id, leadId));
+      await db.insert(assignmentLog).values({
+        leadId,
+        assignedToUserId: userId,
+        ruleId: null,
+        ruleName: "manual",
+        reason: `Manual assignment by ${user.email}${reason ? `: ${String(reason).slice(0, 500)}` : ""}`,
+        assignedBy: user.id,
+      });
+      res.json({ ok: true, leadId, assignedTo: userId });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Unassign (kept in history as an assignment_log row with null user).
+  reg("post", "/api/leads/:id/unassign"); app.post("/api/leads/:id/unassign", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { leads, assignmentLog } = await import("./shared-schema.js");
+      const { eq } = await import("drizzle-orm");
+      const leadId = Number(req.params.id);
+      const { reason } = req.body || {};
+      await db.update(leads).set({ assignedTo: null }).where(eq(leads.id, leadId));
+      await db.insert(assignmentLog).values({
+        leadId,
+        assignedToUserId: null,
+        ruleId: null,
+        ruleName: "manual-unassign",
+        reason: `Unassigned by ${user.email}${reason ? `: ${String(reason).slice(0, 500)}` : ""}`,
+        assignedBy: user.id,
+      });
+      res.json({ ok: true, leadId, assignedTo: null });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  reg("get", "/api/leads/:id/assignment-history"); app.get("/api/leads/:id/assignment-history", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { assignmentLog } = await import("./shared-schema.js");
+      const { eq, desc } = await import("drizzle-orm");
+      const leadId = Number(req.params.id);
+      const rows = await db.select().from(assignmentLog)
+        .where(eq(assignmentLog.leadId, leadId))
+        .orderBy(desc(assignmentLog.assignedAt))
+        .limit(50);
+      res.json({ history: rows });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Dry-run: which rule WOULD fire for a lead, without persisting.
+  reg("post", "/api/assignment/dry-run"); app.post("/api/assignment/dry-run", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { leads } = await import("./shared-schema.js");
+      const { eq } = await import("drizzle-orm");
+      const { evaluateAssignment } = await import("./assignment/engine.js");
+      const leadId = Number(req.body?.leadId);
+      if (!leadId) return res.status(400).json({ message: "leadId is required" });
+      const rows = await db.select({ id: leads.id, state: leads.state, assignedTo: leads.assignedTo })
+        .from(leads).where(eq(leads.id, leadId)).limit(1);
+      if (!rows.length) return res.status(404).json({ message: "Lead not found" });
+      const decision = await evaluateAssignment({ id: rows[0].id, state: rows[0].state, assignedTo: rows[0].assignedTo });
+      // Resolve winner email for display.
+      let winnerEmail: string | null = null;
+      if (decision.assignedToUserId) {
+        const { users } = await import("./shared-schema.js");
+        const u = await db.select({ email: users.email }).from(users)
+          .where(eq(users.id, decision.assignedToUserId)).limit(1);
+        winnerEmail = u[0]?.email || null;
+      }
+      res.json({ leadId, decision: { ...decision, winnerEmail }, persisted: false });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Auto-assign: run the engine over unassigned leads.
+  reg("post", "/api/assignment/auto-assign"); app.post("/api/assignment/auto-assign", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+    try {
+      const { evaluateAssignment, persistAssignment, getUnassignedLeads } = await import("./assignment/engine.js");
+      const limit = Math.min(Math.max(Number(req.body?.limit) || 100, 1), 1000);
+      const unassigned = await getUnassignedLeads(limit);
+      let assigned = 0;
+      let skipped = 0;
+      const results: Array<{ leadId: number; assignedTo: number | null; ruleName: string | null }> = [];
+      for (const lead of unassigned) {
+        const decision = await evaluateAssignment(lead);
+        if (decision.assignedToUserId != null) {
+          await persistAssignment(lead.id, decision, null);
+          assigned++;
+        } else {
+          skipped++;
+        }
+        results.push({ leadId: lead.id, assignedTo: decision.assignedToUserId, ruleName: decision.ruleName });
+      }
+      res.json({ ok: true, scanned: unassigned.length, assigned, skipped, results: results.slice(0, 100) });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Unassigned leads + alert count for the dashboard/settings panel.
+  reg("get", "/api/assignment/unassigned"); app.get("/api/assignment/unassigned", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { leads } = await import("./shared-schema.js");
+      const { eq, isNull, and, sql, asc } = await import("drizzle-orm");
+      const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+      const rows = await db.select({
+        id: leads.id, address: leads.address, city: leads.city, state: leads.state,
+        ownerName: leads.ownerName, status: leads.status, createdAt: leads.createdAt,
+      }).from(leads)
+        .where(and(isNull(leads.assignedTo), isNull(leads.archivedAt)))
+        .orderBy(asc(leads.id))
+        .limit(limit);
+      const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(leads)
+        .where(and(isNull(leads.assignedTo), isNull(leads.archivedAt)));
+      res.json({ count: Number(count) || 0, leads: rows });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  // Per-agent capacity / availability / markets.
+  reg("get", "/api/assignment/capacity"); app.get("/api/assignment/capacity", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+    try {
+      const { users, userCapacity, leads } = await import("./shared-schema.js");
+      const { eq, sql } = await import("drizzle-orm");
+      const agents = await db.select({
+        id: users.id, email: users.email, firstName: users.firstName,
+        lastName: users.lastName, isActive: users.isActive, role: users.role,
+      }).from(users).where(eq(users.isActive, true));
+      const caps = await db.select().from(userCapacity);
+      const capByUser = new Map(caps.map((c) => [c.userId, c]));
+      const counts = await db.select({
+        userId: leads.assignedTo, count: sql<number>`count(*)::int`,
+      }).from(leads)
+        .where(sql`${leads.assignedTo} IS NOT NULL AND ${leads.archivedAt} IS NULL`)
+        .groupBy(leads.assignedTo);
+      const countByUser = new Map<number, number>();
+      for (const r of counts) if (r.userId != null) countByUser.set(r.userId, Number(r.count) || 0);
+      res.json({
+        agents: agents.map((a) => {
+          const cap = capByUser.get(a.id);
+          return {
+            ...a,
+            maxLeads: cap?.maxLeads ?? 50,
+            isAvailable: cap?.isAvailable ?? true,
+            markets: cap?.markets ?? [],
+            currentLeads: countByUser.get(a.id) ?? 0,
+          };
+        }),
+      });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
+  reg("put", "/api/assignment/capacity/:userId"); app.put("/api/assignment/capacity/:userId", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+    try {
+      const { userCapacity } = await import("./shared-schema.js");
+      const targetId = Number(req.params.userId);
+      if (!targetId) return res.status(400).json({ message: "Invalid user id" });
+      const { maxLeads, isAvailable, markets } = req.body || {};
+      const values: Record<string, unknown> = { userId: targetId, updatedAt: new Date() };
+      if (maxLeads !== undefined) {
+        const m = Number(maxLeads);
+        if (!Number.isInteger(m) || m < 0 || m > 10000) return res.status(400).json({ message: "maxLeads must be 0–10000" });
+        values.maxLeads = m;
+      }
+      if (isAvailable !== undefined) {
+        if (typeof isAvailable !== "boolean") return res.status(400).json({ message: "isAvailable must be boolean" });
+        values.isAvailable = isAvailable;
+      }
+      if (markets !== undefined) {
+        if (!Array.isArray(markets) || !markets.every((m) => typeof m === "string")) {
+          return res.status(400).json({ message: "markets must be an array of state codes" });
+        }
+        values.markets = markets.map((m: string) => m.trim().toUpperCase()).filter(Boolean);
+      }
+      const { userId: _uid, ...setValues } = values;
+      await db.insert(userCapacity).values(values as any)
+        .onConflictDoUpdate({ target: userCapacity.userId, set: setValues as any });
+      res.json({ ok: true });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
   await registerMediaRoutes(app, { requireAuth, requireActiveTeam });
 
   if (mode === "serverless") return null;

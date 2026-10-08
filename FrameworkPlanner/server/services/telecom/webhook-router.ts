@@ -763,6 +763,22 @@ async function handleMessageEvent(event: any) {
         }
       }
     }
+
+    // TICKET-14: lead STOP keyword handling — inbound opt-out keywords cancel
+    // all active sequence enrollments for the lead and set DNC flags.
+    // Runs synchronously so the opt-out is honored before we respond.
+    if (direction === "inbound" && effectiveLeadId) {
+      const keyword = String(body || "").trim().toUpperCase();
+      const optOuts = ["STOP", "END", "CANCEL", "UNSUBSCRIBE", "QUIT"];
+      if (optOuts.includes(keyword)) {
+        try {
+          const { optOutLead } = await import("../../sequences/engine.js");
+          await optOutLead(Number(effectiveLeadId), { reason: `SMS keyword "${keyword}"`, actorUserId: 0 });
+        } catch (e) {
+          console.error("Failed to apply lead SMS opt-out:", e);
+        }
+      }
+    }
   } catch (e) {
     console.error("Failed to log SMS webhook event:", e);
   }

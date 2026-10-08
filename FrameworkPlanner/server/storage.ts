@@ -14,7 +14,7 @@ export function generateXpBookingReference(): string {
 import { 
   leads, leadNotes, savedViews, leadBulkActionJobs, aiActionLogs, aiActionUndo, appAuditRuns, appAuditFindings, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, contractSigners, contractEvents, contractFields, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, workCategories, timesheetEntries, timeClockSessions, workerProfiles, categoryRateOverrides, payPeriods, approvalEvents, commissionEvents, dealParticipants, commissionLedgerEntries, globalActivityLogs,
-  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents,
+  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, campaignRecipients, campaignMessages, campaignRuns, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents,
   companies, companyPeople, companyLinks, documents, documentLinks, vaultDocumentVersions, automations, automationTriggers, automationConditions, automationActions, automationRuns, auditEvents,
   opportunityParties, publicListings, buyerInquiries, opportunityEvents, buyerOffers, propertyUnits, commissionSnapshots,
   internalMessages, calendarEvents, appSettings, smsMessages, callSessions, callSessionEvents, agentPhoneSettings, callDispositions, aiCallQualifications,
@@ -23,7 +23,8 @@ import {
   type AgentPhoneSetting, type InsertAgentPhoneSetting, type CallDisposition, type InsertCallDisposition,
   type AiCallQualification, type InsertAiCallQualification,
   type PropertyUnit, type InsertPropertyUnit,
-  type CommissionSnapshot, type InsertCommissionSnapshot
+  type CommissionSnapshot, type InsertCommissionSnapshot,
+  storedFiles, type StoredFile, type InsertStoredFile
 } from "./shared-schema.js";
 import { 
   type Lead, type InsertLead, 
@@ -1509,6 +1510,9 @@ export class DatabaseStorage implements IStorage {
     await db.delete(campaignDeliveries).where(eq(campaignDeliveries.campaignId, id));
     await db.delete(campaignEnrollments).where(eq(campaignEnrollments.campaignId, id));
     await db.delete(campaignSteps).where(eq(campaignSteps.campaignId, id));
+    await db.delete(campaignRuns).where(eq(campaignRuns.campaignId, id));
+    await db.delete(campaignRecipients).where(eq(campaignRecipients.campaignId, id));
+    await db.delete(campaignMessages).where(eq(campaignMessages.campaignId, id));
     await db.delete(campaigns).where(eq(campaigns.id, id));
   }
 
@@ -4856,6 +4860,35 @@ export class DatabaseStorage implements IStorage {
 
   async deleteDocsPage(id: number): Promise<void> {
     await db.delete(docsPages).where(eq(docsPages.id, id));
+  }
+}
+
+  // ── Ticket 18: stored_files registry ─────────────────
+  async createStoredFile(row: InsertStoredFile): Promise<StoredFile> {
+    const result = await db.insert(storedFiles).values(row as any).returning();
+    return result[0];
+  }
+
+  async getStoredFile(id: number): Promise<StoredFile | undefined> {
+    const result = await db.select().from(storedFiles).where(eq(storedFiles.id, id)).limit(1);
+    return result[0];
+  }
+
+  async getStoredFileByKey(storageKey: string): Promise<StoredFile | undefined> {
+    const result = await db.select().from(storedFiles).where(eq(storedFiles.storageKey, storageKey)).limit(1);
+    return result[0];
+  }
+
+  async listStoredFiles(limit = 100, offset = 0): Promise<StoredFile[]> {
+    return db.select().from(storedFiles).orderBy(desc(storedFiles.createdAt)).limit(limit).offset(offset);
+  }
+
+  async listStoredFilesByEntity(entityType: string, entityId: string): Promise<StoredFile[]> {
+    return db
+      .select()
+      .from(storedFiles)
+      .where(and(eq(storedFiles.entityType, entityType), eq(storedFiles.entityId, entityId)))
+      .orderBy(desc(storedFiles.createdAt));
   }
 }
 

@@ -38,6 +38,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 import { QuickLogCallDialog } from "@/components/buyers/QuickLogCallDialog";
 import { BuyerScriptsPanel } from "@/components/buyers/BuyerScriptsPanel";
+import { BuyerQualificationPanel } from "@/components/buyers/BuyerQualificationPanel";
 import { BUYER_PIPELINE, formatBuyerStatus, buyerStatusColor, formatDisposition } from "@/lib/dispositions";
 import { useLocation } from "wouter";
 
@@ -951,6 +952,7 @@ export default function Buyers() {
                     </TabsTrigger>
                     <TabsTrigger value="tasks" className="flex-1">Tasks</TabsTrigger>
                     <TabsTrigger value="scripts" className="flex-1">Scripts</TabsTrigger>
+                    <TabsTrigger value="qualify" className="flex-1">Qualify</TabsTrigger>
                   </TabsList>
 
                   <TabsContent value="info" className="mt-4 space-y-4">
@@ -1155,6 +1157,9 @@ export default function Buyers() {
                   </TabsContent>
                   <TabsContent value="scripts" className="mt-4">
                     <BuyerScriptsPanel />
+                  </TabsContent>
+                  <TabsContent value="qualify" className="mt-4">
+                    <BuyerQualificationPanel buyerId={selectedBuyer.id} />
                   </TabsContent>
                 </Tabs>
               </CardContent>

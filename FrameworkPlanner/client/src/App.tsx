@@ -31,15 +31,21 @@ const ContractWizard = React.lazy(() => import("@/pages/contract-wizard"));
 const ContractDetail = React.lazy(() => import("@/pages/contract-detail"));
 const Analytics = React.lazy(() => import("@/pages/analytics"));
 const Settings = React.lazy(() => import("@/pages/settings"));
+const EmailSettings = React.lazy(() => import("@/pages/settings/email"));
+const AssignmentSettings = React.lazy(() => import("@/pages/settings/assignment"));
 const Calculator = React.lazy(() => import("@/pages/calculator"));
+// TICKET-14 (feat/ticket-14-followup-sequences): Follow-up sequences page.
+const Sequences = React.lazy(() => import("@/pages/sequences"));
 const Timesheet = React.lazy(() => import("@/pages/timesheet"));
 const Notifications = React.lazy(() => import("@/pages/notifications"));
 const MessagesPage = React.lazy(() => import("@/pages/messages"));
 const Playground = React.lazy(() => import("@/pages/playground"));
 const Buyers = React.lazy(() => import("@/pages/buyers"));
+const BuyerQualify = React.lazy(() => import("@/pages/buyers/qualify"));
 // DISPO-PHASE1 (feat/dispo-phase1): Disposition workspace page.
 const Disposition = React.lazy(() => import("@/pages/disposition"));
 const TasksPage = React.lazy(() => import("@/pages/tasks"));
+const TasksTriagePage = React.lazy(() => import("@/pages/tasks-triage"));
 const CalendarPage = React.lazy(() => import("@/pages/calendar"));
 const TodayPage = React.lazy(() => import("@/pages/today"));
 const Contacts = React.lazy(() => import("@/pages/contacts"));
@@ -55,6 +61,7 @@ const CallAuditPage = React.lazy(() => import("@/pages/call-audit"));
 const LoisPage = React.lazy(() => import("@/pages/lois"));
 const VoicemailPage = React.lazy(() => import("@/pages/voicemail"));
 const SystemHealthPage = React.lazy(() => import("@/pages/system-health"));
+const JobsPage = React.lazy(() => import("@/pages/jobs"));
 const TeamsPage = React.lazy(() => import("@/pages/teams"));
 const XpLandingPage = React.lazy(() => import("@/pages/xp/index"));
 const XpExperiencePage = React.lazy(() => import("@/pages/xp/experience"));
@@ -183,16 +190,23 @@ function Router() {
       <Route path="/contracts/:id" component={() => <ProtectedRoute component={ContractDetail} />} />
       <Route path="/analytics" component={() => <ProtectedRoute component={Analytics} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
+      <Route path="/settings/email" component={() => <ProtectedRoute component={EmailSettings} />} />
+      <Route path="/settings/assignment" component={() => <ProtectedRoute component={AssignmentSettings} />} />
       <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
+      {/* TICKET-14: Follow-up sequences */}
+      <Route path="/sequences" component={() => <ProtectedRoute component={Sequences} />} />
       <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />
       <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
       <Route path="/messages" component={() => <ProtectedRoute component={MessagesPage} />} />
       {/* Owner decision Oct 7: Voice Playground is dev-only — unreachable in prod builds. */}
       {import.meta.env.DEV && <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />}
       <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />
+      {/* TICKET 17: Buyer qualification workflow (funnel, review queue, deal-ready). */}
+      <Route path="/buyers/qualify" component={() => <ProtectedRoute component={BuyerQualify} />} />
       {/* DISPO-PHASE1 (feat/dispo-phase1): Disposition workspace. */}
       <Route path="/disposition" component={() => <ProtectedRoute component={Disposition} />} />
       <Route path="/tasks" component={() => <ProtectedRoute component={TasksPage} />} />
+      <Route path="/tasks/triage" component={() => <ProtectedRoute component={TasksTriagePage} />} />
       <Route path="/calendar" component={() => <ProtectedRoute component={CalendarPage} />} />
       <Route path="/today" component={() => <ProtectedRoute component={TodayPage} />} />
       <Route path="/contacts" component={() => <ProtectedRoute component={Contacts} />} />
@@ -212,6 +226,8 @@ function Router() {
           standalone route so the lifecycle is reachable and /lois doesn't 404. */}
       <Route path="/lois" component={() => <ProtectedRoute component={LoisPage} />} />
       <Route path="/system-health" component={() => <ProtectedRoute component={SystemHealthPage} />} />
+      {/* TICKET-09: Background job queue health dashboard. */}
+      <Route path="/jobs" component={() => <ProtectedRoute component={JobsPage} />} />
       <Route path="/teams" component={() => <ProtectedRoute component={TeamsPage} />} />
       {/* Team Pulse — simplified daily standup (replaces the activity-feed wall) */}
       <Route path="/team" component={() => <ProtectedRoute component={TeamPulsePage} />} />

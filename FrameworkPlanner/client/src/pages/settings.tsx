@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock, ImageIcon, Camera, Upload, X, Trash2, Server, Database, Phone, Bot, Plus, Pencil, Save, ArrowUp, ArrowDown, Eye, EyeOff } from "lucide-react";
+import { Shield, Users, Bell, Target, FileText, User, Loader2, Clock, ImageIcon, Camera, Upload, X, Trash2, Server, Database, Phone, Bot, Plus, Pencil, Save, ArrowUp, ArrowDown, Eye, EyeOff, HardDrive } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -19,6 +19,7 @@ import { useLocation, useSearch } from "wouter";
 import { AutomationsContent } from "@/pages/automations";
 import { AuditLogContent } from "@/pages/audit-log";
 import { CallAuditContent } from "@/components/telecom/CallAuditContent";
+import { StorageSettings } from "@/components/settings/StorageSettings";
 import { apiRequest } from "@/lib/queryClient";
 import { TelnyxOnboardingWizard } from "@/components/telnyx/TelnyxOnboardingWizard";
 
@@ -706,6 +707,10 @@ function SettingsContent() {
             <Phone className="w-4 h-4 mr-2" />
             Call Audit
           </TabsTrigger>
+          <TabsTrigger value="storage" className="shrink-0 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent px-4 py-2">
+            <HardDrive className="w-4 h-4 mr-2" />
+            Storage
+          </TabsTrigger>
         </TabsList>
 
         {/* ACCOUNT TAB */}
@@ -1221,6 +1226,21 @@ function SettingsContent() {
             <>
               <Card>
                 <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="w-5 h-5" /> Lead Assignment & Routing
+                  </CardTitle>
+                  <CardDescription>
+                    Ordered routing rules automatically assign new leads to agents. Manage rules, test them, and set agent capacity.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Button onClick={() => setLocation("/settings/assignment")}>
+                    Open assignment settings
+                  </Button>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader>
                   <CardTitle>Teams</CardTitle>
                   <CardDescription>Join teams, switch active team, and manage membership.</CardDescription>
                 </CardHeader>
@@ -1495,6 +1515,10 @@ function SettingsContent() {
 
         <TabsContent value="callaudit" className="mt-6 space-y-6">
           <CallAuditContent />
+        </TabsContent>
+
+        <TabsContent value="storage" className="mt-6 space-y-6">
+          <StorageSettings />
         </TabsContent>
 
         <TabsContent value="pipeline" className="mt-6 space-y-6">
@@ -1991,6 +2015,13 @@ function SettingsContent() {
                   data-testid="button-system-health"
                 >
                   System Health
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => window.location.assign('/settings/email')}
+                  data-testid="button-email-settings"
+                >
+                  Email Delivery
                 </Button>
                 <Button
                   variant="outline"

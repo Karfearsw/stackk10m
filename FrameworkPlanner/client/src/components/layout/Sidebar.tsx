@@ -21,6 +21,7 @@ import {
   PhoneCall,
   Send,
   Voicemail,
+  Repeat,
   CheckSquare,
   CalendarDays,
   CalendarCheck2,
@@ -39,6 +40,8 @@ import {
   Wrench,
   UsersRound,
   Handshake,
+  ListChecks,
+  BadgeCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -75,6 +78,8 @@ const menuGroups = [
       { name: "Dialer Workspace", href: "/dialer-workspace", icon: Phone },
       { name: "Video Meetings", href: "/workspace/communications", icon: Video },
       { name: "Messages", href: "/messages", icon: MessageSquare },
+      // TICKET-14: Follow-up sequences
+      { name: "Sequences", href: "/sequences", icon: Repeat },
       { name: "Voicemail", href: "/voicemail", icon: Voicemail },
       { name: "Communications", href: "/workspace/communications", icon: PhoneCall },
     ],
@@ -109,6 +114,7 @@ const menuGroups = [
       { name: "Automations", href: "/automations", icon: Zap },
       { name: "Scripts", href: "/scripts", icon: FileText },
       { name: "Call Audit", href: "/call-audit", icon: ScrollText },
+      { name: "Buyer Qualification", href: "/buyers/qualify", icon: BadgeCheck },
     ],
   },
   {
@@ -118,6 +124,8 @@ const menuGroups = [
       { name: "Settings", href: "/settings", icon: Settings },
       { name: "Notifications", href: "/notifications", icon: Bell },
       { name: "System Health", href: "/system-health", icon: ActivitySquare },
+      {/* TICKET-09: Background job queue health dashboard. */}
+      { name: "Job Queue", href: "/jobs", icon: ListChecks },
       { name: "Audit Log", href: "/audit-log", icon: ScrollText },
       { name: "Audit", href: "/audit", icon: Shield },
       { name: "Calculator", href: "/calculator", icon: Calculator },

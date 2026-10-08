@@ -246,16 +246,290 @@ function CampaignDetail({ campaign, steps, stats }: { campaign: CampaignRow; ste
       </Card>
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
+          <TabsTrigger value="broadcast">Broadcast</TabsTrigger>
           <TabsTrigger value="steps">Steps</TabsTrigger>
           <TabsTrigger value="audience">Audience</TabsTrigger>
           <TabsTrigger value="ab">A/B Test</TabsTrigger>
           <TabsTrigger value="compliance">Compliance</TabsTrigger>
         </TabsList>
+        <TabsContent value="broadcast"><BroadcastPanel campaignId={campaign.id} campaign={campaign} /></TabsContent>
         <TabsContent value="steps"><StepsEditor campaignId={campaign.id} steps={steps} status={campaign.status} /></TabsContent>
         <TabsContent value="audience"><AudienceBuilder campaignId={campaign.id} status={campaign.status} /></TabsContent>
         <TabsContent value="ab"><ABTestPanel campaignId={campaign.id} status={campaign.status} /></TabsContent>
         <TabsContent value="compliance"><CompliancePanel type={campaign.type || "sms"} status={campaign.status} /></TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+type BroadcastRecipient = {
+  id: number; recipient_type: string; lead_id: number | null; buyer_id: number | null;
+  name: string; phone: string | null; email: string | null;
+  status: string; sent_at: string | null; error: string | null; cost_cents: number;
+};
+type BroadcastPreview = {
+  recipients: { recipientType: string; leadId: number | null; buyerId: number | null; name: string; phone: string | null; email: string | null; excluded: boolean; exclusionReason: string | null }[];
+  total: number; eligible: number; excluded: number; exclusions: Record<string, number>;
+  persisted: number; cost: { perMessageCents: number; totalCents: number };
+};
+
+// Ticket 15: one-shot broadcast builder — exact-recipient preview, cost
+// exposure, scheduling, pilot mode, and immediate pause/stop.
+function BroadcastPanel({ campaignId, campaign }: { campaignId: number; campaign: CampaignRow }) {
+  const qc = useQueryClient();
+  const [channel, setChannel] = useState<"sms" | "email">("sms");
+  const [audience, setAudience] = useState<"leads" | "buyers" | "both">("leads");
+  const [filters, setFilters] = useState<{ field: string; value: string }[]>([]);
+  const [newField, setNewField] = useState("source");
+  const [newValue, setNewValue] = useState("");
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [pilotMode, setPilotMode] = useState(false);
+  const [pilotLimit, setPilotLimit] = useState(10);
+  const [scheduleAt, setScheduleAt] = useState("");
+  const [preview, setPreview] = useState<BroadcastPreview | null>(null);
+  const [showRecipients, setShowRecipients] = useState(false);
+  const [confirmSend, setConfirmSend] = useState(false);
+
+  const { data: stats, refetch: refetchStats } = useQuery<any>({
+    queryKey: ["/api/campaigns", campaignId, "stats"],
+    queryFn: async () => { const res = await apiRequest("GET", `/api/campaigns/${campaignId}/stats`); return await res.json(); },
+    refetchInterval: campaign.status === "sending" ? 3000 : false,
+  });
+  const broadcast = stats?.broadcast || { recipients: 0, sent: 0, failed: 0, excluded: 0, pending: 0, costCents: 0 };
+
+  const previewMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/campaigns/${campaignId}/audience/preview`, { channel, audience, filters });
+      return await res.json();
+    },
+    onSuccess: (data: BroadcastPreview) => { setPreview(data); setShowRecipients(true); toast.success(`Preview ready: ${data.eligible} eligible of ${data.total}`); },
+    onError: (e: any) => toast.error(String(e?.message || "Preview failed")),
+  });
+
+  const saveMessageMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PUT", `/api/campaigns/${campaignId}/message`, { subject: subject || null, body });
+      return await res.json();
+    },
+    onSuccess: () => toast.success("Message saved"),
+    onError: (e: any) => toast.error(String(e?.message || "Save failed")),
+  });
+
+  const actionMutation = useMutation({
+    mutationFn: async (action: "send" | "pause" | "resume" | "cancel" | "schedule") => {
+      const payload = action === "schedule" ? { scheduledAt: scheduleAt } : {};
+      const res = await apiRequest("POST", `/api/campaigns/${campaignId}/${action}`, payload);
+      return await res.json();
+    },
+    onSuccess: async (_, action) => {
+      toast.success(action === "send" ? "Broadcast started" : action === "schedule" ? "Scheduled" : `Campaign ${action}d`);
+      await qc.invalidateQueries({ queryKey: ["/api/campaigns"] });
+      await refetchStats();
+      setConfirmSend(false);
+    },
+    onError: (e: any) => toast.error(String(e?.message || "Action failed")),
+  });
+
+  const addFilter = () => {
+    if (!newValue.trim()) return toast.error("Enter a value");
+    setFilters((p) => [...p, { field: newField, value: newValue.trim() }]);
+    setNewValue("");
+    setPreview(null);
+  };
+
+  const fmtCost = (cents: number) => `$${(cents / 100).toFixed(2)}`;
+  const isSending = campaign.status === "sending";
+  const isPaused = campaign.status === "paused";
+  const progress = broadcast.recipients > 0 ? Math.round(((broadcast.sent + broadcast.failed + broadcast.excluded) / broadcast.recipients) * 100) : 0;
+
+  return (
+    <div className="space-y-4">
+      {/* Progress */}
+      {(isSending || isPaused || broadcast.sent > 0) && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">Send Progress</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <div className="h-2 rounded-full bg-muted overflow-hidden">
+              <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-sm">
+              <div className="border rounded-md p-2"><div className="text-xs text-muted-foreground">Sent</div><div className="font-semibold text-green-600">{broadcast.sent}</div></div>
+              <div className="border rounded-md p-2"><div className="text-xs text-muted-foreground">Failed</div><div className="font-semibold text-destructive">{broadcast.failed}</div></div>
+              <div className="border rounded-md p-2"><div className="text-xs text-muted-foreground">Excluded</div><div className="font-semibold">{broadcast.excluded}</div></div>
+              <div className="border rounded-md p-2"><div className="text-xs text-muted-foreground">Pending</div><div className="font-semibold">{broadcast.pending}</div></div>
+              <div className="border rounded-md p-2"><div className="text-xs text-muted-foreground">Cost</div><div className="font-semibold">{fmtCost(broadcast.costCents)}</div></div>
+            </div>
+            <div className="flex gap-2">
+              {isSending && (
+                <>
+                  <Button size="sm" variant="outline" onClick={() => actionMutation.mutate("pause")} disabled={actionMutation.isPending}>
+                    Pause Now
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={() => { if (window.confirm("Cancel this campaign? Pending messages will not send.")) actionMutation.mutate("cancel"); }} disabled={actionMutation.isPending}>
+                    Cancel
+                  </Button>
+                </>
+              )}
+              {isPaused && (
+                <>
+                  <Button size="sm" onClick={() => actionMutation.mutate("resume")} disabled={actionMutation.isPending}>Resume</Button>
+                  <Button size="sm" variant="destructive" onClick={() => { if (window.confirm("Cancel this campaign?")) actionMutation.mutate("cancel"); }} disabled={actionMutation.isPending}>Cancel</Button>
+                </>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Message composer */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">Message</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Channel</Label>
+              <Select value={channel} onValueChange={(v: "sms" | "email") => { setChannel(v); setPreview(null); }}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="sms">SMS</SelectItem><SelectItem value="email">Email</SelectItem></SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Audience</Label>
+              <Select value={audience} onValueChange={(v: "leads" | "buyers" | "both") => { setAudience(v); setPreview(null); }}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="leads">Leads</SelectItem><SelectItem value="buyers">Buyers</SelectItem><SelectItem value="both">Both</SelectItem></SelectContent>
+              </Select>
+            </div>
+          </div>
+          {channel === "email" && (
+            <div className="space-y-1"><Label className="text-xs">Subject</Label><Input value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Email subject" /></div>
+          )}
+          <div className="space-y-1">
+            <Label className="text-xs">Message {channel === "sms" && <span className="text-muted-foreground">({body.length} chars ~ {Math.max(1, Math.ceil(body.length / 160))} segment(s))</span>}</Label>
+            <Textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder={channel === "sms" ? "Write your SMS..." : "Write your email..."} rows={4} />
+          </div>
+          <Button size="sm" variant="outline" onClick={() => saveMessageMutation.mutate()} disabled={!body.trim() || saveMessageMutation.isPending}>
+            {saveMessageMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />}Save Message
+          </Button>
+        </CardContent>
+      </Card>
+
+      {/* Audience filters */}
+      <Card>
+        <CardHeader><CardTitle className="text-base flex items-center gap-2"><Filter className="h-4 w-4" />Audience Filters</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          {filters.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {filters.map((f, i) => (
+                <Badge key={i} variant="secondary" className="gap-1">{f.field}: {f.value}
+                  <button onClick={() => { setFilters((p) => p.filter((_, j) => j !== i)); setPreview(null); }} className="ml-1 hover:text-destructive"><XCircle className="h-3 w-3" /></button>
+                </Badge>
+              ))}
+            </div>
+          )}
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="space-y-1"><Label className="text-xs">Field</Label>
+              <Select value={newField} onValueChange={setNewField}><SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+                <SelectContent>{LEAD_FILTER_FIELDS.map((f) => <SelectItem key={f.value} value={f.value}>{f.label}</SelectItem>)}</SelectContent></Select>
+            </div>
+            <div className="space-y-1 flex-1 min-w-32"><Label className="text-xs">Value</Label><Input value={newValue} onChange={(e) => setNewValue(e.target.value)} placeholder="e.g. FL, Cash Buyer" /></div>
+            <Button variant="outline" size="sm" onClick={addFilter}>Add</Button>
+          </div>
+          <div className="rounded-md bg-amber-50 border border-amber-200 p-3 text-sm text-amber-800 flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" />
+            <span>DNC/opt-out contacts are automatically excluded. Preview shows exactly who will receive the message.</span>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Exact-recipient preview */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">Exact-Recipient Preview</CardTitle>
+            <Button size="sm" onClick={() => previewMutation.mutate()} disabled={previewMutation.isPending}>
+              {previewMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Users className="h-4 w-4 mr-1" />}
+              Preview Recipients
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {!preview ? (
+            <p className="text-sm text-muted-foreground text-center py-4">Run a preview to see exactly who will receive this broadcast. Nothing sends until you confirm.</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+                <div className="border rounded-md p-2"><div className="text-xs text-muted-foreground">Eligible</div><div className="font-semibold text-green-600">{preview.eligible}</div></div>
+                <div className="border rounded-md p-2"><div className="text-xs text-muted-foreground">Excluded</div><div className="font-semibold text-amber-600">{preview.excluded}</div></div>
+                <div className="border rounded-md p-2"><div className="text-xs text-muted-foreground">Est. Cost</div><div className="font-semibold">{fmtCost(preview.cost.totalCents)}</div></div>
+                <div className="border rounded-md p-2"><div className="text-xs text-muted-foreground">Per Msg</div><div className="font-semibold">{fmtCost(preview.cost.perMessageCents)}</div></div>
+              </div>
+              {Object.keys(preview.exclusions).length > 0 && (
+                <p className="text-xs text-muted-foreground">Exclusions: {Object.entries(preview.exclusions).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(" · ")}</p>
+              )}
+              {showRecipients && (
+                <div className="border rounded-md max-h-64 overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-muted/80 backdrop-blur"><tr><th className="p-2 text-left font-medium">Name</th><th className="p-2 text-left font-medium">Type</th><th className="p-2 text-left font-medium">Contact</th><th className="p-2 text-left font-medium">Status</th></tr></thead>
+                    <tbody>
+                      {preview.recipients.slice(0, 200).map((r, i) => (
+                        <tr key={i} className="border-t">
+                          <td className="p-2">{r.name}</td>
+                          <td className="p-2 capitalize text-muted-foreground">{r.recipientType}</td>
+                          <td className="p-2 text-muted-foreground">{channel === "sms" ? (r.phone || "—") : (r.email || "—")}</td>
+                          <td className="p-2">{r.excluded ? <Badge variant="outline" className="text-amber-700 border-amber-300">{r.exclusionReason}</Badge> : <Badge className="bg-green-100 text-green-700">Will receive</Badge>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {preview.recipients.length > 200 && <p className="p-2 text-xs text-muted-foreground text-center">Showing 200 of {preview.recipients.length}</p>}
+                </div>
+              )}
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Pilot mode + scheduling + send */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">Send Controls</CardTitle></CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center gap-3">
+            <Switch checked={pilotMode} onCheckedChange={setPilotMode} id="pilot-mode" />
+            <Label htmlFor="pilot-mode" className="text-sm">Pilot mode — send to a small test group first</Label>
+            {pilotMode && <Input type="number" value={pilotLimit} onChange={(e) => setPilotLimit(Math.max(1, Math.min(500, parseInt(e.target.value) || 10)))} className="w-20" min={1} max={500} />}
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="space-y-1"><Label className="text-xs">Schedule for later (optional)</Label><Input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} className="w-56" /></div>
+            <Button variant="outline" size="sm" onClick={() => actionMutation.mutate("schedule")} disabled={!scheduleAt || actionMutation.isPending}>Schedule</Button>
+          </div>
+          {!confirmSend ? (
+            <Button
+              onClick={() => {
+                if (!preview) return toast.error("Run a recipient preview first");
+                if (!body.trim()) return toast.error("Write a message first");
+                setConfirmSend(true);
+              }}
+              disabled={isSending || isPaused}
+              className="w-full sm:w-auto"
+            >
+              <Send className="h-4 w-4 mr-1" />{pilotMode ? `Send Pilot (${pilotLimit})` : "Send Broadcast"}
+            </Button>
+          ) : (
+            <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 space-y-2">
+              <p className="text-sm font-medium">Confirm send to {preview?.eligible ?? 0} recipients{pilotMode ? ` (pilot: first ${pilotLimit})` : ""}?</p>
+              <p className="text-xs text-muted-foreground">Estimated cost: {preview ? fmtCost(preview.cost.totalCents) : "—"}. DNC contacts are excluded. You can pause or cancel mid-send.</p>
+              <div className="flex gap-2">
+                <Button variant="destructive" size="sm" onClick={() => actionMutation.mutate("send")} disabled={actionMutation.isPending}>
+                  {actionMutation.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />}Yes, Send Now
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setConfirmSend(false)}>Back</Button>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

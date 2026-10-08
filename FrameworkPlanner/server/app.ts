@@ -294,6 +294,7 @@ app.use((req, res, next) => {
 });
 
 import { startAutomationWorker } from "./cron/lead-automation.js";
+import { startJobWorker } from "./jobs/worker.js";
 import { startCampaignScheduler } from "./cron/campaign-scheduler.js";
 import { startRvmPoller } from "./cron/rvm-poller.js";
 import { startTaskReminders } from "./cron/task-reminders.js";
@@ -626,6 +627,12 @@ await pool.query(`
   const { registerDispositionRoutes } = await import("./routes/dispo.js");
   registerDispositionRoutes(app);
   // DISPO-PHASE1-END
+  // TICKET-14 (feat/ticket-14-followup-sequences): Follow-up sequence routes.
+  // Mounted outside registerRoutes (server/routes.ts) to avoid conflicts
+  // with parallel ticket work. See server/routes/sequences.ts.
+  const { registerSequenceRoutes } = await import("./routes/sequences.js");
+  registerSequenceRoutes(app);
+  // TICKET-14-END
 
   const isServerless = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
 
@@ -637,6 +644,10 @@ await pool.query(`
   if (enableAutomationWorker) {
     startAutomationWorker(60000); // Run every minute
     startSkipTraceWorker(15000);
+    // TICKET-09: durable background job queue worker (follow-ups, sequences, imports).
+    if (process.env.JOB_WORKER_ENABLED !== "false" && process.env.JOB_WORKER_ENABLED !== "0") {
+      startJobWorker(10000);
+    }
   }
 
   const enableCampaignScheduler = String(process.env.FEATURE_CAMPAIGNS || "").trim().toLowerCase() === "true";

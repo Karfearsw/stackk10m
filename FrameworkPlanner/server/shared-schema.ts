@@ -1,6 +1,6 @@
 
 import { sql } from "drizzle-orm";
-import { pgTable, serial, text, varchar, integer, decimal, timestamp, boolean, date, jsonb, numeric } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, varchar, integer, decimal, timestamp, boolean, date, jsonb, numeric, bigint } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -457,7 +457,15 @@ export const campaigns = pgTable("campaigns", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   userId: integer("user_id").notNull(),
   name: varchar("name", { length: 120 }).notNull(),
+  description: text("description"),
+  channel: varchar("channel", { length: 10 }).notNull().default("sms"),
   status: varchar("status", { length: 20 }).notNull().default("active"),
+  scheduledAt: timestamp("scheduled_at"),
+  createdBy: integer("created_by"),
+  audience: varchar("audience", { length: 10 }).notNull().default("leads"),
+  audienceFilters: jsonb("audience_filters").notNull().default([]),
+  pilotMode: boolean("pilot_mode").notNull().default(false),
+  pilotLimit: integer("pilot_limit").notNull().default(10),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -465,6 +473,51 @@ export const campaigns = pgTable("campaigns", {
 export const insertCampaignSchema = createInsertSchema(campaigns).omit({ id: true, createdAt: true, updatedAt: true } as any);
 export type Campaign = typeof campaigns.$inferSelect;
 export type InsertCampaign = z.infer<typeof insertCampaignSchema>;
+
+// Ticket 15: broadcast recipient tracking (exact list resolved at preview time).
+export const campaignRecipients = pgTable("campaign_recipients", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  campaignId: integer("campaign_id").notNull(),
+  leadId: integer("lead_id"),
+  buyerId: integer("buyer_id"),
+  recipientType: varchar("recipient_type", { length: 10 }).notNull().default("lead"),
+  phone: varchar("phone", { length: 32 }),
+  email: varchar("email", { length: 255 }),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
+  sentAt: timestamp("sent_at"),
+  error: text("error"),
+  costCents: integer("cost_cents").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export type CampaignRecipient = typeof campaignRecipients.$inferSelect;
+
+// Ticket 15: broadcast message content (one row per campaign).
+export const campaignMessages = pgTable("campaign_messages", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  campaignId: integer("campaign_id").notNull(),
+  subject: varchar("subject", { length: 255 }),
+  body: text("body").notNull().default(""),
+  templateId: integer("template_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export type CampaignMessage = typeof campaignMessages.$inferSelect;
+
+// Ticket 15: send-run audit trail.
+export const campaignRuns = pgTable("campaign_runs", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  campaignId: integer("campaign_id").notNull(),
+  startedAt: timestamp("started_at").defaultNow(),
+  finishedAt: timestamp("finished_at"),
+  status: varchar("status", { length: 20 }).notNull().default("running"),
+  totalRecipients: integer("total_recipients").notNull().default(0),
+  sentCount: integer("sent_count").notNull().default(0),
+  failedCount: integer("failed_count").notNull().default(0),
+  skippedCount: integer("skipped_count").notNull().default(0),
+  totalCostCents: integer("total_cost_cents").notNull().default(0),
+  startedBy: integer("started_by"),
+  stopReason: text("stop_reason"),
+});
+export type CampaignRun = typeof campaignRuns.$inferSelect;
 
 export const campaignSteps = pgTable("campaign_steps", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
@@ -1346,9 +1399,45 @@ export const tasks = pgTable("tasks", {
   isPrivate: boolean("is_private").notNull().default(false),
   reminderSentAt: timestamp("reminder_sent_at"),
   overdueAlertSentAt: timestamp("overdue_alert_sent_at"),
+  // Ticket 13 — triage + SLA columns
+  slaDueAt: timestamp("sla_due_at"),
+  escalatedAt: timestamp("escalated_at"),
+  escalatedToUserId: integer("escalated_to_user_id"),
+  triageStatus: varchar("triage_status", { length: 24 }).notNull().default("pending"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
+
+// Ticket 13 — SLA rules: per task-type response targets with escalation routing.
+export const taskSlaRules = pgTable("task_sla_rules", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 120 }).notNull(),
+  taskType: varchar("task_type", { length: 80 }).notNull(),
+  slaHours: integer("sla_hours").notNull(),
+  escalationUserId: integer("escalation_user_id"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertTaskSlaRuleSchema = createInsertSchema(taskSlaRules).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type TaskSlaRule = typeof taskSlaRules.$inferSelect;
+export type InsertTaskSlaRule = z.infer<typeof insertTaskSlaRuleSchema>;
+
+// Ticket 13 — task audit: one immutable event per triage/escalation action.
+export const taskAudit = pgTable("task_audit", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  taskId: integer("task_id").notNull(),
+  action: varchar("action", { length: 40 }).notNull(),
+  oldValue: text("old_value"),
+  newValue: text("new_value"),
+  reason: text("reason"),
+  performedBy: integer("performed_by"),
+  performedAt: timestamp("performed_at").defaultNow(),
+});
+export const insertTaskAuditSchema = createInsertSchema(taskAudit).omit({ id: true, performedAt: true } as any);
+export type TaskAudit = typeof taskAudit.$inferSelect;
+export type InsertTaskAudit = z.infer<typeof insertTaskAuditSchema>;
 
 export const insertTaskSchema = createInsertSchema(tasks).omit({
   id: true,
@@ -1719,6 +1808,12 @@ export const buyers = pgTable("buyers", {
   dedupeKey: varchar("dedupe_key", { length: 400 }),
   doNotCall: boolean("do_not_call").notNull().default(false),
   dncUpdatedAt: timestamp("dnc_updated_at", { withTimezone: true }),
+  // Ticket 17: review-queue flags for suspected test/duplicate entries.
+  isSuspectedTest: boolean("is_suspected_test").notNull().default(false),
+  duplicateOf: integer("duplicate_of"),
+  reviewDecision: varchar("review_decision", { length: 16 }),
+  reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  reviewedBy: integer("reviewed_by"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -1742,6 +1837,64 @@ export const buyerCommunications = pgTable("buyer_communications", {
 export const insertBuyerCommunicationSchema = createInsertSchema(buyerCommunications).omit({ id: true, createdAt: true } as any);
 export type BuyerCommunication = typeof buyerCommunications.$inferSelect;
 export type InsertBuyerCommunication = z.infer<typeof insertBuyerCommunicationSchema>;
+
+// TICKET 17 — BUYER QUALIFICATION WORKFLOW TABLES
+// Per-buyer qualification state. relationship_stage is the qualification funnel,
+// distinct from buyers.buyer_status (the 0074 buyer pipeline).
+export const buyerQualification = pgTable("buyer_qualification", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  buyerId: integer("buyer_id").notNull().unique(),
+  ownerUserId: integer("owner_user_id"),
+  relationshipStage: varchar("relationship_stage", { length: 32 }).notNull().default("new"),
+  lastContactAt: timestamp("last_contact_at", { withTimezone: true }),
+  nextAction: text("next_action"),
+  nextActionAt: timestamp("next_action_at", { withTimezone: true }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertBuyerQualificationSchema = createInsertSchema(buyerQualification).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type BuyerQualification = typeof buyerQualification.$inferSelect;
+export type InsertBuyerQualification = z.infer<typeof insertBuyerQualificationSchema>;
+
+// Log of every outreach attempt and its result.
+export const buyerOutreachLog = pgTable("buyer_outreach_log", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  buyerId: integer("buyer_id").notNull(),
+  userId: integer("user_id"),
+  channel: varchar("channel", { length: 16 }).notNull(),
+  outcome: varchar("outcome", { length: 64 }),
+  notes: text("notes"),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertBuyerOutreachLogSchema = createInsertSchema(buyerOutreachLog).omit({ id: true, createdAt: true } as any);
+export type BuyerOutreachLog = typeof buyerOutreachLog.$inferSelect;
+export type InsertBuyerOutreachLog = z.infer<typeof insertBuyerOutreachLogSchema>;
+
+// Confirmed buy-box criteria. Deal alerts may ONLY target buyers with a
+// confirmed buy-box — never the full list.
+export const buyerBuybox = pgTable("buyer_buybox", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  buyerId: integer("buyer_id").notNull().unique(),
+  markets: text("markets").array().notNull().default([]),
+  assetTypes: text("asset_types").array().notNull().default([]),
+  minPrice: decimal("min_price", { precision: 12, scale: 2 }),
+  maxPrice: decimal("max_price", { precision: 12, scale: 2 }),
+  strategy: varchar("strategy", { length: 64 }),
+  buyboxConfirmed: boolean("buybox_confirmed").notNull().default(false),
+  proofOfFundsVerified: boolean("proof_of_funds_verified").notNull().default(false),
+  proofOfFundsAt: timestamp("proof_of_funds_at", { withTimezone: true }),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertBuyerBuyboxSchema = createInsertSchema(buyerBuybox).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type BuyerBuybox = typeof buyerBuybox.$inferSelect;
+export type InsertBuyerBuybox = z.infer<typeof insertBuyerBuyboxSchema>;
 
 // DEAL ASSIGNMENTS TABLE (Linking buyers to properties for closing)
 export const dealAssignments = pgTable("deal_assignments", {
@@ -2439,3 +2592,106 @@ export type InsertDocsCategory = z.infer<typeof insertDocsCategorySchema>;
 export const insertDocsPageSchema = createInsertSchema(docsPages).omit({ id: true, createdAt: true } as any);
 export type DocsPage = typeof docsPages.$inferSelect;
 export type InsertDocsPage = z.infer<typeof insertDocsPageSchema>;
+
+// ---------------------------------------------------------------------------
+// LEAD ASSIGNMENT & ROUTING (Ticket 12 — P1 engine)
+// Deterministic assignment via ordered, versioned rules. Every decision is
+// logged in assignment_log so reassignment preserves full history.
+// ---------------------------------------------------------------------------
+export const assignmentRules = pgTable("assignment_rules", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 255 }).notNull(),
+  ruleType: varchar("rule_type", { length: 50 }).notNull(),
+  config: jsonb("config").notNull().default({}),
+  priorityOrder: integer("priority_order").notNull().default(0),
+  version: integer("version").notNull().default(1),
+  isActive: boolean("is_active").notNull().default(true),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAssignmentRuleSchema = createInsertSchema(assignmentRules).omit({ id: true, createdAt: true, updatedAt: true } as any);
+export type AssignmentRuleRow = typeof assignmentRules.$inferSelect;
+export type InsertAssignmentRule = z.infer<typeof insertAssignmentRuleSchema>;
+
+export const assignmentLog = pgTable("assignment_log", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  leadId: integer("lead_id").notNull(),
+  assignedToUserId: integer("assigned_to_user_id"),
+  ruleId: integer("rule_id"),
+  ruleName: varchar("rule_name", { length: 255 }),
+  assignedAt: timestamp("assigned_at").defaultNow(),
+  reason: text("reason"),
+  assignedBy: integer("assigned_by"),
+});
+
+export const insertAssignmentLogSchema = createInsertSchema(assignmentLog).omit({ id: true, assignedAt: true } as any);
+export type AssignmentLogRow = typeof assignmentLog.$inferSelect;
+export type InsertAssignmentLog = z.infer<typeof insertAssignmentLogSchema>;
+
+export const userCapacity = pgTable("user_capacity", {
+  userId: integer("user_id").primaryKey(),
+  maxLeads: integer("max_leads").notNull().default(50),
+  isAvailable: boolean("is_available").notNull().default(true),
+  markets: text("markets").array().notNull().default([]),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertUserCapacitySchema = createInsertSchema(userCapacity).omit({ updatedAt: true } as any);
+export type UserCapacityRow = typeof userCapacity.$inferSelect;
+export type InsertUserCapacity = z.infer<typeof insertUserCapacitySchema>;
+// ── Ticket 18: durable object storage registry ────────────────────────────
+// Private-by-default file storage (S3-compatible). Migration: 0090_object_storage.sql
+
+export const storedFiles = pgTable("stored_files", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  originalName: varchar("original_name", { length: 255 }).notNull(),
+  storageKey: text("storage_key").notNull(),
+  bucket: varchar("bucket", { length: 255 }).notNull(),
+  sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+  mimeType: varchar("mime_type", { length: 120 }).notNull(),
+  checksumSha256: varchar("checksum_sha256", { length: 64 }).notNull(),
+  entityType: varchar("entity_type", { length: 50 }).notNull(),
+  entityId: varchar("entity_id", { length: 64 }).notNull().default("0"),
+  isImmutable: boolean("is_immutable").notNull().default(false),
+  sourceKind: varchar("source_kind", { length: 30 }),
+  sourceRef: text("source_ref"),
+  uploadedBy: integer("uploaded_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertStoredFileSchema = createInsertSchema(storedFiles).omit({ id: true, createdAt: true } as any);
+export type StoredFile = typeof storedFiles.$inferSelect;
+export type InsertStoredFile = z.infer<typeof insertStoredFileSchema>;
+
+export const storageConfig = pgTable("storage_config", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  environment: varchar("environment", { length: 20 }).notNull(),
+  backend: varchar("backend", { length: 20 }).notNull(),
+  bucket: varchar("bucket", { length: 255 }),
+  region: varchar("region", { length: 64 }),
+  endpoint: text("endpoint"),
+  isActive: boolean("is_active").notNull().default(true),
+  notes: text("notes"),
+  updatedBy: integer("updated_by"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertStorageConfigSchema = createInsertSchema(storageConfig).omit({ id: true, updatedAt: true } as any);
+export type StorageConfigRow = typeof storageConfig.$inferSelect;
+export type InsertStorageConfigRow = z.infer<typeof insertStorageConfigSchema>;
+
+export const storageMigrations = pgTable("storage_migrations", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  dryRun: boolean("dry_run").notNull().default(true),
+  scanned: integer("scanned").notNull().default(0),
+  uploaded: integer("uploaded").notNull().default(0),
+  verified: integer("verified").notNull().default(0),
+  failed: integer("failed").notNull().default(0),
+  skipped: integer("skipped").notNull().default(0),
+  runBy: integer("run_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type StorageMigration = typeof storageMigrations.$inferSelect;
