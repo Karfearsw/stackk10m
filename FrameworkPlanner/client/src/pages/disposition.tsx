@@ -133,8 +133,9 @@ function DispositionPageInner() {
         <div>
           <h1 className="font-serif text-2xl font-semibold">Disposition</h1>
           <p className="text-sm text-muted-foreground">
-            Move contracted deals to buyers — drag cards between stages, open a
-            deal to match, blast, and track offers.
+            Your contracted deals live here. Drag deals between stages to move
+            them from under contract → sold. Open a deal to match buyers, blast
+            it out, and track offers.
           </p>
         </div>
       </div>
