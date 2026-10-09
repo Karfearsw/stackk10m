@@ -127,8 +127,8 @@ const menuGroups = [
       { name: "Audit Log", href: "/audit-log", icon: ScrollText },
       { name: "Audit", href: "/audit", icon: Shield },
       { name: "Calculator", href: "/calculator", icon: Calculator },
-      // Owner decision Oct 7: Voice Playground is dev-only — not in prod nav.
-      ...(import.meta.env.DEV ? [{ name: "Playground", href: "/playground", icon: Lightbulb }] : []),
+      // Rebuilt Oct 9: Playground is now the script-training/roleplay workspace (prod).
+      { name: "Playground", href: "/playground", icon: Lightbulb },
     ],
   },
 ];

@@ -37,6 +37,7 @@ import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from
 import { apiRequest } from "@/lib/queryClient";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 import { QuickLogCallDialog } from "@/components/buyers/QuickLogCallDialog";
+import { BuyerCallHistory } from "@/components/buyers/BuyerCallHistory";
 import { BuyerScriptsPanel } from "@/components/buyers/BuyerScriptsPanel";
 import { BuyerQualificationPanel } from "@/components/buyers/BuyerQualificationPanel";
 import { BUYER_PIPELINE, formatBuyerStatus, buyerStatusColor, formatDisposition } from "@/lib/dispositions";
@@ -941,8 +942,9 @@ export default function Buyers() {
               </CardHeader>
               <CardContent>
                 <Tabs defaultValue="info">
-                  <TabsList className="w-full grid grid-cols-3 sm:grid-cols-6 gap-1 p-1">
+                  <TabsList className="w-full grid grid-cols-4 sm:grid-cols-7 gap-1 p-1">
                     <TabsTrigger value="info" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Info</TabsTrigger>
+                    <TabsTrigger value="calls" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Calls</TabsTrigger>
                     <TabsTrigger value="comms" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">Communications</TabsTrigger>
                     <TabsTrigger value="sms" className="data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
                       SMS
@@ -1081,6 +1083,9 @@ export default function Buyers() {
                     )}
                   </TabsContent>
 
+                  <TabsContent value="calls" className="mt-0">
+                    <BuyerCallHistory buyerId={selectedBuyer.id} />
+                  </TabsContent>
                   <TabsContent value="comms" className="mt-0">
                     <div className="space-y-4">
                       <div className="space-y-2">

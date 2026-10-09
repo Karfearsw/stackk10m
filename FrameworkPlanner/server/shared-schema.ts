@@ -2479,6 +2479,9 @@ export const callSessions = pgTable("crm_call_sessions", {
   providerRecordingId: varchar("provider_recording_id", { length: 64 }),
   providerRecordingUrl: text("provider_recording_url"),
   providerLastEventAt: timestamp("provider_last_event_at", { withTimezone: true }),
+  // Agent's call note — single source of truth (0096). Previously notes lived
+  // only on crm_call_dispositions.note and were invisible to session readers.
+  note: text("note"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

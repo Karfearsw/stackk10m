@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,7 +55,7 @@ function emptyStep(): StepDraft {
   return { channel: "sms", delay_hours: 24, subject: "", body: "" };
 }
 
-export default function SequencesPage() {
+function SequencesPageInner() {
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [builderOpen, setBuilderOpen] = useState(false);
@@ -489,5 +490,14 @@ export default function SequencesPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+
+export default function SequencesPage() {
+  return (
+    <Layout>
+      <SequencesPageInner />
+    </Layout>
   );
 }

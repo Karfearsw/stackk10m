@@ -666,8 +666,10 @@ export default function Timesheet() {
                   </CardContent>
                 </Card>
               ) : (
-                <div className="rounded-md border bg-card">
-                  <Table>
+                <>
+                  {/* Desktop table */}
+                  <div className="rounded-md border bg-card hidden md:block">
+                    <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>Date</TableHead>
@@ -728,7 +730,74 @@ export default function Timesheet() {
                       })}
                     </TableBody>
                   </Table>
-                </div>
+                  </div>
+
+                  {/* Mobile cards */}
+                  <div className="space-y-3 md:hidden">
+                    {entries.map((entry) => {
+                      const cat = categories.find((c) => c.id === entry.categoryId) || null;
+                      const status = String(entry.status || "draft");
+                      const flags = Array.isArray(entry.anomalyFlags) ? entry.anomalyFlags : [];
+                      const cost = (parseFloat(entry.hours.toString()) * parseFloat(entry.hourlyRate.toString())).toFixed(2);
+                      return (
+                        <Card key={`m-${entry.id}`} data-testid={`card-timesheet-${entry.id}`}>
+                          <CardContent className="p-4">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold">{entry.date}</p>
+                                <p className="text-xs text-muted-foreground truncate">{entry.employee}</p>
+                              </div>
+                              <Badge variant={status === "approved" || status === "paid" ? "default" : status === "disputed" ? "destructive" : "secondary"}>
+                                {status}
+                              </Badge>
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+                              <div>
+                                <p className="text-[11px] text-muted-foreground">Time</p>
+                                <p className="font-medium tabular-nums">{entry.startTime} – {entry.endTime}</p>
+                              </div>
+                              <div>
+                                <p className="text-[11px] text-muted-foreground">Hours</p>
+                                <p className="font-medium tabular-nums">{parseFloat(entry.hours.toString()).toFixed(2)}h</p>
+                              </div>
+                              <div>
+                                <p className="text-[11px] text-muted-foreground">Category</p>
+                                <p className="truncate">{cat ? cat.name : "—"}</p>
+                              </div>
+                              <div>
+                                <p className="text-[11px] text-muted-foreground">Cost</p>
+                                <p className="font-medium tabular-nums">${cost}</p>
+                              </div>
+                            </div>
+                            {entry.task && (
+                              <p className="mt-2 text-xs text-muted-foreground break-words line-clamp-2">{entry.task}</p>
+                            )}
+                            {flags.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1">
+                                {flags.slice(0, 2).map((f) => (
+                                  <Badge key={f} variant="outline" className="text-[10px]">{f}</Badge>
+                                ))}
+                              </div>
+                            )}
+                            <div className="mt-3 flex justify-end">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => deleteMutation.mutate(entry.id)}
+                                disabled={deleteMutation.isPending}
+                                className="text-destructive hover:bg-destructive/10"
+                                aria-label={`Delete entry ${entry.date}`}
+                              >
+                                {deleteMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                                <span className="ml-1 text-xs">Delete</span>
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+                </>
               )}
             </div>
 

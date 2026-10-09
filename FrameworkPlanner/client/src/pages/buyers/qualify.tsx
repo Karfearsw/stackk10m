@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -419,7 +420,7 @@ function DealReadyTab() {
   );
 }
 
-export default function BuyerQualifyPage() {
+function BuyerQualifyPageInner() {
   return (
     <div className="space-y-4 p-4 lg:p-6">
       <div className="flex items-center justify-between">
@@ -451,5 +452,14 @@ export default function BuyerQualifyPage() {
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+
+export default function BuyerQualifyPage() {
+  return (
+    <Layout>
+      <BuyerQualifyPageInner />
+    </Layout>
   );
 }
