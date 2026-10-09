@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
+import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -85,7 +86,7 @@ function DealCard({
   );
 }
 
-export default function DispositionPage() {
+function DispositionPageInner() {
   const queryClient = useQueryClient();
   const [openDeal, setOpenDeal] = useState<DealCardData | null>(null);
   const [dragOver, setDragOver] = useState<DispoStage | null>(null);
@@ -256,5 +257,14 @@ export default function DispositionPage() {
 
       <DealDrawer deal={openDeal} onClose={() => setOpenDeal(null)} />
     </div>
+  );
+}
+
+
+export default function DispositionPage() {
+  return (
+    <Layout>
+      <DispositionPageInner />
+    </Layout>
   );
 }
