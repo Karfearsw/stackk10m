@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { X, ChevronRight, ChevronLeft, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -53,13 +53,15 @@ const STORAGE_KEY = "luxe-rm-tour-completed";
 export function OnboardingTour() {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
+  const queryClient = useQueryClient();
 
   // Server-side tour state (0098): follows the user across devices.
   // Falls back to localStorage for signed-out / legacy state.
   const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
 
   useEffect(() => {
-    const serverDone = me && (me.tourCompletedAt || me.tourSkippedAt);
+    // Check both camelCase (Drizzle) and snake_case (raw SQL) just in case.
+    const serverDone = me && (me.tourCompletedAt || me.tour_completed_at || me.tourSkippedAt || me.tour_skipped_at);
     if (me && serverDone) return; // already toured — never auto-open
     if (me && !serverDone) {
       const t = setTimeout(() => setOpen(true), 1200);
@@ -82,6 +84,8 @@ export function OnboardingTour() {
         method: "POST",
         credentials: "include",
       });
+      // Invalidate the me query so the tour doesn't reappear on next navigation.
+      queryClient.invalidateQueries({ queryKey: ["/api/auth/me"] });
     } catch { /* non-blocking */ }
   };
 

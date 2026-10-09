@@ -903,12 +903,21 @@ async function applyBuyerDispositionEffects(
   }
 
   // 4. Buyer-status pipeline moves.
+  // Dispositions that imply a two-way conversation happened (not just an
+  // attempt). Any of these should move a new/attempting buyer to "contacted".
+  const CONVERSATION_DISPOSITIONS = new Set([
+    "connected", "qualified", "qualified_handoff", "callback_requested",
+    "send_deal", "offer_expected", "offer_submitted", "qualified_buyer",
+    "needs_info", "not_interested", "criteria_mismatch",
+  ]);
+  const isNewBuyer = buyer.buyerStatus === "new" || buyer.buyerStatus === "attempting_contact" || !buyer.buyerStatus;
+
   let statusMove: string | null = null;
   if (disposition === "do_not_call") statusMove = "do_not_contact";
-  else if (disposition === "connected" && (buyer.buyerStatus === "new" || buyer.buyerStatus === "attempting_contact")) statusMove = "contacted";
-  else if (disposition === "send_deal" && buyer.buyerStatus !== "do_not_contact") statusMove = "active_buyer";
   else if (disposition === "offer_submitted" && !["under_contract", "closed"].includes(String(buyer.buyerStatus || ""))) statusMove = "offer_submitted";
+  else if (disposition === "send_deal" && buyer.buyerStatus !== "do_not_contact") statusMove = "active_buyer";
   else if (disposition === "qualified_buyer" && buyerBuyBoxComplete(buyer)) statusMove = "qualified";
+  else if (CONVERSATION_DISPOSITIONS.has(disposition) && isNewBuyer) statusMove = "contacted";
 
   if (Object.keys(buyerPatch).length > 0) {
     try { await storage.updateBuyer(buyer.id, buyerPatch); applied.push("contact + disposition recorded"); } catch (e) { console.error("buyer contact stamp failed:", e); }
@@ -920,6 +929,42 @@ async function applyBuyerDispositionEffects(
       await storage.updateBuyer(buyer.id, { buyerStatus: statusMove, updatedAt: new Date() } as any);
       applied.push(`status → ${statusMove}`);
     } catch (e) { console.error("buyer status move failed:", e); }
+  }
+
+  // 4b. Sync the qualification funnel (buyer_qualification.relationship_stage)
+  // so the Qualify tab reflects call activity. Maps buyer pipeline stages to
+  // qualification stages: contacted → contacted, qualified → qualified,
+  // active_buyer/offer_submitted → deal_ready, do_not_contact → inactive.
+  // Always stamps last_contact_at on any conversation disposition.
+  const QUAL_STAGE_MAP: Record<string, string> = {
+    contacted: "contacted",
+    qualified: "qualified",
+    active_buyer: "deal_ready",
+    offer_submitted: "deal_ready",
+    under_contract: "deal_ready",
+    do_not_contact: "inactive",
+  };
+  const qualStage = statusMove ? QUAL_STAGE_MAP[statusMove] : null;
+  const shouldStampContact = CONVERSATION_DISPOSITIONS.has(disposition) || disposition === "voicemail";
+  if (qualStage || shouldStampContact) {
+    try {
+      const { db } = await import("../../db.js");
+      const { sql } = await import("drizzle-orm");
+      const contactAt = session.occurredAt ? new Date(session.occurredAt) : new Date();
+      // Ensure a qualification row exists, then update it.
+      await db.execute(sql`
+        INSERT INTO buyer_qualification (buyer_id, relationship_stage, last_contact_at, updated_at)
+        VALUES (${buyer.id}, ${qualStage || "contacted"}, ${contactAt}, now())
+        ON CONFLICT (buyer_id) DO UPDATE SET
+          relationship_stage = CASE
+            WHEN ${qualStage || null} IS NOT NULL THEN ${qualStage || null}
+            ELSE buyer_qualification.relationship_stage
+          END,
+          last_contact_at = ${contactAt},
+          updated_at = now()
+      `);
+      applied.push(`qualify sync → ${qualStage || "contact stamp"}`);
+    } catch (e) { console.error("buyer qualification sync failed:", e); }
   }
 
   if (taskTitle && taskDue && !Number.isNaN(taskDue.getTime())) {
