@@ -7,9 +7,72 @@ import { VoiceActionDialog } from "@/components/leads/VoiceActionDialog";
 import { UnderwriteDealWorkspace } from "@/components/underwriting/UnderwriteDealWorkspace";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Lightbulb, MapPin, Mic, RotateCcw } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { MapPin, Mic, RotateCcw, History, ArrowRight, FlaskConical } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+
+type PlaygroundSession = {
+  id: number;
+  address: string | null;
+  createdAt?: string | null;
+  created_at?: string | null;
+  updatedAt?: string | null;
+  updated_at?: string | null;
+};
+
+function RecentSessions({ onResume }: { onResume: (s: PlaygroundSession) => void }) {
+  const { data: sessions = [], isLoading } = useQuery<PlaygroundSession[]>({
+    queryKey: ["/api/playground/sessions/recent"],
+    queryFn: async () => {
+      const res = await fetch("/api/playground/sessions/recent?limit=10", { credentials: "include" });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    },
+  });
+
+  if (isLoading) {
+    return <p className="text-sm text-muted-foreground py-4 text-center">Loading recent research…</p>;
+  }
+
+  if (!sessions.length) return null;
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <History className="h-4 w-4 text-primary" aria-hidden />
+          Recent research
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-2">
+          {sessions.map((s) => {
+            const when = s.updated_at || s.updatedAt || s.created_at || s.createdAt;
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => onResume(s)}
+                className="w-full flex items-center justify-between gap-2 rounded-lg border p-3 text-left transition-colors hover:border-primary/50 hover:bg-muted/50"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{s.address || `Session ${s.id}`}</p>
+                  {when && (
+                    <p className="text-xs text-muted-foreground">
+                      {new Date(when).toLocaleDateString()} · {new Date(when).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  )}
+                </div>
+                <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+              </button>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 type PlaygroundContext = {
   address: string;
@@ -221,10 +284,10 @@ export default function Playground() {
       <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-3">
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight flex items-center gap-2" data-testid="page-title">
-            <Lightbulb className="h-8 w-8 text-primary" />
-            Property Playground
+            <FlaskConical className="h-8 w-8 text-primary" />
+            Research Lab
           </h1>
-          <div className="text-sm text-muted-foreground">Research hub for zoning, suppliers, comps, and deal ideas.</div>
+          <div className="text-sm text-muted-foreground">Full deal research workspace — comps, underwriting, notes, and checklists per property.</div>
         </div>
         <Badge variant="secondary" className="h-6">
           {context.sessionId ? `Session ${context.sessionId}` : "Live"}
@@ -311,7 +374,27 @@ export default function Playground() {
       {resolvedAddress ? (
         <div className="min-w-0 overflow-hidden"><UnderwriteDealWorkspace address={resolvedAddress} propertyId={context.propertyId} leadId={context.leadId} sessionId={context.sessionId} /></div>
       ) : (
-        <div className="text-sm text-muted-foreground py-10 text-center">Enter an address to start underwriting.</div>
+        <div className="space-y-4">
+          <Card className="border-dashed">
+            <CardContent className="flex flex-col items-center justify-center py-10 text-center">
+              <FlaskConical className="h-12 w-12 text-primary/40 mb-3" aria-hidden />
+              <p className="font-medium">Real estate research lab</p>
+              <p className="text-sm text-muted-foreground mt-1 max-w-md">
+                Enter a property address above to open the full workspace — in-app research browser,
+                comp tracking, deal underwriting with ARV and MAO, notes, and checklists.
+              </p>
+            </CardContent>
+          </Card>
+          <RecentSessions
+            onResume={(s) => {
+              const addr = String(s.address || "").trim();
+              if (!addr) return;
+              setContext({ address: addr, leadId: null, propertyId: null, sessionId: s.id });
+              setAddressInput(addr);
+              setResolvedAddress(addr);
+            }}
+          />
+        </div>
       )}
     </Layout>
   );

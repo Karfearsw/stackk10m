@@ -18,6 +18,11 @@ export default defineConfig({
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
     { name: "firefox", use: { ...devices["Desktop Firefox"] } },
     { name: "webkit", use: { ...devices["Desktop Safari"] } },
+    // Mobile projects (added Oct 9, 2026) — responsive + a11y coverage
+    { name: "mobile-iphone-se", use: { ...devices["iPhone SE"] } },
+    { name: "mobile-iphone-15", use: { ...devices["iPhone 15"] } },
+    { name: "mobile-pixel-7", use: { ...devices["Pixel 7"] } },
+    { name: "tablet-ipad", use: { ...devices["iPad (gen 7)"] } },
   ],
 });
 

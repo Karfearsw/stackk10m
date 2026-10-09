@@ -344,6 +344,8 @@ export async function logManualBuyerCall(input: {
     providerHangupCause: null,
     idempotencyKey: `manual_buyer_${buyer.id}_${input.userId}_${Date.now()}`,
     recordRequested: false,
+    // 0096: note lives on the session (single source of truth).
+    note: input.note?.trim() ? input.note.trim() : null,
   } as any);
 
   await storage.createCallDisposition({
@@ -355,7 +357,13 @@ export async function logManualBuyerCall(input: {
     actorUserId: input.userId,
   } as any);
   await recordEvent(session.id, "manual_call_logged", null, "completed", { provider, direction: input.direction, disposition: input.disposition }, input.userId);
-  await createActivity(session, "manual_call_logged", `Manual ${input.direction} call logged via ${provider}: ${input.disposition}`, { provider, disposition: input.disposition });
+  const notePreview = input.note?.trim() ? input.note.trim().slice(0, 200) : null;
+  await createActivity(
+    session,
+    "manual_call_logged",
+    `Manual ${input.direction} call logged via ${provider}: ${input.disposition}${notePreview ? ` — ${notePreview}` : ""}`,
+    { provider, disposition: input.disposition, hasNote: Boolean(notePreview) },
+  );
 
   const applied = await applyBuyerDispositionEffects(buyer, session, input.userId, {
     disposition: input.disposition,
@@ -817,7 +825,11 @@ export async function setDisposition(
       }
     } catch (e) { console.error("Auto-SMS follow-up failed (non-blocking):", e); }
   }
-  await storage.updateCallSession(s.id, { finalDisposition: input.disposition });
+  await storage.updateCallSession(s.id, {
+    finalDisposition: input.disposition,
+    // 0096: note lives on the session (single source of truth).
+    ...(input.note?.trim() ? { note: input.note.trim() } : {}),
+  });
   await recordEvent(s.id, "disposition_set", s.status, s.status, { disposition: input.disposition, note: input.note || null }, userId);
   await createActivity(s, "call_dispositioned", `Call dispositioned: ${input.disposition}`, { disposition: input.disposition });
   emitSession(await storage.getCallSessionById(s.id));

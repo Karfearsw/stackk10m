@@ -234,6 +234,7 @@ export default function CompaniesPage() {
           </div>
         </div>
 
+        <div className="overflow-x-auto rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -276,6 +277,7 @@ export default function CompaniesPage() {
             )}
           </TableBody>
         </Table>
+        </div>
       </div>
     </Layout>
   );

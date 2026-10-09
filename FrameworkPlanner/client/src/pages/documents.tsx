@@ -261,6 +261,7 @@ export default function DocumentsPage() {
           </div>
         )}
 
+        <div className="overflow-x-auto rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -297,6 +298,7 @@ export default function DocumentsPage() {
             )}
           </TableBody>
         </Table>
+        </div>
 
         <Dialog open={selectedId !== null} onOpenChange={(v) => !v && setSelectedId(null)}>
           <DialogContent className="sm:max-w-2xl">
