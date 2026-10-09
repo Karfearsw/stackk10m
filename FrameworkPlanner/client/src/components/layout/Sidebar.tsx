@@ -15,7 +15,7 @@ import {
   Bell,
   ChevronLeft,
   ChevronRight,
-  Lightbulb,
+  FlaskConical,
   UserCheck,
   Phone,
   PhoneCall,
@@ -127,8 +127,8 @@ const menuGroups = [
       { name: "Audit Log", href: "/audit-log", icon: ScrollText },
       { name: "Audit", href: "/audit", icon: Shield },
       { name: "Calculator", href: "/calculator", icon: Calculator },
-      // Owner decision Oct 7: Voice Playground is dev-only — not in prod nav.
-      ...(import.meta.env.DEV ? [{ name: "Playground", href: "/playground", icon: Lightbulb }] : []),
+      // Research lab for real-estate deal analysis (underwriting workspace).
+      { name: "Research Lab", href: "/playground", icon: FlaskConical },
     ],
   },
 ];

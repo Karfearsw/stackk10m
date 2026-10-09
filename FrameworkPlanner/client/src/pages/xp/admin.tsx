@@ -912,6 +912,7 @@ export default function XpAdminPage() {
               <CardDescription>Deactivate experiences to remove them from public listing.</CardDescription>
             </CardHeader>
             <CardContent>
+              <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -938,6 +939,7 @@ export default function XpAdminPage() {
                   ))}
                 </TableBody>
               </Table>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

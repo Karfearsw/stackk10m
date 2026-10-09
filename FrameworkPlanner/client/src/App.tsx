@@ -203,8 +203,8 @@ function Router() {
       <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />
       <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
       <Route path="/messages" component={() => <ProtectedRoute component={MessagesPage} />} />
-      {/* Owner decision Oct 7: Voice Playground is dev-only — unreachable in prod builds. */}
-      {import.meta.env.DEV && <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />}
+      {/* Rebuilt Oct 9: Playground is now the script-training/roleplay workspace (prod). */}
+      <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />
       <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />
       {/* TICKET 17: Buyer qualification workflow (funnel, review queue, deal-ready). */}
       <Route path="/buyers/qualify" component={() => <ProtectedRoute component={BuyerQualify} />} />

@@ -18,6 +18,15 @@ await registerInvestorRoutes(app);
 // middleware registers synchronously inside registerRoutes, so it applies.
 import { registerDispositionRoutes } from "./routes/dispo.js";
 registerDispositionRoutes(app);
+
+// P0 fix (audit): e-sign v2 and follow-up sequences were mounted in
+// server/app.ts (dev) but missing here (production bundle entry), so the
+// live UI's /api/esign/* and /api/sequences/* calls 404'd in production.
+import { registerEsignRoutes } from "./routes/esign.js";
+registerEsignRoutes(app);
+const { registerSequenceRoutes } = await import("./routes/sequences.js");
+registerSequenceRoutes(app);
+
 installErrorHandling(app);
 
 // Export the Express app as a Vercel Serverless Function

@@ -21,6 +21,12 @@ const SavedPage = React.lazy(() => import("./SavedPage").then((m) => ({ default:
 const OffersPage = React.lazy(() => import("./OffersPage").then((m) => ({ default: m.OffersPage })));
 const MessagesPage = React.lazy(() => import("./MessagesPage").then((m) => ({ default: m.MessagesPage })));
 const AccountPage = React.lazy(() => import("./AccountPage").then((m) => ({ default: m.AccountPage })));
+// Deal Matchroom phases 9–16
+const MatchesPage = React.lazy(() => import("./matches/MatchesPage").then((m) => ({ default: m.MatchesPage })));
+const BuyBoxesPage = React.lazy(() => import("./buybox/BuyBoxesPage").then((m) => ({ default: m.BuyBoxesPage })));
+const DealRoomPage = React.lazy(() => import("./dealroom/DealRoomPage").then((m) => ({ default: m.DealRoomPage })));
+const LockedUpWorkspacePage = React.lazy(() => import("./lockedup/LockedUpWorkspace").then((m) => ({ default: m.LockedUpWorkspacePage })));
+const ContractWorkspacePage = React.lazy(() => import("./contracts/ContractWorkspacePage").then((m) => ({ default: m.ContractWorkspacePage })));
 
 function Fallback() {
   return (
@@ -43,6 +49,12 @@ export default function InvestorRoutes() {
         <Route path="/investor/signup" component={InvestorSignup} />
         <Route path="/investor/login" component={InvestorLogin} />
         <Route path="/investor/discover" component={DiscoverFeed} />
+        <Route path="/investor/matches" component={MatchesPage} />
+        <Route path="/investor/buy-boxes" component={BuyBoxesPage} />
+        <Route path="/investor/deal-rooms/:id" component={DealRoomPage} />
+        <Route path="/investor/locked-up" component={LockedUpWorkspacePage} />
+        <Route path="/investor/contracts/:id" component={ContractWorkspacePage} />
+        <Route path="/investor/onboarding" component={BuyBoxWizard} />
         <Route path="/investor/saved" component={SavedPage} />
         <Route path="/investor/offers" component={OffersPage} />
         <Route path="/investor/buy-box" component={BuyBoxWizard} />

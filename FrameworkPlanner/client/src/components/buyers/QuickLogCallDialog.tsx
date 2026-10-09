@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -50,6 +50,8 @@ export function QuickLogCallDialog({
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const draftKey = buyer?.id ? `quicklog-draft-buyer-${buyer.id}` : null;
+
   const [direction, setDirection] = useState<"inbound" | "outbound">("outbound");
   const [provider, setProvider] = useState("google_voice");
   const [occurredAt, setOccurredAt] = useState(() => {
@@ -63,6 +65,35 @@ export function QuickLogCallDialog({
   const [note, setNote] = useState("");
   const [nextAction, setNextAction] = useState("");
   const [nextActionAt, setNextActionAt] = useState("");
+
+  // Draft preservation: restore unsent form state if the dialog was closed accidentally
+  useEffect(() => {
+    if (!draftKey || typeof window === "undefined") return;
+    try {
+      const raw = window.localStorage.getItem(draftKey);
+      if (!raw) return;
+      const d = JSON.parse(raw);
+      if (d.direction) setDirection(d.direction);
+      if (d.provider) setProvider(d.provider);
+      if (d.durationMinutes) setDurationMinutes(d.durationMinutes);
+      if (d.disposition) setDisposition(d.disposition);
+      if (d.interestLevel) setInterestLevel(d.interestLevel);
+      if (d.note) setNote(d.note);
+      if (d.nextAction) setNextAction(d.nextAction);
+      if (d.nextActionAt) setNextActionAt(d.nextActionAt);
+    } catch { /* corrupted draft — start fresh */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+
+  // Persist draft on every change (cleared on successful save)
+  useEffect(() => {
+    if (!draftKey || typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(draftKey, JSON.stringify({
+        direction, provider, durationMinutes, disposition, interestLevel, note, nextAction, nextActionAt,
+      }));
+    } catch { /* storage unavailable — non-blocking */ }
+  }, [draftKey, direction, provider, durationMinutes, disposition, interestLevel, note, nextAction, nextActionAt]);
 
   const isDnc = Boolean(buyer?.doNotCall || buyer?.buyerStatus === "do_not_contact");
   const needsNextAction = BUYER_DISPOSITIONS_REQUIRE_NEXT_ACTION.has(disposition);
@@ -80,6 +111,10 @@ export function QuickLogCallDialog({
     setNote("");
     setNextAction("");
     setNextActionAt("");
+    // Clear the preserved draft on successful save
+    if (draftKey && typeof window !== "undefined") {
+      try { window.localStorage.removeItem(draftKey); } catch { /* non-blocking */ }
+    }
   };
 
   const logMutation = useMutation({
@@ -138,7 +173,7 @@ export function QuickLogCallDialog({
           </div>
         ) : null}
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <Label>Direction</Label>
             <select
@@ -209,7 +244,7 @@ export function QuickLogCallDialog({
           </select>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <Label>Interest level</Label>
             <select

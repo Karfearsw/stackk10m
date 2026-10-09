@@ -554,7 +554,7 @@ function StepsEditor({ campaignId, steps, status }: { campaignId: number; steps:
             <div className="flex items-center justify-between"><span className="text-sm font-medium">Step {idx + 1} <Badge variant="outline" className="capitalize">{s.channel}</Badge> Day {s.offsetDays}</span>
               <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setDraftSteps((p) => p.filter((_, j) => j !== idx))} disabled={status === "archived"}>Remove</Button>
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <div><Label className="text-xs">Channel</Label><Select value={s.channel} onValueChange={(v) => setDraftSteps((p) => p.map((x, i) => i === idx ? { ...x, channel: v } : x))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{CHANNELS.filter((c) => ["sms", "email", "task", "notification"].includes(c.value)).map((c) => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}</SelectContent></Select></div>
               <div><Label className="text-xs">Offset (days)</Label><Input type="number" value={s.offsetDays} onChange={(e) => setDraftSteps((p) => p.map((x, i) => i === idx ? { ...x, offsetDays: parseInt(e.target.value) || 0 } : x))} /></div>
               <div><Label className="text-xs">Window</Label><div className="flex gap-1"><Input value={s.sendWindowStart} onChange={(e) => setDraftSteps((p) => p.map((x, i) => i === idx ? { ...x, sendWindowStart: e.target.value } : x))} className="text-xs" /><Input value={s.sendWindowEnd} onChange={(e) => setDraftSteps((p) => p.map((x, i) => i === idx ? { ...x, sendWindowEnd: e.target.value } : x))} className="text-xs" /></div></div>

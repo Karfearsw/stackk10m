@@ -1,6 +1,7 @@
 import { DialerProvider } from "@/contexts/DialerContext";
 import { DialerWorkspaceProvider } from "@/components/dialer/widgets/DialerWorkspaceContext";
 import { useDialerWorkspaceState } from "@/components/dialer/widgets/useDialerWorkspaceState";
+import { Layout } from "@/components/layout/Layout";
 import { DialerWorkspaceGrid } from "@/components/dialer/widgets/DialerWorkspaceGrid";
 
 /**
@@ -21,8 +22,10 @@ function DialerWorkspaceInner() {
 
 export default function DialerWorkspace() {
   return (
-    <DialerProvider>
-      <DialerWorkspaceInner />
-    </DialerProvider>
+    <Layout>
+      <DialerProvider>
+        <DialerWorkspaceInner />
+      </DialerProvider>
+    </Layout>
   );
 }

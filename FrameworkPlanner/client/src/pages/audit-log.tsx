@@ -130,6 +130,7 @@ export function AuditLogContent() {
           </Card>
         )}
 
+        <div className="overflow-x-auto rounded-md border bg-card">
         <Table>
           <TableHeader>
             <TableRow>
@@ -166,6 +167,7 @@ export function AuditLogContent() {
             )}
           </TableBody>
         </Table>
+        </div>
 
         <Dialog open={selected !== null} onOpenChange={(v) => !v && setSelected(null)}>
           <DialogContent className="sm:max-w-3xl">

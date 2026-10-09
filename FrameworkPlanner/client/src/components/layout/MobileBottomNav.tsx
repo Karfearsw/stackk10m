@@ -1,4 +1,4 @@
-import { Building2, Lightbulb, Menu, Phone, Users } from "lucide-react";
+import { Building2, FlaskConical, Menu, Phone, Users } from "lucide-react";
 import { useLocation, Link } from "wouter";
 import { cn } from "@/lib/utils";
 
@@ -13,7 +13,7 @@ export function MobileBottomNav({ onMore }: MobileBottomNavProps) {
     { label: "Leads", href: "/leads", icon: Users },
     { label: "Opps", href: "/opportunities", icon: Building2 },
     { label: "Dial", href: "/dialer-workspace", icon: Phone },
-    { label: "Play", href: "/playground", icon: Lightbulb },
+    { label: "Lab", href: "/playground", icon: FlaskConical },
   ] as const;
 
   return (

@@ -239,6 +239,7 @@ export default function TasksTriage() {
                     <p className="text-sm">Everything is on track.</p>
                   </div>
                 ) : (
+                  <div className="overflow-x-auto rounded-md border bg-card">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -269,6 +270,7 @@ export default function TasksTriage() {
                       ))}
                     </TableBody>
                   </Table>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -334,6 +336,7 @@ export default function TasksTriage() {
                 )}
               </CardHeader>
               <CardContent>
+                <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow><TableHead>Name</TableHead><TableHead>Task Type</TableHead><TableHead>SLA (hrs)</TableHead><TableHead>Active</TableHead>{isManager && <TableHead className="w-24">Actions</TableHead>}</TableRow>
@@ -357,6 +360,7 @@ export default function TasksTriage() {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
