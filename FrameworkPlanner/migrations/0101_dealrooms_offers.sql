@@ -130,7 +130,7 @@ CREATE INDEX IF NOT EXISTS idx_deal_room_showings_room ON deal_room_showings (ro
 -- A counteroffer creates a NEW row (parent_offer_id = the countered offer);
 -- rows are never overwritten. offer_versions holds immutable snapshots.
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS offers (
+CREATE TABLE IF NOT EXISTS deal_offers (
   id integer PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
   deal_room_id integer REFERENCES deal_rooms(id) ON DELETE SET NULL,
   property_id integer NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
@@ -155,7 +155,7 @@ CREATE TABLE IF NOT EXISTS offers (
       'withdrawn','expired','converted_to_contract'
     )),
   version_number integer NOT NULL DEFAULT 1,
-  parent_offer_id integer REFERENCES offers(id) ON DELETE SET NULL,
+  parent_offer_id integer REFERENCES deal_offers(id) ON DELETE SET NULL,
   submitted_at timestamp with time zone,
   accepted_at timestamp with time zone,
   rejected_at timestamp with time zone,
@@ -167,15 +167,15 @@ CREATE TABLE IF NOT EXISTS offers (
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS idx_offers_investor ON offers (investor_user_id, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_offers_room ON offers (deal_room_id, version_number DESC);
-CREATE INDEX IF NOT EXISTS idx_offers_parent ON offers (parent_offer_id);
-CREATE INDEX IF NOT EXISTS idx_offers_contract ON offers (contract_id) WHERE contract_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_deal_offers_investor ON deal_offers (investor_user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_deal_offers_room ON deal_offers (deal_room_id, version_number DESC);
+CREATE INDEX IF NOT EXISTS idx_deal_offers_parent ON deal_offers (parent_offer_id);
+CREATE INDEX IF NOT EXISTS idx_deal_offers_contract ON deal_offers (contract_id) WHERE contract_id IS NOT NULL;
 
 -- Immutable version history: one row per state transition. Never updated.
 CREATE TABLE IF NOT EXISTS offer_versions (
   id integer PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
-  offer_id integer NOT NULL REFERENCES offers(id) ON DELETE CASCADE,
+  offer_id integer NOT NULL REFERENCES deal_offers(id) ON DELETE CASCADE,
   version_number integer NOT NULL,
   snapshot jsonb NOT NULL,
   created_by integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,

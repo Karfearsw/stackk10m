@@ -246,7 +246,7 @@ function offerToJson(r: Row): Record<string, unknown> {
 
 /** Append an immutable snapshot of the offer after every transition. */
 async function snapshotOffer(db: DealDb, offerId: number, byUserId: number, note: string): Promise<void> {
-  const rows = await run(db, sql`SELECT * FROM offers WHERE id = ${offerId} LIMIT 1`);
+  const rows = await run(db, sql`SELECT * FROM deal_offers WHERE id = ${offerId} LIMIT 1`);
   const offer = rows[0];
   if (!offer) return;
   await run(
@@ -563,7 +563,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
     const offers = await run(
       db,
       sql`SELECT o.*, p.address, p.city, p.state
-           FROM offers o JOIN properties p ON p.id = o.property_id
+           FROM deal_offers o JOIN properties p ON p.id = o.property_id
            WHERE o.deal_room_id = ${roomId}
              AND (${forInvestor} = false OR o.investor_user_id = ${viewerUserId})
            ORDER BY o.created_at DESC`,
@@ -880,7 +880,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       }
       const active = await run(
         db,
-        sql`SELECT id FROM offers
+        sql`SELECT id FROM deal_offers
             WHERE deal_room_id = ${roomId} AND investor_user_id = ${user.id}
               AND status IN ('draft','submitted','viewed') LIMIT 1`,
       );
@@ -893,7 +893,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       const contingencies = Array.isArray(body.contingencies) ? (body.contingencies as unknown[]).map(String) : [];
       const rows = await run(
         db,
-        sql`INSERT INTO offers (
+        sql`INSERT INTO deal_offers (
                deal_room_id, property_id, investor_user_id, offer_amount, earnest_money,
                financing_type, inspection_period_days, closing_date, deal_structure,
                contingencies, additional_terms, expiration_at, buyer_entity, authorized_signer,
@@ -924,7 +924,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       const rows = await run(
         db,
         sql`SELECT o.*, p.address, p.city, p.state
-             FROM offers o JOIN properties p ON p.id = o.property_id
+             FROM deal_offers o JOIN properties p ON p.id = o.property_id
              WHERE o.investor_user_id = ${user.id}
              ORDER BY o.updated_at DESC`,
       );
@@ -942,7 +942,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       const rows = await run(
         db,
         sql`SELECT o.*, p.address, p.city, p.state
-             FROM offers o JOIN properties p ON p.id = o.property_id
+             FROM deal_offers o JOIN properties p ON p.id = o.property_id
              WHERE o.id = ${offerId} AND o.investor_user_id = ${user.id} LIMIT 1`,
       );
       if (!rows.length) throw new InvestorError(404, "not_found", "Offer not found.");
@@ -971,7 +971,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       const offerId = parseId(req.params.offerId);
       const rows = await run(
         db,
-        sql`SELECT * FROM offers WHERE id = ${offerId} AND investor_user_id = ${user.id} LIMIT 1`,
+        sql`SELECT * FROM deal_offers WHERE id = ${offerId} AND investor_user_id = ${user.id} LIMIT 1`,
       );
       const offer = rows[0];
       if (!offer) throw new InvestorError(404, "not_found", "Offer not found.");
@@ -982,7 +982,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       const contingencies = Array.isArray(body.contingencies) ? (body.contingencies as unknown[]).map(String) : undefined;
       const updated = await run(
         db,
-        sql`UPDATE offers SET
+        sql`UPDATE deal_offers SET
                offer_amount = COALESCE(${body.offerAmount != null ? Number(body.offerAmount) : null}, offer_amount),
                earnest_money = ${body.earnestMoney !== undefined ? (body.earnestMoney != null ? Number(body.earnestMoney) : null) : sql`earnest_money`},
                financing_type = COALESCE(${str(body.financingType)}, financing_type),
@@ -1019,7 +1019,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       }
       const rows = await run(
         db,
-        sql`SELECT * FROM offers WHERE id = ${offerId} AND investor_user_id = ${user.id} LIMIT 1`,
+        sql`SELECT * FROM deal_offers WHERE id = ${offerId} AND investor_user_id = ${user.id} LIMIT 1`,
       );
       const offer = rows[0];
       if (!offer) throw new InvestorError(404, "not_found", "Offer not found.");
@@ -1034,7 +1034,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       }
       const updated = await run(
         db,
-        sql`UPDATE offers SET status = 'submitted', submitted_at = now(), updated_at = now()
+        sql`UPDATE deal_offers SET status = 'submitted', submitted_at = now(), updated_at = now()
             WHERE id = ${offerId} RETURNING *`,
       );
       await snapshotOffer(db, offerId, Number(user.id), "Offer submitted (investor confirmed)");
@@ -1061,7 +1061,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       const offerId = parseId(req.params.offerId);
       const rows = await run(
         db,
-        sql`SELECT * FROM offers WHERE id = ${offerId} AND investor_user_id = ${user.id} LIMIT 1`,
+        sql`SELECT * FROM deal_offers WHERE id = ${offerId} AND investor_user_id = ${user.id} LIMIT 1`,
       );
       const offer = rows[0];
       if (!offer) throw new InvestorError(404, "not_found", "Offer not found.");
@@ -1070,7 +1070,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       }
       const updated = await run(
         db,
-        sql`UPDATE offers SET status = 'withdrawn', withdrawn_at = now(), updated_at = now()
+        sql`UPDATE deal_offers SET status = 'withdrawn', withdrawn_at = now(), updated_at = now()
             WHERE id = ${offerId} RETURNING *`,
       );
       await snapshotOffer(db, offerId, Number(user.id), "Offer withdrawn by investor");
@@ -1090,7 +1090,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
   ): Promise<void> {
     const admin = await requireAdmin(db, req);
     const offerId = parseId(req.params.offerId);
-    const rows = await run(db, sql`SELECT * FROM offers WHERE id = ${offerId} LIMIT 1`);
+    const rows = await run(db, sql`SELECT * FROM deal_offers WHERE id = ${offerId} LIMIT 1`);
     const offer = rows[0];
     if (!offer) throw new InvestorError(404, "not_found", "Offer not found.");
     const current = String(offer.status) as OfferStatus;
@@ -1100,7 +1100,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
     }
     const updated = await run(
       db,
-      sql`UPDATE offers
+      sql`UPDATE deal_offers
           SET status = ${action},
               accepted_at = ${action === "accepted" ? sql`now()` : sql`accepted_at`},
               rejected_at = ${action === "rejected" ? sql`now()` : sql`rejected_at`},
@@ -1142,7 +1142,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
     try {
       const admin = await requireAdmin(db, req);
       const offerId = parseId(req.params.offerId);
-      const rows = await run(db, sql`SELECT * FROM offers WHERE id = ${offerId} LIMIT 1`);
+      const rows = await run(db, sql`SELECT * FROM deal_offers WHERE id = ${offerId} LIMIT 1`);
       const offer = rows[0];
       if (!offer) throw new InvestorError(404, "not_found", "Offer not found.");
       const current = String(offer.status) as OfferStatus;
@@ -1155,7 +1155,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
 
       const parent = await run(
         db,
-        sql`UPDATE offers SET status = 'countered', updated_at = now()
+        sql`UPDATE deal_offers SET status = 'countered', updated_at = now()
             WHERE id = ${offerId} RETURNING *`,
       );
       await snapshotOffer(db, offerId, Number(admin.id), "Countered by owner (new version row created)");
@@ -1163,7 +1163,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       const contingencies = Array.isArray(body.contingencies) ? (body.contingencies as unknown[]).map(String) : [];
       const child = await run(
         db,
-        sql`INSERT INTO offers (
+        sql`INSERT INTO deal_offers (
                deal_room_id, property_id, investor_user_id, offer_amount, earnest_money,
                financing_type, inspection_period_days, closing_date, deal_structure,
                contingencies, additional_terms, expiration_at, buyer_entity, authorized_signer,
@@ -1199,7 +1199,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       const rows = await run(
         db,
         sql`SELECT o.*, p.address, p.city, p.state, u.first_name, u.last_name, u.email
-             FROM offers o
+             FROM deal_offers o
              JOIN properties p ON p.id = o.property_id
              JOIN users u ON u.id = o.investor_user_id
              WHERE ${status ? sql`o.status = ${status}` : sql`true`}
@@ -1228,7 +1228,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       if (!Number.isFinite(contractId)) {
         throw new InvestorError(400, "contract_required", "contractId is required to convert an offer to a contract.");
       }
-      const rows = await run(db, sql`SELECT * FROM offers WHERE id = ${offerId} LIMIT 1`);
+      const rows = await run(db, sql`SELECT * FROM deal_offers WHERE id = ${offerId} LIMIT 1`);
       const offer = rows[0];
       if (!offer) throw new InvestorError(404, "not_found", "Offer not found.");
       if (String(offer.status) !== "accepted") {
@@ -1236,7 +1236,7 @@ export function createDealRoomsRouter(deps: DealRoomsRouterDeps): Router {
       }
       const updated = await run(
         db,
-        sql`UPDATE offers SET status = 'converted_to_contract', contract_id = ${contractId}, updated_at = now()
+        sql`UPDATE deal_offers SET status = 'converted_to_contract', contract_id = ${contractId}, updated_at = now()
             WHERE id = ${offerId} RETURNING *`,
       );
       await snapshotOffer(db, offerId, Number(admin.id), `Converted to contract #${contractId}`);
