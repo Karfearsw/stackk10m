@@ -210,87 +210,44 @@ export function ResearchConsole(props: {
 
       <CardContent className="pt-0 h-[calc(100%-4.25rem)]">
         <div className="h-full grid grid-cols-1 md:grid-cols-12 gap-3">
-          <div className="md:col-span-2">
-            <Tabs value={source} onValueChange={applySource}>
-              <TabsList className="w-full h-auto flex-col items-stretch justify-start gap-1 bg-muted/40">
-                {sources.map((s) => (
-                  <TabsTrigger key={s.id} value={s.id} className="w-full justify-start">
-                    {s.label}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-          </div>
-
           <div className="md:col-span-8 flex flex-col gap-2 min-h-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex-1 min-w-[220px]">
-                <Input
-                  value={urlInput}
-                  onChange={(e) => setUrlInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") navigate(urlInput);
-                  }}
-                  placeholder="https://…"
-                  aria-invalid={Boolean(validationError)}
-                />
-                {validationError ? <div className="text-xs text-destructive mt-1">{validationError}</div> : null}
+            <div className="rounded-md border bg-muted/30 p-4">
+              <div className="text-sm font-medium mb-3">Quick Research Links</div>
+              <div className="text-xs text-muted-foreground mb-3">
+                Click a source to open it in a new tab. Find your comp, then paste the details below.
               </div>
-              <Button onClick={() => navigate(urlInput)} disabled={!urlInput.trim()}>
-                {status === "loading" ? <Loader2 className="h-4 w-4 animate-spin" /> : "Go"}
-              </Button>
-              <Button variant="outline" size="icon" onClick={goBack} disabled={!canBack} aria-label="Back">
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <Button variant="outline" size="icon" onClick={goForward} disabled={!canForward} aria-label="Forward">
-                <ChevronRight className="h-4 w-4" />
-              </Button>
-              <Button variant="outline" size="icon" onClick={reload} aria-label="Reload">
-                <RefreshCw className="h-4 w-4" />
-              </Button>
-              <Button variant="outline" size="icon" onClick={copyUrl} aria-label="Copy URL">
-                <Copy className="h-4 w-4" />
-              </Button>
-              <Button variant="outline" size="icon" onClick={openExternal} aria-label="Open in new tab">
-                <ExternalLink className="h-4 w-4" />
-              </Button>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {sources.map((s) => {
+                  const url = makeSourceUrl(s.id, props.address);
+                  if (!url) return null;
+                  return (
+                    <Button
+                      key={s.id}
+                      variant="outline"
+                      className="justify-start"
+                      onClick={() => window.open(url, "_blank", "noopener,noreferrer")}
+                    >
+                      <ExternalLink className="h-4 w-4 mr-2" />
+                      {s.label}
+                    </Button>
+                  );
+                })}
+              </div>
             </div>
 
-            <div className="relative flex-1 min-h-0 w-full overflow-hidden rounded-md border bg-background">
-              {!srcUrl.trim() ? (
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="text-sm text-muted-foreground">Pick a source to start.</div>
-                </div>
-              ) : null}
-              {status === "loading" || status === "maybe_blocked" ? (
-                <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/70">
-                  <div className="flex flex-col items-center gap-2 text-sm text-muted-foreground">
-                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                    <div>{status === "maybe_blocked" ? "Page could not be displayed inline. Try opening it directly." : "Loading page…"}</div>
-                    {status === "maybe_blocked" ? (
-                      <Button variant="outline" size="sm" onClick={openExternal}>
-                        Open in new tab
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              ) : null}
-
-              {srcUrl.trim() ? (
-                <iframe
-                  key={iframeKey}
-                  title="Research browser"
-                  src={getProxiedUrl(srcUrl)}
-                  className="h-full w-full"
-                  referrerPolicy="no-referrer"
-                  onLoad={() => setStatus("loaded")}
-                  onError={() => setStatus("maybe_blocked")}
-                />
-              ) : null}
+            <div className="rounded-md border p-4">
+              <div className="text-sm font-medium mb-3">Add Comp from Research</div>
+              <div className="text-xs text-muted-foreground mb-3">
+                Paste the sold price, beds, baths, and sqft from the listing you found.
+              </div>
+              <Button onClick={saveComp} className="w-full justify-start">
+                <Plus className="h-4 w-4 mr-2" />
+                Save as comp
+              </Button>
             </div>
           </div>
 
-          <div className="md:col-span-2">
+          <div className="md:col-span-4">
             <div className="h-full rounded-md border p-3 flex flex-col gap-3">
               <div className="text-sm font-medium">Scratchpad</div>
               <Button onClick={saveComp} className="w-full justify-start">
