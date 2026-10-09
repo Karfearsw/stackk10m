@@ -573,7 +573,7 @@ export default function Timesheet() {
                           data-testid="input-task"
                         />
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
                           <Label htmlFor="startTime">Start Time</Label>
                           <Input
@@ -595,7 +595,7 @@ export default function Timesheet() {
                           />
                         </div>
                       </div>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
                           <Label htmlFor="linkedEntityType">Link Type</Label>
                           <Select value={formData.linkedEntityType || "none"} onValueChange={(v) => setFormData({ ...formData, linkedEntityType: v === "none" ? "" : v })}>
@@ -751,7 +751,7 @@ export default function Timesheet() {
                                 {status}
                               </Badge>
                             </div>
-                            <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
+                            <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5 text-sm">
                               <div>
                                 <p className="text-[11px] text-muted-foreground">Time</p>
                                 <p className="font-medium tabular-nums">{entry.startTime} – {entry.endTime}</p>

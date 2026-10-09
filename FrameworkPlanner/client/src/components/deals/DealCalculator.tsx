@@ -445,7 +445,7 @@ export function DealCalculator({
             <CardTitle>Deal Inputs</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Strategy</Label>
                 <Select value={strategy || ""} onValueChange={(v) => set("strategy", v as any)}>
@@ -476,7 +476,7 @@ export function DealCalculator({
 
             {incomeMode ? (
               <div className="space-y-4 rounded-lg border p-4">
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="dc-noi">NOI (annual)</Label>
                     <div className="relative">
@@ -502,7 +502,7 @@ export function DealCalculator({
                 </div>
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="dc-arv">After Repair Value (ARV)</Label>
                 <div className="relative">
@@ -534,7 +534,7 @@ export function DealCalculator({
             </div>
             )}
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label>ARV Low</Label>
                 <div className="relative">
@@ -565,7 +565,7 @@ export function DealCalculator({
             <CardTitle>Assumptions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Target profit</Label>
                 <div className="flex gap-2">
@@ -608,7 +608,7 @@ export function DealCalculator({
             </div>
 
             {strategy === "wholesale" ? (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Assignment fee</Label>
                   <div className="flex gap-2">
@@ -670,7 +670,7 @@ export function DealCalculator({
             <CardTitle>Costs</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Purchase closing (flat)</Label>
                 <div className="relative">
@@ -687,7 +687,7 @@ export function DealCalculator({
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label>Realtor %</Label>
                 <Input type="number" value={values.saleRealtorPct || ""} onChange={(e) => set("saleRealtorPct", safeNumber(e.target.value))} />
@@ -705,7 +705,7 @@ export function DealCalculator({
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label>Months held</Label>
                 <Input type="number" value={values.monthsHeld || ""} onChange={(e) => set("monthsHeld", safeNumber(e.target.value))} />
@@ -726,7 +726,7 @@ export function DealCalculator({
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label>Utilities / mo</Label>
                 <div className="relative">
@@ -757,7 +757,7 @@ export function DealCalculator({
             <CardTitle>Financing</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Loan type</Label>
                 <Select value={values.loanType || "cash"} onValueChange={(v) => set("loanType", v as any)}>
@@ -777,7 +777,7 @@ export function DealCalculator({
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label>Points %</Label>
                 <Input type="number" value={values.pointsPct || ""} onChange={(e) => set("pointsPct", safeNumber(e.target.value))} />
@@ -809,7 +809,7 @@ export function DealCalculator({
                 <Input type="number" value={values.loanToCostPct || ""} onChange={(e) => set("loanToCostPct", safeNumber(e.target.value))} />
               </div>
             ) : values.loanType === "conventional" ? (
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Down payment %</Label>
                   <Input type="number" value={values.downPaymentPct || ""} onChange={(e) => set("downPaymentPct", safeNumber(e.target.value))} />
@@ -829,7 +829,7 @@ export function DealCalculator({
               <CardTitle>Rental Assumptions</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Rent / mo</Label>
                   <div className="relative">
@@ -901,7 +901,7 @@ export function DealCalculator({
                 <div className="text-xs text-muted-foreground">Estimated value (NOI ÷ cap rate)</div>
                 <div className="text-3xl font-bold break-all">${money(incomeMath.valuation)}</div>
               </div>
-              <div className="grid grid-cols-2 gap-3 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                 <div className="min-w-0">
                   <div className="text-xs text-muted-foreground">NOI (annual)</div>
                   <div className="font-medium">${money(n("noiAnnual"))}</div>
@@ -959,7 +959,7 @@ export function DealCalculator({
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="min-w-0">
                 <div className="text-xs text-muted-foreground">MAO</div>
                 <div className="text-xl font-bold truncate" title={`$${money(dealMath.mao ?? 0)}`}>${money(dealMath.mao ?? 0)}</div>

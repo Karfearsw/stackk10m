@@ -144,8 +144,8 @@ export default function Campaigns() {
             ) : campaigns.length === 0 ? (
               <Card><CardContent className="py-12 text-center"><Users className="h-8 w-8 mx-auto text-muted-foreground mb-2" /><p className="font-medium">No campaigns yet</p><p className="text-sm text-muted-foreground mt-1">Create your first campaign to start drip outreach.</p></CardContent></Card>
             ) : (
-              <div className="rounded-md border">
-                <table className="w-full text-sm">
+              <div className="rounded-md border overflow-x-auto">
+                <table className="w-full text-sm min-w-[600px]">
                   <thead><tr className="border-b bg-muted/50"><th className="p-3 text-left font-medium">Name</th><th className="p-3 text-left font-medium">Type</th><th className="p-3 text-left font-medium">Status</th><th className="p-3 text-right font-medium">Actions</th></tr></thead>
                   <tbody>
                     {campaigns.map((c) => { const st = STATUSES[c.status] || STATUSES.draft; return (
@@ -469,8 +469,8 @@ function BroadcastPanel({ campaignId, campaign }: { campaignId: number; campaign
                 <p className="text-xs text-muted-foreground">Exclusions: {Object.entries(preview.exclusions).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(" · ")}</p>
               )}
               {showRecipients && (
-                <div className="border rounded-md max-h-64 overflow-y-auto">
-                  <table className="w-full text-sm">
+                <div className="border rounded-md max-h-64 overflow-auto">
+                  <table className="w-full text-sm min-w-[500px]">
                     <thead className="sticky top-0 bg-muted/80 backdrop-blur"><tr><th className="p-2 text-left font-medium">Name</th><th className="p-2 text-left font-medium">Type</th><th className="p-2 text-left font-medium">Contact</th><th className="p-2 text-left font-medium">Status</th></tr></thead>
                     <tbody>
                       {preview.recipients.slice(0, 200).map((r, i) => (

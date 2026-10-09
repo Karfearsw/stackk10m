@@ -333,7 +333,7 @@ export default function Contracts() {
                   </div>
                   <div className="flex gap-2">
                     <Button variant="outline" size="sm" asChild>
-                      <a href={`/contracts/${contract.id}`}><Eye className="w-4 h-4 mr-2" /> View</a>
+                      <a href={`/contracts/${contract.id}`}><Eye className="w-4 h-4 sm:mr-2" /> <span className="hidden sm:inline">View</span></a>
                     </Button>
                     {contract.archivedAt ? (
                       <Button
@@ -344,7 +344,7 @@ export default function Contracts() {
                         onClick={() => archiveMutation.mutate({ id: contract.id, archived: true })}
                         data-testid={`button-unarchive-contract-${contract.id}`}
                       >
-                        <ArchiveRestore className="w-4 h-4 mr-2" /> Unarchive
+                        <ArchiveRestore className="w-4 h-4 sm:mr-2" /> <span className="hidden sm:inline">Unarchive</span>
                       </Button>
                     ) : (
                       <Button
@@ -355,7 +355,7 @@ export default function Contracts() {
                         onClick={() => archiveMutation.mutate({ id: contract.id, archived: false })}
                         data-testid={`button-archive-contract-${contract.id}`}
                       >
-                        <Archive className="w-4 h-4 mr-2" /> Archive
+                        <Archive className="w-4 h-4 sm:mr-2" /> <span className="hidden sm:inline">Archive</span>
                       </Button>
                     )}
                     {confirmDeleteId === contract.id ? (

@@ -4,6 +4,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { Layout } from "@/components/layout/Layout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
@@ -27,11 +28,14 @@ function DealCard({
   deal,
   onOpen,
   onDragStart,
+  onMoveStage,
 }: {
   deal: DealCardData;
   onOpen: () => void;
   onDragStart: (e: React.DragEvent) => void;
+  onMoveStage: (id: number, stage: DispoStage) => void;
 }) {
+  const [showMoveMenu, setShowMoveMenu] = useState(false);
   return (
     <Card
       draggable
@@ -79,6 +83,37 @@ function DealCard({
               <Users className="h-3 w-3" />
               {deal.matchCount}
             </Badge>
+          )}
+        </div>
+        {/* Touch-friendly move action (drag-drop doesn't work on mobile) */}
+        <div className="relative pt-1 sm:hidden">
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-full text-xs"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowMoveMenu(!showMoveMenu);
+            }}
+          >
+            Move to…
+          </Button>
+          {showMoveMenu && (
+            <div className="absolute z-10 mt-1 w-full rounded-md border bg-background shadow-lg">
+              {DISPO_STAGES.filter((s) => s !== deal.stage).map((stage) => (
+                <button
+                  key={stage}
+                  className="block w-full px-3 py-2 text-left text-xs hover:bg-muted"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onMoveStage(deal.id, stage);
+                    setShowMoveMenu(false);
+                  }}
+                >
+                  {DISPO_STAGE_LABELS[stage]}
+                </button>
+              ))}
+            </div>
           )}
         </div>
       </CardContent>
@@ -200,6 +235,7 @@ function DispositionPageInner() {
                         );
                         e.dataTransfer.effectAllowed = "move";
                       }}
+                      onMoveStage={(id, stage) => moveStage.mutate({ id, stage })}
                     />
                   ))}
                 {!isLoading && columnDeals.length === 0 && (
