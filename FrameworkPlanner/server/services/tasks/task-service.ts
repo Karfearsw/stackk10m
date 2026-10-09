@@ -123,6 +123,42 @@ export async function onLeadCreated(input: { leadId: number; leadAddress: string
     isPrivate: false,
     createdBy: input.createdBy,
   });
+
+  // ── Speed-to-lead alert (0098): instant in-app + SMS to the assigned agent.
+  try {
+    const { fireSpeedToLeadAlert } = await import("../notifications/speedToLead.js");
+    await fireSpeedToLeadAlert({
+      leadId: input.leadId,
+      leadAddress: input.leadAddress,
+      assignedToUserId,
+      createdByUserId: input.createdBy,
+    });
+  } catch (e) {
+    console.error("[speed-to-lead] hook failed (non-blocking):", e);
+  }
+
+  // ── Skip-trace bottleneck fix (0098): auto-queue a free skip-trace job when
+  // the lead has no phone. Uses public-research/free providers first — $0.
+  try {
+    const lead: any = await storage.getLeadById(input.leadId);
+    const hasPhone = String(lead?.ownerPhone || "").replace(/\D/g, "").length >= 7;
+    if (!hasPhone) {
+      const { createSkipTraceJob, runSkipTraceJob } = await import("../skipTrace/orchestrator.js");
+      const job = await createSkipTraceJob({
+        entityType: "lead",
+        entityId: input.leadId,
+        mode: "public_research",
+        requestedByUserId: input.createdBy,
+      });
+      // Run async — don't block lead creation
+      runSkipTraceJob(job.id).catch((e: any) =>
+        console.error("[auto-skip-trace] job failed (non-blocking):", e?.message || e),
+      );
+      console.log(`[auto-skip-trace] queued job ${job.id} for phoneless lead ${input.leadId}`);
+    }
+  } catch (e) {
+    console.error("[auto-skip-trace] hook failed (non-blocking):", e);
+  }
 }
 
 export async function onLeadStatusChanged(input: {
@@ -155,6 +191,35 @@ export async function onLeadStatusChanged(input: {
       isPrivate: false,
       createdBy: input.actorUserId,
     });
+
+    // ── Auto buyer-matching (0097): the moment a lead qualifies, score every
+    // buyer and surface the top matches to the assigned agent. Non-blocking.
+    try {
+      const { matchBuyersToLead } = await import("../buyerMatch/matchLead.js");
+      const matches = await matchBuyersToLead(input.leadId, { minScore: 40, limit: 10 });
+      if (matches.length > 0) {
+        const top3 = matches.slice(0, 3)
+          .map((m) => `${m.buyerName} (${m.score})`)
+          .join(", ");
+        await createTask({
+          title: `Dispo: ${matches.length} buyer${matches.length === 1 ? "" : "s"} match ${input.leadAddress}`,
+          description: `Top matches: ${top3}${matches.length > 3 ? ` +${matches.length - 3} more` : ""}. Review in lead → buyer matches.`,
+          type: "disposition",
+          relatedEntityType: "lead",
+          relatedEntityId: input.leadId,
+          dueAt: new Date(Date.now() + 48 * 60 * 60 * 1000),
+          priority: matches[0].score >= 70 ? "high" : "medium",
+          status: "open",
+          assignedToUserId,
+          isRecurring: false,
+          recurrenceRule: null,
+          isPrivate: false,
+          createdBy: input.actorUserId,
+        });
+      }
+    } catch (e) {
+      console.error("[auto-buyer-match] failed (non-blocking):", e);
+    }
   }
 
   if (after === "under_contract") {

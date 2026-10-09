@@ -405,5 +405,32 @@ export function createInvestorRouter(deps: InvestorRouterDeps): Router {
  */
 export async function registerInvestorRoutes(app: Express): Promise<void> {
   const { db } = await import("../db.js");
-  app.use(createInvestorRouter({ store: drizzleInvestorStore(db as any) }));
+  const store = drizzleInvestorStore(db as any);
+  app.use(createInvestorRouter({ store }));
+  // Deal Matchroom phases 9–16 (each module owns its routes; all flag-gated
+  // by the same INVESTOR_PORTAL_ENABLED guard inside the routers).
+  try {
+    const { createBuyBoxRouter } = await import("./buybox.js");
+    app.use(createBuyBoxRouter({ store, db: db as any }));
+  } catch (e) {
+    console.error("[investor] buybox router mount failed:", e);
+  }
+  try {
+    const { createDiscoveryRouter } = await import("./discovery.js");
+    app.use(createDiscoveryRouter({ store, db: db as any }));
+  } catch (e) {
+    console.error("[investor] discovery router mount failed:", e);
+  }
+  try {
+    const { createDealRoomsRouter } = await import("./dealrooms.js");
+    app.use(createDealRoomsRouter({ db: db as any }));
+  } catch (e) {
+    console.error("[investor] dealrooms router mount failed:", e);
+  }
+  try {
+    const { createLockedUpRouter } = await import("./lockedup.js");
+    app.use(createLockedUpRouter({ store }));
+  } catch (e) {
+    console.error("[investor] lockedup router mount failed:", e);
+  }
 }

@@ -231,6 +231,25 @@ function isManagerUser(user: any) {
   const role = String(user?.role || "").toLowerCase();
   return !!user?.isSuperAdmin || role === "admin" || role === "manager" || role === "owner";
 }
+// P0 fix (audit IDOR): ownership check for by-ID endpoints. Managers/admins
+// see everything; everyone else must own the record (assignedTo / ownerUserId
+// / userId / createdBy — whichever the table uses). Returns true if allowed.
+function canAccessOwnedRecord(actor: any, record: any): boolean {
+  if (!actor || !record) return false;
+  if (isManagerUser(actor)) return true;
+  const actorId = Number(actor.id);
+  const ownerIds = [
+    (record as any).assignedTo,
+    (record as any).ownerUserId,
+    (record as any).owner_id,
+    (record as any).userId,
+    (record as any).user_id,
+    (record as any).createdBy,
+    (record as any).created_by,
+    (record as any).assignedToUserId,
+  ].map(Number).filter(Number.isFinite);
+  return ownerIds.includes(actorId);
+}
 function isAdminUser(user: any) {
   return isManagerUser(user);
 }
@@ -2802,6 +2821,27 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message, requestId });
     }
   });
+  // ── First-sign-in tutorial (0098): server-side tour state ──────────────────
+  reg("post", "/api/auth/tour/complete"); app.post("/api/auth/tour/complete", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      await db.execute(sql`UPDATE users SET tour_completed_at = now() WHERE id = ${user.id}`);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/auth/tour/skip"); app.post("/api/auth/tour/skip", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      await db.execute(sql`UPDATE users SET tour_skipped_at = now() WHERE id = ${user.id}`);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   // ---- In-app browser proxy: strips iframe-blocking headers ----
   const proxyRateLimit = new Map<number, { count: number; resetAt: number }>();
   reg("get", "/api/playground/proxy"); app.get("/api/playground/proxy", async (req, res) => {
@@ -3694,8 +3734,10 @@ export async function registerRoutes(
     try {
       const authCtx = await requireAuth(req, res);
       if (!authCtx) return;
-      const lead = await storage.getLeadById(parseInt(req.params.id));
+      const lead = await storage.getLeadById(parseInt(req.params.id)) as any;
       if (!lead) return res.status(404).json({ message: "Lead not found" });
+      // P0 fix (audit IDOR): non-managers can only read leads assigned to them.
+      if (!canAccessOwnedRecord(authCtx, lead)) return res.status(403).json({ message: "Forbidden" });
       res.json(lead);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -4990,6 +5032,66 @@ export async function registerRoutes(
         ...row,
         phones: parseJsonArrayText((row as any).phonesJson),
         emails: parseJsonArrayText((row as any).emailsJson),
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // ── Skip-trace bottleneck fix (0098): bulk backfill for phoneless leads ────
+  // Queues free public-research skip-trace jobs for leads without phones.
+  // Batched to avoid hammering providers; run repeatedly until the backlog clears.
+  reg("post", "/api/skip-trace/backfill"); app.post("/api/skip-trace/backfill", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!(await isFeatureEnabled(user.id, "skip_trace", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const batchSize = Math.min(Math.max(Number(req.body?.batchSize) || 50, 1), 200);
+      const mode = req.body?.mode === "provider" ? "provider" : "public_research";
+      // Find leads with no phone and no recent skip-trace job
+      const rows: any = await db.execute(sql`
+        SELECT l.id FROM leads l
+        WHERE (l.owner_phone IS NULL OR regexp_replace(l.owner_phone, '\\D', '', 'g') = '')
+          AND l.archived_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM skip_trace_jobs j
+            WHERE j.entity_type = 'lead' AND j.entity_id = l.id
+              AND j.created_at > now() - interval '7 days'
+          )
+        ORDER BY l.id ASC
+        LIMIT ${batchSize}
+      `);
+      const leadIds: number[] = ((rows as any).rows || []).map((r: any) => Number(r.id));
+      const { createSkipTraceJob, runSkipTraceJob } = await import("./services/skipTrace/orchestrator.js");
+      let queued = 0;
+      for (const leadId of leadIds) {
+        try {
+          const job = await createSkipTraceJob({
+            entityType: "lead",
+            entityId: leadId,
+            mode,
+            requestedByUserId: user.id,
+          });
+          queued++;
+          // Stagger execution — don't await, but add a small delay between kicks
+          setTimeout(() => {
+            runSkipTraceJob(job.id).catch((e: any) =>
+              console.error(`[backfill] job ${job.id} failed:`, e?.message || e));
+          }, queued * 2000);
+        } catch (e: any) {
+          console.error(`[backfill] queue failed for lead ${leadId}:`, e?.message || e);
+        }
+      }
+      // Count remaining backlog
+      const remaining: any = await db.execute(sql`
+        SELECT COUNT(*)::int AS c FROM leads l
+        WHERE (l.owner_phone IS NULL OR regexp_replace(l.owner_phone, '\\D', '', 'g') = '')
+          AND l.archived_at IS NULL
+      `);
+      res.json({
+        ok: true,
+        queued,
+        remainingBacklog: Number(((remaining as any).rows || [])[0]?.c || 0),
+        mode,
       });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -6522,6 +6624,33 @@ export async function registerRoutes(
       res.status(400).json({ message: error.message });
     }
   });
+  // ── Lead-to-buyer matching (0097) ─────────────────────────────────────────
+  reg("get", "/api/leads/:id/buyer-matches"); app.get("/api/leads/:id/buyer-matches", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const leadId = parseInt(req.params.id);
+      if (!Number.isFinite(leadId)) return res.status(400).json({ message: "Invalid lead id" });
+      const { getLeadBuyerMatches } = await import("./services/buyerMatch/matchLead.js");
+      const matches = await getLeadBuyerMatches(leadId);
+      res.json({ items: matches });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/leads/:id/buyer-matches/recompute"); app.post("/api/leads/:id/buyer-matches/recompute", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const leadId = parseInt(req.params.id);
+      if (!Number.isFinite(leadId)) return res.status(400).json({ message: "Invalid lead id" });
+      const { matchBuyersToLead } = await import("./services/buyerMatch/matchLead.js");
+      const matches = await matchBuyersToLead(leadId);
+      res.json({ ok: true, count: matches.length, matches: matches.slice(0, 10) });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
   reg("post", "/api/opportunities"); app.post("/api/opportunities", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -8047,6 +8176,13 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
         startedAt: startedAt ? new Date(startedAt) : new Date(),
         metadata: metadata ? JSON.stringify(metadata) : null as any,
       } as any);
+      // Speed-to-lead (0098): first outreach tracking
+      if (resolvedLeadId && Number.isFinite(resolvedLeadId)) {
+        try {
+          const { recordFirstOutreach } = await import("./services/notifications/speedToLead.js");
+          await recordFirstOutreach(resolvedLeadId, user.id);
+        } catch {}
+      }
       if (metadata && typeof metadata === "object") {
         const metaLeadId = (metadata as any).leadId ? Number((metadata as any).leadId) : null;
         const propertyId = (metadata as any).propertyId ? Number((metadata as any).propertyId) : null;
@@ -9210,6 +9346,12 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
           buyerId: buyerId,
           metadata: JSON.stringify(metaObj),
         } as any);
+        if (effectiveLeadId && Number.isFinite(effectiveLeadId)) {
+          try {
+            const { recordFirstOutreach } = await import("./services/notifications/speedToLead.js");
+            await recordFirstOutreach(effectiveLeadId, user.id);
+          } catch {}
+        }
         persistedMsgId = msg?.id ?? null;
       } catch (e) {
         console.error("SMS persistence failed (non-blocking):", e);
@@ -10220,8 +10362,10 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       const authCtx = await requireAuth(req, res);
       if (!authCtx) return;
       const id = parseInt(req.params.id);
-      const property = await storage.getPropertyById(id);
+      const property = await storage.getPropertyById(id) as any;
       if (!property) return res.status(404).json({ message: "Property not found" });
+      // P0 fix (audit IDOR): non-managers can only read properties they own.
+      if (!canAccessOwnedRecord(authCtx, property)) return res.status(403).json({ message: "Forbidden" });
       let lead: any = null;
       if (property.sourceLeadId) {
         try {
@@ -12717,9 +12861,24 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     try {
       const actor = await requireAuth(req, res);
       if (!actor) return;
-      const validated = insertUserSchema.parse(req.body);
+      const validated = insertUserSchema.parse(req.body) as any;
+      // P0 fix: only admins/managers may set privileged fields on user creation.
+      // A non-privileged actor creating a user with role:"admin" was a privilege escalation.
+      if (!isManagerUser(actor)) {
+        delete validated.role;
+        delete validated.isSuperAdmin;
+      }
+      // Never accept a raw passwordHash from the client — hash the plaintext password.
+      if (validated.password && !validated.passwordHash) {
+        validated.passwordHash = await bcrypt.hash(String(validated.password), 12);
+        delete validated.password;
+      } else {
+        delete validated.passwordHash;
+        delete validated.password;
+      }
       const user = await storage.createUser(validated);
-      res.status(201).json(user);
+      const { passwordHash, ...safe } = user as any;
+      res.status(201).json(safe);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
@@ -12763,7 +12922,21 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       if (!actor) return;
       const targetId = parseInt(req.params.id);
       if (!isSameUserOrAdmin(actor, targetId)) return res.status(403).json({ message: "Forbidden" });
-      const partial = insertUserSchema.partial().parse(req.body);
+      const partial = insertUserSchema.partial().parse(req.body) as any;
+      // P0 fix: non-privileged users may only edit their own non-privileged fields.
+      // Previously a user could PATCH themselves with role:"admin" / isSuperAdmin:true
+      // / passwordHash:"..." and escalate or hijack credentials.
+      if (!isManagerUser(actor)) {
+        delete partial.role;
+        delete partial.isSuperAdmin;
+        delete partial.passwordHash;
+        delete partial.password;
+      } else if (Number(actor.id) === targetId) {
+        // Even admins cannot change their own role/hash via this generic endpoint —
+        // use the dedicated password-change and admin-management flows.
+        delete partial.passwordHash;
+        delete partial.password;
+      }
       const user = await storage.updateUser(targetId, partial);
       // updateUser returns the full row (RETURNING *); strip password + multi-MB
       // payload columns from the response.
@@ -14189,6 +14362,62 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     return Number(task?.createdBy) === Number(user?.id) || Number(task?.assignedToUserId) === Number(user?.id);
   }
   // TASKS ENDPOINTS
+  // ── Notifications + speed-to-lead (0098) ──────────────────────────────────
+  reg("get", "/api/notifications"); app.get("/api/notifications", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { getUnreadNotifications, getUnreadCount } = await import("./services/notifications/speedToLead.js");
+      const [items, unreadCount] = await Promise.all([
+        getUnreadNotifications(user.id, 20),
+        getUnreadCount(user.id),
+      ]);
+      res.json({ items, unreadCount });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/notifications/:id/read"); app.post("/api/notifications/:id/read", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { markNotificationRead } = await import("./services/notifications/speedToLead.js");
+      await markNotificationRead(user.id, parseInt(req.params.id));
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/notifications/read-all"); app.post("/api/notifications/read-all", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { markAllNotificationsRead } = await import("./services/notifications/speedToLead.js");
+      await markAllNotificationsRead(user.id);
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("get", "/api/speed-to-lead/stats"); app.get("/api/speed-to-lead/stats", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { getSpeedToLeadStats } = await import("./services/notifications/speedToLead.js");
+      const teamId = await getOrInitActiveTeamId(req, user.id);
+      let memberIds: number[] = [user.id];
+      try {
+        if (teamId) {
+          const members: any = await storage.getTeamMembers(teamId);
+          memberIds = (members || []).map((m: any) => Number(m.userId)).filter(Number.isFinite);
+        }
+      } catch {}
+      const stats = await getSpeedToLeadStats(memberIds);
+      res.json(stats);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   reg("get", "/api/tasks"); app.get("/api/tasks", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
@@ -15137,8 +15366,13 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
   // TIMESHEET ENTRIES ENDPOINTS
   reg("get", "/api/users/:userId/timesheet"); app.get("/api/users/:userId/timesheet", async (req, res) => {
     try {
+      // P0 fix: this endpoint had no auth — anyone could read any user's hours/pay.
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const targetUserId = parseInt(req.params.userId);
+      if (!isSameUserOrAdmin(actor, targetUserId)) return res.status(403).json({ message: "Forbidden" });
       const { limit, offset } = parseLimitOffset(req.query);
-      const entries = await storage.getTimesheetEntries(parseInt(req.params.userId), limit, offset);
+      const entries = await storage.getTimesheetEntries(targetUserId, limit, offset);
       res.json(entries);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -15146,8 +15380,12 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
   });
   reg("get", "/api/timesheet/:id"); app.get("/api/timesheet/:id", async (req, res) => {
     try {
-      const entry = await storage.getTimesheetEntryById(parseInt(req.params.id));
+      // P0 fix: this endpoint had no auth — anyone could read any timesheet entry.
+      const actor = await requireAuth(req, res);
+      if (!actor) return;
+      const entry = await storage.getTimesheetEntryById(parseInt(req.params.id)) as any;
       if (!entry) return res.status(404).json({ message: "Entry not found" });
+      if (!isSameUserOrAdmin(actor, Number(entry.userId))) return res.status(403).json({ message: "Forbidden" });
       res.json(entry);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -15809,8 +16047,10 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      const buyer = await storage.getBuyerById(parseInt(req.params.id));
+      const buyer = await storage.getBuyerById(parseInt(req.params.id)) as any;
       if (!buyer) return res.status(404).json({ message: "Buyer not found" });
+      // P0 fix (audit IDOR): non-managers can only read buyers they own.
+      if (!canAccessOwnedRecord(user, buyer)) return res.status(403).json({ message: "Forbidden" });
       res.json(buyer);
     } catch (error: any) {
       res.status(500).json({ message: error.message });

@@ -314,7 +314,7 @@ function PropertyForm({
           Property Images
         </h3>
         
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           {formData.images.map((img, index) => (
             <div key={index} className="relative group aspect-video">
               <img
@@ -349,7 +349,7 @@ function PropertyForm({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="col-span-2 space-y-2">
           <Label htmlFor="addressSearch">Address Search</Label>
           <Input
@@ -621,7 +621,7 @@ function PropertyForm({
             <Building2 className="h-4 w-4" />
             Commercial / Income Details
           </h3>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="noi">Net Operating Income ($/yr)</Label>
               <Input
@@ -1162,7 +1162,7 @@ export default function Opportunities() {
                       ) : null}
                     </div>
                   )}
-                  <div className="grid grid-cols-3 gap-2 text-sm">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
                     <div>
                       <p className="text-muted-foreground">Beds</p>
                       <p className="font-medium">{prop.beds || "—"}</p>

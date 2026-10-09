@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { X, ChevronRight, ChevronLeft, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -53,25 +54,44 @@ export function OnboardingTour() {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
 
-  useEffect(() => {
-    try {
-      const done = localStorage.getItem(STORAGE_KEY);
-      if (!done) {
-        // Small delay so the dashboard renders first
-        const t = setTimeout(() => setOpen(true), 1200);
-        return () => clearTimeout(t);
-      }
-    } catch {
-      // localStorage unavailable — don't block
-    }
-  }, []);
+  // Server-side tour state (0098): follows the user across devices.
+  // Falls back to localStorage for signed-out / legacy state.
+  const { data: me } = useQuery<any>({ queryKey: ["/api/auth/me"] });
 
-  const complete = () => {
+  useEffect(() => {
+    const serverDone = me && (me.tourCompletedAt || me.tourSkippedAt);
+    if (me && serverDone) return; // already toured — never auto-open
+    if (me && !serverDone) {
+      const t = setTimeout(() => setOpen(true), 1200);
+      return () => clearTimeout(t);
+    }
+    // me not loaded yet — check legacy localStorage only as a fallback
+    if (!me) {
+      try {
+        if (localStorage.getItem(STORAGE_KEY)) return;
+      } catch { /* ignore */ }
+    }
+  }, [me]);
+
+  const persistDone = async (skipped: boolean) => {
     try {
       localStorage.setItem(STORAGE_KEY, "1");
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
+    try {
+      await fetch(skipped ? "/api/auth/tour/skip" : "/api/auth/tour/complete", {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch { /* non-blocking */ }
+  };
+
+  const complete = () => {
+    persistDone(false);
+    setOpen(false);
+  };
+
+  const skip = () => {
+    persistDone(true);
     setOpen(false);
   };
 
@@ -106,7 +126,7 @@ export function OnboardingTour() {
               Step {step + 1} of {TOUR_STEPS.length}
             </span>
           </div>
-          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={complete}>
+          <Button variant="ghost" size="icon" className="h-6 w-6" onClick={skip} aria-label="Skip tour">
             <X className="h-4 w-4" />
           </Button>
         </div>

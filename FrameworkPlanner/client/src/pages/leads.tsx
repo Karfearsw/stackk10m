@@ -61,6 +61,7 @@ import { LeadPipelineCard } from "@/components/pipeline/LeadPipelineCard";
 import { EntityActivity } from "@/components/activity/EntityActivity";
 import { EntityTasksWidget } from "@/components/tasks/EntityTasksWidget";
 import { LeadNotesList } from "@/components/leads/LeadNotesList";
+import { LeadMatchedBuyers } from "@/components/leads/LeadMatchedBuyers";
 import { CrmImportExportDialog } from "@/components/crm/CrmImportExportDialog";
 import { SkipTraceJobPanel } from "@/components/skipTrace/SkipTraceJobPanel";
 import { VoiceActionDialog } from "@/components/leads/VoiceActionDialog";
@@ -1577,7 +1578,7 @@ export default function Leads() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-2">
                     <Label>Created From</Label>
                     <Input type="date" value={filters.createdFrom} onChange={(e) => setFilters((prev: any) => ({ ...prev, createdFrom: e.target.value }))} />
@@ -1588,7 +1589,7 @@ export default function Leads() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-2">
                     <Label>Last Touch From</Label>
                     <Input type="date" value={filters.lastTouchFrom} onChange={(e) => setFilters((prev: any) => ({ ...prev, lastTouchFrom: e.target.value }))} />
@@ -1599,7 +1600,7 @@ export default function Leads() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-2">
                     <Label>Next Follow-up From</Label>
                     <Input type="date" value={filters.nextFollowUpFrom} onChange={(e) => setFilters((prev: any) => ({ ...prev, nextFollowUpFrom: e.target.value }))} />
@@ -2428,6 +2429,10 @@ export default function Leads() {
               <EntityTasksWidget entityType="lead" entityId={selectedLead.id} />
 
               <div>
+                <LeadMatchedBuyers leadId={selectedLead.id} />
+              </div>
+
+              <div>
                 <LeadNotesList leadId={selectedLead.id} />
               </div>
 
@@ -2637,7 +2642,7 @@ export default function Leads() {
               <div className="border-t pt-4">
                 <div className="text-sm font-medium mb-2">Consent & Do Not Contact</div>
                 <p className="text-xs text-muted-foreground mb-3">Campaigns only send to opted-in recipients. Do Not Call hard-suppresses every channel.</p>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <label className="flex items-center gap-2 text-sm">
                     <Checkbox checked={!!editingLead?.smsConsent} onCheckedChange={(v) => setEditingLead({ ...editingLead, smsConsent: !!v })} data-testid="checkbox-sms-consent" />
                     SMS consent

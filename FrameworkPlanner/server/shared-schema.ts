@@ -40,6 +40,9 @@ export const leads = pgTable("leads", {
   dedupeKey: varchar("dedupe_key", { length: 400 }),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+  // Speed-to-lead (0098): first outreach tracking
+  firstOutreachAt: timestamp("first_outreach_at", { withTimezone: true }),
+  firstOutreachBy: integer("first_outreach_by"),
 });
 
 export const insertLeadSchema = createInsertSchema(leads).omit({ id: true, createdAt: true, updatedAt: true } as any);
@@ -1000,6 +1003,9 @@ export const users = pgTable("users", {
   isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
+  // First-sign-in tutorial (0098): server-side tour state
+  tourCompletedAt: timestamp("tour_completed_at", { withTimezone: true }),
+  tourSkippedAt: timestamp("tour_skipped_at", { withTimezone: true }),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true, updatedAt: true } as any);
@@ -2759,3 +2765,30 @@ export const onboardingChecklist = pgTable("onboarding_checklist", {
 });
 
 export type OnboardingChecklistRow = typeof onboardingChecklist.$inferSelect;
+
+export const leadBuyerMatches = pgTable("lead_buyer_matches", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  leadId: integer("lead_id").notNull(),
+  buyerId: integer("buyer_id").notNull(),
+  score: integer("score").notNull().default(0),
+  reasons: jsonb("reasons").notNull().default(sql`'[]'::jsonb`),
+  notifiedAt: timestamp("notified_at", { withTimezone: true }),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type LeadBuyerMatch = typeof leadBuyerMatches.$inferSelect;
+export type InsertLeadBuyerMatch = typeof leadBuyerMatches.$inferInsert;
+
+export const notifications = pgTable("notifications", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  type: varchar("type", { length: 50 }).notNull().default("info"),
+  title: varchar("title", { length: 255 }).notNull(),
+  body: text("body"),
+  entityType: varchar("entity_type", { length: 50 }),
+  entityId: integer("entity_id"),
+  isRead: boolean("is_read").notNull().default(false),
+  readAt: timestamp("read_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type Notification = typeof notifications.$inferSelect;
+export type InsertNotification = typeof notifications.$inferInsert;

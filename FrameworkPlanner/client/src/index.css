@@ -32,6 +32,15 @@
   
   --color-destructive: hsl(var(--destructive));
   --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  /* Ocean Luxe identity tokens (Phase 8) */
+  --color-oxblood: hsl(var(--oxblood));
+  --color-oxblood-foreground: hsl(var(--oxblood-foreground));
+  --color-verified: hsl(var(--verified));
+  --color-verified-foreground: hsl(var(--verified-foreground));
+  --color-obsidian: hsl(var(--obsidian));
+  --color-pearl: hsl(var(--pearl));
+  --color-ocean-gold: hsl(var(--ocean-gold));
   
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
@@ -90,6 +99,15 @@
   --destructive: 0 84% 50%;
   --destructive-foreground: 0 0% 100%;
 
+  /* Ocean Luxe identity (Phase 8) — restrained semantic colors */
+  --oxblood: 345 45% 32%;
+  --oxblood-foreground: 0 0% 100%;
+  --verified: 150 35% 38%;
+  --verified-foreground: 0 0% 100%;
+  --obsidian: 0 0% 5%;
+  --pearl: 40 20% 97%;
+  --ocean-gold: 46 65% 52%;
+
   --border: 0 0% 90%;
   --input: 0 0% 93%;
   --ring: 46 65% 52%;
@@ -139,6 +157,15 @@
 
   --destructive: 0 84% 55%;
   --destructive-foreground: 0 0% 100%;
+
+  /* Ocean Luxe identity (Phase 8) — restrained semantic colors */
+  --oxblood: 345 40% 38%;
+  --oxblood-foreground: 0 0% 100%;
+  --verified: 150 30% 42%;
+  --verified-foreground: 0 0% 100%;
+  --obsidian: 0 0% 5%;
+  --pearl: 40 15% 96%;
+  --ocean-gold: 46 65% 56%;
 
   --border: 0 0% 20%;
   --input: 0 0% 18%;

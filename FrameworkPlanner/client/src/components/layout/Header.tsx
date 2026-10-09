@@ -21,10 +21,34 @@ import { ThemeToggle } from "@/components/system/ThemeToggle";
 
 interface NotificationItem {
   id: number;
+  type: string;
   title: string;
-  description: string | null;
-  read: boolean;
-  createdAt: string;
+  body: string | null;
+  description?: string | null;
+  entity_type?: string | null;
+  entityType?: string | null;
+  entity_id?: number | null;
+  entityId?: number | null;
+  read?: boolean;
+  is_read?: boolean;
+  created_at?: string;
+  createdAt?: string;
+}
+
+function notifRead(n: NotificationItem): boolean {
+  return n.read ?? n.is_read ?? false;
+}
+function notifBody(n: NotificationItem): string | null {
+  return n.body ?? n.description ?? null;
+}
+function notifTime(n: NotificationItem): string {
+  return n.createdAt ?? n.created_at ?? new Date().toISOString();
+}
+function notifEntity(n: NotificationItem): { type: string | null; id: number | null } {
+  return {
+    type: n.entityType ?? n.entity_type ?? null,
+    id: n.entityId ?? n.entity_id ?? null,
+  };
 }
 
 function useCurrentDateTime() {
@@ -90,29 +114,46 @@ export function Header() {
     requestAnimationFrame(() => searchInputRef.current?.focus());
   };
 
-  const { data: notifications = [] } = useQuery<NotificationItem[]>({
-    queryKey: [`/api/users/${user?.id}/notifications?limit=10`],
+  const { data: notifData } = useQuery<{ items: NotificationItem[]; unreadCount: number }>({
+    queryKey: ["/api/notifications"],
     enabled: !!user?.id,
+    refetchInterval: 30000,
   });
-
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const notifications = notifData?.items || [];
+  const unreadCount = notifData?.unreadCount ?? notifications.filter(n => !n.read).length;
 
   const markAllAsRead = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/users/${user?.id}/notifications/read-all`, {
-        method: "PATCH",
+      const res = await fetch(`/api/notifications/read-all`, {
+        method: "POST",
         credentials: "include",
       });
       if (!res.ok) throw new Error(await res.text());
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/users/${user?.id}/notifications?limit=10`] });
-      queryClient.invalidateQueries({ queryKey: [`/api/users/${user?.id}/notifications`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/notifications"] });
     },
   });
 
+  const markOneRead = useMutation({
+    mutationFn: async (id: number) => {
+      const res = await fetch(`/api/notifications/${id}/read`, { method: "POST", credentials: "include" });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/notifications"] }),
+  });
+
+  const openNotification = (n: NotificationItem) => {
+    markOneRead.mutate(n.id);
+    const { type, id } = notifEntity(n);
+    if (type === "lead" && id) setLocation(`/leads?highlight=${id}`);
+    else setLocation("/notifications");
+  };
+
   const formatTime = (dateString: string) => {
+    if (!dateString) return "";
     const date = new Date(dateString);
     const now = new Date();
     const diffMs = now.getTime() - date.getTime();
@@ -274,16 +315,16 @@ export function Header() {
                 notifications.slice(0, 10).map((n) => (
                   <button
                     key={n.id}
-                    className={`w-full text-left px-4 py-3 border-b hover:bg-muted/40 ${n.read ? "" : "bg-primary/5"}`}
-                    onClick={() => setLocation("/notifications")}
+                    className={`w-full text-left px-4 py-3 border-b hover:bg-muted/40 ${notifRead(n) ? "" : "bg-primary/5"}`}
+                    onClick={() => openNotification(n)}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="text-sm font-medium truncate">{n.title}</div>
-                        {n.description && <div className="text-xs text-muted-foreground truncate mt-0.5">{n.description}</div>}
-                        <div className="text-xs text-muted-foreground mt-1">{formatTime(n.createdAt)}</div>
+                        {notifBody(n) && <div className="text-xs text-muted-foreground truncate mt-0.5">{notifBody(n)}</div>}
+                        <div className="text-xs text-muted-foreground mt-1">{formatTime(notifTime(n))}</div>
                       </div>
-                      {!n.read && <div className="mt-1 h-2 w-2 rounded-full bg-primary" />}
+                      {!notifRead(n) && <div className="mt-1 h-2 w-2 rounded-full bg-primary" />}
                     </div>
                   </button>
                 ))

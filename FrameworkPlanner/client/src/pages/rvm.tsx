@@ -202,7 +202,7 @@ export default function RvmPage() {
               <Label>Name</Label>
               <Input value={newCampaignName} onChange={(e) => setNewCampaignName(e.target.value)} placeholder="RVM Campaign name" />
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <div className="grid gap-2">
                 <Label>Start</Label>
                 <Input value={sendWindowStart} onChange={(e) => setSendWindowStart(e.target.value)} placeholder="09:00" />
@@ -268,16 +268,16 @@ export default function RvmPage() {
             </Button>
 
             {!!drops.length && (
-              <div className="border rounded-md p-3 text-sm space-y-2">
+              <div className="border rounded-md p-3 text-sm space-y-2 overflow-x-auto">
                 <div className="font-medium">Recent Drops</div>
-                <div className="grid grid-cols-4 gap-2 text-xs text-muted-foreground">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-muted-foreground min-w-[480px] md:min-w-0">
                   <div>Lead</div>
                   <div>To</div>
                   <div>Status</div>
                   <div>When</div>
                 </div>
                 {drops.slice(0, 50).map((d: any) => (
-                  <div key={String(d.id)} className="grid grid-cols-4 gap-2">
+                  <div key={String(d.id)} className="grid grid-cols-2 md:grid-cols-4 gap-2 min-w-[480px] md:min-w-0">
                     <div>{String(d.leadId ?? d.lead_id ?? "")}</div>
                     <div className="truncate">{String(d.toNumber ?? d.to_number ?? "") || "—"}</div>
                     <div>{String(d.status || "—")}</div>
