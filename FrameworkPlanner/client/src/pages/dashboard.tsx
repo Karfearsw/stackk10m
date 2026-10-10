@@ -539,8 +539,8 @@ export default function Dashboard() {
                         )
                       }
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-sm font-medium truncate">{l.address || "Lead"}</div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm font-medium line-clamp-2">{l.address || "Lead"}</div>
                         <div className="text-xs text-muted-foreground">{formatTimeAgo(l.lastTouchAt || null)}</div>
                       </div>
                       <div className="text-xs text-muted-foreground truncate">{[l.city, l.state].filter(Boolean).join(", ")}</div>
@@ -569,8 +569,8 @@ export default function Dashboard() {
                       className="w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted/50"
                       onClick={() => setLocation(`/today`)}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-sm font-medium truncate">{t.title || "Task"}</div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm font-medium line-clamp-2">{t.title || "Task"}</div>
                         <div className="text-xs text-muted-foreground">{t.dueAt ? new Date(t.dueAt).toLocaleDateString() : ""}</div>
                       </div>
                       <div className="text-xs text-muted-foreground truncate">Overdue</div>
@@ -599,8 +599,8 @@ export default function Dashboard() {
                       className="w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted/50"
                       onClick={() => setLocation(`/today`)}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-sm font-medium truncate">{t.title || "Follow-up"}</div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm font-medium line-clamp-2">{t.title || "Follow-up"}</div>
                         <div className="text-xs text-muted-foreground">{t.dueAt ? formatTimeAgo(t.dueAt) : ""}</div>
                       </div>
                       <div className="text-xs text-muted-foreground truncate">{String(t.type || "").replaceAll("_", " ")}</div>
@@ -635,8 +635,8 @@ export default function Dashboard() {
                         className="w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted/50"
                         onClick={() => setLocation(`/contracts/${c.id}`)}
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="text-sm font-medium truncate">{c.title || "Contract"}</div>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="text-sm font-medium line-clamp-2">{c.title || "Contract"}</div>
                           <Badge variant="outline" className="shrink-0">{days === 0 ? "Today" : `${days}d left`}</Badge>
                         </div>
                         <div className="text-xs text-muted-foreground truncate">Expires {new Date(c.expiresAt).toLocaleDateString()}</div>
@@ -670,8 +670,8 @@ export default function Dashboard() {
                       className="w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted/50"
                       onClick={() => setLocation(`/contracts/${c.id}`)}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-sm font-medium truncate">{c.title || "Contract"}</div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm font-medium line-clamp-2">{c.title || "Contract"}</div>
                         <Badge variant="destructive" className="shrink-0 capitalize">{String(c.status || "expired")}</Badge>
                       </div>
                       <div className="text-xs text-muted-foreground truncate">Expired {new Date(c.expiresAt).toLocaleDateString()}</div>
@@ -704,8 +704,8 @@ export default function Dashboard() {
                       className="w-full rounded-md border border-border px-2 py-2 text-left hover:bg-muted/50"
                       onClick={() => setLocation(`/contracts?tab=list&statusIn=draft,sent,executed`)}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="text-sm font-medium truncate">{c.title || "Contract"}</div>
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm font-medium line-clamp-2">{c.title || "Contract"}</div>
                         <Badge variant="outline" className="capitalize">{String(c.status || "")}</Badge>
                       </div>
                       <div className="text-xs text-muted-foreground truncate">{c.documentType || "contract"}</div>
@@ -909,7 +909,7 @@ export default function Dashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="text-center p-4 bg-muted/30 rounded-lg min-w-0">
                 <p className="text-3xl font-bold break-words">{properties.length}</p>
                 <p className="text-sm text-muted-foreground">Total Properties</p>
