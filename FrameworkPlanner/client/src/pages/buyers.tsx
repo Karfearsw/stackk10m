@@ -728,15 +728,15 @@ export default function Buyers() {
   return (
     <Layout>
       <div className="flex flex-col gap-2 mb-4">
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="min-w-0">
             <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2" data-testid="page-title">
               <Users className="h-8 w-8 text-primary" />
               Cash Buyers CRM
             </h1>
             <p className="text-muted-foreground">Manage your buyer relationships and track deals</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-shrink-0">
             <CrmImportExportDialog entityType="buyer" />
             <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
               <DialogTrigger asChild>

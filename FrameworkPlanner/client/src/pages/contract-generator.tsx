@@ -322,7 +322,7 @@ function ContractCreator({ templates, properties, initialPropertyId, selectedTem
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="template">Template (Optional)</Label>
               <Select value={selectedTemplateId} onValueChange={onTemplateChange}>
@@ -402,7 +402,7 @@ function ContractCreator({ templates, properties, initialPropertyId, selectedTem
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="purchasePrice">Purchase Price</Label>
               <Input
@@ -677,7 +677,7 @@ function TemplatesManager({ templates, isLoading, onUseTemplate }: { templates: 
           <div className="flex-1 overflow-auto space-y-4">
             {editing ? (
               <>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Name</Label>
                     <Input value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} disabled={editing.status === "approved"} />
@@ -754,7 +754,7 @@ function TemplateCreator({ onClose }: { onClose: () => void }) {
   return (
     <form onSubmit={handleSubmit} className="space-y-4 p-4 bg-accent/5 rounded-lg mb-4">
       <h3 className="font-semibold text-lg">Create New Template</h3>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="template-name">Template Name</Label>
           <Input
@@ -958,7 +958,7 @@ function LOICreator({ properties, onClose }: { properties: any[], onClose: () =>
   return (
     <form onSubmit={handleSubmit} className="space-y-4 p-4 bg-accent/5 rounded-lg mb-4">
       <h3 className="font-semibold text-lg">Create New LOI</h3>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="loi-property">Property</Label>
           <Select value={formData.propertyId} onValueChange={(value) => setFormData({ ...formData, propertyId: value })} required>
@@ -1570,7 +1570,7 @@ function ClosingModule({ contracts, properties }: { contracts: any[], properties
             </div>
           ) : (
             <div className="space-y-6">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Assignment Fee</Label>
                   <Input

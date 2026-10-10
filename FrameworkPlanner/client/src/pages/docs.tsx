@@ -290,7 +290,7 @@ export default function DocsPage() {
                     <Label>Title</Label>
                     <Input value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} placeholder="Page title" />
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <Label>Category</Label>
                       <Select value={draft.categoryId || "none"} onValueChange={(v) => setDraft({ ...draft, categoryId: v === "none" ? "" : v })}>

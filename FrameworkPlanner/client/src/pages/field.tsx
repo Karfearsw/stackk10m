@@ -226,7 +226,7 @@ export default function FieldModePage() {
               <Label>Address</Label>
               <Input value={leadDraft.address} onChange={(e) => setLeadDraft((p: any) => ({ ...p, address: e.target.value }))} placeholder="123 Main St" />
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div className="grid gap-2">
                 <Label>City</Label>
                 <Input value={leadDraft.city} onChange={(e) => setLeadDraft((p: any) => ({ ...p, city: e.target.value }))} placeholder="Tampa" />
@@ -236,7 +236,7 @@ export default function FieldModePage() {
                 <Input value={leadDraft.state} onChange={(e) => setLeadDraft((p: any) => ({ ...p, state: e.target.value }))} placeholder="FL" />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div className="grid gap-2">
                 <Label>Zip</Label>
                 <Input value={leadDraft.zipCode} onChange={(e) => setLeadDraft((p: any) => ({ ...p, zipCode: e.target.value }))} placeholder="33602" />
@@ -246,7 +246,7 @@ export default function FieldModePage() {
                 <Input value={leadDraft.ownerName} onChange={(e) => setLeadDraft((p: any) => ({ ...p, ownerName: e.target.value }))} placeholder="Owner name" />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div className="grid gap-2">
                 <Label>Owner phone</Label>
                 <Input value={leadDraft.ownerPhone} onChange={(e) => setLeadDraft((p: any) => ({ ...p, ownerPhone: e.target.value }))} placeholder="(555) 555-5555" />
@@ -308,7 +308,7 @@ export default function FieldModePage() {
             <CardTitle>Quick Actions</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div className="grid gap-2">
                 <Label>Lead ID</Label>
                 <Input value={actionLeadId} onChange={(e) => setActionLeadId(e.target.value)} placeholder="123" />

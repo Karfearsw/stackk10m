@@ -493,7 +493,7 @@ export default function ContractWizard() {
                 <div className="min-w-0"><span className="text-muted-foreground">Seller:</span> <span className="break-words">{selectedSeller?.name || "—"}</span></div>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Purchase Price</Label>
                 <Input type="number" value={form.purchasePrice} onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })} placeholder="150000" />
