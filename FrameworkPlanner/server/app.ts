@@ -633,6 +633,11 @@ await pool.query(`
   const { registerSequenceRoutes } = await import("./routes/sequences.js");
   registerSequenceRoutes(app);
   // TICKET-14-END
+  // SIGNALS-PHASE1 (municipal distress-signal ingestion): parcel timeline API.
+  // Mounted outside registerRoutes to avoid conflicts with parallel work.
+  const { registerSignalRoutes } = await import("./routes/signals.js");
+  registerSignalRoutes(app);
+  // SIGNALS-PHASE1-END
 
   const isServerless = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
 

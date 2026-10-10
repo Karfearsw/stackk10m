@@ -27,6 +27,10 @@ registerEsignRoutes(app);
 const { registerSequenceRoutes } = await import("./routes/sequences.js");
 registerSequenceRoutes(app);
 
+// SIGNALS-PHASE1: municipal distress-signal ingestion API (production bundle).
+import { registerSignalRoutes } from "./routes/signals.js";
+registerSignalRoutes(app);
+
 installErrorHandling(app);
 
 // Export the Express app as a Vercel Serverless Function

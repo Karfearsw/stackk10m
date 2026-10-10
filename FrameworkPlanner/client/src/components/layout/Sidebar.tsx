@@ -27,6 +27,7 @@ import {
   CalendarCheck2,
   Ticket,
   Zap,
+  AlertTriangle,
   ScrollText,
   FileSignature,
   PenLine,
@@ -128,6 +129,8 @@ const menuGroups = [
       { name: "Audit Log", href: "/audit-log", icon: ScrollText },
       { name: "Audit", href: "/audit", icon: Shield },
       { name: "Calculator", href: "/calculator", icon: Calculator },
+      // SIGNALS-PHASE1: municipal distress-signal ingestion.
+      { name: "Signals", href: "/signals", icon: AlertTriangle },
       // Research lab for real-estate deal analysis (underwriting workspace).
       { name: "Research Lab", href: "/playground", icon: FlaskConical },
     ],

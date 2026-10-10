@@ -38,6 +38,8 @@ const OnboardingDocsSettings = React.lazy(() => import("@/pages/settings/onboard
 const ApiKeys = React.lazy(() => import("@/pages/api-keys"));
 const AdminInvestors = React.lazy(() => import("@/pages/admin-investors"));
 const Calculator = React.lazy(() => import("@/pages/calculator"));
+// SIGNALS-PHASE1: municipal distress-signal ingestion UI.
+const Signals = React.lazy(() => import("@/pages/signals"));
 // TICKET-14 (feat/ticket-14-followup-sequences): Follow-up sequences page.
 const Sequences = React.lazy(() => import("@/pages/sequences"));
 const Timesheet = React.lazy(() => import("@/pages/timesheet"));
@@ -202,6 +204,8 @@ function Router() {
       <Route path="/settings/email-provisioning" component={() => <ProtectedRoute component={EmailProvisioningSettings} />} />
       <Route path="/settings/onboarding-docs" component={() => <ProtectedRoute component={OnboardingDocsSettings} />} />
       <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
+      {/* SIGNALS-PHASE1: distress signals */}
+      <Route path="/signals" component={() => <ProtectedRoute component={Signals} />} />
       {/* TICKET-14: Follow-up sequences */}
       <Route path="/sequences" component={() => <ProtectedRoute component={Sequences} />} />
       <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />

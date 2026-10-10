@@ -1023,3 +1023,68 @@ export type InsertDocsCategory = z.infer<typeof insertDocsCategorySchema>;
 export const insertDocsPageSchema = createInsertSchema(docsPages).omit({ id: true, createdAt: true } as any);
 export type DocsPage = typeof docsPages.$inferSelect;
 export type InsertDocsPage = z.infer<typeof insertDocsPageSchema>;
+
+// ── Municipal distress signals (Phase 1: free-tool build plan) ──
+// Stack code violations, tax delinquency, vacancy, court filings, permits,
+// water shutoffs, fire damage, evictions on a parcel key for timeline view.
+
+export const SIGNAL_TYPES = [
+  "code_violation",
+  "tax_delinquent",
+  "vacancy",
+  "court_filing",
+  "permit",
+  "water_shutoff",
+  "fire_damage",
+  "eviction",
+  "probate",
+  "lien",
+] as const;
+export type SignalType = (typeof SIGNAL_TYPES)[number];
+
+export const SIGNAL_SEVERITIES = ["info", "watch", "alert", "critical"] as const;
+export type SignalSeverity = (typeof SIGNAL_SEVERITIES)[number];
+
+export const parcelWatchlist = pgTable("parcel_watchlist", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  parcelKey: varchar("parcel_key", { length: 400 }).notNull().unique(),
+  address: varchar("address", { length: 255 }).notNull(),
+  city: varchar("city", { length: 100 }).notNull(),
+  state: varchar("state", { length: 2 }).notNull(),
+  zipCode: varchar("zip_code", { length: 10 }).notNull(),
+  apn: varchar("apn", { length: 100 }),
+  ownerName: varchar("owner_name", { length: 255 }),
+  notes: text("notes"),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export type ParcelWatchlist = typeof parcelWatchlist.$inferSelect;
+export type InsertParcelWatchlist = typeof parcelWatchlist.$inferInsert;
+
+export const distressSignals = pgTable("distress_signals", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  parcelKey: varchar("parcel_key", { length: 400 }).notNull(),
+  watchlistId: integer("watchlist_id"),
+  leadId: integer("lead_id"),
+  signalType: varchar("signal_type", { length: 50 }).notNull(),
+  severity: varchar("severity", { length: 20 }).notNull().default("info"),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  source: varchar("source", { length: 100 }).notNull(),
+  sourceUrl: text("source_url"),
+  occurredAt: date("occurred_at"),
+  discoveredAt: timestamp("discovered_at").defaultNow(),
+  rawData: jsonb("raw_data"),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export type DistressSignal = typeof distressSignals.$inferSelect;
+export type InsertDistressSignal = typeof distressSignals.$inferInsert;
+
+/** Normalize address parts into a dedupe-friendly parcel key. */
+export function parcelKeyFor(address: string, city: string, state: string, zip: string): string {
+  const norm = (s: string) =>
+    s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
+  return `${norm(address)}|${norm(city)}|${norm(state)}|${norm(zip.replace(/[^0-9]/g, "").slice(0, 5))}`;
+}
