@@ -8,7 +8,7 @@
  */
 import React, { Suspense } from "react";
 import { Switch, Route, Redirect } from "wouter";
-import { LogoLoader } from "@/components/system/LogoLoader";
+import { HouseLogoLoader } from "@/components/system/HouseLogoLoader";
 import NotFound from "@/pages/not-found";
 import { usePortalEnabled } from "./api";
 import { RequireInvestor } from "./InvestorLayout";
@@ -31,7 +31,7 @@ const ContractWorkspacePage = React.lazy(() => import("./contracts/ContractWorks
 function Fallback() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#000000]">
-      <LogoLoader size={72} />
+      <HouseLogoLoader size={100} />
     </div>
   );
 }

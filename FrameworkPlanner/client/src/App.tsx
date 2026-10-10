@@ -9,7 +9,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { AppErrorBoundary } from "@/components/system/AppErrorBoundary";
 import { ThemeProvider } from "next-themes";
-import { LogoLoader } from "@/components/system/LogoLoader";
+import { HouseLogoLoader } from "@/components/system/HouseLogoLoader";
 import NotFound from "@/pages/not-found";
 import Login from "@/pages/login";
 import Signup from "@/pages/signup";
@@ -89,7 +89,7 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <LogoLoader size={72} />
+        <HouseLogoLoader size={100} />
       </div>
     );
   }
@@ -99,7 +99,7 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   }
 
   return (
-    <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+    <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><HouseLogoLoader size={100} /></div>}>
       <Component />
     </Suspense>
   );
@@ -112,7 +112,7 @@ function Router() {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <LogoLoader size={72} />
+        <HouseLogoLoader size={100} />
       </div>
     );
   }
@@ -128,7 +128,7 @@ function Router() {
 
       {/* Public Listing Route (no auth required) */}
       <Route path="/l/:token" component={() => (
-        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><HouseLogoLoader size={100} /></div>}>
           <PublicListing />
         </Suspense>
       )} />
@@ -136,13 +136,13 @@ function Router() {
       {/* Public E-Sign Route (no auth, token-authenticated) */}
       {/* Public self-built e-sign v2 ceremony (no auth, HMAC token-authenticated) */}
       <Route path="/esign/:token" component={() => (
-        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><HouseLogoLoader size={100} /></div>}>
           <EsignSignPage />
         </Suspense>
       )} />
 
       <Route path="/sign/:token" component={() => (
-        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><HouseLogoLoader size={100} /></div>}>
           <SignContractPage />
         </Suspense>
       )} />
@@ -151,30 +151,30 @@ function Router() {
           DEV-003: the customer storefront is public (the XP APIs are too);
           only /xp/admin requires a CRM login. */}
       <Route path="/xp" component={() => (
-        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><HouseLogoLoader size={100} /></div>}>
           <XpLandingPage />
         </Suspense>
       )} />
       <Route path="/xp/experience" component={() => (
-        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><HouseLogoLoader size={100} /></div>}>
           <XpExperiencePage />
         </Suspense>
       )} />
       <Route path="/xp/admin" component={() => <ProtectedRoute component={XpAdminPage} />} />
       <Route path="/xp/checkout-success" component={() => (
-        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><HouseLogoLoader size={100} /></div>}>
           <XpCheckoutSuccessPage />
         </Suspense>
       )} />
       <Route path="/xp/checkout-cancel" component={() => (
-        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><HouseLogoLoader size={100} /></div>}>
           <XpCheckoutCancelPage />
         </Suspense>
       )} />
       {/* XP-CRIT-1: the storefront links to /xp/<slug>; without this route the
           entire customer booking flow 404s. */}
       <Route path="/xp/:slug" component={() => (
-        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><HouseLogoLoader size={100} /></div>}>
           <XpExperiencePage />
         </Suspense>
       )} />
@@ -252,7 +252,7 @@ function Router() {
           The module renders the CRM 404 when INVESTOR_PORTAL_ENABLED is off,
           so no public routes or nav entries are reachable while disabled. */}
       <Route path="/investor/*" component={() => (
-        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><LogoLoader size={72} /></div>}>
+        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><HouseLogoLoader size={100} /></div>}>
           <InvestorRoutes />
         </Suspense>
       )} />
