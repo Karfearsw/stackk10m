@@ -396,7 +396,15 @@ export default function Analytics() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={sourcePerformanceData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="source" stroke="hsl(var(--muted-foreground))" />
+                    <XAxis 
+                      dataKey="source" 
+                      stroke="hsl(var(--muted-foreground))"
+                      tick={{ fontSize: 11 }}
+                      interval={0}
+                      angle={-25}
+                      dy={10}
+                      height={50}
+                    />
                     <YAxis stroke="hsl(var(--muted-foreground))" />
                     <Tooltip />
                     <Legend />
@@ -425,9 +433,9 @@ export default function Analytics() {
                     <Pie 
                       data={leadSourceData} 
                       cx="50%" 
-                      cy="50%" 
+                      cy="45%" 
                       labelLine={false} 
-                      label={({ name, value }) => `${name} ${value}%`} 
+                      label={({ percent }) => `${(percent * 100).toFixed(0)}%`}
                       outerRadius={80} 
                       fill="#000" 
                       dataKey="value"
@@ -436,7 +444,13 @@ export default function Analytics() {
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value) => `${value}%`} />
+                    <Tooltip formatter={(value, name) => [`${value}%`, name]} />
+                    <Legend 
+                      layout="horizontal" 
+                      verticalAlign="bottom" 
+                      align="center"
+                      wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
