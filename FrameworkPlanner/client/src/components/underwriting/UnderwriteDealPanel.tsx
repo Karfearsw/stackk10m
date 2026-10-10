@@ -331,7 +331,7 @@ export function UnderwriteDealPanel(props: {
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label>ARV</Label>
                     <Input
@@ -519,7 +519,7 @@ export function UnderwriteDealPanel(props: {
                 <CardTitle className="text-sm">Deal Math</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <Label>Closing/Holding %</Label>
                     <ToggleGroup
@@ -631,12 +631,13 @@ export function UnderwriteDealPanel(props: {
                         ))}
                         {!items.length ? <div className="text-xs text-muted-foreground">Tap presets to add</div> : null}
                       </div>
-                      <div className="flex flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-2 min-w-0">
                         {row.presets.map((p) => (
                           <Button
                             key={p}
                             size="sm"
                             variant="outline"
+                            className="shrink-0"
                             onClick={() =>
                               setUw((u) => ({
                                 ...u,
