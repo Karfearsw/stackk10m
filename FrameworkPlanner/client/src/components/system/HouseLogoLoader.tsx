@@ -76,16 +76,16 @@ export function HouseLogoLoader({
       </div>
 
       <style>{`
-        /* Sequence: logo fades in first, pulses once, THEN house draws over it */
+        /* Sequence: logo fades in first, completes 1 full pulse cycle, THEN house draws */
         .house-draw {
           stroke-dasharray: 1000;
           stroke-dashoffset: 1000;
-          animation: draw-house 1.8s ease-out 1.2s forwards;
+          animation: draw-house 1.8s ease-out 2.8s forwards;
         }
         .house-draw-door {
           stroke-dasharray: 300;
           stroke-dashoffset: 300;
-          animation: draw-house 1.2s ease-out 2.4s forwards;
+          animation: draw-house 1.2s ease-out 4s forwards;
         }
         .logo-fade-in {
           opacity: 0;
