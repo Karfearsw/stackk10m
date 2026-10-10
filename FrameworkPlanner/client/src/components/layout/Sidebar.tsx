@@ -55,6 +55,7 @@ const primaryNavigation = [
   { name: "Leads Pipeline", href: "/leads", icon: Users },
   { name: "Opportunities", href: "/opportunities", icon: Building2 },
   { name: "Buyers", href: "/buyers", icon: UserCheck },
+  { name: "Investor Approvals", href: "/admin/investors", icon: UserCheck },
   { name: "Disposition", href: "/disposition", icon: Handshake },
   { name: "Contracts", href: "/contracts", icon: FileText },
 ];

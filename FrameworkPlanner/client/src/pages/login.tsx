@@ -289,6 +289,11 @@ export default function Login() {
               Sign up as an employee
             </Link>
           </div>
+          <div className="mt-2 text-center text-sm">
+            <Link href="/investor/signup" className="text-primary hover:underline">
+              Sign up as an investor
+            </Link>
+          </div>
           <div className="mt-4 text-center text-xs text-muted-foreground">
             &copy; 2025 Luxe RM. All rights reserved.
           </div>

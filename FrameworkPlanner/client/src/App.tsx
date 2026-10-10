@@ -36,6 +36,7 @@ const AssignmentSettings = React.lazy(() => import("@/pages/settings/assignment"
 const EmailProvisioningSettings = React.lazy(() => import("@/pages/settings/email-provisioning"));
 const OnboardingDocsSettings = React.lazy(() => import("@/pages/settings/onboarding-docs"));
 const ApiKeys = React.lazy(() => import("@/pages/api-keys"));
+const AdminInvestors = React.lazy(() => import("@/pages/admin-investors"));
 const Calculator = React.lazy(() => import("@/pages/calculator"));
 // TICKET-14 (feat/ticket-14-followup-sequences): Follow-up sequences page.
 const Sequences = React.lazy(() => import("@/pages/sequences"));
@@ -195,6 +196,7 @@ function Router() {
       <Route path="/analytics" component={() => <ProtectedRoute component={Analytics} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
       <Route path="/settings/api-keys" component={() => <ProtectedRoute component={ApiKeys} />} />
+      <Route path="/admin/investors" component={() => <ProtectedRoute component={AdminInvestors} />} />
       <Route path="/settings/email" component={() => <ProtectedRoute component={EmailSettings} />} />
       <Route path="/settings/assignment" component={() => <ProtectedRoute component={AssignmentSettings} />} />
       <Route path="/settings/email-provisioning" component={() => <ProtectedRoute component={EmailProvisioningSettings} />} />
