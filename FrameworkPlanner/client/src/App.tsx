@@ -40,6 +40,8 @@ const AdminInvestors = React.lazy(() => import("@/pages/admin-investors"));
 const Calculator = React.lazy(() => import("@/pages/calculator"));
 // SIGNALS-PHASE1: municipal distress-signal ingestion UI.
 const Signals = React.lazy(() => import("@/pages/signals"));
+// AUTOMATION-PHASE2: n8n bridge UI.
+const N8nBridge = React.lazy(() => import("@/pages/n8n-bridge"));
 // TICKET-14 (feat/ticket-14-followup-sequences): Follow-up sequences page.
 const Sequences = React.lazy(() => import("@/pages/sequences"));
 const Timesheet = React.lazy(() => import("@/pages/timesheet"));
@@ -206,6 +208,8 @@ function Router() {
       <Route path="/calculator" component={() => <ProtectedRoute component={Calculator} />} />
       {/* SIGNALS-PHASE1: distress signals */}
       <Route path="/signals" component={() => <ProtectedRoute component={Signals} />} />
+      {/* AUTOMATION-PHASE2: n8n bridge */}
+      <Route path="/settings/n8n-bridge" component={() => <ProtectedRoute component={N8nBridge} />} />
       {/* TICKET-14: Follow-up sequences */}
       <Route path="/sequences" component={() => <ProtectedRoute component={Sequences} />} />
       <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />

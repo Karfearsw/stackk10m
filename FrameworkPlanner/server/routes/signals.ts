@@ -18,6 +18,7 @@ import {
   SIGNAL_TYPES,
   SIGNAL_SEVERITIES,
 } from "../shared-schema.js";
+import { onSignalCreated } from "./automation.js";
 
 async function requireAuth(req: Request, res: Response) {
   const userId = (req as any).session?.userId;
@@ -126,6 +127,7 @@ export function registerSignalRoutes(app: Express) {
         rawData: b.rawData || null,
         createdBy: user.id,
       }).returning();
+      onSignalCreated(row).catch(() => {});
       res.status(201).json(row);
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to create signal" });

@@ -31,6 +31,10 @@ registerSequenceRoutes(app);
 import { registerSignalRoutes } from "./routes/signals.js";
 registerSignalRoutes(app);
 
+// AUTOMATION-PHASE2: n8n bridge — inbound v1 API + outbound webhooks.
+import { registerAutomationRoutes } from "./routes/automation.js";
+registerAutomationRoutes(app);
+
 installErrorHandling(app);
 
 // Export the Express app as a Vercel Serverless Function

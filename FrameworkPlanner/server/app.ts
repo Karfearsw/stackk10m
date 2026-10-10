@@ -638,6 +638,10 @@ await pool.query(`
   const { registerSignalRoutes } = await import("./routes/signals.js");
   registerSignalRoutes(app);
   // SIGNALS-PHASE1-END
+  // AUTOMATION-PHASE2 (n8n bridge): inbound v1 API + outbound webhooks.
+  const { registerAutomationRoutes } = await import("./routes/automation.js");
+  registerAutomationRoutes(app);
+  // AUTOMATION-PHASE2-END
 
   const isServerless = Boolean(process.env.VERCEL) || Boolean(process.env.VERCEL_ENV);
 

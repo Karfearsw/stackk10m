@@ -2869,3 +2869,39 @@ export function parcelKeyFor(address: string, city: string, state: string, zip: 
     s.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim();
   return `${norm(address)}|${norm(city)}|${norm(state)}|${norm(zip.replace(/[^0-9]/g, "").slice(0, 5))}`;
 }
+
+// ── Phase 2: n8n automation bridge ──
+export const AUTOMATION_EVENTS = [
+  "signal.created",
+  "parcel.high_score",
+  "lead.created",
+  "lead.status_changed",
+] as const;
+export type AutomationEvent = (typeof AUTOMATION_EVENTS)[number];
+
+export const automationWebhooks = pgTable("automation_webhooks", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 255 }).notNull(),
+  url: text("url").notNull(),
+  events: text("events").array().notNull().default([]),
+  secret: varchar("secret", { length: 255 }),
+  active: boolean("active").notNull().default(true),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export type AutomationWebhook = typeof automationWebhooks.$inferSelect;
+
+export const webhookDeliveries = pgTable("webhook_deliveries", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  webhookId: integer("webhook_id"),
+  event: varchar("event", { length: 100 }).notNull(),
+  payload: jsonb("payload").notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
+  httpStatus: integer("http_status"),
+  responseBody: text("response_body"),
+  attempts: integer("attempts").notNull().default(0),
+  nextRetryAt: timestamp("next_retry_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export type WebhookDelivery = typeof webhookDeliveries.$inferSelect;

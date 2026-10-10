@@ -28,6 +28,7 @@ import {
   Ticket,
   Zap,
   AlertTriangle,
+  Webhook,
   ScrollText,
   FileSignature,
   PenLine,
@@ -131,6 +132,8 @@ const menuGroups = [
       { name: "Calculator", href: "/calculator", icon: Calculator },
       // SIGNALS-PHASE1: municipal distress-signal ingestion.
       { name: "Signals", href: "/signals", icon: AlertTriangle },
+      // AUTOMATION-PHASE2: n8n bridge.
+      { name: "n8n Bridge", href: "/settings/n8n-bridge", icon: Webhook },
       // Research lab for real-estate deal analysis (underwriting workspace).
       { name: "Research Lab", href: "/playground", icon: FlaskConical },
     ],
