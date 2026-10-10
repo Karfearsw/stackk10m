@@ -418,8 +418,8 @@ export function DealCalculator({
   };
 
   return (
-    <div className="grid gap-6 lg:grid-cols-3">
-      <div className="lg:col-span-2 space-y-6">
+    <div className="grid gap-6 lg:grid-cols-3 min-w-0">
+      <div className="lg:col-span-2 space-y-6 min-w-0">
         {linked?.opportunity || linked?.playground ? (
           <Card>
             <CardHeader className="pb-3">
@@ -1048,6 +1048,7 @@ export function DealCalculator({
             <CardTitle className="text-sm">Scenario Compare</CardTitle>
           </CardHeader>
           <CardContent>
+            <div className="overflow-x-auto -mx-1 px-1">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -1072,6 +1073,7 @@ export function DealCalculator({
                 ))}
               </TableBody>
             </Table>
+            </div>
           </CardContent>
         </Card>
       </div>
