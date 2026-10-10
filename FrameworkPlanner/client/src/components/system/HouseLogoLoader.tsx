@@ -6,7 +6,7 @@
  */
 export function HouseLogoLoader({
   size = 140,
-  src = "/logo.jpg",
+  src = "/seashell-logo.png",
 }: {
   size?: number;
   src?: string;
