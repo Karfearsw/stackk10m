@@ -2792,3 +2792,19 @@ export const notifications = pgTable("notifications", {
 });
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = typeof notifications.$inferInsert;
+
+export const apiKeys = pgTable("api_keys", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  userId: integer("user_id").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  keyHash: varchar("key_hash", { length: 255 }).notNull().unique(),
+  keyPrefix: varchar("key_prefix", { length: 20 }).notNull(),
+  scopes: text("scopes").array().notNull().default([]),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+export type ApiKey = typeof apiKeys.$inferSelect;
+export type InsertApiKey = typeof apiKeys.$inferInsert;

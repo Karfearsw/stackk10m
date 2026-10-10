@@ -444,6 +444,31 @@ function isXpOpsUser(user: any) {
   return isAdminUser(user) || isConciergeUser(user);
 }
 async function requireAuth(req: any, res: any) {
+  // API key auth (0104): check for Bearer token first.
+  const authHeader = req.headers?.authorization;
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    const token = authHeader.slice(7).trim();
+    if (token.startsWith("lxrm_")) {
+      try {
+        const { validateApiKey } = await import("./services/api-keys.js");
+        const result = await validateApiKey(token);
+        if (result) {
+          const user = await storage.getUserByIdWithoutProfilePicture(result.userId);
+          if (user) {
+            // Attach API key context for scope checking.
+            (req as any).apiKey = { keyId: result.keyId, scopes: result.scopes };
+            return user;
+          }
+        }
+      } catch (e) {
+        console.error("API key validation failed:", e);
+      }
+      res.status(401).json({ message: "Invalid API key" });
+      return null;
+    }
+  }
+
+  // Session auth (existing).
   const userId = req.session?.userId;
   if (!userId) {
     res.status(401).json({ message: "Unauthorized" });
@@ -2821,6 +2846,55 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message, requestId });
     }
   });
+  // ── API Keys (0104): programmatic access for AI agents & integrations ──────
+  reg("get", "/api/api-keys"); app.get("/api/api-keys", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { listApiKeys } = await import("./services/api-keys.js");
+      const keys = await listApiKeys(user.id);
+      res.json({ keys });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/api-keys"); app.post("/api/api-keys", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const name = String(req.body?.name || "").trim();
+      if (!name) return res.status(400).json({ message: "Name is required" });
+      const scopes = Array.isArray(req.body?.scopes) ? req.body.scopes.map(String) : [];
+      const { createApiKey } = await import("./services/api-keys.js");
+      const { key, record } = await createApiKey(user.id, name, scopes);
+      // Return the plaintext key ONCE — it cannot be retrieved again.
+      res.status(201).json({
+        key,
+        id: record.id,
+        name: record.name,
+        keyPrefix: record.keyPrefix,
+        scopes: record.scopes,
+        createdAt: record.createdAt,
+      });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("delete", "/api/api-keys/:id"); app.delete("/api/api-keys/:id", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { revokeApiKey } = await import("./services/api-keys.js");
+      const ok = await revokeApiKey(parseInt(req.params.id), user.id);
+      if (!ok) return res.status(404).json({ message: "API key not found" });
+      res.json({ ok: true });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   // ── First-sign-in tutorial (0098): server-side tour state ──────────────────
   reg("post", "/api/auth/tour/complete"); app.post("/api/auth/tour/complete", async (req, res) => {
     try {
