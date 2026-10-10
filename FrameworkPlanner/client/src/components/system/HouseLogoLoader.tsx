@@ -64,9 +64,9 @@ export function HouseLogoLoader({ size = 120 }: { size?: number }) {
           />
         </svg>
         
-        {/* Logo - fades in after house starts building */}
+        {/* Logo - fades in after house starts building, with soft pulse */}
         <div 
-          className="absolute logo-fade-in"
+          className="absolute logo-fade-in logo-pulse"
           style={{
             left: pad,
             top: pad + s * 0.125,
@@ -108,6 +108,13 @@ export function HouseLogoLoader({ size = 120 }: { size?: number }) {
           opacity: 0;
           transform: scale(0.9);
           animation: logo-appear 0.8s ease-out 0.5s forwards;
+        }
+        .logo-pulse {
+          animation: logo-appear 0.8s ease-out 0.5s forwards, logo-pulse 2s ease-in-out 1.5s infinite;
+        }
+        @keyframes logo-pulse {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.03); opacity: 0.92; }
         }
         .loading-dots span {
           animation: dot-bounce 1.4s infinite;
