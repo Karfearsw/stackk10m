@@ -2847,10 +2847,12 @@ export async function registerRoutes(
     }
   });
   // ── API Keys (0104): programmatic access for AI agents & integrations ──────
+  // Only admins/managers (team leads) can manage API keys — not regular members.
   reg("get", "/api/api-keys"); app.get("/api/api-keys", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Only admins and team leads can manage API keys" });
       const { listApiKeys } = await import("./services/api-keys.js");
       const keys = await listApiKeys(user.id);
       res.json({ keys });
@@ -2863,6 +2865,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Only admins and team leads can create API keys" });
       const name = String(req.body?.name || "").trim();
       if (!name) return res.status(400).json({ message: "Name is required" });
       const scopes = Array.isArray(req.body?.scopes) ? req.body.scopes.map(String) : [];
@@ -2886,6 +2889,7 @@ export async function registerRoutes(
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Only admins and team leads can revoke API keys" });
       const { revokeApiKey } = await import("./services/api-keys.js");
       const ok = await revokeApiKey(parseInt(req.params.id), user.id);
       if (!ok) return res.status(404).json({ message: "API key not found" });
