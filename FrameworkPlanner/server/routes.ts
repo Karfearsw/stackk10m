@@ -17165,7 +17165,7 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
       if (!["offer_letter", "ica"].includes(docType)) {
         return res.status(400).json({ message: "docType must be offer_letter or ica (W-9 is agent-filled)" });
       }
-      const target = await storage.getUser(targetUserId);
+      const target = await storage.getUserById(targetUserId);
       if (!target) return res.status(404).json({ message: "User not found" });
       const t = await import("./onboarding-docs/templates.js");
       const store = await import("./onboarding-docs/store.js");

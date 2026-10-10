@@ -1593,24 +1593,24 @@ function SettingsContent() {
             <CardContent className="space-y-4">
               <div className="space-y-3">
                 {opportunityPipelineColumns.map((col, idx) => (
-                  <div key={`${col.value}-${idx}`} className="grid grid-cols-12 gap-2 items-center">
-                    <div className="col-span-5">
-                      <Label className="sr-only">Label</Label>
+                  <div key={`${col.value}-${idx}`} className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:items-center border rounded-lg p-3 sm:border-0 sm:p-0">
+                    <div className="sm:col-span-5">
+                      <Label className="sm:sr-only text-xs font-medium mb-1 block sm:mb-0">Label</Label>
                       <Input value={col.label} onChange={(e) => {
                         const next = [...opportunityPipelineColumns];
                         next[idx] = { ...next[idx], label: e.target.value };
                         setOpportunityPipelineColumns(next);
                       }} placeholder="Label" />
                     </div>
-                    <div className="col-span-5">
-                      <Label className="sr-only">Value</Label>
+                    <div className="sm:col-span-5">
+                      <Label className="sm:sr-only text-xs font-medium mb-1 block sm:mb-0">Value</Label>
                       <Input value={col.value} onChange={(e) => {
                         const next = [...opportunityPipelineColumns];
                         next[idx] = { ...next[idx], value: e.target.value };
                         setOpportunityPipelineColumns(next);
                       }} placeholder="value_slug" />
                     </div>
-                    <div className="col-span-2 flex justify-end gap-2">
+                    <div className="sm:col-span-2 flex justify-start sm:justify-end gap-2">
                       <Button type="button" variant="outline" size="sm" disabled={idx === 0} onClick={() => {
                         const next = [...opportunityPipelineColumns];
                         const tmp = next[idx - 1];

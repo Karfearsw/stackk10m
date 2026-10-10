@@ -301,7 +301,7 @@ function AgentRow({ agent, onSave, saving }: { agent: any; onSave: (b: any) => v
   const name = [agent.firstName, agent.lastName].filter(Boolean).join(" ") || agent.email;
   const atCap = agent.currentLeads >= (agent.maxLeads ?? 50);
   return (
-    <div className="flex items-center gap-3 p-3 rounded-lg border flex-wrap">
+    <div className="flex items-start gap-3 p-3 rounded-lg border flex-wrap sm:items-center">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-sm">{name}</span>

@@ -184,19 +184,19 @@ function SequencesPageInner() {
   const selected = sequences.find((s) => s.id === selectedId);
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
+    <div className="p-4 sm:p-6 space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold">Follow-up Sequences</h1>
           <p className="text-sm text-muted-foreground">
             Stage-aware automated follow-ups with quiet hours, consent checks, and opt-out handling.
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => processMutation.mutate()} disabled={processMutation.isPending}>
+        <div className="flex gap-2 flex-shrink-0">
+          <Button variant="outline" onClick={() => processMutation.mutate()} disabled={processMutation.isPending} className="flex-1 sm:flex-none">
             <Zap className="h-4 w-4 mr-2" /> {processMutation.isPending ? "Processing…" : "Process Due Now"}
           </Button>
-          <Button onClick={() => setBuilderOpen(true)}>
+          <Button onClick={() => setBuilderOpen(true)} className="flex-1 sm:flex-none">
             <Plus className="h-4 w-4 mr-2" /> New Sequence
           </Button>
         </div>
