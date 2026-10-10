@@ -59,10 +59,15 @@ export default function EsignPage() {
   // New envelope form
   const [title, setTitle] = useState("");
   const [templateId, setTemplateId] = useState("");
+  const [contractId, setContractId] = useState("");
   const [signingMode, setSigningMode] = useState<"sequential" | "parallel">("sequential");
   const [expiresInDays, setExpiresInDays] = useState(14);
   const [message, setMessage] = useState("");
   const [signers, setSigners] = useState<SignerInput[]>([{ name: "", email: "", phone: "", order: 1 }]);
+
+  const { data: contracts } = useQuery<any[]>({
+    queryKey: ["/api/contracts"],
+  });
 
   const { data: envelopes, isLoading } = useQuery<any[]>({
     queryKey: ["/api/esign/envelopes"],
@@ -82,6 +87,7 @@ export default function EsignPage() {
       const res = await apiRequest("POST", "/api/esign/envelopes", {
         templateId: parseInt(templateId, 10),
         title: title || undefined,
+        contractId: contractId ? parseInt(contractId, 10) : undefined,
         signers: signers
           .filter((s) => s.name.trim() && s.email.trim())
           .map((s) => ({
@@ -141,6 +147,7 @@ export default function EsignPage() {
   const resetForm = () => {
     setTitle("");
     setTemplateId("");
+    setContractId("");
     setSigningMode("sequential");
     setExpiresInDays(14);
     setMessage("");
@@ -281,6 +288,24 @@ export default function EsignPage() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+              <div>
+                <Label>Link to Contract (optional)</Label>
+                <Select value={contractId} onValueChange={setContractId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a contract to anchor this envelope" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {contracts?.map((c: any) => (
+                      <SelectItem key={c.id} value={String(c.id)}>
+                        {c.title || `Contract #${c.id}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Linking anchors the audit trail. Leave empty for standalone envelopes.
+                </p>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>

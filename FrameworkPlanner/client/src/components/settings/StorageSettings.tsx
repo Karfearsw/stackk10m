@@ -95,7 +95,10 @@ export function StorageSettings() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dryRun }),
       });
-      if (!res.ok) throw new Error("Migration request failed");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Migration request failed");
+      }
       return (await res.json()) as MigrateResponse;
     },
     onSuccess: (result, dryRun) => {

@@ -198,7 +198,7 @@ export function UnderwriteDealPanel(props: {
   const dealOk = computedDealMath.meetsCriteria;
 
   return (
-    <Card className="h-full">
+    <Card className="h-full min-w-0 max-w-full">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between gap-3">
           <CardTitle className="text-base">Underwrite Deal</CardTitle>

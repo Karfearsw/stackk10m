@@ -218,7 +218,7 @@ export async function createEnvelopeFromTemplate(rawInput: unknown, createdByUse
 
   const merged = mergeTemplate(String((template as any).content || ""), input.mergeData ?? {});
 
-  // Audit-trail anchor: a real contract row.
+  // Audit-trail anchor: a real contract row (optional for standalone envelopes).
   let contractId: number | null = input.contractId ?? null;
   if (!contractId) {
     const md: any = input.mergeData ?? {};
@@ -237,13 +237,8 @@ export async function createEnvelopeFromTemplate(rawInput: unknown, createdByUse
         })
         .returning({ id: contracts.id });
       contractId = c.id;
-    } else {
-      throw new EsignError(
-        "no_contract_anchor",
-        "Provide contractId, or include propertyId in mergeData, so the audit trail has a contract anchor.",
-        400
-      );
     }
+    // Standalone envelopes allowed without contract anchor (contractId stays null).
   } else {
     const cRows = await db.select({ id: contracts.id }).from(contracts).where(eq(contracts.id, contractId)).limit(1);
     if (!cRows[0]) throw new EsignError("contract_not_found", "Contract not found.", 404);
@@ -303,7 +298,9 @@ export async function createEnvelopeFromTemplate(rawInput: unknown, createdByUse
     signersOut.push({ signer: { ...signer, tokenNonce: nonce }, token, nonce });
   }
 
-  await audit(contractId, "esign.envelope_created", {
+  // Skip audit for standalone envelopes (no contract anchor).
+  if (contractId) {
+    await audit(contractId, "esign.envelope_created", {
     envelopeId: env.id,
     documentId: doc.id,
     templateId: template.id,
@@ -312,6 +309,7 @@ export async function createEnvelopeFromTemplate(rawInput: unknown, createdByUse
     signerCount: signersOut.length,
     signers: signersOut.map((x) => ({ id: x.signer.id, name: x.signer.name, email: x.signer.email, order: x.signer.signingOrder })),
   }, { actorType: "agent", actorUserId: createdByUserId });
+  }
 
   return {
     envelope: env,

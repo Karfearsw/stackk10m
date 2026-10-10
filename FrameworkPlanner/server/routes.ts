@@ -9122,7 +9122,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.json({ success: true, ...result });
     } catch (e: any) {
       console.error("[storage] migrate failed:", e?.message || e);
-      res.status(500).json({ success: false, error: "Migration failed" });
+      res.status(500).json({ success: false, error: e?.message || "Migration failed" });
     }
   });
 

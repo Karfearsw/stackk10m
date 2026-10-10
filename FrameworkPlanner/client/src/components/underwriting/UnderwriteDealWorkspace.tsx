@@ -463,8 +463,8 @@ export function UnderwriteDealWorkspace(props: {
           </div>
         </div>
       )}
-      <div className="grid grid-cols-1 gap-4 min-h-[70vh] overflow-hidden xl:hidden">
-        <div className="min-h-[70vh] min-w-0">
+      <div className="grid grid-cols-1 gap-4 min-h-[70vh] xl:hidden">
+        <div className="min-h-[70vh] min-w-0 max-w-full overflow-x-hidden">
           <ResearchHub
             address={address}
             currentUrl={currentUrl}

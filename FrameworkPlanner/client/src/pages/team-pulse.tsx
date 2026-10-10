@@ -213,8 +213,8 @@ export default function TeamPulsePage() {
                         : "System";
                       return (
                         <div key={h.id} className="flex items-start gap-2 text-sm" data-testid={`highlight-${h.id}`}>
-                          <span className="font-medium">{who}</span>
-                          <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                          <span className="font-medium shrink-0">{who}</span>
+                          <span className="min-w-0 flex-1 line-clamp-2 text-muted-foreground">
                             {h.description || h.action}
                           </span>
                           {h.groupCount > 1 && (
