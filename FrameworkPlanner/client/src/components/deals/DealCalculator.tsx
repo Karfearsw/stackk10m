@@ -851,7 +851,7 @@ export function DealCalculator({
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                 <div className="space-y-2">
                   <Label>Vacancy %</Label>
                   <Input type="number" value={values.vacancyPct || ""} onChange={(e) => set("vacancyPct", safeNumber(e.target.value))} />
