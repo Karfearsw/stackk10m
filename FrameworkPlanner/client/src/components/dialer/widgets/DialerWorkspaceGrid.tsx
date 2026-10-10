@@ -2,7 +2,6 @@ import { useState } from "react";
 import { ResponsiveReactGridLayout, WidthProvider } from "react-grid-layout/legacy";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
-import { Layout } from "@/components/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Phone, RotateCcw } from "lucide-react";
 import { Softphone } from "@/components/telnyx/Softphone";
@@ -24,7 +23,7 @@ export function DialerWorkspaceGrid() {
   const stacked = (l: WidgetLayoutItem[]) => l.map((item) => ({ ...item, x: 0, w: 12 }));
 
   return (
-    <Layout>
+    <>
       <div className="mb-3 flex items-center gap-2 flex-wrap">
         <Button
           size="sm"
@@ -68,6 +67,6 @@ export function DialerWorkspaceGrid() {
         </ResponsiveGridLayout>
       )}
       {!loaded ? <span className="sr-only">Loading saved layout…</span> : null}
-    </Layout>
+    </>
   );
 }
