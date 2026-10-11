@@ -14,8 +14,8 @@ import {
   type DispoStage,
 } from "@shared/dispo-stages";
 import { MetricsStrip } from "@/components/dispo/MetricsStrip";
-import { DealDrawer, type DealCardData } from "@/components/dispo/DealDrawer";
-import { BedDouble, Clock, Users, LayoutGrid, List } from "lucide-react";
+import { DealDrawer, type DealCardData, type DealDrawerTab } from "@/components/dispo/DealDrawer";
+import { BedDouble, Clock, Users, LayoutGrid, List, Megaphone } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -27,11 +27,13 @@ function money(n: number | null): string {
 function DealCard({
   deal,
   onOpen,
+  onOpenTab,
   onDragStart,
   onMoveStage,
 }: {
   deal: DealCardData;
   onOpen: () => void;
+  onOpenTab: (tab: DealDrawerTab) => void;
   onDragStart: (e: React.DragEvent) => void;
   onMoveStage: (id: number, stage: DispoStage) => void;
 }) {
@@ -75,15 +77,37 @@ function DealCard({
               </span>
             )}
           </div>
-          {deal.matchCount > 0 && (
-            <Badge
-              variant="outline"
-              className="inline-flex items-center gap-1 border-[#D4AF37]/40 text-[10px] text-[#D4AF37]"
+          <div className="flex items-center gap-1">
+            {deal.matchCount > 0 && (
+              <button
+                type="button"
+                title="View matched buyers"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenTab("buyers");
+                }}
+              >
+                <Badge
+                  variant="outline"
+                  className="inline-flex items-center gap-1 border-[#D4AF37]/40 text-[10px] text-[#D4AF37] hover:bg-[#D4AF37]/10"
+                >
+                  <Users className="h-3 w-3" />
+                  {deal.matchCount}
+                </Badge>
+              </button>
+            )}
+            <button
+              type="button"
+              title="Broadcast to buyers"
+              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenTab("broadcast");
+              }}
             >
-              <Users className="h-3 w-3" />
-              {deal.matchCount}
-            </Badge>
-          )}
+              <Megaphone className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
         {/* Touch-friendly move action (drag-drop doesn't work on mobile) */}
         <div className="relative pt-1 sm:hidden">
@@ -124,7 +148,13 @@ function DealCard({
 function DispositionPageInner() {
   const queryClient = useQueryClient();
   const [openDeal, setOpenDeal] = useState<DealCardData | null>(null);
+  const [drawerTab, setDrawerTab] = useState<DealDrawerTab>("buyers");
   const [dragOver, setDragOver] = useState<DispoStage | null>(null);
+
+  const openDealOnTab = (deal: DealCardData, tab: DealDrawerTab) => {
+    setDrawerTab(tab);
+    setOpenDeal(deal);
+  };
 
   const { data, isLoading, isError } = useQuery<{ deals: DealCardData[] }>({
     queryKey: ["disposition-deals"],
@@ -183,6 +213,18 @@ function DispositionPageInner() {
         </div>
       )}
 
+      {!isLoading && !isError && deals.length === 0 && (
+        <div className="rounded-xl border border-dashed p-10 text-center">
+          <Megaphone className="mx-auto h-8 w-8 text-muted-foreground/50" />
+          <h2 className="mt-3 font-serif text-lg font-semibold">No deals in disposition yet</h2>
+          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+            When a seller lead goes under contract it lands here. Match it
+            against your buyer list, broadcast it out, and track offers to the
+            assignment fee.
+          </p>
+        </div>
+      )}
+
       <Tabs defaultValue="board" className="space-y-4">
         <TabsList>
           <TabsTrigger value="board" className="gap-2">
@@ -228,6 +270,7 @@ function DispositionPageInner() {
                       key={deal.id}
                       deal={deal}
                       onOpen={() => setOpenDeal(deal)}
+                      onOpenTab={(tab) => openDealOnTab(deal, tab)}
                       onDragStart={(e) => {
                         e.dataTransfer.setData(
                           "text/dispo-deal-id",
@@ -260,12 +303,14 @@ function DispositionPageInner() {
                       <th className="p-3 font-medium">Property</th>
                       <th className="p-3 font-medium">Stage</th>
                       <th className="p-3 font-medium">Asking</th>
+                      <th className="p-3 font-medium">Matches</th>
                       <th className="p-3 font-medium">Offers</th>
+                      <th className="p-3 font-medium text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {isLoading && (
-                      <tr><td colSpan={4} className="p-6 text-center text-muted-foreground">Loading…</td></tr>
+                      <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">Loading…</td></tr>
                     )}
                     {!isLoading && deals.map((deal) => (
                       <tr
@@ -278,11 +323,46 @@ function DispositionPageInner() {
                           <Badge variant="secondary">{DISPO_STAGE_LABELS[deal.stage as DispoStage] || deal.stage}</Badge>
                         </td>
                         <td className="p-3">{money(deal.askingPrice ?? null)}</td>
+                        <td className="p-3">
+                          {deal.matchCount > 0 ? (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openDealOnTab(deal, "buyers");
+                              }}
+                            >
+                              <Badge
+                                variant="outline"
+                                className="inline-flex items-center gap-1 border-[#D4AF37]/40 text-[11px] text-[#D4AF37] hover:bg-[#D4AF37]/10"
+                              >
+                                <Users className="h-3 w-3" />
+                                {deal.matchCount}
+                              </Badge>
+                            </button>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                        </td>
                         <td className="p-3">{deal.offerCount ?? 0}</td>
+                        <td className="p-3 text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5 text-xs"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openDealOnTab(deal, "broadcast");
+                            }}
+                          >
+                            <Megaphone className="h-3.5 w-3.5" />
+                            Broadcast
+                          </Button>
+                        </td>
                       </tr>
                     ))}
                     {!isLoading && deals.length === 0 && (
-                      <tr><td colSpan={4} className="p-6 text-center text-muted-foreground">No deals yet.</td></tr>
+                      <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">No deals yet.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -292,7 +372,11 @@ function DispositionPageInner() {
         </TabsContent>
       </Tabs>
 
-      <DealDrawer deal={openDeal} onClose={() => setOpenDeal(null)} />
+      <DealDrawer
+        deal={openDeal}
+        initialTab={drawerTab}
+        onClose={() => setOpenDeal(null)}
+      />
     </div>
   );
 }

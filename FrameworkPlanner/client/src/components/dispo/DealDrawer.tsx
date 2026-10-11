@@ -43,12 +43,17 @@ function money(n: number | null): string {
   return "$" + Math.round(n).toLocaleString("en-US");
 }
 
+export type DealDrawerTab = "buyers" | "offers" | "broadcast" | "scripts" | "docs";
+
 export function DealDrawer({
   deal,
   onClose,
+  initialTab = "buyers",
 }: {
   deal: DealCardData | null;
   onClose: () => void;
+  /** Which tab to open on — lets list/board quick actions deep-link. */
+  initialTab?: DealDrawerTab;
 }) {
   const dealId = deal?.id ?? 0;
   const [, navigate] = useLocation();
@@ -128,7 +133,7 @@ export function DealDrawer({
               </div>
             </div>
 
-            <Tabs defaultValue="buyers" className="mt-4">
+            <Tabs defaultValue={initialTab} key={`${deal.id}-${initialTab}`} className="mt-4">
               <TabsList className="grid w-full grid-cols-5">
                 <TabsTrigger value="buyers">Buyers</TabsTrigger>
                 <TabsTrigger value="offers">Offers</TabsTrigger>

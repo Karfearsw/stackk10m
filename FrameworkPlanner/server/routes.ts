@@ -95,7 +95,8 @@ import {
   globalActivityLogs,
   opportunityParties, publicListings, buyerInquiries, opportunityEvents,
   defaultNotificationCategories, insertInternalMessageSchema, insertCalendarEventSchema,
-  tasks, taskSlaRules, taskAudit, quarantinedRecords, insertTaskSlaRuleSchema
+  tasks, taskSlaRules, taskAudit, quarantinedRecords, insertTaskSlaRuleSchema,
+  buyers
 } from "./shared-schema.js";
 import { z } from "zod";
 import { computeArvFromComps, computeCommissionMath, computeDealMath, computeRepairTotal, commissionSnapshotInputSchema, underwritingSchemaV1, underwritingTemplateConfigSchema } from "../shared/underwriting.js";
@@ -16047,6 +16048,74 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
         WHERE id = ${id}
       `);
       res.json({ id, decision });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // ── Buyer dedupe (disposition polish) ──────────────────────────────────
+  // Read-only duplicate/test report + non-destructive flagging. Nothing here
+  // deletes rows — deletions stay per-item approved by Benjamin.
+  reg("get", "/api/buyers/dedupe-report"); app.get("/api/buyers/dedupe-report", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Manager role required" });
+      const { findDuplicateClusters, findTestBuyers } = await import("./services/buyer-dedupe.js");
+      const [duplicateClusters, testBuyers] = await Promise.all([
+        findDuplicateClusters(100),
+        findTestBuyers(200),
+      ]);
+      res.json({ duplicateClusters, testBuyers });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/buyers/:id/mark-duplicate"); app.post("/api/buyers/:id/mark-duplicate", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Manager role required" });
+      const id = parseInt(req.params.id);
+      const duplicateOf = parseInt(req.body?.duplicateOf);
+      if (!Number.isFinite(id) || !Number.isFinite(duplicateOf) || id === duplicateOf) {
+        return res.status(400).json({ message: "valid buyer id and duplicateOf required" });
+      }
+      const [target] = await db.select({ id: buyers.id }).from(buyers).where(eq(buyers.id, duplicateOf)).limit(1);
+      if (!target) return res.status(404).json({ message: "duplicateOf buyer not found" });
+      await db.execute(sql`
+        UPDATE buyers
+        SET duplicate_of = ${duplicateOf},
+            review_decision = 'merged',
+            reviewed_at = now(),
+            reviewed_by = ${user.id},
+            updated_at = now()
+        WHERE id = ${id}
+      `);
+      res.json({ id, duplicateOf, decision: "merged" });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  reg("post", "/api/buyers/:id/flag-test"); app.post("/api/buyers/:id/flag-test", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Manager role required" });
+      const id = parseInt(req.params.id);
+      if (!Number.isFinite(id)) return res.status(400).json({ message: "valid buyer id required" });
+      await db.execute(sql`
+        UPDATE buyers
+        SET is_suspected_test = true,
+            review_decision = NULL,
+            reviewed_at = NULL,
+            reviewed_by = NULL,
+            updated_at = now()
+        WHERE id = ${id}
+      `);
+      res.json({ id, flagged: true });
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
