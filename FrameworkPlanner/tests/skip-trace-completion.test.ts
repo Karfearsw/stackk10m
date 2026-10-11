@@ -272,6 +272,17 @@ describe("queue drain", () => {
     expect(resolveDrainBatchLimit(null)).toBe(6);
   });
 
+  it("falls back to env then default 35000ms for the inter-job delay", async () => {
+    const { resolveDrainJobDelayMs } = await import("../server/cron/skip-trace-daily-enrichment.js");
+    expect(resolveDrainJobDelayMs(1000)).toBe(1000);
+    expect(resolveDrainJobDelayMs(0)).toBe(0);
+    vi.stubEnv("SKIP_TRACE_DRAIN_JOB_DELAY_MS", "20000");
+    expect(resolveDrainJobDelayMs()).toBe(20000);
+    vi.stubEnv("SKIP_TRACE_DRAIN_JOB_DELAY_MS", "");
+    expect(resolveDrainJobDelayMs()).toBe(35000);
+    expect(resolveDrainJobDelayMs(null)).toBe(35000);
+  });
+
   it("exports the drain function", async () => {
     const mod = await import("../server/cron/skip-trace-daily-enrichment.js");
     expect(typeof mod.drainSkipTraceQueue).toBe("function");
