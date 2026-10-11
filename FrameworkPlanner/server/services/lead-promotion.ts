@@ -156,6 +156,59 @@ export async function promoteParcelToLead(
  * Backfill helper: promote every parcel whose distress score is at or above
  * the threshold and which has no lead yet. Returns counts; safe to re-run.
  */
+/**
+ * Reconstruct a missing parcel_watchlist row for historical signals.
+ *
+ * Signals imported before PR #51 (via /api/v1/signals/bulk) never got
+ * watchlist rows, so promoteParcelToLead() fails for them with
+ * "parcel not on watchlist". This pulls address parts from the signal's
+ * rawData (preferring explicit fields) and upserts the watchlist row.
+ * Idempotent — onConflictDoNothing on the unique parcel_key.
+ */
+async function ensureWatchlistForBackfill(
+  parcelKey: string,
+  createdBy: number | null,
+): Promise<void> {
+  const key = (parcelKey || "").trim();
+  if (!key) return;
+  // Skip if the watchlist row already exists.
+  const [existing] = await db
+    .select({ id: parcelWatchlist.id })
+    .from(parcelWatchlist)
+    .where(eq(parcelWatchlist.parcelKey, key))
+    .limit(1);
+  if (existing) return;
+  // Pull address parts from the most recent signal's rawData for this parcel.
+  const [sig] = await db
+    .select({ rawData: distressSignals.rawData })
+    .from(distressSignals)
+    .where(eq(distressSignals.parcelKey, key))
+    .orderBy(desc(distressSignals.discoveredAt))
+    .limit(1);
+  const raw: any = (sig as any)?.rawData || {};
+  const address = String(raw.address || raw.street || raw.propertyAddress || "").trim();
+  const city = String(raw.city || "").trim();
+  const state = String(raw.state || "").trim();
+  const zipCode = String(raw.zip || raw.zipCode || raw.postalCode || "").trim();
+  // Watchlist columns are NOT NULL — without address parts we cannot create
+  // a valid row; promotion will fail gracefully as before.
+  if (!address || !city || !state || !zipCode) return;
+  try {
+    await db.insert(parcelWatchlist).values({
+      parcelKey: key,
+      address: address.slice(0, 255),
+      city: city.slice(0, 100),
+      state: state.slice(0, 2),
+      zipCode: zipCode.slice(0, 10),
+      apn: raw.apn ? String(raw.apn).slice(0, 100) : null,
+      ownerName: raw.ownerName ? String(raw.ownerName).slice(0, 255) : null,
+      createdBy,
+    }).onConflictDoNothing({ target: parcelWatchlist.parcelKey });
+  } catch (e) {
+    console.error("[lead-promotion] backfill watchlist upsert failed for", key, e);
+  }
+}
+
 export async function backfillHighScoreParcels(
   threshold: number,
   opts: { createdBy?: number | null; limit?: number; quiet?: boolean } = {}
@@ -183,6 +236,10 @@ export async function backfillHighScoreParcels(
   const list = rows.rows ?? rows;
   for (const r of list as any[]) {
     try {
+      // Historical signals (imported before PR #51) lack parcel_watchlist rows.
+      // Reconstruct the watchlist row from the signal's rawData before promotion,
+      // otherwise promoteParcelToLead() fails with "parcel not on watchlist".
+      await ensureWatchlistForBackfill(r.parcelKey, opts.createdBy ?? null);
       const res = await promoteParcelToLead(r.parcelKey, { createdBy: opts.createdBy, quiet: opts.quiet });
       if (res.promoted) promoted++;
       else skippedExisting++;
