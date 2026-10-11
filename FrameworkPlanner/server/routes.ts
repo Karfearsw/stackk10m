@@ -5248,6 +5248,21 @@ export async function registerRoutes(
         seen.add(v);
         deduped.push({ id: r.id, value: v, label: r.label, isActive: r.isActive, sortOrder: r.sortOrder });
       }
+      // Also include any distinct sources actually present in the leads table
+      // (e.g. fsbo-craigslist, municipal-signal from automated imports) so the
+      // filter never hides leads whose source wasn't manually configured.
+      try {
+        const { db } = await import("./db.js");
+        const { leads } = await import("../shared-schema.js");
+        const distinct = await db.selectDistinct({ source: leads.source }).from(leads);
+        for (const d of distinct) {
+          const v = String(d?.source || '').trim();
+          if (!v || seen.has(v)) continue;
+          seen.add(v);
+          deduped.push({ id: `auto-${v}`, value: v, label: v, isActive: true, sortOrder: 999 });
+        }
+      } catch {}
+      deduped.sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
       res.json(deduped);
     } catch (error: any) {
       try {
