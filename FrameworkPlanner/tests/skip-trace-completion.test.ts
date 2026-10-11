@@ -253,3 +253,27 @@ describe("daily free-lane enrichment", () => {
     expect(out.queued).toBe(0);
   });
 });
+
+describe("queue drain", () => {
+  it("resolves the drain batch limit from explicit input", async () => {
+    const { resolveDrainBatchLimit } = await import("../server/cron/skip-trace-daily-enrichment.js");
+    expect(resolveDrainBatchLimit(10)).toBe(10);
+    expect(resolveDrainBatchLimit(3.9)).toBe(3);
+  });
+
+  it("falls back to env then default 6", async () => {
+    const { resolveDrainBatchLimit } = await import("../server/cron/skip-trace-daily-enrichment.js");
+    vi.stubEnv("SKIP_TRACE_PROCESS_BATCH", "4");
+    expect(resolveDrainBatchLimit()).toBe(4);
+    expect(resolveDrainBatchLimit(0)).toBe(4);
+    expect(resolveDrainBatchLimit(-2)).toBe(4);
+    vi.stubEnv("SKIP_TRACE_PROCESS_BATCH", "");
+    expect(resolveDrainBatchLimit()).toBe(6);
+    expect(resolveDrainBatchLimit(null)).toBe(6);
+  });
+
+  it("exports the drain function", async () => {
+    const mod = await import("../server/cron/skip-trace-daily-enrichment.js");
+    expect(typeof mod.drainSkipTraceQueue).toBe("function");
+  });
+});

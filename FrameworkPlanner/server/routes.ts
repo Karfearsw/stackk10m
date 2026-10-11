@@ -5123,6 +5123,20 @@ export async function registerRoutes(
       res.status(500).json({ message: error.message });
     }
   });
+  reg("post", "/api/skip-trace/process-queue"); app.post("/api/skip-trace/process-queue", async (req, res) => {    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      // Managers may trigger manually; automation (runtime cron) uses the CRM API key.
+      const viaApiKey = Boolean((req as any).apiKey);
+      if (!viaApiKey && !isManagerUser(user)) return res.status(403).json({ message: "Managers or API key only" });
+      // Free lane only: paid/provider jobs stay manual so automation never spends.
+      const { drainSkipTraceQueue } = await import("./cron/skip-trace-daily-enrichment.js");
+      const out = await drainSkipTraceQueue();
+      res.json(out);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   reg("post", "/api/skip-trace/jobs"); app.post("/api/skip-trace/jobs", async (req, res) => {
     try {
       const user = await requireAuth(req, res);
