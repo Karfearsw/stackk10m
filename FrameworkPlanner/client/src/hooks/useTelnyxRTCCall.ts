@@ -356,8 +356,47 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
   const sendDigits = useCallback((digits: string) => {
     const sdkCall = callRef.current;
     if (!sdkCall || call?.state !== "active") return;
+    // Play a local DTMF tone so the user hears keypress feedback,
+    // then send the digits to the remote party via the SDK.
+    playLocalDtmfTone(digits.charAt(0));
     try { sdkCall.dtmf?.(digits); } catch (e) { console.error("DTMF failed:", e); }
   }, [call?.state]);
+
+  /**
+   * Play a local DTMF tone using the Web Audio API. Standard DTMF frequency
+   * pairs — the user hears the keypress even before the remote party does.
+   */
+  function playLocalDtmfTone(digit: string) {
+    try {
+      const DTMF_FREQS: Record<string, [number, number]> = {
+        "1": [697, 1209], "2": [697, 1336], "3": [697, 1477],
+        "4": [770, 1209], "5": [770, 1336], "6": [770, 1477],
+        "7": [852, 1209], "8": [852, 1336], "9": [852, 1477],
+        "*": [941, 1209], "0": [941, 1336], "#": [941, 1477],
+        "A": [697, 1633], "B": [770, 1633], "C": [852, 1633], "D": [941, 1633],
+      };
+      const freqs = DTMF_FREQS[digit.toUpperCase()];
+      if (!freqs || typeof window === "undefined") return;
+      const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+      if (!Ctx) return;
+      const ctx = new Ctx();
+      const gain = ctx.createGain();
+      gain.gain.value = 0.25;
+      gain.connect(ctx.destination);
+      for (const f of freqs) {
+        const osc = ctx.createOscillator();
+        osc.type = "sine";
+        osc.frequency.value = f;
+        osc.connect(gain);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.15);
+      }
+      // Clean up the context after the tone finishes.
+      setTimeout(() => ctx.close().catch(() => {}), 300);
+    } catch {
+      // Audio playback is best-effort; DTMF was already sent via the SDK.
+    }
+  }
 
 
   /** List available audio OUTPUT devices (speakers). Requires permission to enumerate. */
