@@ -135,4 +135,22 @@ describe("TelnyxClient dial params + sendDtmf", () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(400, { errors: [{ title: "Invalid digits" }] })));
     await expect(makeClient().sendDtmf("cc-1", "999")).rejects.toThrow("Invalid digits");
   });
+
+  it("speak posts payload to the speak action", async () => {
+    const calls = captureFetch();
+    await makeClient().speak("cc-1", "Hello from OceanLuxe");
+    expect(calls[0].url).toContain("/calls/cc-1/actions/speak");
+    const body = JSON.parse(calls[0].init.body);
+    expect(body.payload).toBe("Hello from OceanLuxe");
+    expect(body.language).toBe("en-US");
+  });
+
+  it("speak rejects empty text", async () => {
+    await expect(makeClient().speak("cc-1", "   ")).rejects.toThrow("cannot be empty");
+  });
+
+  it("speak maps a 4xx failure to a thrown error", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(400, { errors: [{ title: "Call not active" }] })));
+    await expect(makeClient().speak("cc-1", "hi")).rejects.toThrow("Call not active");
+  });
 });

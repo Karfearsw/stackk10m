@@ -225,6 +225,27 @@ export class TelnyxClient {
     }
   }
 
+  async speak(callControlId: string, text: string, voice: string = "female"): Promise<void> {
+    this.requireReady();
+    const payload = String(text || "").trim().slice(0, 500);
+    if (!payload) throw new Error("Speak text cannot be empty");
+    const res = await fetch(`${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/speak`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ payload, voice, language: "en-US" }),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) {
+      const data: any = await res.json().catch(() => ({}));
+      const title = data?.errors?.[0]?.title || data?.error || data?.message || `Telnyx speak failed (${res.status})`;
+      const err = new Error(title) as any;
+      err.status = res.status;
+      err.code = data?.errors?.[0]?.code || data?.code || null;
+      throw err;
+    }
+  }
+
   async sendSms(input: TelnyxSmsInput): Promise<{ messageId: string }> {
     this.requireReady();
     const from = input.from || this.defaultFrom;

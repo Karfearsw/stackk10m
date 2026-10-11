@@ -126,6 +126,20 @@ function decodeRvmClientState(raw: unknown): { audioAssetId: number | null } {
   }
 }
 
+// client_state on agent-less dials carries { kind: "speak_on_answer", text } (base64).
+function decodeSpeakClientState(raw: unknown): { text: string | null } {
+  try {
+    const b64 = String(raw || "");
+    if (!b64) return { text: null };
+    const json = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+    if (json?.kind !== "speak_on_answer") return { text: null };
+    const text = String(json.text || "").trim().slice(0, 500);
+    return { text: text || null };
+  } catch {
+    return { text: null };
+  }
+}
+
 /**
  * Drives a real ringless-voicemail drop over Call Control:
  *  - call.machine.greeting.ended / call.machine.ended → play audio into the voicemail box
@@ -459,6 +473,18 @@ async function handleCallEvent(event: any) {
         } as any);
       } catch (e) {
         console.error("PSTN → WebRTC bridge failed:", e);
+      }
+    } else {
+      // No agent leg (test call, broadcast): speak the greeting from
+      // client_state instead of leaving silence.
+      const { text } = decodeSpeakClientState(payload.client_state);
+      if (text) {
+        try {
+          await telnyx.speak(callControlId, text);
+          console.log(`[webhook] speak-on-answer played for ${callControlId}`);
+        } catch (e) {
+          console.error("speak-on-answer failed:", e);
+        }
       }
     }
   }
