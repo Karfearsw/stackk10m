@@ -12,7 +12,7 @@ vi.mock("../server/services/skipTrace/freeWeb.js", () => {
   return {
     FreeWebPublicResearchRunner: class {
       name = "free-web";
-      enabled = String(process.env.SKIP_TRACE_PUBLIC_RESEARCH_ENABLED || "").trim().toLowerCase() === "true";
+      enabled = String(process.env.SKIP_TRACE_PUBLIC_RESEARCH_ENABLED || "").trim().toLowerCase() !== "false";
       async run() {
         return {
           status: "success",
@@ -109,6 +109,8 @@ describe("CompositePublicResearchRunner", () => {
 
   it("reports disabled when nothing is enabled", async () => {
     vi.resetModules();
+    // Free-web is always-on by default now — disabling requires the explicit opt-out.
+    process.env.SKIP_TRACE_PUBLIC_RESEARCH_ENABLED = "false";
     const { CompositePublicResearchRunner } = await import("../server/services/skipTrace/publicResearch/composite.js");
     const out = await new CompositePublicResearchRunner().run(baseInput);
     expect(out.status).toBe("disabled");

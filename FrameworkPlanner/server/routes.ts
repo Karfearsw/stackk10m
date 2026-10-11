@@ -5101,9 +5101,10 @@ export async function registerRoutes(
         });
       }
       const providerName = getSkipTraceProvider().name;
+      // Free-web research is always-on; the env var is an explicit opt-out.
       const publicResearchEnabled = String(process.env.SKIP_TRACE_PUBLIC_RESEARCH_ENABLED || "")
         .trim()
-        .toLowerCase() === "true";
+        .toLowerCase() !== "false";
       const allowedModes = publicResearchEnabled ? ["provider", "public_research", "both"] : ["provider"];
       const { getSkipTraceRuntimeSettings, getSpendSummary, getKeyStatus, SKIP_TRACE_QUOTA_GUIDANCE } = await import(
         "./services/skipTrace/settings.js"

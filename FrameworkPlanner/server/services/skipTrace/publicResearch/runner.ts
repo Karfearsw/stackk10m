@@ -58,7 +58,8 @@ function parseEnvBool(v: unknown): boolean | null {
 
 export class DefaultPublicResearchRunner implements PublicResearchRunner {
   name = "default";
-  enabled = parseEnvBool(process.env.SKIP_TRACE_PUBLIC_RESEARCH_ENABLED) ?? false;
+  // Always-on like the rest of the free lane; explicit opt-out only.
+  enabled = parseEnvBool(process.env.SKIP_TRACE_PUBLIC_RESEARCH_ENABLED) ?? true;
 
   async run(_input: PublicResearchInput): Promise<PublicResearchOutput> {
     if (!this.enabled) {
