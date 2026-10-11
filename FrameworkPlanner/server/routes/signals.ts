@@ -323,8 +323,21 @@ export function registerSignalRoutes(app: Express) {
   // quiet=true suppresses the per-lead lead.created fan-out so a mass
   // backfill doesn't fire thousands of webhook events at once.
   app.post("/api/parcels/backfill-signal-leads", async (req: Request, res: Response) => {
-    const user = await requireAuth(req, res);
-    if (!user) return;
+    // Accept session auth (manager UI) or API-key auth (automation/cron).
+    // API keys are bound to a user; the key owner's role must be manager+.
+    let user: any = null;
+    const sessionUserId = (req as any).session?.userId;
+    if (sessionUserId) {
+      user = await storage.getUserByIdWithoutProfilePicture(sessionUserId);
+    } else {
+      const m = String(req.headers.authorization || "").match(/^Bearer\s+(.+)$/i);
+      if (m) {
+        const { validateApiKey } = await import("../services/api-keys.js");
+        const keyAuth = await validateApiKey(m[1].trim());
+        if (keyAuth) user = await storage.getUserByIdWithoutProfilePicture(keyAuth.userId);
+      }
+    }
+    if (!user) return res.status(401).json({ message: "Unauthorized" });
     try {
       const role = String((user as any).role || "").toLowerCase();
       const isManager = !!(user as any).isSuperAdmin || role === "admin" || role === "manager" || role === "owner";
