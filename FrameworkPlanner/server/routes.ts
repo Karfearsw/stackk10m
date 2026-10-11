@@ -9264,6 +9264,43 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   });
 
   // ── Ticket 18: durable object storage ──────────────────────────────────
+  // TEMPORARY: One-time AI call test — dials a number and starts the AI assistant.
+  reg("post", "/api/admin/telnyx/test-ai-call");
+  app.post("/api/admin/telnyx/test-ai-call", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) {
+        res.status(403).json({ success: false, error: "Admin access required" });
+        return;
+      }
+      const to = String(req.body?.to || "").trim();
+      if (!to) return res.status(400).json({ success: false, error: "to number required" });
+
+      const { getAiAssistantConfig } = await import("./services/telecom/ai-config.js");
+      const aiConfig = await getAiAssistantConfig();
+      if (!aiConfig.enabled || !aiConfig.assistantId) {
+        return res.status(400).json({ success: false, error: "AI assistant not enabled/configured" });
+      }
+
+      // Dial the number
+      const { telnyx } = await import("./services/telecom/telnyx-client.js");
+      const dialResult = await telnyx.dial({
+        to,
+        from: String(process.env.TELNYX_DEFAULT_FROM_NUMBER || "").trim(),
+        connectionId: String(process.env.TELNYX_CONNECTION_ID || ""),
+        timeoutSecs: 30,
+      });
+
+      return res.json({
+        success: true,
+        callControlId: dialResult.callControlId,
+        message: "Call placed. Answer it, then POST to /api/telephony/outbound/:callControlId/ai-assistant to start the AI.",
+      });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: String(e?.message || e) });
+    }
+  });
   // Private-by-default file storage on S3-compatible object storage.
   // Downloads go through expiring signed URLs only — never public.
 
