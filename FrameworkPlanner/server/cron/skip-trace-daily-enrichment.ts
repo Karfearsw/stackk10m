@@ -129,6 +129,14 @@ export function resolveDrainBatchLimit(raw?: number | null): number {
   return envInt("SKIP_TRACE_PROCESS_BATCH", 6);
 }
 
+/** Pure helper: ms to wait between drained jobs (CourtListener: 5 req/min). */
+export function resolveDrainJobDelayMs(raw?: number | null): number {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) return Math.floor(raw);
+  return envInt("SKIP_TRACE_DRAIN_JOB_DELAY_MS", 35000);
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /**
  * Drain the free-lane queue on serverless deployments.
  *
@@ -136,6 +144,9 @@ export function resolveDrainBatchLimit(raw?: number | null): number {
  * runs each inline via the orchestrator. Only the free lane is drained here:
  * paid/provider jobs stay manual so automation never spends without a human
  * starting it (spend caps + kill switch remain the backstop).
+ *
+ * Jobs are paced ~35s apart so the burst stays under CourtListener's
+ * 5 req/min free-tier limit (SKIP_TRACE_DRAIN_JOB_DELAY_MS overrides).
  *
  * runSkipTraceJob() claims each job atomically and no-ops on already
  * completed/failed/running jobs, so concurrent drain invocations are safe.
@@ -145,6 +156,7 @@ export function resolveDrainBatchLimit(raw?: number | null): number {
  */
 export async function drainSkipTraceQueue(limit?: number): Promise<QueueDrainResult> {
   const batchLimit = resolveDrainBatchLimit(limit);
+  const jobDelayMs = resolveDrainJobDelayMs();
   const q: any = await db.execute(sql`
     SELECT id FROM skip_trace_jobs
     WHERE status = 'queued' AND mode = 'public_research'
@@ -157,7 +169,13 @@ export async function drainSkipTraceQueue(limit?: number): Promise<QueueDrainRes
 
   let succeeded = 0;
   let failed = 0;
-  for (const id of ids) {
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    // Pace jobs so the burst stays under CourtListener's 5 req/min free-tier
+    // limit (up to 3 court searches per job for FL leads). No delay after the
+    // last job. Env:
+    //   SKIP_TRACE_DRAIN_JOB_DELAY_MS   optional — ms between jobs (default 35000)
+    if (i > 0 && jobDelayMs > 0) await sleep(jobDelayMs);
     try {
       const out = await runSkipTraceJob(id);
       if (String((out.job as any).status || "").toLowerCase() === "completed") succeeded++;
