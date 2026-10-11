@@ -9304,6 +9304,69 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
   // Private-by-default file storage on S3-compatible object storage.
   // Downloads go through expiring signed URLs only — never public.
 
+  // TEMPORARY: Full Telnyx voice diagnostics via API (no portal needed).
+  reg("get", "/api/admin/telnyx/diagnostics");
+  app.get("/api/admin/telnyx/diagnostics", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) {
+        res.status(403).json({ success: false, error: "Admin access required" });
+        return;
+      }
+      const apiKey = process.env.TELNYX_API_KEY;
+      const connectionId = process.env.TELNYX_CONNECTION_ID;
+      if (!apiKey) return res.status(500).json({ success: false, error: "No API key" });
+
+      const headers = { "Authorization": `Bearer ${apiKey}` };
+      const result: any = { success: true };
+
+      // 1. List AI assistants
+      try {
+        const aRes = await fetch("https://api.telnyx.com/v2/ai/assistants", { headers });
+        const aData: any = await aRes.json().catch(() => ({}));
+        result.assistants = (aData?.data || []).map((a: any) => ({ id: a.id, name: a.name }));
+        result.assistantsError = aRes.ok ? null : (aData?.errors?.[0]?.title || `HTTP ${aRes.status}`);
+      } catch (e: any) {
+        result.assistantsError = String(e?.message || e);
+      }
+
+      // 2. Check Call Control App webhook URL
+      if (connectionId) {
+        try {
+          const cRes = await fetch(`https://api.telnyx.com/v2/call_control_applications/${connectionId}`, { headers });
+          const cData: any = await cRes.json().catch(() => ({}));
+          const app = cData?.data || {};
+          result.callControlApp = {
+            id: connectionId,
+            webhookUrl: app.webhook_event_url || null,
+            webhookSet: Boolean(app.webhook_event_url),
+          };
+        } catch (e: any) {
+          result.callControlAppError = String(e?.message || e);
+        }
+      }
+
+      // 3. Configured assistant ID from CRM
+      try {
+        const { getAiAssistantConfig } = await import("./services/telecom/ai-config.js");
+        const cfg = await getAiAssistantConfig();
+        result.configuredAssistantId = cfg.assistantId;
+        result.assistantEnabled = cfg.enabled;
+        // Check if configured ID exists in Telnyx
+        if (result.assistants && cfg.assistantId) {
+          result.assistantExistsInTelnyx = result.assistants.some((a: any) => a.id === cfg.assistantId);
+        }
+      } catch (e: any) {
+        result.configError = String(e?.message || e);
+      }
+
+      return res.json(result);
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: String(e?.message || e) });
+    }
+  });
+
   // POST /api/files/upload — upload a file to durable object storage.
   reg("post", "/api/files/upload"); app.post("/api/files/upload", upload.single("file"), async (req, res) => {
     try {
