@@ -226,6 +226,30 @@ class TelnyxVideoService {
       }
 
       if (res.ok) {
+        // Rooms API is reachable — now verify the account has a positive
+        // balance, otherwise room creation will fail at billing time.
+        try {
+          const balRes = await fetch(`https://api.telnyx.com/v2/billing/balance`, {
+            method: "GET",
+            headers: this.headers(),
+            signal: AbortSignal.timeout(10000),
+          });
+          if (balRes.ok) {
+            const balData: any = await balRes.json().catch(() => ({}));
+            const bal = balData?.data?.balance;
+            const amount = typeof bal === "number" ? bal : parseFloat(String(bal ?? "0"));
+            if (!isNaN(amount) && amount <= 0) {
+              return {
+                configured: true,
+                reachable: false,
+                roomsApiAvailable: true,
+                blocker: `Telnyx account balance is $${amount.toFixed(2)} — top up to enable video meetings.`,
+              };
+            }
+          }
+        } catch {
+          // Balance check failed; proceed since Rooms API is reachable.
+        }
         return {
           configured: true,
           reachable: true,
