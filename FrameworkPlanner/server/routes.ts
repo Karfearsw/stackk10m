@@ -9367,6 +9367,46 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     }
   });
 
+  // DIAGNOSTIC: List Telnyx email domains + their required DNS records.
+  reg("get", "/api/admin/telnyx/email-domains"); app.get("/api/admin/telnyx/email-domains", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) {
+        res.status(403).json({ success: false, error: "Admin access required" });
+        return;
+      }
+      const apiKey = process.env.TELNYX_API_KEY;
+      if (!apiKey) return res.status(500).json({ success: false, error: "Telnyx API key not configured" });
+      const headers = { "Authorization": `Bearer ${apiKey}` };
+      const listRes = await fetch("https://api.telnyx.com/v2/email_domains", { headers });
+      const listData: any = await listRes.json().catch(() => ({}));
+      if (!listRes.ok) {
+        return res.status(listRes.status).json({ success: false, error: listData?.errors?.[0]?.title || "Telnyx API read failed" });
+      }
+      const domains = (listData?.data || []).map((d: any) => ({
+        id: d.id, domain: d.domain, status: d.status, createdAt: d.created_at,
+      }));
+      const withRecords = [];
+      for (const d of domains) {
+        try {
+          const r = await fetch(`https://api.telnyx.com/v2/email_domains/${d.id}/dns_records`, { headers });
+          const rd: any = await r.json().catch(() => ({}));
+          withRecords.push({
+            ...d,
+            dnsRecords: (rd?.data || []).map((rec: any) => ({
+              type: rec.record_type, host: rec.host, value: rec.value,
+              status: rec.status, actualValue: rec.actual_value || null,
+            })),
+          });
+        } catch { withRecords.push({ ...d, dnsRecords: [] }); }
+      }
+      return res.json({ success: true, domains: withRecords });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: String(e?.message || e) });
+    }
+  });
+
   // POST /api/files/upload — upload a file to durable object storage.
   reg("post", "/api/files/upload"); app.post("/api/files/upload", upload.single("file"), async (req, res) => {
     try {
@@ -9891,7 +9931,7 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     try {
       const user = await requireAuth(req, res);
       if (!user) return;
-      const { toNumber, fromNumber, metadata } = req.body || {};
+      const { toNumber, fromNumber, metadata, speakOnAnswer } = req.body || {};
       if (!toNumber || !String(toNumber).trim()) {
         return res.status(400).json({ error: "toNumber is required", code: "MISSING_TO" });
       }
@@ -9995,10 +10035,15 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
         });
       }
       try {
-        const result = await telnyx.dial({
+        const dialInput: any = {
           to: String(toNumber),
           from: resolvedFrom,
-        });
+        };
+        const speakText = String(speakOnAnswer || "").trim().slice(0, 500);
+        if (speakText) {
+          dialInput.clientState = Buffer.from(JSON.stringify({ kind: "speak_on_answer", text: speakText })).toString("base64");
+        }
+        const result = await telnyx.dial(dialInput);
         callControlId = result.callControlId;
       } catch (error: any) {
         console.error("Telnyx outbound dispatch failed:", error);
