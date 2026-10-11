@@ -285,6 +285,44 @@ export class TelnyxClient {
     return { messageId: String(messageId) };
   }
 
+  /**
+   * Poll Telnyx for inbound SMS messages. Fallback when webhooks aren't delivering.
+   * Returns messages received since the given ISO timestamp.
+   */
+  async listInboundMessages(sinceIso?: string, limit = 50): Promise<Array<{
+    id: string;
+    from: string;
+    to: string;
+    body: string;
+    receivedAt: string;
+    direction: string;
+  }>> {
+    this.requireReady();
+    const params = new URLSearchParams();
+    params.set("filter[direction]", "inbound");
+    params.set("page[size]", String(Math.min(limit, 100)));
+    params.set("sort", "-created_at");
+    if (sinceIso) params.set("filter[created_at][gte]", sinceIso);
+    const res = await fetch(`${this.baseUrl}/messages?${params.toString()}`, {
+      headers: this.headers(),
+      signal: AbortSignal.timeout(15000),
+    });
+    const data: any = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const title = data?.errors?.[0]?.title || `Telnyx list messages failed (${res.status})`;
+      throw new Error(title);
+    }
+    const items = data?.data || [];
+    return items.map((m: any) => ({
+      id: String(m.id || ""),
+      from: String(m.from?.phone_number || m.from || ""),
+      to: String(m.to?.[0]?.phone_number || m.to || ""),
+      body: String(m.text || m.body || ""),
+      receivedAt: String(m.created_at || m.received_at || ""),
+      direction: "inbound",
+    }));
+  }
+
   async healthCheck(): Promise<{
     status: "reachable" | "unreachable" | "degraded" | "unconfigured";
     code: number | string | null;
