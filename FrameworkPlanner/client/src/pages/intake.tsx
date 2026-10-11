@@ -692,7 +692,7 @@ function LeadIntakeDrawer({
                 <Calculator className="h-3.5 w-3.5" /> Deal math
               </span>
             </h3>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <div>
                 <label className="text-[11px] text-muted-foreground">Est. value</label>
                 <Input

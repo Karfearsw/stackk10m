@@ -51,7 +51,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Filter, Plus, Search, Building2, MoreHorizontal, Pencil, Trash2, Lightbulb, ListFilter, Columns2, Mic, UserPlus } from "lucide-react";
+import { Filter, Plus, Search, Building2, MoreHorizontal, Pencil, Trash2, Lightbulb, ListFilter, Columns2, Mic, UserPlus, Phone } from "lucide-react";
 import { useLocation } from "wouter";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState, type MouseEvent } from "react";
@@ -2129,7 +2129,8 @@ export default function Leads() {
         </TabsList>
 
         <TabsContent value="list" className="mt-4">
-          <div className="rounded-md border bg-card shadow-sm overflow-x-auto">
+          {/* Desktop table — hidden on mobile in favor of the card list below */}
+          <div className="hidden md:block rounded-md border bg-card shadow-sm overflow-x-auto">
             <Table className="min-w-[800px]">
               <TableHeader>
                 <TableRow>
@@ -2308,6 +2309,67 @@ export default function Leads() {
             </Table>
             {leads.length === 0 && (
               <div className="text-center py-8 text-muted-foreground">No leads yet. Create one to get started!</div>
+            )}
+          </div>
+          {/* Mobile card list — agents work leads on phones; the 800px table
+              is unreachable without horizontal scrolling. Cards show the
+              essentials: address, owner, status, score, tap-to-call. */}
+          <div className="md:hidden space-y-2">
+            {filteredLeads.map((lead: any) => (
+              <div
+                key={lead.id}
+                className="rounded-lg border bg-card p-3 flex gap-3 cursor-pointer active:bg-muted/40"
+                onClick={() => openLead(lead.id)}
+                data-testid={`card-lead-${lead.id}`}
+              >
+                <div onClick={(e) => e.stopPropagation()} className="pt-0.5 shrink-0">
+                  <Checkbox
+                    checked={isSelected(Number(lead.id))}
+                    onCheckedChange={(v) => toggleRow(Number(lead.id), !!v)}
+                    aria-label={`Select lead ${lead.address}`}
+                  />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-medium text-sm truncate" title={`${lead.address || ""}, ${lead.city || ""}`}>
+                        {lead.address}, {lead.city}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate" title={String(lead.ownerName || "")}>
+                        {lead.ownerName || "Unknown owner"}
+                      </p>
+                    </div>
+                    {visibleColumns.score ? (
+                      <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs font-semibold" title="Lead score">
+                        {lead.relasScore || "—"}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="mt-2 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      {visibleColumns.status ? (
+                        <Badge variant="outline" className={getStatusBadgeColor(lead.status)}>
+                          {pipelineColumnsWithMissing.find((s) => s.value === lead.status)?.label || lead.status}
+                        </Badge>
+                      ) : null}
+                    </div>
+                    {lead.ownerPhone ? (
+                      <a
+                        href={`tel:${lead.ownerPhone}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-sm active:scale-95"
+                        aria-label={`Call ${lead.ownerName || lead.address}`}
+                        data-testid={`button-call-lead-${lead.id}`}
+                      >
+                        <Phone className="h-4 w-4" />
+                      </a>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ))}
+            {filteredLeads.length === 0 && (
+              <div className="text-center py-8 text-muted-foreground text-sm">No leads yet. Create one to get started!</div>
             )}
           </div>
         </TabsContent>
