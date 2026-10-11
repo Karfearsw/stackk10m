@@ -79,7 +79,7 @@ export class CompositePublicResearchRunner implements PublicResearchRunner {
       return {
         status: "disabled",
         evidence: [],
-        message: "No public-research sources configured (set SKIP_TRACE_PUBLIC_RESEARCH_ENABLED=true and/or COURTLISTENER_API_TOKEN)",
+        message: "No public-research sources enabled (free-web was explicitly disabled via SKIP_TRACE_PUBLIC_RESEARCH_ENABLED=false and COURTLISTENER_API_TOKEN is not set)",
         raw: { runner: this.name },
       };
     }

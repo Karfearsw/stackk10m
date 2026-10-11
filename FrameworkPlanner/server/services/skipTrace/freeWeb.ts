@@ -504,7 +504,10 @@ export class FreeWebSkipTraceProvider implements SkipTraceProvider {
 
 export class FreeWebPublicResearchRunner implements PublicResearchRunner {
   name = "free-web";
-  enabled = String(process.env.SKIP_TRACE_PUBLIC_RESEARCH_ENABLED || "").trim().toLowerCase() === "true";
+  // Free-web research is always-on by design (keyless public sources:
+  // DuckDuckGo, Mojeek, US Census geocoder). Set
+  // SKIP_TRACE_PUBLIC_RESEARCH_ENABLED=false to opt out.
+  enabled = String(process.env.SKIP_TRACE_PUBLIC_RESEARCH_ENABLED || "").trim().toLowerCase() !== "false";
 
   async run(input: PublicResearchInput): Promise<PublicResearchOutput> {
     if (!this.enabled) {
