@@ -14956,6 +14956,58 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.status(400).json({ message: error.message });
     }
   });
+
+  // Poll Telnyx for new inbound SMS (fallback when webhooks aren't delivering).
+  // Call periodically or via cron. Returns count of new messages ingested.
+  reg("post", "/api/sms/poll-inbound"); app.post("/api/sms/poll-inbound", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const { telnyx } = await import("./services/telecom/telnyx-client.js");
+      // Only poll messages from the last 15 minutes to avoid duplicates
+      const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+      const messages = await telnyx.listInboundMessages(since, 50);
+      let ingested = 0;
+      for (const m of messages) {
+        if (!m.id) continue;
+        try {
+          const existing: any = await pool.query(
+            `SELECT 1 FROM crm_sms_messages WHERE provider_message_id = $1 LIMIT 1`,
+            [m.id],
+          );
+          if (existing.rows?.length) continue;
+          // Match to lead
+          let leadId: number | null = null;
+          const fromDigits = m.from.replace(/\D/g, "");
+          if (fromDigits.length >= 7) {
+            const lr: any = await pool.query(
+              "SELECT id FROM leads WHERE regexp_replace(COALESCE(owner_phone, ''), '\\D', '', 'g') LIKE $1 ORDER BY id DESC LIMIT 1",
+              [`%${fromDigits.slice(-10)}`],
+            );
+            if (lr.rows?.[0]?.id) leadId = Number(lr.rows[0].id);
+          }
+          await pool.query(
+            `INSERT INTO crm_sms_messages
+               (user_id, lead_id, direction, from_number, to_number, body, status, provider_message_id, metadata, created_at)
+             VALUES (0, $1, 'inbound', $2, $3, $4, 'received', $5, $6, NOW())`,
+            [leadId, m.from, m.to, m.body, m.id, JSON.stringify({ polled: true, receivedAt: m.receivedAt })],
+          );
+          ingested++;
+        } catch (e) {
+          console.error("Poll ingest failed for", m.id, e);
+        }
+      }
+      // Update webhook health marker so UI reflects polling is active
+      if (ingested > 0) {
+        try {
+          await storage.setAppSetting("TELNYX_LAST_POLL_AT", new Date().toISOString());
+        } catch {}
+      }
+      res.json({ ok: true, checked: messages.length, ingested });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   // CALENDAR EVENTS (internal meetings)
   reg("get", "/api/calendar-events"); app.get("/api/calendar-events", async (req, res) => {
     try {
