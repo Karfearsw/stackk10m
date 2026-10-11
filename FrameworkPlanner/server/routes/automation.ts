@@ -18,8 +18,8 @@
  */
 
 import type { Express, Request, Response } from "express";
-import { createHmac } from "crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { createHmac, createHash } from "crypto";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { db } from "../db.js";
 import { storage } from "../storage.js";
 import {
@@ -113,8 +113,10 @@ const SCORE_WEIGHTS: Record<string, number> = { critical: 4, alert: 3, watch: 2,
 export const HIGH_SCORE_THRESHOLD = 8;
 
 /** Called after a signal is created — emits signal.created and parcel.high_score,
- *  and auto-promotes the parcel to a callable seller lead when its distress
- *  score crosses HIGH_SCORE_THRESHOLD. */
+ *  and auto-promotes the parcel to a callable seller lead on its FIRST signal.
+ *  Distress score drives priority (hot-lead alert at HIGH_SCORE_THRESHOLD) and
+ *  lead-list filtering — not whether the parcel becomes a lead at all.
+ *  Promotion is idempotent (dedupeKey = parcel key: one lead per parcel ever). */
 export async function onSignalCreated(signal: any) {
   emitAutomationEvent("signal.created", {
     id: signal.id,
@@ -124,7 +126,6 @@ export async function onSignalCreated(signal: any) {
     title: signal.title,
     source: signal.source,
   }).catch(() => {});
-  // Check parcel score for high-score alert
   try {
     const signals = await db.select().from(distressSignals)
       .where(eq(distressSignals.parcelKey, signal.parcelKey));
@@ -139,19 +140,87 @@ export async function onSignalCreated(signal: any) {
         address: parcel?.address, city: parcel?.city, state: parcel?.state,
         latestSignal: { id: signal.id, title: signal.title, severity: signal.severity },
       }).catch(() => {});
-      // Auto-promote: turn this distressed parcel into a callable seller lead
-      // (idempotent — deduped on parcel key, one lead per parcel ever).
-      try {
-        const { promoteParcelToLead } = await import("../services/lead-promotion.js");
-        const res = await promoteParcelToLead(signal.parcelKey);
-        if (res.promoted) {
-          console.log(`[automation] parcel ${signal.parcelKey} promoted to lead ${res.leadId} (score ${score})`);
-        }
-      } catch (e) {
-        console.error("[automation] lead promotion failed:", e);
-      }
     }
-  } catch (e) { console.error("[automation] high-score check failed:", e); }
+    // Auto-promote: every distressed parcel becomes a callable seller lead.
+    // (idempotent — deduped on parcel key, one lead per parcel ever.)
+    try {
+      const { promoteParcelToLead } = await import("../services/lead-promotion.js");
+      const res = await promoteParcelToLead(signal.parcelKey);
+      if (res.promoted) {
+        console.log(`[automation] parcel ${signal.parcelKey} promoted to lead ${res.leadId} (score ${score})`);
+      }
+    } catch (e) {
+      console.error("[automation] lead promotion failed:", e);
+    }
+  } catch (e) { console.error("[automation] signal post-processing failed:", e); }
+}
+
+/**
+ * Ensure a parcel_watchlist row exists for a parcel key coming through the
+ * API-key ingest path. Idempotent (parcel_key is unique) and best-effort:
+ * without a watchlist row, promoteParcelToLead() can never create a lead for
+ * the parcel, silently breaking the signal → lead loop for every API import.
+ * Mirrors the auto-create behavior of the session-authenticated import.
+ */
+async function ensureWatchlistEntry(
+  parcelKey: string,
+  r: { address?: string; city?: string; state?: string; zipCode?: string; apn?: string; ownerName?: string },
+  createdBy: number | null,
+): Promise<void> {
+  const key = (parcelKey || "").trim();
+  if (!key) return;
+  const address = String(r.address || "").trim();
+  const city = String(r.city || "").trim();
+  const state = String(r.state || "").trim();
+  const zipCode = String(r.zipCode || "").trim();
+  // Watchlist columns are NOT NULL — without address parts we cannot create
+  // a valid row; promotion for that parcel will fail gracefully as before.
+  if (!address || !city || !state || !zipCode) return;
+  try {
+    await db.insert(parcelWatchlist).values({
+      parcelKey: key,
+      address: address.slice(0, 255),
+      city: city.slice(0, 100),
+      state: state.slice(0, 2),
+      zipCode: zipCode.slice(0, 10),
+      apn: r.apn ? String(r.apn).slice(0, 100) : null,
+      ownerName: r.ownerName ? String(r.ownerName).slice(0, 255) : null,
+      createdBy,
+    }).onConflictDoNothing({ target: parcelWatchlist.parcelKey });
+  } catch (e) {
+    console.error("[automation] watchlist upsert failed:", e);
+  }
+}
+
+/**
+ * Idempotency key for an imported signal row.
+ *
+ * Importers may pass an explicit `sourceRecordId` (stable per source record).
+ * Otherwise we derive a deterministic content hash from the row's natural key
+ * so re-running any import script is a no-op instead of duplicating rows.
+ * Stored in distress_signals.source_record_id; the partial unique index on
+ * (source, source_record_id) + ON CONFLICT DO NOTHING enforces the skip.
+ */
+export function signalDedupeKey(r: {
+  sourceRecordId?: string | null;
+  source: string;
+  parcelKey: string;
+  signalType: string;
+  severity?: string | null;
+  occurredAt?: string | null;
+  title: string;
+}): string {
+  const explicit = (r.sourceRecordId || "").trim();
+  if (explicit) return explicit.slice(0, 200);
+  const parts = [
+    (r.source || "").trim().toLowerCase(),
+    (r.parcelKey || "").trim(),
+    (r.signalType || "").trim().toLowerCase(),
+    (r.severity || "info").trim().toLowerCase(),
+    (r.occurredAt || "").trim(),
+    (r.title || "").trim().toLowerCase(),
+  ];
+  return "hash:" + createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 32);
 }
 
 export function registerAutomationRoutes(app: Express) {
@@ -172,18 +241,35 @@ export function registerAutomationRoutes(app: Express) {
         parcelKey = parcelKeyFor(b.address, b.city, b.state, b.zipCode);
       if (!parcelKey) return res.status(400).json({ message: "parcelKey or address/city/state/zipCode required" });
 
+      await ensureWatchlistEntry(parcelKey, b, auth.userId);
+      const source = String(b.source).slice(0, 100);
+      const severity = VALID_SEVERITIES.has(b.severity) ? b.severity : "info";
+      const title = String(b.title).slice(0, 255);
+      const occurredAt = b.occurredAt || null;
+      const dedupeKey = signalDedupeKey({
+        sourceRecordId: b.sourceRecordId,
+        source, parcelKey,
+        signalType: b.signalType, severity, occurredAt, title,
+      });
       const [row] = await db.insert(distressSignals).values({
         parcelKey,
         signalType: b.signalType,
-        severity: VALID_SEVERITIES.has(b.severity) ? b.severity : "info",
-        title: String(b.title).slice(0, 255),
+        severity,
+        title,
         description: b.description || null,
-        source: String(b.source).slice(0, 100),
+        source,
+        sourceRecordId: dedupeKey,
         sourceUrl: b.sourceUrl || null,
-        occurredAt: b.occurredAt || null,
+        occurredAt,
         rawData: b.rawData || { via: "api-v1", keyId: auth.keyId },
         createdBy: auth.userId,
+      }).onConflictDoNothing({
+        target: [distressSignals.source, distressSignals.sourceRecordId],
+        where: isNotNull(distressSignals.sourceRecordId),
       }).returning();
+      // Idempotent: a re-imported record conflicts and returns no row —
+      // report it as deduplicated instead of creating a duplicate.
+      if (!row) return res.status(200).json({ deduplicated: true, sourceRecordId: dedupeKey });
       onSignalCreated(row).catch(() => {});
       res.status(201).json(row);
     } catch (e: any) {
@@ -198,8 +284,9 @@ export function registerAutomationRoutes(app: Express) {
       const rows: any[] = Array.isArray(req.body?.rows) ? req.body.rows : [];
       if (!rows.length) return res.status(400).json({ message: "No rows" });
       if (rows.length > 500) return res.status(400).json({ message: "Max 500 rows" });
-      let created = 0;
+      let created = 0, skipped = 0;
       const errors: any[] = [];
+      const wlEnsured = new Set<string>();
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i] || {};
         try {
@@ -208,23 +295,45 @@ export function registerAutomationRoutes(app: Express) {
           let parcelKey = (r.parcelKey || "").trim();
           if (!parcelKey && r.address) parcelKey = parcelKeyFor(r.address, r.city, r.state, r.zipCode);
           if (!parcelKey) throw new Error("parcelKey or address required");
+          // Keep the signal → lead loop alive: every imported parcel needs a
+          // watchlist row or promotion silently fails ("parcel not on watchlist").
+          if (!wlEnsured.has(parcelKey)) {
+            wlEnsured.add(parcelKey);
+            await ensureWatchlistEntry(parcelKey, r, auth.userId);
+          }
+          const source = String(r.source).slice(0, 100);
+          const severity = VALID_SEVERITIES.has(r.severity) ? r.severity : "info";
+          const title = String(r.title).slice(0, 255);
+          const occurredAt = r.occurredAt || null;
+          // Idempotent re-imports: same source record → same dedupe key →
+          // ON CONFLICT DO NOTHING skips it instead of duplicating the row.
+          const dedupeKey = signalDedupeKey({
+            sourceRecordId: r.sourceRecordId,
+            source, parcelKey,
+            signalType: r.signalType, severity, occurredAt, title,
+          });
           const [row] = await db.insert(distressSignals).values({
             parcelKey,
             signalType: r.signalType,
-            severity: VALID_SEVERITIES.has(r.severity) ? r.severity : "info",
-            title: String(r.title).slice(0, 255),
+            severity,
+            title,
             description: r.description || null,
-            source: String(r.source).slice(0, 100),
+            source,
+            sourceRecordId: dedupeKey,
             sourceUrl: r.sourceUrl || null,
-            occurredAt: r.occurredAt || null,
+            occurredAt,
             rawData: r.rawData || { via: "api-v1-bulk", keyId: auth.keyId },
             createdBy: auth.userId,
+          }).onConflictDoNothing({
+            target: [distressSignals.source, distressSignals.sourceRecordId],
+            where: isNotNull(distressSignals.sourceRecordId),
           }).returning();
+          if (!row) { skipped++; continue; }
           onSignalCreated(row).catch(() => {});
           created++;
         } catch (e: any) { errors.push({ row: i + 1, error: e.message }); }
       }
-      res.json({ created, total: rows.length, errors: errors.slice(0, 20) });
+      res.json({ created, skipped, total: rows.length, errors: errors.slice(0, 20) });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed" });
     }
