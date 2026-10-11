@@ -113,8 +113,10 @@ const SCORE_WEIGHTS: Record<string, number> = { critical: 4, alert: 3, watch: 2,
 export const HIGH_SCORE_THRESHOLD = 8;
 
 /** Called after a signal is created — emits signal.created and parcel.high_score,
- *  and auto-promotes the parcel to a callable seller lead when its distress
- *  score crosses HIGH_SCORE_THRESHOLD. */
+ *  and auto-promotes the parcel to a callable seller lead on its FIRST signal.
+ *  Distress score drives priority (hot-lead alert at HIGH_SCORE_THRESHOLD) and
+ *  lead-list filtering — not whether the parcel becomes a lead at all.
+ *  Promotion is idempotent (dedupeKey = parcel key: one lead per parcel ever). */
 export async function onSignalCreated(signal: any) {
   emitAutomationEvent("signal.created", {
     id: signal.id,
@@ -124,7 +126,6 @@ export async function onSignalCreated(signal: any) {
     title: signal.title,
     source: signal.source,
   }).catch(() => {});
-  // Check parcel score for high-score alert
   try {
     const signals = await db.select().from(distressSignals)
       .where(eq(distressSignals.parcelKey, signal.parcelKey));
@@ -139,19 +140,56 @@ export async function onSignalCreated(signal: any) {
         address: parcel?.address, city: parcel?.city, state: parcel?.state,
         latestSignal: { id: signal.id, title: signal.title, severity: signal.severity },
       }).catch(() => {});
-      // Auto-promote: turn this distressed parcel into a callable seller lead
-      // (idempotent — deduped on parcel key, one lead per parcel ever).
-      try {
-        const { promoteParcelToLead } = await import("../services/lead-promotion.js");
-        const res = await promoteParcelToLead(signal.parcelKey);
-        if (res.promoted) {
-          console.log(`[automation] parcel ${signal.parcelKey} promoted to lead ${res.leadId} (score ${score})`);
-        }
-      } catch (e) {
-        console.error("[automation] lead promotion failed:", e);
-      }
     }
-  } catch (e) { console.error("[automation] high-score check failed:", e); }
+    // Auto-promote: every distressed parcel becomes a callable seller lead.
+    // (idempotent — deduped on parcel key, one lead per parcel ever.)
+    try {
+      const { promoteParcelToLead } = await import("../services/lead-promotion.js");
+      const res = await promoteParcelToLead(signal.parcelKey);
+      if (res.promoted) {
+        console.log(`[automation] parcel ${signal.parcelKey} promoted to lead ${res.leadId} (score ${score})`);
+      }
+    } catch (e) {
+      console.error("[automation] lead promotion failed:", e);
+    }
+  } catch (e) { console.error("[automation] signal post-processing failed:", e); }
+}
+
+/**
+ * Ensure a parcel_watchlist row exists for a parcel key coming through the
+ * API-key ingest path. Idempotent (parcel_key is unique) and best-effort:
+ * without a watchlist row, promoteParcelToLead() can never create a lead for
+ * the parcel, silently breaking the signal → lead loop for every API import.
+ * Mirrors the auto-create behavior of the session-authenticated import.
+ */
+async function ensureWatchlistEntry(
+  parcelKey: string,
+  r: { address?: string; city?: string; state?: string; zipCode?: string; apn?: string; ownerName?: string },
+  createdBy: number | null,
+): Promise<void> {
+  const key = (parcelKey || "").trim();
+  if (!key) return;
+  const address = String(r.address || "").trim();
+  const city = String(r.city || "").trim();
+  const state = String(r.state || "").trim();
+  const zipCode = String(r.zipCode || "").trim();
+  // Watchlist columns are NOT NULL — without address parts we cannot create
+  // a valid row; promotion for that parcel will fail gracefully as before.
+  if (!address || !city || !state || !zipCode) return;
+  try {
+    await db.insert(parcelWatchlist).values({
+      parcelKey: key,
+      address: address.slice(0, 255),
+      city: city.slice(0, 100),
+      state: state.slice(0, 2),
+      zipCode: zipCode.slice(0, 10),
+      apn: r.apn ? String(r.apn).slice(0, 100) : null,
+      ownerName: r.ownerName ? String(r.ownerName).slice(0, 255) : null,
+      createdBy,
+    }).onConflictDoNothing({ target: parcelWatchlist.parcelKey });
+  } catch (e) {
+    console.error("[automation] watchlist upsert failed:", e);
+  }
 }
 
 export function registerAutomationRoutes(app: Express) {
@@ -172,6 +210,7 @@ export function registerAutomationRoutes(app: Express) {
         parcelKey = parcelKeyFor(b.address, b.city, b.state, b.zipCode);
       if (!parcelKey) return res.status(400).json({ message: "parcelKey or address/city/state/zipCode required" });
 
+      await ensureWatchlistEntry(parcelKey, b, auth.userId);
       const [row] = await db.insert(distressSignals).values({
         parcelKey,
         signalType: b.signalType,
@@ -200,6 +239,7 @@ export function registerAutomationRoutes(app: Express) {
       if (rows.length > 500) return res.status(400).json({ message: "Max 500 rows" });
       let created = 0;
       const errors: any[] = [];
+      const wlEnsured = new Set<string>();
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i] || {};
         try {
@@ -208,6 +248,12 @@ export function registerAutomationRoutes(app: Express) {
           let parcelKey = (r.parcelKey || "").trim();
           if (!parcelKey && r.address) parcelKey = parcelKeyFor(r.address, r.city, r.state, r.zipCode);
           if (!parcelKey) throw new Error("parcelKey or address required");
+          // Keep the signal → lead loop alive: every imported parcel needs a
+          // watchlist row or promotion silently fails ("parcel not on watchlist").
+          if (!wlEnsured.has(parcelKey)) {
+            wlEnsured.add(parcelKey);
+            await ensureWatchlistEntry(parcelKey, r, auth.userId);
+          }
           const [row] = await db.insert(distressSignals).values({
             parcelKey,
             signalType: r.signalType,

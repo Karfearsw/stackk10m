@@ -64,7 +64,7 @@ export interface PromotionResult {
  */
 export async function promoteParcelToLead(
   parcelKey: string,
-  opts: { createdBy?: number | null; force?: boolean } = {}
+  opts: { createdBy?: number | null; force?: boolean; quiet?: boolean } = {}
 ): Promise<PromotionResult> {
   const key = (parcelKey || "").trim();
   if (!key) return { promoted: false, leadId: null, reason: "parcelKey required" };
@@ -134,16 +134,20 @@ export async function promoteParcelToLead(
       .where(eq(distressSignals.parcelKey, key));
   }
 
-  // 5. Fire the lead.created automation event (drives n8n / Discord / speed-to-lead)
-  emitAutomationEvent("lead.created", {
-    id: lead.id,
-    address: lead.address,
-    city: lead.city,
-    state: lead.state,
-    source: lead.source,
-    distressScore: score,
-    signalCount: signals.length,
-  }).catch(() => {});
+  // 5. Fire the lead.created automation event (drives n8n / Discord / speed-to-lead).
+  // Skipped when quiet (mass backfill) to avoid fanning out thousands of
+  // events at once; the leads themselves are still created and queryable.
+  if (!opts.quiet) {
+    emitAutomationEvent("lead.created", {
+      id: lead.id,
+      address: lead.address,
+      city: lead.city,
+      state: lead.state,
+      source: lead.source,
+      distressScore: score,
+      signalCount: signals.length,
+    }).catch(() => {});
+  }
 
   return { promoted: true, leadId: lead.id, reason: `created (score ${score}, ${signals.length} signals)` };
 }
@@ -154,7 +158,7 @@ export async function promoteParcelToLead(
  */
 export async function backfillHighScoreParcels(
   threshold: number,
-  opts: { createdBy?: number | null; limit?: number } = {}
+  opts: { createdBy?: number | null; limit?: number; quiet?: boolean } = {}
 ): Promise<{ promoted: number; skippedExisting: number; checked: number }> {
   // Aggregate scores per parcel in SQL, then promote the qualifiers.
   const rows: any = await db.execute(sql`
@@ -179,7 +183,7 @@ export async function backfillHighScoreParcels(
   const list = rows.rows ?? rows;
   for (const r of list as any[]) {
     try {
-      const res = await promoteParcelToLead(r.parcelKey, { createdBy: opts.createdBy });
+      const res = await promoteParcelToLead(r.parcelKey, { createdBy: opts.createdBy, quiet: opts.quiet });
       if (res.promoted) promoted++;
       else skippedExisting++;
     } catch (e) {

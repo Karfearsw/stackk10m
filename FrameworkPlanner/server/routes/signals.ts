@@ -289,6 +289,29 @@ export function registerSignalRoutes(app: Express) {
     }
   });
 
+  // ── Backfill: promote every signaled parcel with no lead yet ─────────────
+  // One-time repair for signals imported before the signal → lead loop was
+  // fixed (missing watchlist rows + score-gated promotion). Manager-only.
+  // Idempotent — skips parcels that already have a lead (dedupeKey).
+  // quiet=true suppresses the per-lead lead.created fan-out so a mass
+  // backfill doesn't fire thousands of webhook events at once.
+  app.post("/api/parcels/backfill-signal-leads", async (req: Request, res: Response) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const role = String((user as any).role || "").toLowerCase();
+      const isManager = !!(user as any).isSuperAdmin || role === "admin" || role === "manager" || role === "owner";
+      if (!isManager) return res.status(403).json({ message: "Manager role required" });
+      const { backfillHighScoreParcels } = await import("../services/lead-promotion.js");
+      // threshold=1: every parcel with at least one distress signal becomes a
+      // callable lead; score drives priority, not existence.
+      const result = await backfillHighScoreParcels(1, { createdBy: user.id, limit: 20000, quiet: true });
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Backfill failed" });
+    }
+  });
+
   app.delete("/api/distress-signals/:id", async (req: Request, res: Response) => {
     const user = await requireAuth(req, res);
     if (!user) return;
