@@ -189,7 +189,19 @@ export default function SmsInboxPage() {
                         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                       </div>
                     )}
-                    {(messages || []).map((m) => (
+                    {(messages || []).map((m) => {
+                      const statusColor =
+                        m.status === "delivered" ? "text-green-500" :
+                        m.status === "failed" ? "text-red-500" :
+                        m.status === "sent" ? "text-blue-400" :
+                        "text-muted-foreground";
+                      const statusLabel =
+                        m.status === "delivered" ? "✓✓ Delivered" :
+                        m.status === "failed" ? "✗ Failed" :
+                        m.status === "sent" ? "✓ Sent" :
+                        m.status === "received" ? "Received" :
+                        m.status;
+                      return (
                       <div
                         key={m.id}
                         className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
@@ -199,11 +211,14 @@ export default function SmsInboxPage() {
                         }`}
                       >
                         <div>{m.body}</div>
-                        <div className={`text-xs mt-1 ${m.direction === "inbound" ? "text-muted-foreground" : "text-primary-foreground/70"}`}>
-                          {formatTime(m.created_at)} · {m.status}
+                        <div className={`text-xs mt-1 flex items-center gap-1 ${m.direction === "inbound" ? "text-muted-foreground" : "text-primary-foreground/70"}`}>
+                          <span>{formatTime(m.created_at)}</span>
+                          <span>·</span>
+                          <span className={m.direction === "outbound" ? statusColor : ""}>{statusLabel}</span>
                         </div>
                       </div>
-                    ))}
+                      );
+                    })}
                     <div ref={bottomRef} />
                   </div>
                   <div className="flex gap-2">

@@ -14910,8 +14910,48 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       const body = String(req.body?.body || "").trim();
       if (!to || !body) return res.status(400).json({ message: "to and body are required" });
       if (body.length > 1600) return res.status(400).json({ message: "Message too long" });
+
+      const fromNumber = String(process.env.TELNYX_DEFAULT_FROM_NUMBER || "").trim();
       const result = await telnyx.sendSms({ to, body });
-      res.json({ ok: true, providerMessageId: result?.messageId || null });
+      const providerMessageId = result?.messageId || null;
+
+      // Persist outbound message immediately with "sending" status, then update
+      // to "sent" once Telnyx accepts it. Delivery receipts via webhook update
+      // to "delivered"/"failed".
+      let savedId: number | null = null;
+      try {
+        // Match to lead by phone
+        let leadId: number | null = null;
+        const toDigits = to.replace(/\D/g, "");
+        if (toDigits.length >= 7) {
+          const last10 = toDigits.slice(-10);
+          const lr: any = await pool.query(
+            "SELECT id FROM leads WHERE regexp_replace(COALESCE(owner_phone, ''), '\\D', '', 'g') LIKE $1 ORDER BY id DESC LIMIT 1",
+            [`%${last10}`],
+          );
+          if (lr.rows?.[0]?.id) leadId = Number(lr.rows[0].id);
+        }
+        const ins: any = await pool.query(
+          `INSERT INTO crm_sms_messages
+             (user_id, lead_id, direction, from_number, to_number, body, status, provider_message_id, metadata, created_at)
+           VALUES ($1, $2, 'outbound', $3, $4, $5, 'sent', $6, $7, NOW())
+           RETURNING id`,
+          [
+            user.id,
+            leadId,
+            fromNumber,
+            to,
+            body,
+            providerMessageId,
+            JSON.stringify({ sentBy: user.id, sentAt: new Date().toISOString() }),
+          ],
+        );
+        savedId = ins.rows?.[0]?.id ?? null;
+      } catch (e) {
+        console.error("Failed to persist outbound SMS:", e);
+      }
+
+      res.json({ ok: true, providerMessageId, id: savedId, status: "sent" });
     } catch (error: any) {
       res.status(400).json({ message: error.message });
     }
