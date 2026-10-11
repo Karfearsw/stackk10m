@@ -9194,6 +9194,110 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     }
   });
 
+
+  // ADMIN: Telnyx root-cause diagnostic — queries Telnyx API directly
+  // to check number assignment, webhook config, and delivery attempts.
+  reg("get", "/api/admin/telnyx/diagnose-webhooks");
+  app.get("/api/admin/telnyx/diagnose-webhooks", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (user.role !== "admin" && user.role !== "super_admin") {
+        return res.status(403).json({ error: "Admin required" });
+      }
+
+      const apiKey = process.env.TELNYX_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({ error: "TELNYX_API_KEY not configured" });
+      }
+
+      const headers = {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      };
+
+      const results: any = {};
+
+      // 1. Check phone number assignment
+      try {
+        const numRes = await fetch(
+          "https://api.telnyx.com/v2/phone_numbers?filter[phone_number]=%2B13212940738",
+          { headers }
+        );
+        const numData: any = await numRes.json();
+        const num = numData.data?.[0];
+        results.number = {
+          found: !!num,
+          phone_number: num?.phone_number,
+          messaging_profile_id: num?.messaging_profile_id,
+          voice_connection_id: num?.connection_id,
+          status: num?.status,
+        };
+      } catch (e: any) {
+        results.number = { error: e.message };
+      }
+
+      // 2. Check messaging profile webhook URL
+      try {
+        if (results.number?.messaging_profile_id) {
+          const profRes = await fetch(
+            `https://api.telnyx.com/v2/messaging_profiles/${results.number.messaging_profile_id}`,
+            { headers }
+          );
+          const profData: any = await profRes.json();
+          results.messaging_profile = {
+            id: profData.data?.id,
+            name: profData.data?.name,
+            webhook_url: profData.data?.webhook_url,
+            webhook_failover_url: profData.data?.webhook_failover_url,
+          };
+        }
+      } catch (e: any) {
+        results.messaging_profile = { error: e.message };
+      }
+
+      // 3. Check recent webhook deliveries
+      try {
+        const delRes = await fetch(
+          "https://api.telnyx.com/v2/webhook_deliveries?page[size]=10",
+          { headers }
+        );
+        const delData: any = await delRes.json();
+        results.webhook_deliveries = (delData.data || []).map((d: any) => ({
+          id: d.id,
+          event_type: d.event_type,
+          status: d.status,
+          created_at: d.created_at,
+          webhook_url: d.webhook_url,
+          response_status: d.last_attempt?.response_status_code,
+          error: d.last_attempt?.error,
+        }));
+        results.delivery_count = (delData.data || []).length;
+      } catch (e: any) {
+        results.webhook_deliveries = { error: e.message };
+      }
+
+      // 4. Check public key matches
+      try {
+        const keyRes = await fetch("https://api.telnyx.com/v2/public_key", { headers });
+        const keyData: any = await keyRes.json();
+        const apiKey = keyData.data?.public_key;
+        const envKey = process.env.TELNYX_PUBLIC_KEY;
+        results.public_key = {
+          matches: apiKey === envKey,
+          api_key_prefix: apiKey?.substring(0, 20) + "...",
+          env_key_prefix: envKey?.substring(0, 20) + "...",
+        };
+      } catch (e: any) {
+        results.public_key = { error: e.message };
+      }
+
+      res.json(results);
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Diagnostic failed" });
+    }
+  });
+
   // ADMIN: Run migrations manually (post-deploy / manual trigger)
   // Requires admin auth. Uses a PostgreSQL advisory lock to prevent
   // concurrent migration runs across multiple Vercel instances.
