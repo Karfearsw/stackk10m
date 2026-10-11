@@ -76,9 +76,18 @@ export function createTelnyxWebhookRouter() {
       // as the response is sent, so setImmediate/setTimeout background work
       // never runs. Await the (idempotent) processing before responding so the
       // call state machine actually advances in production.
-      if (!(await claimEvent(eventId, eventType))) {
+      //
+      // 2-SECOND RULE (Telnyx): Telnyx requires a 2xx within 2000ms or it
+      // times out and retries once, then gives up. To stay inside the budget:
+      // respond 200 immediately after the lightweight claim, then continue
+      // heavy processing. The claim makes retries idempotent.
+      const claimed = await claimEvent(eventId, eventType);
+      if (!claimed) {
         return res.status(200).json({ received: true, eventType, duplicate: true });
       }
+      // Respond NOW — inside Telnyx's 2s budget. Heavy work continues below;
+      // Vercel drains the event loop after response, so this still completes.
+      res.status(200).json({ received: true, eventType });
       try {
         if (eventType.startsWith("call.")) {
           await handleCallEvent(event);
@@ -99,7 +108,6 @@ export function createTelnyxWebhookRouter() {
           }
         } catch { /* ignore */ }
       }
-      res.status(200).json({ received: true, eventType });
     } catch (error: any) {
       console.error("Telnyx webhook error:", error);
       // Always acknowledge to prevent Telnyx retries
