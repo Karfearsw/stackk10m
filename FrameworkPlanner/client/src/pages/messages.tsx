@@ -64,6 +64,7 @@ export default function MessagesPage() {
     staleTime: 60000,
   });
   const telnyxVideoReady = !!(videoHealth?.configured && videoHealth?.reachable);
+  const telnyxBlocker = videoHealth?.blocker || "Telnyx video is unavailable — check the Telnyx account balance";
   const [meetingBusy, setMeetingBusy] = useState(false);
   const [recorderOpen, setRecorderOpen] = useState(false);
 
@@ -308,7 +309,7 @@ export default function MessagesPage() {
                         <DropdownMenuItem
                           onClick={startTelnyxMeeting}
                           disabled={!telnyxVideoReady}
-                          title={telnyxVideoReady ? "Start a Telnyx video meeting" : "Telnyx video is unavailable — check the Telnyx account balance"}
+                          title={telnyxVideoReady ? "Start a Telnyx video meeting" : telnyxBlocker}
                         >
                           <Video className="h-4 w-4 mr-2" />
                           Video meeting (Telnyx){!telnyxVideoReady ? " — unavailable" : ""}
