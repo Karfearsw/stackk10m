@@ -7,9 +7,10 @@ import { createSkipTraceJob, runSkipTraceJob } from "../services/skipTrace/orche
  * Daily free-lane enrichment routine.
  *
  * Selects up to N leads (SKIP_TRACE_DAILY_FREE_LIMIT, default 100) that have
- * no owner phone and no successful skip trace in the last 90 days (matched
- * by the skip-trace cache key), prioritized by lead score then recency, and
- * queues free public_research jobs for them.
+ * no owner phone, no active job, no completed trace within the re-trace
+ * window (SKIP_TRACE_RETRACE_DAYS, default 30), and no successful skip trace
+ * in the last 90 days (matched by the skip-trace cache key), prioritized by
+ * lead score then recency, and queues free public_research jobs for them.
  *
  * Jobs are attributed to no user (requestedByUserId = null) — the system
  * convention for automated work. Queued jobs are drained by
@@ -20,6 +21,8 @@ import { createSkipTraceJob, runSkipTraceJob } from "../services/skipTrace/orche
  * Env:
  *   SKIP_TRACE_DAILY_FREE_LIMIT   optional — max leads per run (default 100)
  *   SKIP_TRACE_DAILY_ENABLED      optional — "false" disables the routine
+ *   SKIP_TRACE_RETRACE_DAYS       optional — don't re-trace a lead traced
+ *                                 within this many days (default 30)
  */
 
 export function skipTraceCacheKey(input: { ownerName: string; address: string; city: string; state: string; zipCode: string }) {
@@ -43,13 +46,19 @@ export type DailyEnrichmentResult = {
 export async function runDailyFreeLaneEnrichment(): Promise<DailyEnrichmentResult> {
   const enabled = String(process.env.SKIP_TRACE_DAILY_ENABLED || "").trim().toLowerCase() !== "false";
   const limit = envInt("SKIP_TRACE_DAILY_FREE_LIMIT", 100);
+  // Don't re-trace a lead whose last completed trace is newer than this —
+  // a miss stays a miss for a while; re-tracing daily just burns the
+  // CourtListener quota on the same phone-less leads.
+  const retraceDays = envInt("SKIP_TRACE_RETRACE_DAYS", 30);
   if (!enabled) {
     return { ok: true, queued: 0, skippedRecentlyTraced: 0, limit, enabled: false };
   }
 
-  // Candidate leads: no usable phone, not archived, and no active (queued or
-  // running) skip-trace job from the last 7 days — so the routine is safe to
-  // re-run on a schedule without double-queueing. Prioritized by score then recency.
+  // Candidate leads: no usable phone, not archived, no active (queued or
+  // running) job from the last 7 days, and no completed trace within the
+  // re-trace window — so the routine is safe to re-run on a schedule and
+  // works through untraced leads instead of churning misses.
+  // Prioritized by score then recency.
   const candidates: any = await db.execute(sql`
     SELECT l.id, l.owner_name, l.address, l.city, l.state, l.zip_code, l.relas_score
     FROM leads l
@@ -60,6 +69,12 @@ export async function runDailyFreeLaneEnrichment(): Promise<DailyEnrichmentResul
         WHERE j.entity_type = 'lead' AND j.entity_id = l.id
           AND j.status IN ('queued', 'running')
           AND j.created_at > now() - interval '7 days'
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM skip_trace_jobs j
+        WHERE j.entity_type = 'lead' AND j.entity_id = l.id
+          AND j.status = 'completed'
+          AND j.created_at > now() - (${retraceDays} || ' days')::interval
       )
     ORDER BY l.relas_score DESC NULLS LAST, l.id DESC
     LIMIT ${limit * 2}
