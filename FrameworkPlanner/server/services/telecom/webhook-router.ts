@@ -43,6 +43,16 @@ export function createTelnyxWebhookRouter() {
       const eventType = String(event?.data?.event_type || event?.event_type || "unknown");
       const eventId = String(event?.data?.id || event?.id || event?.data?.event_id || "");
 
+      // Track webhook receipt: this is the heartbeat that proves Telnyx is
+      // actually delivering events to us. If this timestamp goes stale, the
+      // webhook URL is likely not configured in the Telnyx portal.
+      try {
+        await storage.setAppSetting("TELNYX_LAST_WEBHOOK_AT", new Date().toISOString());
+      } catch (e) {
+        // Non-blocking: don't fail the webhook if settings write fails.
+        console.error("Failed to update TELNYX_LAST_WEBHOOK_AT:", e);
+      }
+
       // Process inline: on serverless (Vercel) the function is frozen as soon
       // as the response is sent, so setImmediate/setTimeout background work
       // never runs. Await the (idempotent) processing before responding so the
