@@ -14,6 +14,7 @@ import { Copy, ExternalLink, Loader2, Maximize2, RefreshCw, Search, Trash2 } fro
 import { getProxiedUrl } from "@/lib/proxy-url";
 import { useToast } from "@/hooks/use-toast";
 import { SaveCompDialog } from "@/components/underwriting/SaveCompDialog";
+import { CompLookupTab } from "@/components/underwriting/CompLookupTab";
 
 type BrowserStatus = "idle" | "loading" | "loaded" | "maybe_blocked";
 
@@ -151,7 +152,7 @@ export function ResearchHub(props: {
   const address = String(props.address || "").trim();
   const sources = useMemo(() => makeAddressSources(address), [address]);
 
-  const [tab, setTab] = useState<"browser" | "zoning" | "resources" | "suppliers" | "session" | "notes">("browser");
+  const [tab, setTab] = useState<"browser" | "comps" | "zoning" | "resources" | "suppliers" | "session" | "notes">("browser");
 
   const [urlInput, setUrlInput] = useState(props.currentUrl);
   const [srcUrl, setSrcUrl] = useState(props.currentUrl);
@@ -369,6 +370,7 @@ export function ResearchHub(props: {
             <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="flex flex-col min-h-0">
               <TabsList className="justify-start flex-wrap h-auto">
                 <TabsTrigger value="browser">Browser</TabsTrigger>
+                <TabsTrigger value="comps">Comps</TabsTrigger>
                 <TabsTrigger value="zoning">Zoning</TabsTrigger>
                 <TabsTrigger value="resources">Resources</TabsTrigger>
                 <TabsTrigger value="suppliers">Suppliers</TabsTrigger>
@@ -589,6 +591,15 @@ export function ResearchHub(props: {
                     </div>
                   </div>
                 )}
+              </TabsContent>
+
+              <TabsContent value="comps" className="mt-3 flex flex-col min-h-0 gap-3">
+                <CompLookupTab
+                  address={address}
+                  onSaveComp={(comp) => {
+                    if (props.onSaveComp) props.onSaveComp(comp);
+                  }}
+                />
               </TabsContent>
 
               <TabsContent value="zoning" className="mt-3 space-y-3">
