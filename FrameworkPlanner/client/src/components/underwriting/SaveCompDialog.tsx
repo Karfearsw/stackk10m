@@ -38,6 +38,8 @@ export function SaveCompDialog(props: {
   onOpenChange: (open: boolean) => void;
   defaultAddress: string;
   defaultUrl: string;
+  /** Prefilled numeric fields (e.g. from reader-mode extraction). Clipboard fills any that stay empty. */
+  defaultFields?: { soldPrice?: string; beds?: string; baths?: string; sqft?: string };
   onSave: (comp: {
     address?: string;
     url?: string;
@@ -50,12 +52,28 @@ export function SaveCompDialog(props: {
   const [values, setValues] = useState<SaveCompDialogValues>(() => ({
     address: props.defaultAddress,
     url: props.defaultUrl,
-    soldPrice: "",
-    beds: "",
-    baths: "",
-    sqft: "",
+    soldPrice: props.defaultFields?.soldPrice || "",
+    beds: props.defaultFields?.beds || "",
+    baths: props.defaultFields?.baths || "",
+    sqft: props.defaultFields?.sqft || "",
   }));
   const [clipboardTried, setClipboardTried] = useState(false);
+
+  // Reset to the latest defaults every time the dialog opens, so extracted
+  // comp values from the Research Lab actually appear.
+  useEffect(() => {
+    if (!props.open) return;
+    setValues({
+      address: props.defaultAddress,
+      url: props.defaultUrl,
+      soldPrice: props.defaultFields?.soldPrice || "",
+      beds: props.defaultFields?.beds || "",
+      baths: props.defaultFields?.baths || "",
+      sqft: props.defaultFields?.sqft || "",
+    });
+    setClipboardTried(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.open]);
 
   useEffect(() => {
     if (!props.open) {

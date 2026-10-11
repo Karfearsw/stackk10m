@@ -7,6 +7,7 @@ import { createRequire } from "node:module";
 import { storage } from "./storage.js";
 import { seedDocsForTeam, docsSlugify } from "./docs-seed.js";
 import { computeManualTimeEntry, MAX_TIME_ENTRY_HOURS } from "./lib/time-entry-math.js";
+import { assertPublicHostname, isBlockedHostname, readBodyWithCap } from "./lib/ssrf-guard.js";
 import { db, pool } from "./db.js";
 import { and, desc, eq, gte, inArray, lte, sql, lt, isNull, isNotNull, ne, or, notInArray } from "drizzle-orm";
 import { initTelephonyWs, emitTelephonyEventToAll } from "./telephony/ws.js";
@@ -2943,7 +2944,24 @@ export async function registerRoutes(
     }
   });
   // ---- In-app browser proxy: strips iframe-blocking headers ----
+  // SSRF posture: session auth + http(s) validation + hostname blocklist +
+  // DNS-resolution guard (defeats DNS rebinding) + 5MB response cap +
+  // 60 req/min/user. See server/lib/ssrf-guard.ts.
   const proxyRateLimit = new Map<number, { count: number; resetAt: number }>();
+  const PROXY_MAX_BYTES = 5 * 1024 * 1024;
+
+  function checkProxyRateLimit(userId: number): boolean {
+    const now = Date.now();
+    const entry = proxyRateLimit.get(userId);
+    if (entry && entry.resetAt > now) {
+      if (entry.count >= 60) return false;
+      entry.count++;
+    } else {
+      proxyRateLimit.set(userId, { count: 1, resetAt: now + 60_000 });
+    }
+    return true;
+  }
+
   reg("get", "/api/playground/proxy"); app.get("/api/playground/proxy", async (req, res) => {
     try {
       const userId = req.session.userId;
@@ -2964,31 +2982,21 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Only http/https URLs allowed" });
       }
 
-      // Block private / internal addresses
+      // Block private / internal addresses (hostname layer)
       const host = target.hostname.toLowerCase();
-      if (
-        host === "localhost" ||
-        host === "127.0.0.1" ||
-        host === "::1" ||
-        host.startsWith("192.168.") ||
-        host.startsWith("10.") ||
-        /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
-        host.endsWith(".local") ||
-        host.endsWith(".internal")
-      ) {
+      if (isBlockedHostname(host)) {
         return res.status(403).json({ message: "Private/internal URLs are not allowed" });
       }
 
+      // DNS-level SSRF guard: reject if the hostname resolves to any
+      // private/loopback/link-local address (defeats DNS rebinding).
+      if (!(await assertPublicHostname(host))) {
+        return res.status(403).json({ message: "URL resolves to a private/internal address" });
+      }
+
       // Rate limit: 60 requests per minute per user
-      const now = Date.now();
-      const entry = proxyRateLimit.get(userId);
-      if (entry && entry.resetAt > now) {
-        if (entry.count >= 60) {
-          return res.status(429).json({ message: "Rate limit exceeded. Try again shortly." });
-        }
-        entry.count++;
-      } else {
-        proxyRateLimit.set(userId, { count: 1, resetAt: now + 60_000 });
+      if (!checkProxyRateLimit(userId)) {
+        return res.status(429).json({ message: "Rate limit exceeded. Try again shortly." });
       }
 
       const controller = new AbortController();
@@ -3038,7 +3046,12 @@ export async function registerRoutes(
 
       // For HTML responses: rewrite relative URLs to absolute
       if (contentType.includes("text/html")) {
-        let html = await upstream.text();
+        let html: string;
+        try {
+          html = (await readBodyWithCap(upstream, PROXY_MAX_BYTES)).toString("utf-8");
+        } catch (e: any) {
+          return res.status(413).json({ message: "Proxied page too large", detail: String(e?.message || e) });
+        }
         // Rewrite relative src/href to absolute using the target origin
         html = html.replace(/(src|href)=["'](?![a-z]+:)([^"']+)["']/gi, (match, attr, rel) => {
           try {
@@ -3091,7 +3104,12 @@ export async function registerRoutes(
         res.send(html);
       } else if (contentType.includes("text/css")) {
         // Rewrite CSS url() references to go through the proxy for same-origin resources
-        let css = await upstream.text();
+        let css: string;
+        try {
+          css = (await readBodyWithCap(upstream, PROXY_MAX_BYTES)).toString("utf-8");
+        } catch (e: any) {
+          return res.status(413).json({ message: "Proxied stylesheet too large", detail: String(e?.message || e) });
+        }
         const cssHostname = target.hostname;
         css = css.replace(/url\((['"]?)((?!data:|blob:)[^)'"]+?)\)/gi, (match, q, rawUrl) => {
           try {
@@ -3112,15 +3130,87 @@ export async function registerRoutes(
         res.setHeader("Content-Type", "text/css; charset=utf-8");
         res.send(css);
       } else {
-        // Stream non-HTML responses (images, JS, etc.)
+        // Non-HTML responses (images, JS, etc.) — still size-capped
         for (const [key, value] of responseHeaders.entries()) {
           if (!skip.has(key.toLowerCase())) res.setHeader(key, value);
         }
-        const buffer = Buffer.from(await upstream.arrayBuffer());
+        let buffer: Buffer;
+        try {
+          buffer = await readBodyWithCap(upstream, PROXY_MAX_BYTES);
+        } catch (e: any) {
+          return res.status(413).json({ message: "Proxied resource too large", detail: String(e?.message || e) });
+        }
         res.send(buffer);
       }
     } catch (error: any) {
       res.status(500).json({ message: "Proxy error", detail: String(error?.message || error) });
+    }
+  });
+
+  // ── Reader-mode extraction: fetch a page through Jina Reader and return
+  // clean markdown for comp auto-fill. Opt-in per click (never automatic):
+  // the target URL is validated with the same SSRF guards as the proxy, and
+  // the upstream fetch always goes to r.jina.ai (fixed host), so our network
+  // is never exposed to the target. Free tier: 20 RPM keyless.
+  reg("get", "/api/playground/extract"); app.get("/api/playground/extract", async (req, res) => {
+    try {
+      const userId = req.session.userId;
+      if (!userId) return res.status(401).json({ message: "Unauthorized" });
+
+      const rawUrl = String(req.query.url || "").trim();
+      if (!rawUrl) return res.status(400).json({ message: "Missing url parameter" });
+
+      let target: URL;
+      try {
+        const withProto = rawUrl.startsWith("http://") || rawUrl.startsWith("https://") ? rawUrl : `https://${rawUrl}`;
+        target = new URL(withProto);
+      } catch {
+        return res.status(400).json({ message: "Invalid URL" });
+      }
+      if (target.protocol !== "http:" && target.protocol !== "https:") {
+        return res.status(400).json({ message: "Only http/https URLs allowed" });
+      }
+      const host = target.hostname.toLowerCase();
+      if (isBlockedHostname(host)) {
+        return res.status(403).json({ message: "Private/internal URLs are not allowed" });
+      }
+      if (!(await assertPublicHostname(host))) {
+        return res.status(403).json({ message: "URL resolves to a private/internal address" });
+      }
+      if (!checkProxyRateLimit(userId)) {
+        return res.status(429).json({ message: "Rate limit exceeded. Try again shortly." });
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 20_000);
+      let upstream: Response;
+      try {
+        upstream = await fetch(`https://r.jina.ai/${target.toString()}`, {
+          signal: controller.signal,
+          headers: {
+            "Accept": "text/markdown",
+            "X-Return-Format": "markdown",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          },
+        });
+      } catch (e: any) {
+        clearTimeout(timeout);
+        const detail = e?.name === "AbortError" ? "Request timed out" : String(e?.message || e);
+        return res.status(502).json({ message: "Reader service unreachable", detail });
+      }
+      clearTimeout(timeout);
+      if (!upstream.ok) {
+        return res.status(502).json({ message: "Reader service could not extract this page", detail: `HTTP ${upstream.status}` });
+      }
+      let markdown: string;
+      try {
+        markdown = (await readBodyWithCap(upstream, 512 * 1024)).toString("utf-8");
+      } catch (e: any) {
+        return res.status(413).json({ message: "Extracted content too large", detail: String(e?.message || e) });
+      }
+      res.json({ url: target.toString(), markdown: markdown.slice(0, 200_000) });
+    } catch (error: any) {
+      res.status(500).json({ message: "Extract error", detail: String(error?.message || error) });
     }
   });
 
