@@ -3484,8 +3484,32 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createBuyer(buyer: InsertBuyer): Promise<Buyer> {
-    const result = await db.insert(buyers).values(buyer as any).returning();
-    return result[0];
+    // Dedupe: stamp the canonical key (same function the import pipeline
+    // uses) and treat a key conflict as "already exists" — return the
+    // existing row instead of inserting a duplicate buyer.
+    const { buyerDedupeKey } = await import("./services/buyer-dedupe.js");
+    const key = (buyer as any).dedupeKey?.trim() || buyerDedupeKey(buyer as any);
+    const values = { ...(buyer as any), dedupeKey: key || null };
+    const inserted = await db
+      .insert(buyers)
+      .values(values)
+      .onConflictDoNothing({
+        target: [buyers.dedupeKey],
+        where: isNotNull(buyers.dedupeKey),
+      })
+      .returning();
+    if (inserted[0]) return inserted[0];
+    // Conflict: someone already holds this key — return the existing buyer.
+    const [existing] = await db
+      .select()
+      .from(buyers)
+      .where(eq(buyers.dedupeKey, key))
+      .limit(1);
+    if (existing) return existing;
+    // Extremely rare race (key cleared between insert and select): fall back
+    // to a plain insert so the hard create invariant in the route still holds.
+    const retry = await db.insert(buyers).values(values).returning();
+    return retry[0];
   }
 
   async updateBuyer(id: number, buyer: Partial<InsertBuyer>): Promise<Buyer> {
