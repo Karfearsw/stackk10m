@@ -10,7 +10,14 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { formatBytes, isVideoAsset, isImageAsset, mediaPreviewUrl, type MediaAsset } from "@/lib/media";
 import { JitsiMeetingDialog } from "@/components/video/JitsiMeetingDialog";
 import { newTeamMeetingRoom } from "@/lib/jitsi";
+import { VideoCallDialog } from "@/components/video/VideoCallDialog";
 import { VideoMessageRecorder } from "@/components/video/VideoMessageRecorder";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -48,6 +55,15 @@ export default function MessagesPage() {
   const [jitsiOpen, setJitsiOpen] = useState(false);
   const [jitsiRoomName, setJitsiRoomName] = useState("");
   const [jitsiTitle, setJitsiTitle] = useState("");
+  // Telnyx video (paid) — offered alongside Jitsi when the Telnyx account is healthy.
+  const [telnyxOpen, setTelnyxOpen] = useState(false);
+  const [telnyxRoomId, setTelnyxRoomId] = useState("");
+  const [telnyxRoomName, setTelnyxRoomName] = useState("");
+  const { data: videoHealth } = useQuery<any>({
+    queryKey: ["/api/video/health"],
+    staleTime: 60000,
+  });
+  const telnyxVideoReady = !!(videoHealth?.configured && videoHealth?.reachable);
   const [meetingBusy, setMeetingBusy] = useState(false);
   const [recorderOpen, setRecorderOpen] = useState(false);
 
@@ -165,6 +181,45 @@ export default function MessagesPage() {
     }
   };
 
+  // Start a Telnyx video meeting (paid — requires a funded Telnyx account).
+  // Creates a room server-side, posts the invite, and opens the Telnyx call dialog.
+  const startTelnyxMeeting = async () => {
+    if (withUserId == null || meetingBusy || !telnyxVideoReady) return;
+    setMeetingBusy(true);
+    try {
+      const title = `Video meeting: ${userName(user?.id)} & ${userName(withUserId)}`;
+      const res = await fetch("/api/video/rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ name: title }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.roomId) {
+        throw new Error(data.error || data.message || "Could not create the Telnyx video room");
+      }
+      const roomId = String(data.roomId);
+      await fetch("/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          recipientUserId: withUserId,
+          body: `🎥 Started a video meeting (Telnyx) — I'll call you in now.`,
+        }),
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/messages", withUserId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/messages/conversations"] });
+      setTelnyxRoomId(roomId);
+      setTelnyxRoomName(title);
+      setTelnyxOpen(true);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to start Telnyx video meeting");
+    } finally {
+      setMeetingBusy(false);
+    }
+  };
+
   return (
     <Layout>
       <div className="space-y-1 mb-6">
@@ -233,16 +288,33 @@ export default function MessagesPage() {
                   <h2 className="font-semibold truncate">{userName(withUserId)}</h2>
                   <div className="flex items-center gap-2 shrink-0">
                     <Badge variant="outline">Internal</Badge>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={startVideoMeeting}
-                      disabled={meetingBusy}
-                      title={`Start video meeting with ${userName(withUserId)} (free)`}
-                    >
-                      {meetingBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Video className="h-4 w-4" />}
-                      <span className="hidden sm:inline ml-1">Video meeting</span>
-                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={meetingBusy}
+                          title="Start a video meeting"
+                        >
+                          {meetingBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Video className="h-4 w-4" />}
+                          <span className="hidden sm:inline ml-1">Video meeting</span>
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={startVideoMeeting}>
+                          <Video className="h-4 w-4 mr-2" />
+                          Video meeting (free)
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={startTelnyxMeeting}
+                          disabled={!telnyxVideoReady}
+                          title={telnyxVideoReady ? "Start a Telnyx video meeting" : "Telnyx video is unavailable — check the Telnyx account balance"}
+                        >
+                          <Video className="h-4 w-4 mr-2" />
+                          Video meeting (Telnyx){!telnyxVideoReady ? " — unavailable" : ""}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </div>
                 <div data-chat-thread className="space-y-2 max-h-[55vh] overflow-y-auto overflow-x-hidden rounded-md border p-3 bg-muted/30">
@@ -433,6 +505,16 @@ export default function MessagesPage() {
         meetingTitle={jitsiTitle}
         displayName={user ? userName(user.id) : undefined}
       />
+      {/* Telnyx video meeting (paid) — enabled automatically when /api/video/health reports reachable. */}
+      {telnyxRoomId && (
+        <VideoCallDialog
+          open={telnyxOpen}
+          onOpenChange={setTelnyxOpen}
+          roomId={telnyxRoomId}
+          roomName={telnyxRoomName}
+          participantName={user ? userName(user.id) : undefined}
+        />
+      )}
       <VideoMessageRecorder
         open={recorderOpen}
         onOpenChange={setRecorderOpen}
