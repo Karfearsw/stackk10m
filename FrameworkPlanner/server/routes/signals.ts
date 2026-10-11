@@ -272,6 +272,23 @@ export function registerSignalRoutes(app: Express) {
     }
   });
 
+  // ── Promote a parcel to a callable seller lead ─────────────────────────
+  // Manual trigger for the Signals UI ("Convert to Lead"). Idempotent —
+  // a parcel can only ever produce one signal-sourced lead (dedupeKey).
+  app.post("/api/parcels/promote-to-lead", async (req: Request, res: Response) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { parcelKey } = req.body || {};
+      if (!parcelKey) return res.status(400).json({ message: "parcelKey required" });
+      const { promoteParcelToLead } = await import("../services/lead-promotion.js");
+      const result = await promoteParcelToLead(parcelKey, { createdBy: user.id, force: true });
+      res.status(result.promoted ? 201 : 200).json(result);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Promotion failed" });
+    }
+  });
+
   app.delete("/api/distress-signals/:id", async (req: Request, res: Response) => {
     const user = await requireAuth(req, res);
     if (!user) return;
