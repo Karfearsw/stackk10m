@@ -15,6 +15,9 @@ export const leads = pgTable("leads", {
   ownerPhone: varchar("owner_phone", { length: 20 }),
   ownerEmail: varchar("owner_email", { length: 255 }),
   estimatedValue: decimal("estimated_value", { precision: 12, scale: 2 }),
+  // Intake workspace: manual deal math recorded before a property exists.
+  arvEstimate: decimal("arv_estimate", { precision: 12, scale: 2 }),
+  repairEstimate: decimal("repair_estimate", { precision: 12, scale: 2 }),
   relasScore: integer("relas_score"),
   motivation: varchar("motivation", { length: 50 }),
   status: varchar("status", { length: 50 }).default("new"),

@@ -21,6 +21,7 @@ import { getAppVariant } from "@/lib/appVariant";
 
 const Dashboard = React.lazy(() => import("@/pages/dashboard"));
 const Leads = React.lazy(() => import("@/pages/leads"));
+const Intake = React.lazy(() => import("@/pages/intake"));
 const Campaigns = React.lazy(() => import("@/pages/campaigns"));
 const RvmPage = React.lazy(() => import("@/pages/rvm"));
 const PropertyDetail = React.lazy(() => import("@/pages/property-detail"));
@@ -187,6 +188,7 @@ function Router() {
       <Route path="/" component={() => (isAuthenticated ? <ProtectedRoute component={Dashboard} /> : <Redirect to="/login" />)} />
       <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} />} />
       <Route path="/leads" component={() => <ProtectedRoute component={Leads} />} />
+      <Route path="/intake" component={() => <ProtectedRoute component={Intake} />} />
       <Route path="/campaigns" component={() => <ProtectedRoute component={Campaigns} />} />
       <Route path="/rvm" component={() => <ProtectedRoute component={RvmPage} />} />
       <Route path="/property/:id" component={() => <ProtectedRoute component={PropertyDetail} />} />
