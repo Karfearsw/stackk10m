@@ -1,9 +1,11 @@
 import { storage } from "../../storage.js";
 import type { Lead, Property, SkipTraceJob, SkipTraceResult, LeadScoreSnapshot } from "../../shared-schema.js";
-import { getSkipTraceProvider } from "./provider.js";
+import { getSkipTraceProvider, resolveJobSkipTraceProvider, normalizeProviderName, isPaidSkipTraceProvider, type SkipTraceOutput } from "./provider.js";
 import { computeLeadScore } from "../leadScoring/engine.js";
 import { getPublicResearchRunner, type PublicResearchRunner } from "./publicResearch/runner.js";
 import { validatePhones, isValidationEnabled } from "./validation.js";
+import { checkSpendAllowed, estimatePaidLookupCostCents } from "./spend.js";
+import { getSkipTraceRuntimeSettings, getSpendSummary } from "./settings.js";
 
 export type SkipTraceEntityType = "lead" | "opportunity";
 export type SkipTraceMode = "provider" | "public_research" | "both";
@@ -90,6 +92,46 @@ async function addJobEvent(jobId: number, status: string, message: string | null
   } as any);
 }
 
+/** Record a paid lookup's cost in the spend ledger. Never throws. */
+async function recordPaidSpend(input: { jobId: number; providerName: string; costCents: number }) {
+  const costCents = Math.max(0, Math.floor(Number(input.costCents) || 0));
+  if (!isPaidSkipTraceProvider(input.providerName) || costCents <= 0) return;
+  try {
+    await storage.recordSkipTraceSpend({ jobId: input.jobId, provider: input.providerName, costCents } as any);
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), event: "skip_trace_spend_ledger", kind: "record_failed", jobId: input.jobId, message: String(e?.message || e) }));
+  }
+}
+
+function isInsufficientCredits(out: SkipTraceOutput): boolean {
+  return out.status === "fail" && String((out as any).errorMessage || "").startsWith("insufficient_credits");
+}
+
+/**
+ * Persistent admin alert for 402s. Dedupes on provider so one empty balance
+ * doesn't spam the alerts table; emits even when creation races.
+ */
+async function raiseInsufficientCreditsAlert(input: { jobId: number; providerName: string; entityType: SkipTraceEntityType; entityId: number }) {
+  try {
+    const existing = await storage.listUnresolvedSkipTraceAlerts(50);
+    const dup = existing.some((a: any) => {
+      if (String((a as any).type || "") !== "insufficient_credits") return false;
+      const meta = (a as any).metadataJson;
+      const metaObj = typeof meta === "string" ? (() => { try { return JSON.parse(meta); } catch { return {}; } })() : (meta || {});
+      return String(metaObj?.provider || "") === input.providerName;
+    });
+    if (!dup) {
+      await storage.createSkipTraceAlert({
+        type: "insufficient_credits",
+        message: `Skip-trace provider "${input.providerName}" returned 402 (insufficient credits). Top up credits to resume paid lookups — free public research keeps running.`,
+        metadataJson: { provider: input.providerName, jobId: input.jobId, entityType: input.entityType, entityId: input.entityId },
+      } as any);
+    }
+  } catch (e: any) {
+    console.error(JSON.stringify({ ts: new Date().toISOString(), event: "skip_trace_alert", kind: "alert_failed", jobId: input.jobId, message: String(e?.message || e) }));
+  }
+}
+
 async function loadEntity(input: { entityType: SkipTraceEntityType; entityId: number }) {
   if (input.entityType === "lead") {
     const lead = await storage.getLeadById(input.entityId);
@@ -145,7 +187,10 @@ export async function createSkipTraceJob(input: {
   mode: SkipTraceMode;
   requestedByUserId: number;
   idempotencyKey?: string | null;
+  /** Per-job provider override ("auto" or unset = env/config default). */
+  providerName?: string | null;
 }): Promise<SkipTraceJob> {
+  const normalizedProvider = normalizeProviderName(input.providerName);
   const job = await storage.createSkipTraceJob({
     entityType: input.entityType,
     entityId: input.entityId,
@@ -153,8 +198,9 @@ export async function createSkipTraceJob(input: {
     mode: input.mode,
     status: "queued",
     idempotencyKey: input.idempotencyKey ?? null,
+    providerName: normalizedProvider === "auto" ? null : (normalizedProvider ?? null),
   } as any);
-  await addJobEvent(job.id, "queued", null, { mode: input.mode });
+  await addJobEvent(job.id, "queued", null, { mode: input.mode, providerName: normalizedProvider ?? "auto" });
   return job;
 }
 
@@ -204,13 +250,23 @@ async function persistLeadScoreSnapshot(input: {
   return snapshot;
 }
 
+type ProviderStepResult = {
+  providerResult: SkipTraceResult | null;
+  cached: boolean;
+  pending: boolean;
+  /** True when the paid lane was skipped by kill switch / spend cap policy. */
+  skipped: boolean;
+  lead: Lead | null;
+  sourceLead: Lead | null;
+};
+
 async function runProviderStep(input: {
   job: SkipTraceJob;
   entityType: SkipTraceEntityType;
   entityId: number;
   requestedByUserId: number;
   ownerNameOverride?: string | null;
-}) {
+}): Promise<ProviderStepResult> {
   const entity = await loadEntity({ entityType: input.entityType, entityId: input.entityId });
   const providerInput = requireProviderInput({ entityType: input.entityType, ...entity, ownerNameOverride: input.ownerNameOverride });
 
@@ -250,7 +306,7 @@ async function runProviderStep(input: {
         description: `Skip trace cache hit: ${providerInput.address}`,
         metadata: JSON.stringify({ entityType: input.entityType, entityId: input.entityId, skipTraceId: cached.id }),
       } as any);
-      return { providerResult: cached, cached: true, pending: false, lead: entity.lead, sourceLead: entity.sourceLead };
+      return { providerResult: cached, cached: true, pending: false, skipped: false, lead: entity.lead, sourceLead: entity.sourceLead };
     }
   }
 
@@ -259,12 +315,51 @@ async function runProviderStep(input: {
     const pendingCompatible = String((existing as any).providerName || "").toLowerCase() !== "mock";
     if (pendingCompatible && Number.isFinite(requestedAtMs) && now - requestedAtMs < ms5m && (existing as any).jobId) {
       await addJobEvent(input.job.id, "provider_pending", null, { existingJobId: (existing as any).jobId, skipTraceResultId: (existing as any).id });
-      return { providerResult: existing, cached: false, pending: true, lead: entity.lead, sourceLead: entity.sourceLead };
+      return { providerResult: existing, cached: false, pending: true, skipped: false, lead: entity.lead, sourceLead: entity.sourceLead };
     }
   }
 
-  const provider = getSkipTraceProvider();
+  // Per-job provider selection: the job's providerName wins ("auto"/unset =
+  // env + config default). Normalized at creation, so an unknown value here
+  // falls back safely instead of throwing inside the worker.
+  const jobProviderName = normalizeProviderName((input.job as any).providerName) ?? "auto";
+  const provider = resolveJobSkipTraceProvider(jobProviderName) ?? getSkipTraceProvider();
   await storage.updateSkipTraceJob(input.job.id, { providerName: provider.name } as any);
+
+  // Spend caps + kill switch: paid lookups need budget headroom. On block the
+  // paid lane is skipped (public research still runs in "both" mode).
+  if (isPaidSkipTraceProvider(provider.name)) {
+    const settings = await getSkipTraceRuntimeSettings();
+    const { todaySpendCents, monthSpendCents } = await getSpendSummary();
+    const verdict = checkSpendAllowed({
+      killSwitch: settings.killSwitch,
+      caps: settings.caps,
+      dailySpendCents: todaySpendCents,
+      monthlySpendCents: monthSpendCents,
+      estimatedCostCents: estimatePaidLookupCostCents(provider.name),
+    });
+    if (verdict.blocked) {
+      const eventName = verdict.reason === "kill_switch" ? "kill_switch" : "spend_cap_hit";
+      const message =
+        verdict.reason === "kill_switch"
+          ? "Paid skip-trace lookups are disabled by the kill switch."
+          : `Paid skip-trace lookup blocked: ${verdict.reason === "daily_cap" ? "daily" : "monthly"} spend cap reached.`;
+      await addJobEvent(input.job.id, eventName, message, {
+        provider: provider.name,
+        dailySpendCents: todaySpendCents,
+        monthlySpendCents: monthSpendCents,
+        dailyCapCents: settings.caps.dailyCapCents,
+        monthlyCapCents: settings.caps.monthlyCapCents,
+      });
+      await storage.createGlobalActivity({
+        userId: input.requestedByUserId,
+        action: eventName,
+        description: `Skip trace ${verdict.reason === "kill_switch" ? "kill switch" : "spend cap"} blocked paid lookup: ${providerInput.address}`,
+        metadata: JSON.stringify({ entityType: input.entityType, entityId: input.entityId, provider: provider.name, reason: verdict.reason }),
+      } as any);
+      return { providerResult: null, cached: false, pending: false, skipped: true, lead: entity.lead, sourceLead: entity.sourceLead };
+    }
+  }
 
   const pendingRow = await storage.createSkipTraceResult({
     jobId: input.job.id,
@@ -309,6 +404,8 @@ async function runProviderStep(input: {
         rawResponseJson: JSON.stringify(out.raw ?? null),
       } as any)) as any;
 
+      await recordPaidSpend({ jobId: input.job.id, providerName: provider.name, costCents: out.costCents });
+
       const leadToPatch = input.entityType === "lead" ? entity.lead : entity.sourceLead;
       const leadId = (leadToPatch as any)?.id ? Number((leadToPatch as any).id) : null;
       // Mock contacts are synthetic — never write them onto real lead records.
@@ -349,6 +446,11 @@ async function runProviderStep(input: {
         completedAt: new Date(),
         rawResponseJson: JSON.stringify(out.raw ?? null),
       } as any)) as any;
+
+      await recordPaidSpend({ jobId: input.job.id, providerName: provider.name, costCents: out.costCents });
+      if (isInsufficientCredits(out)) {
+        await raiseInsufficientCreditsAlert({ jobId: input.job.id, providerName: provider.name, entityType: input.entityType, entityId: input.entityId });
+      }
       for (const ev of (out as any).evidence || []) {
         await storage.createSkipTraceEvidence({
           jobId: input.job.id,
@@ -386,7 +488,7 @@ async function runProviderStep(input: {
     } as any);
   }
 
-  return { providerResult: updated, cached: false, pending: false, lead: entity.lead, sourceLead: entity.sourceLead };
+  return { providerResult: updated, cached: false, pending: false, skipped: false, lead: entity.lead, sourceLead: entity.sourceLead };
 }
 
 async function runPublicResearchStep(input: {
@@ -476,6 +578,9 @@ export async function runSkipTraceJob(jobId: number, input?: { ownerNameOverride
       lead = out.lead;
       sourceLead = out.sourceLead;
       providerPending = out.pending;
+      if (out.skipped) {
+        await addJobEvent(running.id, "provider_skipped", "Paid provider lane skipped by spend policy (kill switch / cap).", { mode });
+      }
     }
 
     if (mode === "public_research" || mode === "both") {

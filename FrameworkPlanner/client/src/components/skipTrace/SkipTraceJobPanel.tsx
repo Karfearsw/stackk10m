@@ -13,6 +13,21 @@ import { SkipTraceProviderState, SkipTraceScoreBreakdown } from "@/components/sk
 
 type EntityType = "lead" | "opportunity";
 type Mode = "provider" | "public_research" | "both";
+type ProviderChoice = "auto" | "free-web" | "courtlistener" | "tracerfy" | "tracerfy-batch";
+
+const PROVIDER_LABELS: Record<ProviderChoice, string> = {
+  auto: "Auto (default)",
+  "free-web": "Free web",
+  courtlistener: "CourtListener",
+  tracerfy: "Tracerfy instant",
+  "tracerfy-batch": "Tracerfy batch",
+};
+
+function normalizeProvider(v: unknown): ProviderChoice {
+  const s = String(v || "").trim().toLowerCase();
+  if (s === "free-web" || s === "courtlistener" || s === "tracerfy" || s === "tracerfy-batch") return s as ProviderChoice;
+  return "auto";
+}
 
 type PollResponse = {
   job?: any;
@@ -48,7 +63,9 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
   const { user } = useAuth();
   const storageKey = `skipTrace:lastJob:${props.entityType}:${props.entityId}`;
   const modeStorageKey = user?.id ? `skipTrace:mode:${user.id}` : "";
+  const providerStorageKey = user?.id ? `skipTrace:provider:${user.id}` : "";
   const [mode, setMode] = useState<Mode>("both");
+  const [provider, setProvider] = useState<ProviderChoice>("auto");
   const [didInitMode, setDidInitMode] = useState(false);
   const [jobId, setJobId] = useState<number | null>(null);
 
@@ -107,12 +124,28 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
     } catch {}
   }, [mode, modeStorageKey]);
 
+  useEffect(() => {
+    if (!providerStorageKey) return;
+    try {
+      const raw = localStorage.getItem(providerStorageKey) || "";
+      setProvider(normalizeProvider(raw));
+    } catch {}
+  }, [providerStorageKey]);
+
+  useEffect(() => {
+    if (!providerStorageKey) return;
+    try {
+      localStorage.setItem(providerStorageKey, provider);
+    } catch {}
+  }, [provider, providerStorageKey]);
+
   const createJobMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/skip-trace/jobs", {
         entityType: props.entityType,
         entityId: props.entityId,
         mode,
+        providerName: provider,
       });
       return (await res.json()) as { jobId: number; status: string };
     },
@@ -229,6 +262,19 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
           </div>
         ) : null}
 
+        {Array.isArray((configQuery.data as any)?.alerts) && (configQuery.data as any).alerts.length > 0 ? (
+          <Alert className="border-amber-200 bg-amber-50 text-amber-950">
+            <AlertTitle>Skip trace needs attention</AlertTitle>
+            <AlertDescription>
+              {((configQuery.data as any).alerts as any[]).slice(0, 3).map((a: any) => (
+                <div key={String(a?.id ?? a?.message)} className="break-words">
+                  {toStr(a?.message)}
+                </div>
+              ))}
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-2">
             <div className="text-sm font-medium">Skip Trace</div>
@@ -263,6 +309,23 @@ export function SkipTraceJobPanel(props: { entityType: EntityType; entityId: num
                 <SelectItem value="both" disabled={Array.isArray(allowedModes) && !allowedModes.includes("both")}>
                   Both
                 </SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={provider} onValueChange={(v) => setProvider(normalizeProvider(v))}>
+              <SelectTrigger
+                className="h-9 w-full sm:w-[170px]"
+                data-testid="select-skip-trace-provider"
+                disabled={!canRun || mode === "public_research"}
+                title={mode === "public_research" ? "Provider only applies to provider/both modes" : ""}
+              >
+                <SelectValue placeholder="Provider" />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(PROVIDER_LABELS) as ProviderChoice[]).map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {PROVIDER_LABELS[p]}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Button

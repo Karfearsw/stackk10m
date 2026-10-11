@@ -5014,12 +5014,110 @@ export async function registerRoutes(
         .trim()
         .toLowerCase() === "true";
       const allowedModes = publicResearchEnabled ? ["provider", "public_research", "both"] : ["provider"];
+      const { getSkipTraceRuntimeSettings, getSpendSummary, getKeyStatus, SKIP_TRACE_QUOTA_GUIDANCE } = await import(
+        "./services/skipTrace/settings.js"
+      );
+      // New 0108 tables may not exist yet on dev DBs — degrade gracefully.
+      let settings = { defaultProvider: "auto", defaultMode: "both", killSwitch: false, killSwitchSource: "env", caps: { dailyCapCents: 0, monthlyCapCents: 0 } } as any;
+      let spend = { todaySpendCents: 0, monthSpendCents: 0 };
+      let alerts: any[] | undefined;
+      try {
+        settings = await getSkipTraceRuntimeSettings();
+        spend = await getSpendSummary();
+        alerts = isManagerUser(user) ? await storage.listUnresolvedSkipTraceAlerts(20) : undefined;
+      } catch (e: any) {
+        console.error(JSON.stringify({ ts: new Date().toISOString(), event: "skip_trace_config", kind: "extended_config_failed", message: String(e?.message || e) }));
+      }
+      const keys = getKeyStatus();
       res.json({
         enabled: true,
         providerName,
         publicResearchEnabled,
         allowedModes,
+        defaultProvider: settings.defaultProvider,
+        defaultMode: settings.defaultMode,
+        killSwitch: settings.killSwitch,
+        killSwitchSource: settings.killSwitchSource,
+        dailySpendCapCents: settings.caps.dailyCapCents,
+        monthlySpendCapCents: settings.caps.monthlyCapCents,
+        todaySpendCents: spend.todaySpendCents,
+        monthSpendCents: spend.monthSpendCents,
+        tracerfyConfigured: keys.tracerfyConfigured,
+        courtlistenerConfigured: keys.courtlistenerConfigured,
+        validationKeysConfigured: keys.validationKeysConfigured,
+        quotaGuidance: SKIP_TRACE_QUOTA_GUIDANCE,
+        // Manager-only: unresolved admin alerts (e.g. insufficient credits).
+        alerts,
       });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("put", "/api/skip-trace/config"); app.put("/api/skip-trace/config", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+      const { normalizeProviderName } = await import("./services/skipTrace/provider.js");
+      const body = z
+        .object({
+          defaultProvider: z.string().trim().max(40).optional().nullable(),
+          defaultMode: z.enum(["provider", "public_research", "both"]).optional().nullable(),
+          killSwitch: z.boolean().optional().nullable(),
+        })
+        .parse(req.body);
+      const saved: Record<string, string> = {};
+      if (body.defaultProvider != null) {
+        const normalized = normalizeProviderName(body.defaultProvider);
+        if (normalized === null) {
+          return res.status(400).json({
+            message: `Unknown defaultProvider "${body.defaultProvider}". Use auto, free-web, courtlistener, tracerfy, tracerfy-batch, or enformiongo.`,
+          });
+        }
+        await storage.setSkipTraceSetting("default_provider", normalized);
+        saved.defaultProvider = normalized;
+      }
+      if (body.defaultMode != null) {
+        await storage.setSkipTraceSetting("default_mode", body.defaultMode);
+        saved.defaultMode = body.defaultMode;
+      }
+      if (body.killSwitch != null) {
+        await storage.setSkipTraceSetting("kill_switch", body.killSwitch ? "true" : "false");
+        saved.killSwitch = body.killSwitch ? "true" : "false";
+        await storage.createSkipTraceAlert({
+          type: body.killSwitch ? "kill_switch_on" : "kill_switch_off",
+          message: `Skip-trace kill switch ${body.killSwitch ? "ENABLED" : "disabled"} by ${(user as any).email || `user ${user.id}`}.`,
+          metadataJson: { byUserId: user.id, killSwitch: body.killSwitch },
+        } as any);
+      }
+      res.json({ ok: true, saved });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/skip-trace/alerts/:alertId/resolve"); app.post("/api/skip-trace/alerts/:alertId/resolve", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isManagerUser(user)) return res.status(403).json({ message: "Managers only" });
+      const alertId = parseInt(req.params.alertId, 10);
+      if (!Number.isFinite(alertId)) return res.status(400).json({ message: "Invalid alert id" });
+      const resolved = await storage.resolveSkipTraceAlert(alertId);
+      if (!resolved) return res.status(404).json({ message: "Alert not found" });
+      res.json({ ok: true, alert: resolved });
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  reg("post", "/api/skip-trace/daily-enrichment/run"); app.post("/api/skip-trace/daily-enrichment/run", async (req, res) => {    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      // Managers may trigger manually; automation (runtime cron) uses the CRM API key.
+      const viaApiKey = Boolean((req as any).apiKey);
+      if (!viaApiKey && !isManagerUser(user)) return res.status(403).json({ message: "Managers or API key only" });
+      const { runDailyFreeLaneEnrichment } = await import("./cron/skip-trace-daily-enrichment.js");
+      const out = await runDailyFreeLaneEnrichment();
+      res.json(out);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
     }
@@ -5029,18 +5127,26 @@ export async function registerRoutes(
       const user = await requireAuth(req, res);
       if (!user) return;
       if (!(await isFeatureEnabled(user.id, "skip_trace", isFeatureBypassUser(user)))) return res.status(404).json({ message: "Not found" });
+      const { normalizeProviderName } = await import("./services/skipTrace/provider.js");
       const body = z
         .object({
           entityType: z.enum(["lead", "opportunity"]),
           entityId: z.coerce.number().int().positive(),
           mode: z.enum(["provider", "public_research", "both"]),
+          providerName: z.string().trim().max(40).optional().nullable(),
         })
         .parse(req.body);
+      if (body.providerName != null && normalizeProviderName(body.providerName) === null) {
+        return res.status(400).json({
+          message: `Unknown providerName "${body.providerName}". Use auto, free-web, courtlistener, tracerfy, tracerfy-batch, or enformiongo.`,
+        });
+      }
       const job = await createSkipTraceJob({
         entityType: body.entityType,
         entityId: body.entityId,
         mode: body.mode,
         requestedByUserId: user.id,
+        providerName: body.providerName ?? null,
       });
       if (body.mode === "provider") {
         const out = await runSkipTraceJob(job.id);
