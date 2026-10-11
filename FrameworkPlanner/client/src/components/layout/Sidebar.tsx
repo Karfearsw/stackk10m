@@ -81,6 +81,7 @@ const menuGroups = [
       { name: "Phone", href: "/phone", icon: Phone },
       { name: "Dialer Workspace", href: "/dialer-workspace", icon: Phone },
       { name: "Messages", href: "/messages", icon: MessageSquare },
+      { name: "SMS Inbox", href: "/sms-inbox", icon: MessageSquare },
       // TICKET-14: Follow-up sequences
       { name: "Sequences", href: "/sequences", icon: Repeat },
       { name: "Voicemail", href: "/voicemail", icon: Voicemail },
