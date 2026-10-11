@@ -27,6 +27,7 @@ import {
   webhookDeliveries,
   distressSignals,
   parcelWatchlist,
+  leads,
   parcelKeyFor,
   SIGNAL_TYPES,
   SIGNAL_SEVERITIES,
@@ -111,7 +112,9 @@ async function deliverWebhook(hook: any, delivery: any) {
 const SCORE_WEIGHTS: Record<string, number> = { critical: 4, alert: 3, watch: 2, info: 1 };
 export const HIGH_SCORE_THRESHOLD = 8;
 
-/** Called after a signal is created — emits signal.created and parcel.high_score. */
+/** Called after a signal is created — emits signal.created and parcel.high_score,
+ *  and auto-promotes the parcel to a callable seller lead when its distress
+ *  score crosses HIGH_SCORE_THRESHOLD. */
 export async function onSignalCreated(signal: any) {
   emitAutomationEvent("signal.created", {
     id: signal.id,
@@ -136,6 +139,17 @@ export async function onSignalCreated(signal: any) {
         address: parcel?.address, city: parcel?.city, state: parcel?.state,
         latestSignal: { id: signal.id, title: signal.title, severity: signal.severity },
       }).catch(() => {});
+      // Auto-promote: turn this distressed parcel into a callable seller lead
+      // (idempotent — deduped on parcel key, one lead per parcel ever).
+      try {
+        const { promoteParcelToLead } = await import("../services/lead-promotion.js");
+        const res = await promoteParcelToLead(signal.parcelKey);
+        if (res.promoted) {
+          console.log(`[automation] parcel ${signal.parcelKey} promoted to lead ${res.leadId} (score ${score})`);
+        }
+      } catch (e) {
+        console.error("[automation] lead promotion failed:", e);
+      }
     }
   } catch (e) { console.error("[automation] high-score check failed:", e); }
 }
@@ -211,6 +225,59 @@ export function registerAutomationRoutes(app: Express) {
         } catch (e: any) { errors.push({ row: i + 1, error: e.message }); }
       }
       res.json({ created, total: rows.length, errors: errors.slice(0, 20) });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed" });
+    }
+  });
+
+  // ── Bulk lead import (API-key auth) ────────────────────────────────────
+  // For warm lead sources (FSBO scrapers, etc.) that create leads directly.
+  // Dedupes on dedupeKey — a duplicate key skips silently (not an error).
+  app.post("/api/v1/leads/bulk", async (req: Request, res: Response) => {
+    const auth = await requireApiKey(req, res);
+    if (!auth) return;
+    try {
+      const rows: any[] = Array.isArray(req.body?.rows) ? req.body.rows : [];
+      if (!rows.length) return res.status(400).json({ message: "No rows" });
+      if (rows.length > 500) return res.status(400).json({ message: "Max 500 rows" });
+      let created = 0, skipped = 0;
+      const errors: any[] = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i] || {};
+        try {
+          if (!r.address || !r.city || !r.state || !r.zipCode)
+            throw new Error("address/city/state/zipCode required");
+          const dedupeKey = (r.dedupeKey || "").trim() || null;
+          if (dedupeKey) {
+            const [dup] = await db.select({ id: leads.id }).from(leads)
+              .where(eq(leads.dedupeKey, dedupeKey)).limit(1);
+            if (dup) { skipped++; continue; }
+          }
+          const [row] = await db.insert(leads).values({
+            address: String(r.address).slice(0, 255),
+            city: String(r.city).slice(0, 100),
+            state: String(r.state).slice(0, 2),
+            zipCode: String(r.zipCode).slice(0, 10),
+            ownerName: String(r.ownerName || "Unknown Owner").slice(0, 255),
+            ownerPhone: r.ownerPhone || null,
+            ownerEmail: r.ownerEmail || null,
+            estimatedValue: r.estimatedValue != null ? String(r.estimatedValue) : null,
+            status: r.status || "new",
+            source: String(r.source || "api-v1").slice(0, 100),
+            leadType: r.leadType || "seller",
+            county: r.county || null,
+            notes: r.notes || null,
+            dedupeKey,
+            tags: Array.isArray(r.tags) ? r.tags : null,
+          }).returning();
+          emitAutomationEvent("lead.created", {
+            id: row.id, address: row.address, city: row.city,
+            state: row.state, source: row.source,
+          }).catch(() => {});
+          created++;
+        } catch (e: any) { errors.push({ row: i + 1, error: e.message }); }
+      }
+      res.json({ created, skipped, total: rows.length, errors: errors.slice(0, 20) });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed" });
     }
