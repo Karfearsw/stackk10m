@@ -43,6 +43,7 @@ import {
   Handshake,
   ListChecks,
   BadgeCheck,
+  Inbox,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -54,6 +55,7 @@ import { motion, AnimatePresence } from "framer-motion";
 
 const primaryNavigation = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
+  { name: "Intake", href: "/intake", icon: Inbox },
   { name: "Leads Pipeline", href: "/leads", icon: Users },
   { name: "Opportunities", href: "/opportunities", icon: Building2 },
   { name: "Buyers", href: "/buyers", icon: UserCheck },

@@ -17569,6 +17569,42 @@ reg("post", "/api/buyer-offers/:id/counter"); app.post("/api/buyer-offers/:id/co
     } catch (e: any) { res.status(500).json({ message: e.message }); }
   });
 
+  // Bulk assign (Intake workspace): assign many leads to one agent in a
+  // single call. Mirrors the single-assign rules (active user, assignment_log
+  // row per lead). Body: { leadIds: number[], userId: number, reason?: string }
+  reg("post", "/api/leads/bulk-assign"); app.post("/api/leads/bulk-assign", async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const { leads, users, assignmentLog } = await import("./shared-schema.js");
+      const { eq, inArray } = await import("drizzle-orm");
+      const rawIds: unknown[] = Array.isArray((req.body as any)?.leadIds) ? (req.body as any).leadIds : [];
+      const leadIds: number[] = [...new Set<number>(
+        rawIds.map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0)
+      )].slice(0, 500);
+      const userId = Number((req.body as any)?.userId);
+      const reason = typeof (req.body as any)?.reason === "string" ? (req.body as any).reason.slice(0, 500) : "";
+      if (!leadIds.length) return res.status(400).json({ message: "leadIds[] is required" });
+      if (!Number.isInteger(userId) || userId <= 0) return res.status(400).json({ message: "userId is required" });
+      const target = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+      if (!target.length || !target[0].isActive) {
+        return res.status(400).json({ message: "Cannot assign to an inactive or missing user" });
+      }
+      await db.update(leads).set({ assignedTo: userId }).where(inArray(leads.id, leadIds));
+      await db.insert(assignmentLog).values(
+        leadIds.map((leadId) => ({
+          leadId,
+          assignedToUserId: userId,
+          ruleId: null,
+          ruleName: "manual-bulk",
+          reason: `Bulk assignment by ${user.email}${reason ? `: ${reason}` : ""}`,
+          assignedBy: user.id,
+        }))
+      );
+      res.json({ ok: true, assigned: leadIds.length, assignedTo: userId });
+    } catch (e: any) { res.status(500).json({ message: e.message }); }
+  });
+
   reg("get", "/api/leads/:id/assignment-history"); app.get("/api/leads/:id/assignment-history", async (req, res) => {
     const user = await requireAuth(req, res);
     if (!user) return;
