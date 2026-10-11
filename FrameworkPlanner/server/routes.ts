@@ -9407,6 +9407,39 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
     }
   });
 
+  // Create a Telnyx email domain (e.g. oceanluxe.org) via API — no portal needed.
+  reg("post", "/api/admin/telnyx/email-domains"); app.post("/api/admin/telnyx/email-domains", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) {
+        res.status(403).json({ success: false, error: "Admin access required" });
+        return;
+      }
+      const domain = String(req.body?.domain || "").trim().toLowerCase();
+      if (!domain || !/^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)) {
+        return res.status(400).json({ success: false, error: "Valid domain required" });
+      }
+      const apiKey = process.env.TELNYX_API_KEY;
+      if (!apiKey) return res.status(500).json({ success: false, error: "Telnyx API key not configured" });
+      const createRes = await fetch("https://api.telnyx.com/v2/email_domains", {
+        method: "POST",
+        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ domain }),
+      });
+      const createData: any = await createRes.json().catch(() => ({}));
+      if (!createRes.ok) {
+        const title = createData?.errors?.[0]?.title || "Telnyx API create failed";
+        const detail = createData?.errors?.[0]?.detail || null;
+        return res.status(createRes.status).json({ success: false, error: title, detail });
+      }
+      const d = createData?.data || {};
+      return res.json({ success: true, id: d.id || null, domain: d.domain || domain, status: d.status || null });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: String(e?.message || e) });
+    }
+  });
+
   // POST /api/files/upload — upload a file to durable object storage.
   reg("post", "/api/files/upload"); app.post("/api/files/upload", upload.single("file"), async (req, res) => {
     try {
