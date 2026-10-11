@@ -20,6 +20,7 @@ import { AutomationsContent } from "@/pages/automations";
 import { AuditLogContent } from "@/pages/audit-log";
 import { CallAuditContent } from "@/components/telecom/CallAuditContent";
 import { StorageSettings } from "@/components/settings/StorageSettings";
+import { SkipTraceSettings } from "@/components/settings/SkipTraceSettings";
 import { apiRequest } from "@/lib/queryClient";
 import { TelnyxOnboardingWizard } from "@/components/telnyx/TelnyxOnboardingWizard";
 
@@ -1997,8 +1998,8 @@ function SettingsContent() {
 
         {/* SYSTEM TAB */}
         <TabsContent value="system" className="mt-6 space-y-6">
-          {/* Provider Readiness Header */}
-          <Card>
+          <SkipTraceSettings />
+          {/* Provider Readiness Header */}          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Server className="w-5 h-5" />

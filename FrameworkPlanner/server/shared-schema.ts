@@ -393,6 +393,43 @@ export const insertSkipTraceJobSchema = createInsertSchema(skipTraceJobs).omit(
 export type SkipTraceJob = typeof skipTraceJobs.$inferSelect;
 export type InsertSkipTraceJob = z.infer<typeof insertSkipTraceJobSchema>;
 
+// ── Skip-trace completion (0108): spend ledger, admin alerts, runtime settings ──
+
+export const skipTraceSpendLedger = pgTable("skip_trace_spend_ledger", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  jobId: integer("job_id"),
+  provider: varchar("provider", { length: 100 }).notNull(),
+  costCents: integer("cost_cents").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertSkipTraceSpendLedgerSchema = createInsertSchema(skipTraceSpendLedger).omit({ id: true, createdAt: true } as any);
+export type SkipTraceSpendLedger = typeof skipTraceSpendLedger.$inferSelect;
+export type InsertSkipTraceSpendLedger = z.infer<typeof insertSkipTraceSpendLedgerSchema>;
+
+export const skipTraceAlerts = pgTable("skip_trace_alerts", {
+  id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+  type: varchar("type", { length: 100 }).notNull(),
+  message: text("message").notNull(),
+  metadataJson: jsonb("metadata_json"),
+  resolvedAt: timestamp("resolved_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const insertSkipTraceAlertSchema = createInsertSchema(skipTraceAlerts).omit({ id: true, createdAt: true } as any);
+export type SkipTraceAlert = typeof skipTraceAlerts.$inferSelect;
+export type InsertSkipTraceAlert = z.infer<typeof insertSkipTraceAlertSchema>;
+
+export const skipTraceSettings = pgTable("skip_trace_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull().default(""),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const insertSkipTraceSettingSchema = createInsertSchema(skipTraceSettings).omit({ updatedAt: true } as any);
+export type SkipTraceSetting = typeof skipTraceSettings.$inferSelect;
+export type InsertSkipTraceSetting = z.infer<typeof insertSkipTraceSettingSchema>;
+
 export const skipTraceJobEvents = pgTable("skip_trace_job_events", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   jobId: integer("job_id").notNull(),

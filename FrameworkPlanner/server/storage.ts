@@ -14,7 +14,7 @@ export function generateXpBookingReference(): string {
 import { 
   leads, leadNotes, savedViews, leadBulkActionJobs, aiActionLogs, aiActionUndo, appAuditRuns, appAuditFindings, properties, contacts, contracts, contractTemplates, contractDocuments, contractEnvelopes, contractSigners, contractEvents, contractFields, documentVersions, lois,
   users, twoFactorAuth, backupCodes, teams, teamMembers, teamActivityLogs, notificationPreferences, userGoals, userNotifications, tasks, offers, workCategories, timesheetEntries, timeClockSessions, workerProfiles, categoryRateOverrides, payPeriods, approvalEvents, commissionEvents, dealParticipants, commissionLedgerEntries, globalActivityLogs,
-  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, campaignRecipients, campaignMessages, campaignRuns, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents,
+  buyers, buyerCommunications, dealAssignments, callLogs, callMedia, numberReputation, pipelineConfigs, underwritingTemplates, playgroundPropertySessions, userFeatureFlags, skipTraceResults, skipTraceJobs, skipTraceJobEvents, skipTraceEvidence, skipTraceSpendLedger, skipTraceAlerts, skipTraceSettings, leadScoreSnapshots, leadSourceOptions, campaigns, campaignSteps, campaignEnrollments, campaignDeliveries, campaignRecipients, campaignMessages, campaignRuns, rvmAudioAssets, rvmCampaigns, rvmDrops, syncIdempotency, fieldMediaAssets, compSnapshots, compSnapshotRows, dealBuyerMatches, xpExperiences, xpTimeSlots, xpBlackouts, xpBookings, xpStripeEvents,
   companies, companyPeople, companyLinks, documents, documentLinks, vaultDocumentVersions, automations, automationTriggers, automationConditions, automationActions, automationRuns, auditEvents,
   opportunityParties, publicListings, buyerInquiries, opportunityEvents, buyerOffers, propertyUnits, commissionSnapshots,
   internalMessages, calendarEvents, appSettings, smsMessages, callSessions, callSessionEvents, agentPhoneSettings, callDispositions, aiCallQualifications,
@@ -89,6 +89,9 @@ import {
   type SkipTraceJob, type InsertSkipTraceJob,
   type SkipTraceJobEvent, type InsertSkipTraceJobEvent,
   type SkipTraceEvidence, type InsertSkipTraceEvidence,
+  type SkipTraceSpendLedger, type InsertSkipTraceSpendLedger,
+  type SkipTraceAlert, type InsertSkipTraceAlert,
+  type SkipTraceSetting, type InsertSkipTraceSetting,
   type LeadScoreSnapshot, type InsertLeadScoreSnapshot,
   type LeadSourceOption, type InsertLeadSourceOption,
   type Campaign, type InsertCampaign,
@@ -227,6 +230,13 @@ export interface IStorage {
   listSkipTraceJobEvents(jobId: number, limit?: number): Promise<SkipTraceJobEvent[]>;
   createSkipTraceEvidence(input: InsertSkipTraceEvidence): Promise<SkipTraceEvidence>;
   listSkipTraceEvidence(jobId: number, limit?: number): Promise<SkipTraceEvidence[]>;
+  recordSkipTraceSpend(input: InsertSkipTraceSpendLedger): Promise<SkipTraceSpendLedger>;
+  getSkipTraceSpendSince(since: Date): Promise<number>;
+  createSkipTraceAlert(input: InsertSkipTraceAlert): Promise<SkipTraceAlert>;
+  listUnresolvedSkipTraceAlerts(limit?: number): Promise<SkipTraceAlert[]>;
+  resolveSkipTraceAlert(id: number): Promise<SkipTraceAlert | undefined>;
+  getSkipTraceSetting(key: string): Promise<SkipTraceSetting | undefined>;
+  setSkipTraceSetting(key: string, value: string): Promise<SkipTraceSetting>;
   createLeadScoreSnapshot(input: InsertLeadScoreSnapshot): Promise<LeadScoreSnapshot>;
   getLatestLeadScoreSnapshot(entityType: string, entityId: number): Promise<LeadScoreSnapshot | undefined>;
   listLeadScoreSnapshotsByJobId(jobId: number): Promise<LeadScoreSnapshot[]>;
@@ -1438,6 +1448,56 @@ export class DatabaseStorage implements IStorage {
       .where(eq(skipTraceEvidence.jobId, jobId))
       .orderBy(desc(skipTraceEvidence.collectedAt), desc(skipTraceEvidence.id))
       .limit(limit);
+  }
+
+  async recordSkipTraceSpend(input: InsertSkipTraceSpendLedger): Promise<SkipTraceSpendLedger> {
+    const result = await db.insert(skipTraceSpendLedger).values(input as any).returning();
+    return result[0];
+  }
+
+  async getSkipTraceSpendSince(since: Date): Promise<number> {
+    const rows = await db
+      .select({ total: sql<number>`COALESCE(SUM(${skipTraceSpendLedger.costCents}), 0)::int` })
+      .from(skipTraceSpendLedger)
+      .where(gte(skipTraceSpendLedger.createdAt, since));
+    return Number(rows?.[0]?.total || 0);
+  }
+
+  async createSkipTraceAlert(input: InsertSkipTraceAlert): Promise<SkipTraceAlert> {
+    const result = await db.insert(skipTraceAlerts).values(input as any).returning();
+    return result[0];
+  }
+
+  async listUnresolvedSkipTraceAlerts(limit: number = 20): Promise<SkipTraceAlert[]> {
+    return db
+      .select()
+      .from(skipTraceAlerts)
+      .where(isNull(skipTraceAlerts.resolvedAt))
+      .orderBy(desc(skipTraceAlerts.createdAt), desc(skipTraceAlerts.id))
+      .limit(limit);
+  }
+
+  async resolveSkipTraceAlert(id: number): Promise<SkipTraceAlert | undefined> {
+    const result = await db
+      .update(skipTraceAlerts)
+      .set({ resolvedAt: new Date() } as any)
+      .where(eq(skipTraceAlerts.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getSkipTraceSetting(key: string): Promise<SkipTraceSetting | undefined> {
+    const result = await db.select().from(skipTraceSettings).where(eq(skipTraceSettings.key, key)).limit(1);
+    return result[0];
+  }
+
+  async setSkipTraceSetting(key: string, value: string): Promise<SkipTraceSetting> {
+    const result = await db
+      .insert(skipTraceSettings)
+      .values({ key, value } as any)
+      .onConflictDoUpdate({ target: skipTraceSettings.key, set: { value, updatedAt: new Date() } as any })
+      .returning();
+    return result[0];
   }
 
   async createLeadScoreSnapshot(input: InsertLeadScoreSnapshot): Promise<LeadScoreSnapshot> {

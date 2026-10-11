@@ -183,7 +183,8 @@ function baseUrl(): string {
     .replace(/\/+$/, "");
 }
 
-function buildEvidence(data: any, persons: ExtractedPerson[]): SkipTraceProviderEvidence[] {
+/** Shared evidence builder — also reused by the batch provider. */
+export function buildEvidence(data: any, persons: ExtractedPerson[]): SkipTraceProviderEvidence[] {
   const evidence: SkipTraceProviderEvidence[] = [];
   const meta = data?.meta || {};
   evidence.push({
