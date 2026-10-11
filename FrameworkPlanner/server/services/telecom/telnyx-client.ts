@@ -773,7 +773,7 @@ export class TelnyxClient {
       {
         method: "POST",
         headers: this.headers(),
-        body: JSON.stringify({ assistant_id: assistantId }),
+        body: JSON.stringify({ assistant: { id: assistantId } }),
         signal: AbortSignal.timeout(10000),
       },
     );
