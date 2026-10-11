@@ -186,6 +186,8 @@ export default function Leads() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFilters] = useState(() => parseFiltersFromUrl());
   const [appliedFilters, setAppliedFilters] = useState(filters);
+  // "Load all" progress — paced loading with a cap to avoid mobile browser meltdowns.
+  const [loadAllState, setLoadAllState] = useState<{ active: boolean; loaded: number; total: number } | null>(null);
   const [density, setDensity] = useState<"luxury" | "dense">("luxury");
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>({
     address: true,
@@ -1421,6 +1423,21 @@ export default function Leads() {
             {density === "dense" ? "Dense" : "Luxury"}
           </Button>
 
+          {/* Quick filter: only leads with a phone number — one tap, no sheet digging. */}
+          <Button
+            variant={filters.contactPresence === "phone_only" ? "default" : "outline"}
+            size="sm"
+            onClick={() => {
+              const next = filters.contactPresence === "phone_only" ? "" : "phone_only";
+              setFilters((prev: any) => ({ ...prev, contactPresence: next }));
+            }}
+            title="Show only leads with a phone number"
+            data-testid="button-leads-has-phone"
+          >
+            <Phone className="mr-2 h-4 w-4" />
+            Has phone
+          </Button>
+
           <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
             <SheetTrigger asChild>
               <Button variant="outline" size="sm" data-testid="button-leads-filter">
@@ -1632,21 +1649,40 @@ export default function Leads() {
                 variant="outline"
                 size="sm"
                 onClick={async () => {
-                  let guard = 0;
-                  while (guard < 50) {
-                    guard += 1;
-                    const res = await fetchNextPage();
-                    const pages = (res as any)?.data?.pages || [];
-                    const last = pages[pages.length - 1];
-                    const total = Number(last?.total || 0);
-                    const loaded = pages.reduce((acc: number, p: any) => acc + (Array.isArray(p?.items) ? p.items.length : 0), 0);
-                    if (!total || loaded >= total) break;
+                  // Paced "load all": fetch page-by-page with a short breather
+                  // between pages so the UI can paint and mobile browsers don't
+                  // choke. Capped at 2,000 items — beyond that, use filters to
+                  // narrow down instead of loading everything into memory.
+                  const MAX_LOAD_ALL = 2000;
+                  setLoadAllState({ active: true, loaded: 0, total: 0 });
+                  try {
+                    let guard = 0;
+                    while (guard < 50) {
+                      guard += 1;
+                      const res = await fetchNextPage();
+                      const pages = (res as any)?.data?.pages || [];
+                      const last = pages[pages.length - 1];
+                      const total = Number(last?.total || 0);
+                      const loaded = pages.reduce((acc: number, p: any) => acc + (Array.isArray(p?.items) ? p.items.length : 0), 0);
+                      setLoadAllState({ active: true, loaded, total });
+                      if (!total || loaded >= total) break;
+                      if (loaded >= MAX_LOAD_ALL) {
+                        toast({ title: `Loaded ${loaded.toLocaleString()} leads`, description: `Capped at ${MAX_LOAD_ALL.toLocaleString()} for performance — use filters to narrow down.` });
+                        break;
+                      }
+                      // Let the UI breathe between pages (paint + GC).
+                      await new Promise((r) => setTimeout(r, 120));
+                    }
+                  } finally {
+                    setLoadAllState(null);
                   }
                 }}
-                disabled={isFetchingNextPage}
+                disabled={isFetchingNextPage || !!loadAllState?.active}
                 data-testid="button-leads-load-all"
               >
-                Load all
+                {loadAllState?.active
+                  ? `Loading… ${loadAllState.loaded.toLocaleString()}${loadAllState.total ? ` / ${loadAllState.total.toLocaleString()}` : ""}`
+                  : "Load all"}
               </Button>
             </>
           ) : null}
