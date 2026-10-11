@@ -186,10 +186,24 @@ async function ensureWatchlistForBackfill(
     .orderBy(desc(distressSignals.discoveredAt))
     .limit(1);
   const raw: any = (sig as any)?.rawData || {};
-  const address = String(raw.address || raw.street || raw.propertyAddress || "").trim();
-  const city = String(raw.city || "").trim();
-  const state = String(raw.state || "").trim();
-  const zipCode = String(raw.zip || raw.zipCode || raw.postalCode || "").trim();
+  let address = String(raw.address || raw.street || raw.propertyAddress || "").trim();
+  let city = String(raw.city || "").trim();
+  let state = String(raw.state || "").trim();
+  let zipCode = String(raw.zip || raw.zipCode || raw.postalCode || "").trim();
+  // Fallback: bulk imports (e.g. Detroit CSV) stored no rawData address —
+  // reconstruct from the parcel key itself ("address|city|state|zip",
+  // normalized lowercase by parcelKeyFor). Title-cased for readability.
+  if ((!address || !city || !state || !zipCode) && key.includes("|")) {
+    const parts = key.split("|");
+    const titleCase = (s: string) =>
+      s.replace(/\w\S*/g, (w) => w.charAt(0).toUpperCase() + w.slice(1));
+    if (parts.length >= 4) {
+      if (!address) address = titleCase(parts[0] || "");
+      if (!city) city = titleCase(parts[1] || "");
+      if (!state) state = (parts[2] || "").toUpperCase();
+      if (!zipCode) zipCode = (parts[3] || "").replace(/[^0-9]/g, "").slice(0, 5);
+    }
+  }
   // Watchlist columns are NOT NULL — without address parts we cannot create
   // a valid row; promotion will fail gracefully as before.
   if (!address || !city || !state || !zipCode) return;
