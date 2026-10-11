@@ -9301,6 +9301,63 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       return res.status(500).json({ success: false, error: String(e?.message || e) });
     }
   });
+
+  // Outbound AI call: places the call and auto-starts the AI assistant when answered.
+  // No manual "start AI" step needed.
+  reg("post", "/api/telephony/ai-call"); app.post("/api/telephony/ai-call", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const to = String(req.body?.to || "").trim();
+      if (!to) return res.status(400).json({ success: false, error: "to number required" });
+      const assistantId = String(req.body?.assistantId || "").trim() || undefined;
+      const greeting = String(req.body?.greeting || "").trim() || undefined;
+
+      const { getAiAssistantConfig } = await import("./services/telecom/ai-config.js");
+      const aiConfig = await getAiAssistantConfig();
+      if (!aiConfig.enabled) {
+        return res.status(400).json({ success: false, error: "AI assistant not enabled" });
+      }
+      const effectiveAssistantId = assistantId || aiConfig.assistantId;
+      if (!effectiveAssistantId) {
+        return res.status(400).json({ success: false, error: "No assistant ID configured" });
+      }
+
+      const { telnyx } = await import("./services/telecom/telnyx-client.js");
+      const dialResult = await telnyx.dial({
+        to,
+        from: String(process.env.TELNYX_DEFAULT_FROM_NUMBER || "").trim(),
+        connectionId: String(process.env.TELNYX_CONNECTION_ID || ""),
+        timeoutSecs: 45,
+      });
+      const callControlId = dialResult.callControlId;
+
+      // Background: poll and auto-start AI when the call is answered (up to 60s).
+      // Fire-and-forget; the response returns immediately with the call ID.
+      (async () => {
+        for (let i = 0; i < 12; i++) {
+          await new Promise((r) => setTimeout(r, 5000));
+          try {
+            await telnyx.startAiAssistant(callControlId, effectiveAssistantId, greeting);
+            console.log(`[ai-call] Auto-started AI on ${callControlId.slice(0, 20)}...`);
+            return;
+          } catch (e: any) {
+            const msg = String(e?.message || "");
+            // "Call not answered yet" → keep polling. Anything else → stop.
+            if (!msg.toLowerCase().includes("not answered")) {
+              console.error(`[ai-call] Auto-start failed: ${msg.slice(0, 120)}`);
+              return;
+            }
+          }
+        }
+        console.log(`[ai-call] Auto-start timed out for ${callControlId.slice(0, 20)}...`);
+      })();
+
+      return res.json({ success: true, callControlId, autoStart: true });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: String(e?.message || e) });
+    }
+  });
   // Private-by-default file storage on S3-compatible object storage.
   // Downloads go through expiring signed URLs only — never public.
 

@@ -787,14 +787,16 @@ export class TelnyxClient {
   // Starts an AI assistant on an active call. The assistant must exist in the
   // Telnyx account; transcripts arrive as ai_assistant.* webhook events.
 
-  async startAiAssistant(callControlId: string, assistantId: string): Promise<void> {
+  async startAiAssistant(callControlId: string, assistantId: string, greeting?: string): Promise<void> {
     this.requireReady();
+    const body: Record<string, unknown> = { assistant: { id: assistantId } };
+    if (greeting) body.greeting = greeting;
     const res = await fetch(
       `${this.baseUrl}/calls/${encodeURIComponent(callControlId)}/actions/ai_assistant_start`,
       {
         method: "POST",
         headers: this.headers(),
-        body: JSON.stringify({ assistant: { id: assistantId } }),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(10000),
       },
     );
