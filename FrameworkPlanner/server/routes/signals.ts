@@ -8,7 +8,7 @@
  */
 
 import type { Express, Request, Response } from "express";
-import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, isNotNull, or, sql } from "drizzle-orm";
 import { db } from "../db.js";
 import { storage } from "../storage.js";
 import {
@@ -18,7 +18,7 @@ import {
   SIGNAL_TYPES,
   SIGNAL_SEVERITIES,
 } from "../shared-schema.js";
-import { onSignalCreated } from "./automation.js";
+import { onSignalCreated, signalDedupeKey } from "./automation.js";
 
 async function requireAuth(req: Request, res: Response) {
   const userId = (req as any).session?.userId;
@@ -113,20 +113,34 @@ export function registerSignalRoutes(app: Express) {
         }
       }
 
+      const title = String(b.title).slice(0, 255);
+      const source = String(b.source).slice(0, 100);
+      const occurredAt = b.occurredAt || null;
+      const dedupeKey = signalDedupeKey({
+        sourceRecordId: b.sourceRecordId,
+        source, parcelKey,
+        signalType: b.signalType, severity, occurredAt, title,
+      });
+
       const [row] = await db.insert(distressSignals).values({
         parcelKey,
         watchlistId,
         leadId: toInt(b.leadId),
         signalType: b.signalType,
         severity,
-        title: String(b.title).slice(0, 255),
+        title,
         description: b.description || null,
-        source: String(b.source).slice(0, 100),
+        source,
+        sourceRecordId: dedupeKey,
         sourceUrl: b.sourceUrl || null,
-        occurredAt: b.occurredAt || null,
+        occurredAt,
         rawData: b.rawData || null,
         createdBy: user.id,
+      }).onConflictDoNothing({
+        target: [distressSignals.source, distressSignals.sourceRecordId],
+        where: isNotNull(distressSignals.sourceRecordId),
       }).returning();
+      if (!row) return res.status(200).json({ deduplicated: true, sourceRecordId: dedupeKey });
       onSignalCreated(row).catch(() => {});
       res.status(201).json(row);
     } catch (e: any) {
@@ -172,7 +186,7 @@ export function registerSignalRoutes(app: Express) {
             wlCache.set(parcelKey, watchlistId);
           }
 
-          await db.insert(distressSignals).values({
+          const inserted = await db.insert(distressSignals).values({
             parcelKey,
             watchlistId,
             signalType: r.signalType,
@@ -180,12 +194,25 @@ export function registerSignalRoutes(app: Express) {
             title: String(r.title).slice(0, 255),
             description: r.description || null,
             source: String(r.source).slice(0, 100),
+            // Idempotent re-imports: same source record → ON CONFLICT skip.
+            sourceRecordId: signalDedupeKey({
+              sourceRecordId: r.sourceRecordId,
+              source: String(r.source).slice(0, 100),
+              parcelKey,
+              signalType: r.signalType,
+              severity: VALID_SEVERITIES.has(r.severity) ? r.severity : "info",
+              occurredAt: r.occurredAt || null,
+              title: String(r.title).slice(0, 255),
+            }),
             sourceUrl: r.sourceUrl || null,
             occurredAt: r.occurredAt || null,
             rawData: r.rawData || null,
             createdBy: user.id,
-          });
-          created++;
+          }).onConflictDoNothing({
+            target: [distressSignals.source, distressSignals.sourceRecordId],
+            where: isNotNull(distressSignals.sourceRecordId),
+          }).returning({ id: distressSignals.id });
+          if (inserted.length) created++; else skipped++;
         } catch (e: any) {
           skipped++;
           errors.push({ row: i + 1, error: e.message || "unknown" });
@@ -286,6 +313,32 @@ export function registerSignalRoutes(app: Express) {
       res.status(result.promoted ? 201 : 200).json(result);
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Promotion failed" });
+    }
+  });
+
+  // ── Backfill: promote every signaled parcel with no lead yet ─────────────
+  // One-time repair for signals imported before the signal → lead loop was
+  // fixed (missing watchlist rows + score-gated promotion). Manager-only.
+  // Idempotent — skips parcels that already have a lead (dedupeKey).
+  // quiet=true suppresses the per-lead lead.created fan-out so a mass
+  // backfill doesn't fire thousands of webhook events at once.
+  app.post("/api/parcels/backfill-signal-leads", async (req: Request, res: Response) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    try {
+      const role = String((user as any).role || "").toLowerCase();
+      const isManager = !!(user as any).isSuperAdmin || role === "admin" || role === "manager" || role === "owner";
+      if (!isManager) return res.status(403).json({ message: "Manager role required" });
+      const { backfillHighScoreParcels } = await import("../services/lead-promotion.js");
+      // threshold=1: every parcel with at least one distress signal becomes a
+      // callable lead; score drives priority, not existence.
+      // Chunkable via { limit } (idempotent — re-running skips existing leads)
+      // to stay inside serverless function timeouts on large backfills.
+      const limit = Math.min(Math.max(Number(req.body?.limit) || 1000, 1), 20000);
+      const result = await backfillHighScoreParcels(1, { createdBy: user.id, limit, quiet: true });
+      res.json({ ok: true, ...result });
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Backfill failed" });
     }
   });
 

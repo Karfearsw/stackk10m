@@ -2855,6 +2855,11 @@ export const distressSignals = pgTable("distress_signals", {
   description: text("description"),
   source: varchar("source", { length: 100 }).notNull(),
   sourceUrl: text("source_url"),
+  // Idempotency key for imports: explicit per-row ID from the importer when
+  // available, otherwise a deterministic content hash (see signalDedupeKey in
+  // server/routes/automation.ts). Partial unique index on
+  // (source, source_record_id) makes re-imports skip instead of duplicating.
+  sourceRecordId: varchar("source_record_id", { length: 200 }),
   occurredAt: date("occurred_at"),
   discoveredAt: timestamp("discovered_at").defaultNow(),
   rawData: jsonb("raw_data"),
