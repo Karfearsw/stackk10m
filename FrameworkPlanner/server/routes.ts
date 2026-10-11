@@ -9227,6 +9227,42 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.status(500).json({ success: false, error: "Migration failed" });
     }
   });
+
+  // TEMPORARY: One-time webhook URL fix for Telnyx Call Control Application.
+  reg("post", "/api/admin/telnyx/fix-webhook");
+  app.post("/api/admin/telnyx/fix-webhook", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      if (!isAdminUser(user)) {
+        res.status(403).json({ success: false, error: "Admin access required" });
+        return;
+      }
+      const apiKey = process.env.TELNYX_API_KEY;
+      const connectionId = process.env.TELNYX_CONNECTION_ID;
+      const webhookUrl = process.env.TELNYX_WEBHOOK_URL || "https://crm.oceanluxe.org/api/v1/telecom/webhooks/telnyx";
+      if (!apiKey || !connectionId) {
+        return res.status(500).json({ success: false, error: "Telnyx API key or connection ID not configured" });
+      }
+      const telnyxRes = await fetch(`https://api.telnyx.com/v2/call_control_applications/${connectionId}`, {
+        method: "PATCH",
+        headers: { "Authorization": `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ webhook_event_url: webhookUrl, webhook_event_failover_url: "", webhook_api_version: "2" }),
+      });
+      const data = await telnyxRes.json().catch(() => ({}));
+      if (!telnyxRes.ok) {
+        return res.status(telnyxRes.status).json({
+          success: false,
+          error: data?.errors?.[0]?.title || "Telnyx API update failed",
+          detail: data?.errors?.[0]?.detail || null,
+        });
+      }
+      return res.json({ success: true, webhookUrl, applicationId: connectionId });
+    } catch (e: any) {
+      return res.status(500).json({ success: false, error: String(e?.message || e) });
+    }
+  });
+
   // ── Ticket 18: durable object storage ──────────────────────────────────
   // Private-by-default file storage on S3-compatible object storage.
   // Downloads go through expiring signed URLs only — never public.
