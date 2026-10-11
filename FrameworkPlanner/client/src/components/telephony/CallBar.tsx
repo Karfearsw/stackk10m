@@ -295,6 +295,12 @@ export function CallBar({
         <MicLevelMeter stream={inCall ? micStream ?? null : null} />
       </div>
 
+      {!inCall && extraControls ? (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {extraControls}
+        </div>
+      ) : null}
+
       {inCall ? (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <Button size="sm" variant="outline" onClick={onMute} data-testid={`${testId}-mute`} aria-label={muted ? "Unmute" : "Mute"}>
@@ -315,7 +321,6 @@ export function CallBar({
           >
             <Hash className="mr-1 h-4 w-4" /> Keypad
           </Button>
-          {extraControls}
           <Button size="sm" variant="destructive" onClick={onHangup} data-testid={`${testId}-hangup`} aria-label="End call">
             <PhoneOff className="mr-1 h-4 w-4" /> End
           </Button>
