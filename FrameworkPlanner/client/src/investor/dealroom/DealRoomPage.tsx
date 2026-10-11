@@ -429,16 +429,16 @@ function MessageBubble({ message: m }: { message: RoomMessage }) {
     return (
       <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-primary">Room update</p>
-        <p className="mt-1">{m.body}</p>
+        <p className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.body}</p>
         {m.createdAt && <p className="mt-1 text-xs text-muted-foreground">{new Date(m.createdAt).toLocaleString()}</p>}
       </div>
     );
   }
   return (
-    <div className={`flex ${m.mine ? "justify-end" : "justify-start"}`}>
-      <div className={`max-w-[85%] rounded-lg px-4 py-2.5 text-sm ${m.mine ? "bg-primary/15 text-foreground" : "border border-border/60"}`}>
+    <div className={`flex min-w-0 ${m.mine ? "justify-end" : "justify-start"}`}>
+      <div className={`min-w-0 max-w-[85%] rounded-lg px-4 py-2.5 text-sm ${m.mine ? "bg-primary/15 text-foreground" : "border border-border/60"}`}>
         {!m.mine && <p className="mb-0.5 text-xs font-semibold text-muted-foreground">{m.authorName}</p>}
-        <p>{m.body}</p>
+        <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.body}</p>
         {m.createdAt && <p className="mt-1 text-[11px] text-muted-foreground">{new Date(m.createdAt).toLocaleString()}</p>}
       </div>
     </div>
