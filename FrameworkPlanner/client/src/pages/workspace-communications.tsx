@@ -661,9 +661,9 @@ export default function CommunicationsWorkspace() {
                     <ScrollArea className="h-[34vh] border rounded-md p-3 space-y-2">
                       {selectedThreadPhone && (threadMessages.data || []).length === 0 && <p className="text-sm text-muted-foreground">No messages in this thread yet.</p>}
                       {(threadMessages.data || []).map((m: any) => (
-                        <div key={m.id} className={`flex ${m.direction === "outbound" ? "justify-end" : "justify-start"}`}>
-                          <div className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${m.direction === "outbound" ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
-                            <p className="whitespace-pre-wrap break-words">{m.body}</p>
+                        <div key={m.id} className={`flex min-w-0 ${m.direction === "outbound" ? "justify-end" : "justify-start"}`}>
+                          <div className={`min-w-0 max-w-[75%] rounded-lg px-3 py-2 text-sm ${m.direction === "outbound" ? "bg-primary text-primary-foreground" : "bg-muted"}`}>
+                            <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.body}</p>
                             <div className="text-[10px] opacity-70 mt-1 flex items-center gap-2">
                               <span>{timeAgo(m.created_at || m.createdAt)}</span>
                               <span>{m.status || ""}</span>

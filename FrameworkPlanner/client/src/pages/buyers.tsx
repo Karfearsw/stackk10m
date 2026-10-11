@@ -407,13 +407,13 @@ function BuyerSmsPanel({ buyer, onBuyerChange }: { buyer: Buyer; onBuyerChange: 
             <p className="text-center text-sm text-muted-foreground py-4">No SMS yet with this buyer</p>
           ) : (
             messages.map((m) => (
-              <div key={m.id} className={`flex ${m.direction === "outbound" ? "justify-end" : "justify-start"}`}>
+              <div key={m.id} className={`flex min-w-0 ${m.direction === "outbound" ? "justify-end" : "justify-start"}`}>
                 <div
-                  className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                  className={`min-w-0 max-w-[80%] rounded-lg px-3 py-2 text-sm ${
                     m.direction === "outbound" ? "bg-primary text-primary-foreground" : "bg-muted"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap break-words">{m.body}</p>
+                  <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.body}</p>
                   <p className={`text-[10px] mt-1 ${m.direction === "outbound" ? "text-primary-foreground/70" : "text-muted-foreground"}`}>
                     {new Date(m.createdAt).toLocaleString()}
                     {m.status && m.status !== "received" ? ` · ${m.status}` : ""}

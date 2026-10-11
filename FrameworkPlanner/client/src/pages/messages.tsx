@@ -4,12 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { MessageSquare, Send, Loader2, Users, Paperclip, X, Video, ExternalLink, Download } from "lucide-react";
+import { MessageSquare, Send, Loader2, Users, Paperclip, X, Video, ExternalLink, Download, Clapperboard } from "lucide-react";
 import { MediaUploader } from "@/components/media/MediaUploader";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { formatBytes, isVideoAsset, isImageAsset, mediaPreviewUrl, type MediaAsset } from "@/lib/media";
-import { VideoCallDialog } from "@/components/video/VideoCallDialog";
-import { apiRequest } from "@/lib/queryClient";
+import { JitsiMeetingDialog } from "@/components/video/JitsiMeetingDialog";
+import { newTeamMeetingRoom } from "@/lib/jitsi";
+import { VideoMessageRecorder } from "@/components/video/VideoMessageRecorder";
 import { toast } from "sonner";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -43,11 +44,12 @@ export default function MessagesPage() {
   const [body, setBody] = useState("");
   const [pendingMedia, setPendingMedia] = useState<MediaAsset[]>([]);
   const [lightboxAsset, setLightboxAsset] = useState<MediaAsset | null>(null);
-  // Video call state — internal team video, unified with the chat.
-  const [videoOpen, setVideoOpen] = useState(false);
-  const [videoRoomId, setVideoRoomId] = useState("");
-  const [videoRoomName, setVideoRoomName] = useState("");
-  const [videoBusy, setVideoBusy] = useState(false);
+  // Unified video: free Jitsi meeting + in-chat video messages, launched from here.
+  const [jitsiOpen, setJitsiOpen] = useState(false);
+  const [jitsiRoomName, setJitsiRoomName] = useState("");
+  const [jitsiTitle, setJitsiTitle] = useState("");
+  const [meetingBusy, setMeetingBusy] = useState(false);
+  const [recorderOpen, setRecorderOpen] = useState(false);
 
   const { data: conversations = [], isLoading: convLoading, isError: convError, refetch: refetchConvs } = useQuery<Conversation[]>({
     queryKey: ["/api/messages/conversations"],
@@ -114,7 +116,7 @@ export default function MessagesPage() {
     readMutation.mutate(recipientUserId);
   };
 
-  const userName = (id: number) => {
+  const userName = (id: number | undefined) => {
     const u = users.find((x: any) => Number(x.id) === Number(id));
     if (!u) return `User #${id}`;
     const name = [u.firstName, u.lastName].filter(Boolean).join(" ");
@@ -127,27 +129,39 @@ export default function MessagesPage() {
     [users, user?.id],
   );
 
-  // Start an internal team video call with the current conversation partner.
-  const startVideoCall = async () => {
-    if (withUserId == null) return;
-    setVideoBusy(true);
+  // Start a free team video meeting (Jitsi — no account, no paid provider).
+  // The join link is also posted into the thread so the teammate can join
+  // from the chat history on any device.
+  const startVideoMeeting = async () => {
+    if (withUserId == null || meetingBusy) return;
+    setMeetingBusy(true);
     try {
-      const res = await apiRequest("POST", "/api/video/rooms", {
-        name: `Team call: ${userName(user?.id)} & ${userName(withUserId)}`,
-        maxParticipants: 4,
+      const { roomName, joinUrl } = newTeamMeetingRoom();
+      const title = `Video meeting: ${userName(user?.id)} & ${userName(withUserId)}`;
+      // Post the invite into the thread first, so it lands even if the
+      // meeting dialog is closed right away.
+      const res = await fetch("/api/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          recipientUserId: withUserId,
+          body: `🎥 Started a video meeting — join here: ${joinUrl}`,
+        }),
       });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || json?.message || "Failed to create video room");
-      const room = json?.room || json;
-      const roomId = room?.room_id || room?.roomId || room?.id;
-      if (!roomId) throw new Error("No room id returned");
-      setVideoRoomId(roomId);
-      setVideoRoomName(room?.name || `Call with ${userName(withUserId)}`);
-      setVideoOpen(true);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.message || "Could not post the meeting invite");
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/messages", withUserId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/messages/conversations"] });
+      setJitsiRoomName(roomName);
+      setJitsiTitle(title);
+      setJitsiOpen(true);
     } catch (e: any) {
-      toast.error(e?.message || "Failed to start video call");
+      toast.error(e?.message || "Failed to start video meeting");
     } finally {
-      setVideoBusy(false);
+      setMeetingBusy(false);
     }
   };
 
@@ -222,12 +236,12 @@ export default function MessagesPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={startVideoCall}
-                      disabled={videoBusy}
-                      title={`Start video call with ${userName(withUserId)}`}
+                      onClick={startVideoMeeting}
+                      disabled={meetingBusy}
+                      title={`Start video meeting with ${userName(withUserId)} (free)`}
                     >
-                      {videoBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Video className="h-4 w-4" />}
-                      <span className="hidden sm:inline ml-1">Video call</span>
+                      {meetingBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Video className="h-4 w-4" />}
+                      <span className="hidden sm:inline ml-1">Video meeting</span>
                     </Button>
                   </div>
                 </div>
@@ -340,16 +354,31 @@ export default function MessagesPage() {
                     ))}
                   </div>
                 )}
-                <MediaUploader
-                  entityType="internal_message"
-                  deferAttach
-                  compact
-                  multiple
-                  maxFiles={5}
-                  label="Attach images or video"
-                  onUploaded={(asset) => setPendingMedia((prev) => [...prev, asset])}
-                  onError={(m) => toast.error(m)}
-                />
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex-1 min-w-0">
+                    <MediaUploader
+                      entityType="internal_message"
+                      deferAttach
+                      compact
+                      multiple
+                      maxFiles={5}
+                      label="Attach images or video"
+                      onUploaded={(asset) => setPendingMedia((prev) => [...prev, asset])}
+                      onError={(m) => toast.error(m)}
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setRecorderOpen(true)}
+                    title="Record a video message with your camera"
+                    className="shrink-0"
+                  >
+                    <Clapperboard className="h-4 w-4" />
+                    <span className="hidden sm:inline ml-1">Record video</span>
+                  </Button>
+                </div>
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
@@ -396,13 +425,22 @@ export default function MessagesPage() {
           )}
         </DialogContent>
       </Dialog>
-      {/* Unified internal video call — launched from the team chat header. */}
-      <VideoCallDialog
-        open={videoOpen}
-        onOpenChange={setVideoOpen}
-        roomId={videoRoomId}
-        roomName={videoRoomName}
-        participantName={withUserId != null ? userName(withUserId) : undefined}
+      {/* Unified team video meeting (free Jitsi) + in-chat video messages. */}
+      <JitsiMeetingDialog
+        open={jitsiOpen}
+        onOpenChange={setJitsiOpen}
+        roomName={jitsiRoomName}
+        meetingTitle={jitsiTitle}
+        displayName={user ? userName(user.id) : undefined}
+      />
+      <VideoMessageRecorder
+        open={recorderOpen}
+        onOpenChange={setRecorderOpen}
+        onRecorded={(asset) => {
+          setPendingMedia((prev) => [...prev, asset]);
+          toast.success("Video message ready — press send to deliver it.");
+        }}
+        onError={(m) => toast.error(m)}
       />
     </Layout>
   );
