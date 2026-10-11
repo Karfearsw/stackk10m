@@ -8,6 +8,25 @@ import { emitTelephonyEventToAll } from "../../telephony/ws.js";
 import { handleWebhookEvent as handleSessionCallEvent, handleAiSessionEvent as handleSessionAiEvent } from "./call-sessions.js";
 import { getRvmAudioUrl } from "../rvm/provider.js";
 
+/**
+ * Post a notification to Discord via webhook URL from env.
+ * Non-blocking: failures are logged but never break webhook processing.
+ */
+async function notifyDiscord(content: string): Promise<void> {
+  const webhookUrl = process.env.DISCORD_TELNYX_WEBHOOK_URL;
+  if (!webhookUrl) return;
+  try {
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: content.slice(0, 1900) }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch (e) {
+    console.error("Discord notification failed:", (e as Error).message);
+  }
+}
+
 export function createTelnyxWebhookRouter() {
   const router = Router();
 
@@ -546,8 +565,10 @@ async function handleCallEvent(event: any) {
 
   // Inbound: notify agents of the ringing call (matched to a lead when possible)
   if (direction === "inbound" && internalStatus === "ringing") {
+    let ringLeadName: string | null = null;
     try {
       const lead = from ? await storage.getLeadByPhone(String(from)) : undefined;
+      ringLeadName = lead?.ownerName || null;
       emitTelephonyEventToAll({
         type: "inbound_call_ringing",
         payload: {
@@ -563,9 +584,12 @@ async function handleCallEvent(event: any) {
     } catch (e) {
       console.error("Inbound ring notification failed:", e);
     }
+    // Discord: notify on inbound ringing call
+    notifyDiscord(`📞 **Inbound call ringing** from ${maskNumber(String(from || "unknown"))}${ringLeadName ? ` (${ringLeadName})` : ""}`);
   }
   if (direction === "inbound" && (internalStatus === "ended" || internalStatus === "missed" || internalStatus === "failed")) {
     emitTelephonyEventToAll({ type: "inbound_call_ended", payload: { callControlId, status: internalStatus } } as any);
+    notifyDiscord(`📞 Inbound call ${internalStatus} from ${maskNumber(String(from || "unknown"))}`);
   }
 
   // ── Missed-call text-back (2026-10-08): highest-ROI automation — when an
@@ -786,6 +810,8 @@ async function handleMessageEvent(event: any) {
       } catch (e) {
         console.error("Failed to persist inbound SMS message:", e);
       }
+      // Discord: notify on inbound SMS
+      notifyDiscord(`💬 **Inbound SMS** from ${maskNumber(String(from || "unknown"))}: ${String(body || "(no content)").slice(0, 200)}`);
     }
 
     // STOP/START keyword handling: inbound opt-out keywords flip the buyer's DNC flag.

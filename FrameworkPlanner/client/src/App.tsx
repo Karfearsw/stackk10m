@@ -48,6 +48,7 @@ const Sequences = React.lazy(() => import("@/pages/sequences"));
 const Timesheet = React.lazy(() => import("@/pages/timesheet"));
 const Notifications = React.lazy(() => import("@/pages/notifications"));
 const MessagesPage = React.lazy(() => import("@/pages/messages"));
+const SmsInboxPage = React.lazy(() => import("@/pages/sms-inbox"));
 const Playground = React.lazy(() => import("@/pages/playground"));
 const Buyers = React.lazy(() => import("@/pages/buyers"));
 const BuyerQualify = React.lazy(() => import("@/pages/buyers/qualify"));
@@ -217,6 +218,7 @@ function Router() {
       <Route path="/timesheet" component={() => <ProtectedRoute component={Timesheet} />} />
       <Route path="/notifications" component={() => <ProtectedRoute component={Notifications} />} />
       <Route path="/messages" component={() => <ProtectedRoute component={MessagesPage} />} />
+      <Route path="/sms-inbox" component={() => <ProtectedRoute component={SmsInboxPage} />} />
       {/* Rebuilt Oct 9: Playground is now the script-training/roleplay workspace (prod). */}
       <Route path="/playground" component={() => <ProtectedRoute component={Playground} />} />
       <Route path="/buyers" component={() => <ProtectedRoute component={Buyers} />} />

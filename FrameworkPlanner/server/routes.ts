@@ -14701,6 +14701,86 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       res.status(400).json({ message: error.message });
     }
   });
+
+  // ── SMS INBOX (Telnyx) ──────────────────────────────────────────────
+  // Lists SMS conversation threads grouped by phone number, most recent first.
+  reg("get", "/api/sms/conversations"); app.get("/api/sms/conversations", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const limit = Math.min(parseInt(String(req.query.limit || "50"), 10) || 50, 200);
+      // Group by the "other party" number: for inbound it's from_number, for outbound it's to_number.
+      const result = await pool.query(
+        `WITH ranked AS (
+           SELECT *,
+             CASE WHEN direction = 'inbound' THEN from_number ELSE to_number END AS peer,
+             ROW_NUMBER() OVER (
+               PARTITION BY CASE WHEN direction = 'inbound' THEN from_number ELSE to_number END
+               ORDER BY created_at DESC
+             ) AS rn
+           FROM crm_sms_messages
+         ),
+         latest AS (SELECT * FROM ranked WHERE rn = 1),
+         counts AS (
+           SELECT CASE WHEN direction = 'inbound' THEN from_number ELSE to_number END AS peer,
+                  COUNT(*) AS total,
+                  COUNT(*) FILTER (WHERE direction = 'inbound') AS inbound_count
+           FROM crm_sms_messages GROUP BY 1
+         )
+         SELECT l.peer AS phone, l.direction, l.body AS last_body, l.created_at AS last_at,
+                l.lead_id, l.buyer_id, c.total AS message_count, c.inbound_count,
+                ld.owner_name AS lead_name
+         FROM latest l
+         LEFT JOIN counts c ON c.peer = l.peer
+         LEFT JOIN leads ld ON ld.id = l.lead_id
+         ORDER BY l.created_at DESC
+         LIMIT $1`,
+        [limit],
+      );
+      res.json(result.rows || []);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Messages for one conversation (by peer phone number).
+  reg("get", "/api/sms/conversations/:phone/messages"); app.get("/api/sms/conversations/:phone/messages", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const phone = String(req.params.phone || "").replace(/\D/g, "").slice(-10);
+      if (phone.length < 7) return res.status(400).json({ message: "Invalid phone number" });
+      const limit = Math.min(parseInt(String(req.query.limit || "100"), 10) || 100, 500);
+      const result = await pool.query(
+        `SELECT id, direction, from_number, to_number, body, status, created_at, lead_id, buyer_id
+         FROM crm_sms_messages
+         WHERE regexp_replace(from_number, '\\D', '', 'g') LIKE '%' || $1
+            OR regexp_replace(to_number, '\\D', '', 'g') LIKE '%' || $1
+         ORDER BY created_at ASC
+         LIMIT $2`,
+        [phone, limit],
+      );
+      res.json(result.rows || []);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
+  // Send an SMS via Telnyx.
+  reg("post", "/api/sms/send"); app.post("/api/sms/send", async (req, res) => {
+    try {
+      const user = await requireAuth(req, res);
+      if (!user) return;
+      const to = String(req.body?.to || "").trim();
+      const body = String(req.body?.body || "").trim();
+      if (!to || !body) return res.status(400).json({ message: "to and body are required" });
+      if (body.length > 1600) return res.status(400).json({ message: "Message too long" });
+      const result = await telnyx.sendSms({ to, body });
+      res.json({ ok: true, providerMessageId: result?.messageId || null });
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  });
   // CALENDAR EVENTS (internal meetings)
   reg("get", "/api/calendar-events"); app.get("/api/calendar-events", async (req, res) => {
     try {
