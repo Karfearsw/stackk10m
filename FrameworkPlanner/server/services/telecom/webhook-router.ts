@@ -35,6 +35,8 @@ export function createTelnyxWebhookRouter() {
       const signatureHeader = String(
         req.headers["telnyx-signature-ed25519"] || req.headers["telnyx-signature"] || "",
       );
+      // New Telnyx format uses separate telnyx-timestamp header
+      const timestampHeader = String(req.headers["telnyx-timestamp"] || "");
       const rawBody: Buffer = Buffer.isBuffer((req as any).rawBody)
         ? (req as any).rawBody
         : Buffer.from(JSON.stringify(req.body || {}));
@@ -47,7 +49,7 @@ export function createTelnyxWebhookRouter() {
         const whTs = String(req.headers["webhook-timestamp"] || "");
         const whSig = String(req.headers["webhook-signature"] || "");
         const okStandard = Boolean(whId && whTs && whSig) && telnyx.verifyStandardWebhookSignature(rawBody, whId, whTs, whSig);
-        const okTelnyx = Boolean(signatureHeader) && telnyx.verifyWebhookSignature(rawBody, signatureHeader);
+        const okTelnyx = Boolean(signatureHeader) && telnyx.verifyWebhookSignature(rawBody, signatureHeader, timestampHeader || undefined);
         if (!okStandard && !okTelnyx) {
           // DEBUG: Detailed logging to diagnose signature failures
           console.error("Telnyx webhook signature rejected - DEBUG", {
