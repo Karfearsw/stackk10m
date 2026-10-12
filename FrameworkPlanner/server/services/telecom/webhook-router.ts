@@ -49,10 +49,16 @@ export function createTelnyxWebhookRouter() {
         const okStandard = Boolean(whId && whTs && whSig) && telnyx.verifyStandardWebhookSignature(rawBody, whId, whTs, whSig);
         const okTelnyx = Boolean(signatureHeader) && telnyx.verifyWebhookSignature(rawBody, signatureHeader);
         if (!okStandard && !okTelnyx) {
-          console.error("Telnyx webhook signature rejected", {
+          // DEBUG: Detailed logging to diagnose signature failures
+          console.error("Telnyx webhook signature rejected - DEBUG", {
             hasTelnyxHeader: Boolean(signatureHeader),
+            telnyxHeaderPrefix: signatureHeader.substring(0, 30),
             hasStandardHeaders: Boolean(whId && whTs && whSig),
             bodyLength: rawBody.length,
+            bodyPrefix: rawBody.toString().substring(0, 100),
+            hasRawBody: Buffer.isBuffer((req as any).rawBody),
+            publicKeyPrefix: process.env.TELNYX_PUBLIC_KEY?.substring(0, 20),
+            publicKeyLength: process.env.TELNYX_PUBLIC_KEY?.length,
           });
           return res.status(401).json({ error: "Invalid webhook signature" });
         }
