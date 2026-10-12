@@ -462,6 +462,48 @@ async function handleCallEvent(event: any) {
 
   if (!callControlId) return;
 
+  // Inbound call answered: start the AI assistant with greeting
+  if (direction === "inbound" && eventTypeIs("call.answered", event)) {
+    try {
+      const apiKey = process.env.TELNYX_API_KEY;
+      // Get assistant ID from env or app setting
+      let assistantId = String(process.env.TELNYX_AI_ASSISTANT_ID || "").trim();
+      if (!assistantId) {
+        try {
+          const { storage } = await import("../../storage.js");
+          assistantId = String(await storage.getAppSetting("TELNYX_AI_ASSISTANT_ID") || "").trim();
+        } catch {}
+      }
+      if (apiKey && callControlId && assistantId) {
+        console.log(`[webhook] Starting AI assistant ${assistantId} on inbound call ${callControlId}`);
+        const aiRes = await fetch(
+          `https://api.telnyx.com/v2/calls/${callControlId}/actions/ai_assistant_start`,
+          {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              assistant: { id: assistantId },
+              // Greeting is configured in the Telnyx AI Assistant itself
+            }),
+          }
+        );
+        if (aiRes.ok) {
+          console.log(`[webhook] AI assistant started on inbound call ${callControlId}`);
+        } else {
+          const errText = await aiRes.text();
+          console.error(`[webhook] Failed to start AI: ${aiRes.status} ${errText.slice(0, 200)}`);
+        }
+      } else {
+        console.log(`[webhook] Skipping AI start: apiKey=${!!apiKey} cc=${!!callControlId} assistant=${!!assistantId}`);
+      }
+    } catch (err: any) {
+      console.error(`[webhook] Error starting AI on inbound:`, err?.message || err);
+    }
+  }
+
   // Parked-outbound WebRTC dialer: when the parked browser leg arrives, dial
   // the PSTN leg now; bridge the two when the PSTN leg answers (below).
   console.log(`[webhook] event=${event?.data?.event_type} state=${state} cc=${callControlId}`);
