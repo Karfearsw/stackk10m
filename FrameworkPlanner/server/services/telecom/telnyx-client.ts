@@ -717,6 +717,7 @@ export class TelnyxClient {
   verifyWebhookSignature(
     payload: string | Buffer,
     signatureHeader: string,
+    timestampHeader?: string,
     toleranceSeconds?: number,
   ): boolean {
     const publicKey = process.env.TELNYX_PUBLIC_KEY;
@@ -726,23 +727,36 @@ export class TelnyxClient {
     try {
       const tolerance = toleranceSeconds ?? Number(process.env.TELNYX_WEBHOOK_SIGNING_TOLERANCE_SECONDS || "300");
 
-      // Parse header: t=<timestamp>,v1=<base64_signature>
-      const parts = String(signatureHeader).split(",").map((p) => p.trim());
-      const timestampStr = parts.find((p) => p.startsWith("t="));
-      const v1Sig = parts.find((p) => p.startsWith("v1="));
+      let timestamp: number;
+      let signatureB64: string;
 
-      if (!timestampStr || !v1Sig) return false;
+      // New format: separate telnyx-timestamp header + raw base64 signature
+      // Signed content: {timestamp}|{raw_body} (pipe, not dot)
+      if (timestampHeader) {
+        timestamp = parseInt(String(timestampHeader).trim(), 10);
+        if (Number.isNaN(timestamp)) return false;
+        signatureB64 = String(signatureHeader).trim();
+      } else {
+        // Old format: t=<timestamp>,v1=<base64_signature> in single header
+        const parts = String(signatureHeader).split(",").map((p) => p.trim());
+        const timestampStr = parts.find((p) => p.startsWith("t="));
+        const v1Sig = parts.find((p) => p.startsWith("v1="));
 
-      const timestamp = parseInt(timestampStr.slice(2), 10);
-      if (Number.isNaN(timestamp)) return false;
+        if (!timestampStr || !v1Sig) return false;
+
+        timestamp = parseInt(timestampStr.slice(2), 10);
+        if (Number.isNaN(timestamp)) return false;
+        signatureB64 = v1Sig.slice(3);
+      }
 
       // Check timestamp tolerance
       const now = Math.floor(Date.now() / 1000);
       if (Math.abs(now - timestamp) > tolerance) return false;
 
-      const signature = Buffer.from(v1Sig.slice(3), "base64");
+      const signature = Buffer.from(signatureB64, "base64");
       const body = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload));
-      const signedContent = Buffer.concat([Buffer.from(`${timestamp}.`), body]);
+      // Telnyx signs: {timestamp}|{raw_body} — pipe separator, not dot
+      const signedContent = Buffer.concat([Buffer.from(`${timestamp}|`), body]);
 
       // TELNYX_PUBLIC_KEY from the portal is the RAW 32-byte Ed25519 public
       // key (base64). Wrap it in the fixed RFC 8410 SPKI prefix so crypto can
