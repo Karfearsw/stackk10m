@@ -442,6 +442,7 @@ async function handleParkedWebrtcLeg(payload: any, browserLegCc: string) {
 // ── Call Events ────────────────────────────────────────────────────────────
 
 async function handleCallEvent(event: any) {
+  // Telnyx sends direction as "incoming" for inbound calls; accept both forms.
   // Telnyx envelope: { data: { event_type, id, payload: { ... } } }
   const payload = event?.data?.payload || event?.data || event;
   const callControlId = String(payload.call_control_id || "");
@@ -573,7 +574,7 @@ async function handleCallEvent(event: any) {
 
   // Answer inbound calls: when Telnyx sends call.initiated for inbound,
   // we must explicitly answer via API or the caller gets a busy tone.
-  if (direction === "inbound" && eventTypeIs("call.initiated", event)) {
+  if ((direction === "inbound" || direction === "incoming") && eventTypeIs("call.initiated", event)) {
     try {
       const apiKey = process.env.TELNYX_API_KEY;
       if (apiKey && callControlId) {
@@ -602,7 +603,7 @@ async function handleCallEvent(event: any) {
   }
 
   // If no existing log found and this is an inbound call, create one
-  if (!existingLogId && direction === "inbound" && (internalStatus === "ringing" || internalStatus === "answered")) {
+  if (!existingLogId && (direction === "inbound" || direction === "incoming") && (internalStatus === "ringing" || internalStatus === "answered")) {
     try {
       const createResult = await pool.query(
         `INSERT INTO call_logs (user_id, direction, number, status, started_at, call_control_id, metadata)
@@ -678,7 +679,7 @@ async function handleCallEvent(event: any) {
   }
 
   // Inbound: notify agents of the ringing call (matched to a lead when possible)
-  if (direction === "inbound" && internalStatus === "ringing") {
+  if ((direction === "inbound" || direction === "incoming") && internalStatus === "ringing") {
     let ringLeadName: string | null = null;
     try {
       const lead = from ? await storage.getLeadByPhone(String(from)) : undefined;
@@ -701,7 +702,7 @@ async function handleCallEvent(event: any) {
     // Discord: notify on inbound ringing call
     notifyDiscord(`📞 **Inbound call ringing** from ${maskNumber(String(from || "unknown"))}${ringLeadName ? ` (${ringLeadName})` : ""}`);
   }
-  if (direction === "inbound" && (internalStatus === "ended" || internalStatus === "missed" || internalStatus === "failed")) {
+  if ((direction === "inbound" || direction === "incoming") && (internalStatus === "ended" || internalStatus === "missed" || internalStatus === "failed")) {
     emitTelephonyEventToAll({ type: "inbound_call_ended", payload: { callControlId, status: internalStatus } } as any);
     notifyDiscord(`📞 Inbound call ${internalStatus} from ${maskNumber(String(from || "unknown"))}`);
   }
@@ -709,7 +710,7 @@ async function handleCallEvent(event: any) {
   // ── Missed-call text-back (2026-10-08): highest-ROI automation — when an
   // inbound call is missed (no agent answered), immediately text the caller.
   // Non-blocking; respects DNC.
-  if (direction === "inbound" && internalStatus === "missed" && from) {
+  if ((direction === "inbound" || direction === "incoming") && internalStatus === "missed" && from) {
     try {
       const { pool } = await import("../../db.js");
       const digits = String(from).replace(/\D/g, "");
