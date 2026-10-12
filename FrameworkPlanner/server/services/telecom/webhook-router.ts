@@ -529,6 +529,36 @@ async function handleCallEvent(event: any) {
     if (terminal.has(current) && !terminal.has(internalStatus)) return;
   }
 
+  // Answer inbound calls: when Telnyx sends call.initiated for inbound,
+  // we must explicitly answer via API or the caller gets a busy tone.
+  if (direction === "inbound" && eventTypeIs("call.initiated", event)) {
+    try {
+      const apiKey = process.env.TELNYX_API_KEY;
+      if (apiKey && callControlId) {
+        console.log(`[webhook] Answering inbound call ${callControlId} from ${from}`);
+        const answerRes = await fetch(
+          `https://api.telnyx.com/v2/calls/${callControlId}/actions/answer`,
+          {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({}),
+          }
+        );
+        if (answerRes.ok) {
+          console.log(`[webhook] Inbound call ${callControlId} answered`);
+        } else {
+          const errText = await answerRes.text();
+          console.error(`[webhook] Failed to answer inbound call: ${answerRes.status} ${errText.slice(0, 200)}`);
+        }
+      }
+    } catch (err: any) {
+      console.error(`[webhook] Error answering inbound call:`, err?.message || err);
+    }
+  }
+
   // If no existing log found and this is an inbound call, create one
   if (!existingLogId && direction === "inbound" && (internalStatus === "ringing" || internalStatus === "answered")) {
     try {
