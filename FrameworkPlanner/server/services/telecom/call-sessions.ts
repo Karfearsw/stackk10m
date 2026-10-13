@@ -1137,3 +1137,263 @@ export async function handleAiSessionEvent(event: any): Promise<void> {
     }
   }
 }
+
+// ── AI Auto-Disposition (from Telnyx Insight results) ───────────────────────
+// Maps structured AI screening outcomes to CRM dispositions and auto-applies
+// them. This is what makes the "AI screen" mode truly autonomous — the AI's
+// assessment becomes the session disposition without human intervention.
+//
+// The Telnyx Insight Group (configured on the assistant) returns a JSON
+// object per call. We accept both a direct `disposition` field and derive one
+// from qualification signals as fallback.
+
+/** AI insight disposition values → CRM disposition taxonomy. */
+const AI_DISPOSITION_MAP: Record<string, string> = {
+  qualified: "qualified",
+  not_interested: "not_interested",
+  notinterested: "not_interested",
+  callback_requested: "callback_requested",
+  callback: "callback_requested",
+  voicemail: "voicemail",
+  no_answer: "no_answer",
+  noanswer: "no_answer",
+  busy: "busy",
+  wrong_number: "wrong_number_confirmed",
+  wrongnumber: "wrong_number_confirmed",
+  do_not_call: "do_not_call",
+  donotcall: "do_not_call",
+  dnc: "do_not_call",
+  connected: "connected",
+  // Fallback for unclear outcomes — still records that contact happened
+  unknown: "connected",
+};
+
+export interface AiScreeningResult {
+  disposition?: string;
+  qualified?: boolean;
+  confidence?: number;
+  intent?: string;
+  requestHuman?: boolean;
+  doNotCall?: boolean;
+  summary?: string;
+  // Qualification fields
+  motivation?: string;
+  timeline?: string;
+  propertyType?: string;
+  location?: string;
+  budget?: string;
+  [key: string]: any;
+}
+
+/**
+ * Derive a CRM disposition from AI screening results.
+ * Priority: explicit disposition field → DNC signals → qualified → intent signals → fallback.
+ */
+export function mapAiResultToDisposition(result: AiScreeningResult): { disposition: string; confidence: number } {
+  // 1. Explicit disposition from the AI (highest priority)
+  if (result.disposition) {
+    const normalized = String(result.disposition).toLowerCase().trim().replace(/[\s-]+/g, "_");
+    const mapped = AI_DISPOSITION_MAP[normalized];
+    if (mapped && ALLOWED_DISPOSITIONS.has(mapped)) {
+      return { disposition: mapped, confidence: typeof result.confidence === "number" ? result.confidence : 0.9 };
+    }
+  }
+
+  // 2. DNC signals (safety first)
+  if (result.doNotCall === true) {
+    return { disposition: "do_not_call", confidence: 0.95 };
+  }
+
+  // 3. Qualified signals
+  if (result.qualified === true) {
+    return { disposition: "qualified", confidence: typeof result.confidence === "number" ? result.confidence : 0.85 };
+  }
+
+  // 4. Human handoff requested (implies qualified enough to talk to)
+  if (result.requestHuman === true) {
+    return { disposition: "qualified", confidence: 0.8 };
+  }
+
+  // 5. Intent-based inference
+  const intent = String(result.intent || "").toLowerCase();
+  if (/\b(sell|offer|interested|yes|ready|list)\b/.test(intent)) {
+    return { disposition: "qualified", confidence: 0.7 };
+  }
+  if (/\b(not interested|no thanks|don't call|remove)\b/.test(intent)) {
+    return { disposition: "not_interested", confidence: 0.7 };
+  }
+  if (/\b(call back|later|busy now)\b/.test(intent)) {
+    return { disposition: "callback_requested", confidence: 0.7 };
+  }
+
+  // 6. Fallback: we made contact but couldn't determine outcome
+  return { disposition: "connected", confidence: 0.5 };
+}
+
+/**
+ * Auto-apply an AI-derived disposition to a call session.
+ * Uses source="ai" to distinguish from manual agent dispositions.
+ * Triggers the same side effects as manual disposition (DNC, tasks, SMS, etc.)
+ * plus AI-specific automations (handoff for qualified in handoff mode).
+ */
+export async function applyAiDisposition(
+  sessionId: number,
+  result: AiScreeningResult,
+): Promise<{ ok: true; disposition: string } | { ok: false; error: string }> {
+  const s = await storage.getCallSessionById(sessionId);
+  if (!s) return { ok: false, error: "SESSION_NOT_FOUND" };
+  if (TERMINAL.has(s.status)) return { ok: false, error: "SESSION_TERMINAL" };
+
+  // Don't overwrite a disposition the agent already set manually
+  const existingDispositions = await storage.getCallDispositionsBySession?.(sessionId).catch(() => []) || [];
+  const hasManual = existingDispositions.some((d: any) => d.source === "agent");
+  if (hasManual) {
+    await recordEvent(s.id, "ai_disposition_skipped", s.status, s.status, { reason: "manual_disposition_exists" });
+    return { ok: false, error: "MANUAL_DISPOSITION_EXISTS" };
+  }
+
+  const { disposition, confidence } = mapAiResultToDisposition(result);
+
+  // Create the disposition record with AI source
+  await storage.createCallDisposition({
+    sessionId,
+    disposition,
+    confidence: confidence >= 0.8 ? "high" : confidence >= 0.6 ? "medium" : "low",
+    source: "ai",
+    note: result.summary ? `AI: ${String(result.summary).slice(0, 500)}` : "Auto-dispositioned by AI screening",
+    actorUserId: s.initiatingUserId || 0,
+  } as any);
+
+  // Apply side effects via the standard disposition pipeline
+  // (DNC flag, auto-SMS, buyer updates, etc.)
+  if (disposition === "do_not_call" && s.leadId) {
+    try {
+      await storage.updateLead(s.leadId, { doNotCall: true } as any);
+      await createActivity(s, "do_not_call", "AI marked Do Not Call from screening", { source: "ai" });
+    } catch (e) { console.error("AI DNC update failed:", e); }
+  }
+
+  // Qualified → handoff or task (mode-dependent)
+  if (disposition === "qualified") {
+    if (s.mode === "ai_screen_handoff") {
+      await requestHumanHandoff(sessionId, s.initiatingUserId || 0);
+    } else {
+      // Create high-priority follow-up task
+      try {
+        await createTask({
+          title: `AI Qualified: ${s.leadPhoneE164}`,
+          description: `AI screening qualified this lead (intent: ${result.intent || "unknown"}, confidence: ${Math.round(confidence * 100)}%). ${result.summary || ""}`.slice(0, 1000),
+          type: "lead_follow_up",
+          relatedEntityType: "lead",
+          relatedEntityId: s.leadId || undefined,
+          priority: "high",
+          assignedToUserId: s.assignedAgentUserId || s.initiatingUserId,
+          createdBy: s.initiatingUserId || 0,
+        } as any);
+      } catch (e) { console.error("AI qualified task failed:", e); }
+    }
+  }
+
+  // Callback requested → create callback task
+  if (disposition === "callback_requested" && s.leadId) {
+    try {
+      await createTask({
+        title: `Callback requested: ${s.leadPhoneE164}`,
+        description: `Lead requested a callback during AI screening. ${result.summary || ""}`.slice(0, 500),
+        type: "callback",
+        relatedEntityType: "lead",
+        relatedEntityId: s.leadId,
+        priority: "high",
+        assignedToUserId: s.assignedAgentUserId || s.initiatingUserId,
+        createdBy: s.initiatingUserId || 0,
+      } as any);
+    } catch (e) { console.error("AI callback task failed:", e); }
+  }
+
+  // Update session with final disposition
+  await storage.updateCallSession(s.id, {
+    finalDisposition: disposition,
+    status: "completed",
+    endedAt: new Date(),
+  });
+  await recordEvent(s.id, "ai_disposition_applied", s.status, "completed", { disposition, confidence, source: "ai" });
+  await createActivity(s, "call_dispositioned", `AI auto-dispositioned: ${disposition}`, { disposition, source: "ai", confidence });
+  emitSession(await storage.getCallSessionById(s.id));
+
+  return { ok: true, disposition };
+}
+
+// ── Telnyx Insight Result Handler ───────────────────────────────────────────
+// Handles `conversation_insight_result` webhooks from Telnyx AI Insights.
+// These arrive after an AI-screened call completes, carrying structured
+// analysis (disposition, qualification, extracted fields).
+//
+// Linking strategy (in order of preference):
+// 1. call_control_id in payload → direct session lookup
+// 2. session_id in metadata → direct lookup
+// 3. Recency fallback: most recent incomplete AI screening session
+
+export async function handleInsightResultEvent(event: any): Promise<void> {
+  const payload = event?.data?.payload || event?.payload || event?.data || {};
+  const results = Array.isArray(payload.results) ? payload.results : [];
+  if (!results.length) return;
+
+  const metadata = payload.metadata || {};
+  const conversationId = String(payload.conversation_id || "");
+
+  // ── Find the session ──
+  let session: any = null;
+
+  // Strategy 1: direct call_control_id
+  const callControlId = String(payload.call_control_id || metadata.call_control_id || "");
+  if (callControlId) {
+    try { session = await storage.getCallSessionByLegCallControlId(callControlId); } catch { session = null; }
+  }
+
+  // Strategy 2: session_id in metadata
+  if (!session && metadata.crm_session_id) {
+    try { session = await storage.getCallSessionById(Number(metadata.crm_session_id)); } catch { session = null; }
+  }
+
+  // Strategy 3: recency fallback — most recent AI screening session without disposition
+  if (!session) {
+    try {
+      const recent = await storage.getRecentAiScreeningSessions?.(5).catch(() => []) || [];
+      // Filter to sessions still awaiting AI disposition (no final disposition, not terminal)
+      session = recent.find((s: any) =>
+        !TERMINAL.has(s.status) && !s.finalDisposition &&
+        (s.mode === "ai_screen" || s.mode === "ai_screen_handoff")
+      ) || null;
+    } catch { session = null; }
+  }
+
+  if (!session) {
+    console.log(`[insights] No matching session for conversation ${conversationId.slice(0, 12)}...`);
+    return;
+  }
+
+  // ── Parse insight results into a unified screening result ──
+  const screeningResult: AiScreeningResult = {};
+  for (const r of results) {
+    try {
+      const parsed = typeof r.result === "string" ? JSON.parse(r.result) : r.result;
+      if (parsed && typeof parsed === "object") {
+        Object.assign(screeningResult, parsed);
+      }
+    } catch {
+      // Non-JSON result — treat as free text summary
+      if (typeof r.result === "string" && r.result.trim()) {
+        screeningResult.summary = (screeningResult.summary || "") + r.result.trim() + "\n";
+      }
+    }
+  }
+  if (conversationId) screeningResult.conversationId = conversationId;
+
+  // ── Apply auto-disposition ──
+  const applied = await applyAiDisposition(session.id, screeningResult);
+  if (applied.ok) {
+    console.log(`[insights] Session ${session.id} auto-dispositioned: ${applied.disposition}`);
+  } else {
+    console.log(`[insights] Session ${session.id} disposition skipped: ${applied.error}`);
+  }
+}
