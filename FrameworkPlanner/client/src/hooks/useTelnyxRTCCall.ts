@@ -9,6 +9,18 @@ import { apiRequest } from "@/lib/queryClient";
  * endpoint, so TELNYX_API_KEY never reaches the browser.
  */
 
+// Module-level shared AudioContext for DTMF tones — avoids Chrome's 6-context limit.
+let sharedDtmfCtx: AudioContext | null = null;
+function getSharedDtmfCtx(): AudioContext | null {
+  if (typeof window === "undefined") return null;
+  if (!sharedDtmfCtx) {
+    const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!Ctx) return null;
+    sharedDtmfCtx = new Ctx();
+  }
+  return sharedDtmfCtx;
+}
+
 export type RtcConnectionState =
   | "idle"
   | "disabled"
@@ -363,8 +375,9 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
   }, [call?.state]);
 
   /**
-   * Play a local DTMF tone using the Web Audio API. Standard DTMF frequency
-   * pairs — the user hears the keypress even before the remote party does.
+   * Play a local DTMF tone using a shared Web Audio context. Standard DTMF
+   * frequency pairs — the user hears the keypress even before the remote party does.
+   * Uses a module-level shared context to avoid Chrome's 6-context limit.
    */
   function playLocalDtmfTone(digit: string) {
     try {
@@ -377,9 +390,11 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
       };
       const freqs = DTMF_FREQS[digit.toUpperCase()];
       if (!freqs || typeof window === "undefined") return;
-      const Ctx = (window as any).AudioContext || (window as any).webkitAudioContext;
-      if (!Ctx) return;
-      const ctx = new Ctx();
+      const ctx = getSharedDtmfCtx();
+      if (!ctx) return;
+      if (ctx.state === "suspended") {
+        void ctx.resume().catch(() => {});
+      }
       const gain = ctx.createGain();
       gain.gain.value = 0.25;
       gain.connect(ctx.destination);
@@ -391,8 +406,6 @@ export function useTelnyxRTCCall(opts?: TelnyxRtcOptions) {
         osc.start();
         osc.stop(ctx.currentTime + 0.15);
       }
-      // Clean up the context after the tone finishes.
-      setTimeout(() => ctx.close().catch(() => {}), 300);
     } catch {
       // Audio playback is best-effort; DTMF was already sent via the SDK.
     }
