@@ -5,7 +5,7 @@ import { telnyx } from "./telnyx-client.js";
 import { storage } from "../../storage.js";
 import { createTask } from "../tasks/task-service.js";
 import { emitTelephonyEventToAll } from "../../telephony/ws.js";
-import { handleWebhookEvent as handleSessionCallEvent, handleAiSessionEvent as handleSessionAiEvent } from "./call-sessions.js";
+import { handleWebhookEvent as handleSessionCallEvent, handleAiSessionEvent as handleSessionAiEvent, handleInsightResultEvent } from "./call-sessions.js";
 import { getRvmAudioUrl } from "../rvm/provider.js";
 
 /**
@@ -106,6 +106,8 @@ export function createTelnyxWebhookRouter() {
         } else if (eventType.startsWith("ai_assistant.")) {
           await handleAiAssistantEvent(event);
           await handleSessionAiEvent(event);
+        } else if (eventType === "conversation_insight_result") {
+          await handleInsightResultEvent(event);
         }
       } catch (err) {
         console.error("Telnyx webhook processing error:", err);

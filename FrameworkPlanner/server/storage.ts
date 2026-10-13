@@ -723,6 +723,8 @@ export interface IStorage {
   createCallSession(input: InsertCallSession): Promise<CallSession>;
   getCallSessionById(id: number): Promise<CallSession | undefined>;
   getCallSessionByLegCallControlId(callControlId: string): Promise<CallSession | undefined>;
+  getRecentAiScreeningSessions(limit?: number): Promise<CallSession[]>;
+  getCallDispositionsBySession(sessionId: number): Promise<any[]>;
   updateCallSession(id: number, patch: Partial<InsertCallSession>): Promise<CallSession>;
   getStaleCallSessions(maxAgeSecs: number, limit?: number): Promise<CallSession[]>;
   createCallSessionEvent(input: InsertCallSessionEvent): Promise<CallSessionEvent>;
@@ -3854,6 +3856,26 @@ export class DatabaseStorage implements IStorage {
     `);
     const row = (result as any).rows?.[0];
     return row ? this.mapCallSessionRow(row) : undefined;
+  }
+
+  async getRecentAiScreeningSessions(limit: number = 5): Promise<CallSession[]> {
+    const lim = Math.max(1, Math.min(20, Math.floor(limit)));
+    const result: any = await db.execute(sql`
+      SELECT * FROM crm_call_sessions
+      WHERE mode IN ('ai_screen', 'ai_screen_handoff')
+      ORDER BY id DESC LIMIT ${lim}
+    `);
+    const rows = (result as any).rows || [];
+    return rows.map((r: any) => this.mapCallSessionRow(r));
+  }
+
+  async getCallDispositionsBySession(sessionId: number): Promise<any[]> {
+    const result: any = await db.execute(sql`
+      SELECT * FROM crm_call_dispositions
+      WHERE session_id = ${sessionId}
+      ORDER BY id ASC
+    `);
+    return (result as any).rows || [];
   }
 
   async updateCallSession(id: number, patch: Partial<InsertCallSession>): Promise<CallSession> {
