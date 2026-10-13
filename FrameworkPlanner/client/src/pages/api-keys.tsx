@@ -34,8 +34,10 @@ export default function ApiKeysPage() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (input: { name: string; expiresInDays?: number }) =>
-      apiRequest("POST", "/api/api-keys", input),
+    mutationFn: async (input: { name: string; expiresInDays?: number }) => {
+      const res = await apiRequest("POST", "/api/api-keys", input);
+      return res.json();
+    },
     onSuccess: (data: any) => {
       setCreatedKey(data.key);
       setNewKeyName("");
