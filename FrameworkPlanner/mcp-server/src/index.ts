@@ -206,28 +206,34 @@ async function runStdio() {
 // ── SSE transport (for Telnyx, web clients) ──
 async function runSse(port: number) {
   const app = express();
-  const servers = new Map<string, Server>();
+  // sessionId -> transport
+  const transports = new Map<string, SSEServerTransport>();
 
-  app.get("/sse", async (req, res) => {
-    const server = createServer();
+  app.get("/sse", async (_req, res) => {
     const transport = new SSEServerTransport("/messages", res);
-    servers.set(transport.sessionId, server);
+    transports.set(transport.sessionId, transport);
+    res.on("close", () => {
+      transports.delete(transport.sessionId);
+    });
+    const server = createServer();
     await server.connect(transport);
   });
 
-  app.post("/messages", express.json(), async (req, res) => {
+  // NOTE: no express.json() here — handlePostMessage reads the raw body itself
+  app.post("/messages", async (req, res) => {
     const sessionId = String(req.query.sessionId || "");
-    const server = servers.get(sessionId);
-    if (!server) return res.status(404).json({ error: "No session" });
-    // SSEServerTransport handles POST via its own mechanism
-    res.status(501).json({ error: "Use the SSE endpoint" });
+    const transport = transports.get(sessionId);
+    if (!transport) {
+      res.status(400).send("No transport found for sessionId");
+      return;
+    }
+    await transport.handlePostMessage(req, res);
   });
 
   app.get("/health", (_req, res) => res.json({ ok: true, tools: TOOLS.length }));
 
   app.listen(port, () => {
     console.error(`OceanLuxe CRM MCP server running (SSE on :${port})`);
-    console.error(`Connect: ${CRM_BASE_URL}/mcp/sse (proxied) or http://localhost:${port}/sse`);
   });
 }
 
