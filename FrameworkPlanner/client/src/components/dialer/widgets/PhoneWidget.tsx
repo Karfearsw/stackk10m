@@ -83,7 +83,7 @@ export function PhoneWidget() {
 
         <div className="space-y-2">
           <Label htmlFor="dialer-number">Phone Number</Label>
-          <Input id="dialer-number" value={number} onChange={(e) => setNumber(e.target.value)} placeholder="Enter number" />
+          <Input id="dialer-number" value={number} onChange={(e) => setNumber(e.target.value)} onKeyDown={(e) => { const k = e.key; if (/^[0-9*#]$/.test(k)) { void playDtmfTone(k); } }} placeholder="Enter number" />
           <div className="grid grid-cols-3 gap-2" role="group" aria-label="Dialer keypad">
             {DIALER_KEYS.map((k) => (
               <Button key={k} variant="outline" className="h-10 sm:h-12 text-lg sm:text-xl" onClick={() => { void playDtmfTone(k); if (sessionActive) { void sendSessionDtmf(k); } else { setNumber((prev) => prev + k); } }} aria-label={sessionActive ? `Send ${k}` : `Key ${k}`}>
