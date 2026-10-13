@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: oceanluxe-crm-mcp
+    runtime: docker
+    dockerfilePath: ./FrameworkPlanner/mcp-server/Dockerfile
+    dockerContext: ./FrameworkPlanner/mcp-server
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 3100
+      - key: CRM_BASE_URL
+        value: https://crm.oceanluxe.org
+      - key: CRM_API_KEY
+        sync: false  # Set in Render dashboard — paste your lxrm_... key
