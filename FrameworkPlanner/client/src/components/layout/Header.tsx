@@ -93,10 +93,23 @@ export function Header() {
   const [query, setQuery] = React.useState("");
   const [debounced, setDebounced] = React.useState("");
   const [open, setOpen] = React.useState(false);
+  // Track whether the popover was opened by typing (vs. programmatic close).
+  // This decouples the open state from keystrokes so Radix focus management
+  // doesn't steal input focus on every character.
+  const userTypingRef = React.useRef(false);
   React.useEffect(() => {
     const t = setTimeout(() => setDebounced(query.trim()), 250);
     return () => clearTimeout(t);
   }, [query]);
+  // Open the popover when the debounced query is searchable, but never
+  // toggle it closed on keystrokes — only explicit dismiss closes it.
+  React.useEffect(() => {
+    if (userTypingRef.current && debounced.length >= 2) {
+      setOpen(true);
+    } else if (debounced.length < 2) {
+      setOpen(false);
+    }
+  }, [debounced]);
   const { data: searchData, isFetching: searching } = useQuery<any>({
     queryKey: ["/api/search", debounced],
     queryFn: async () => {
@@ -220,14 +233,40 @@ export function Header() {
             value={query}
             onChange={(e) => {
               const v = e.target.value;
+              userTypingRef.current = true;
               setQuery(v);
-              setOpen(v.trim().length >= 2);
             }}
-            onFocus={() => setOpen(query.trim().length >= 2)}
+            onFocus={() => {
+              userTypingRef.current = true;
+              if (query.trim().length >= 2) setOpen(true);
+            }}
+            onBlur={() => {
+              // Delay so click selection still works; only close if not selecting
+              setTimeout(() => {
+                userTypingRef.current = false;
+              }, 200);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setOpen(false);
+                userTypingRef.current = false;
+                searchInputRef.current?.blur();
+              }
+            }}
             data-testid="input-global-search"
           />
-          {/* Popover anchored to a hidden span — does NOT wrap the Input */}
-          <Popover open={open} onOpenChange={setOpen}>
+          {/* Popover anchored to a hidden span — does NOT wrap the Input.
+              modal={false} prevents Radix from stealing input focus. */}
+          <Popover open={open} onOpenChange={(v) => {
+            // Only allow closing via explicit dismiss (selection, Escape, outside click).
+            // Never auto-close on keystrokes while the user is typing.
+            if (!v) {
+              userTypingRef.current = false;
+              setOpen(false);
+            } else {
+              setOpen(true);
+            }
+          }} modal={false}>
             <PopoverTrigger asChild>
               <span className="absolute inset-0 -z-10" tabIndex={-1} aria-hidden="true" />
             </PopoverTrigger>

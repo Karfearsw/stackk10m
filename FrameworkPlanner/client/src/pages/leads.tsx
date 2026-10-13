@@ -54,7 +54,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Filter, Plus, Search, Building2, MoreHorizontal, Pencil, Trash2, Lightbulb, ListFilter, Columns2, Mic, UserPlus, Phone } from "lucide-react";
 import { useLocation } from "wouter";
 import { useInfiniteQuery, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { PipelineBoard } from "@/components/pipeline/PipelineBoard";
 import { LeadPipelineCard } from "@/components/pipeline/LeadPipelineCard";
@@ -186,6 +186,10 @@ export default function Leads() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFilters] = useState(() => parseFiltersFromUrl());
   const [appliedFilters, setAppliedFilters] = useState(filters);
+  // Local search input state — decoupled from filters so typing never
+  // triggers re-renders/remounts that steal input focus. Debounced into
+  // filters after the user pauses.
+  const [searchInput, setSearchInput] = useState(() => parseFiltersFromUrl().query || "");
   // "Load all" progress — paced loading with a cap to avoid mobile browser meltdowns.
   const [loadAllState, setLoadAllState] = useState<{ active: boolean; loaded: number; total: number } | null>(null);
   const [density, setDensity] = useState<"luxury" | "dense">("luxury");
@@ -221,6 +225,28 @@ export default function Leads() {
     const id = setTimeout(() => setAppliedFilters(filters), 250);
     return () => clearTimeout(id);
   }, [filters]);
+  // Debounce the search input into filters — typing stays in local state,
+  // filters (and the URL + data refetch) only update after a pause.
+  const searchFromTypingRef = useRef(false);
+  useEffect(() => {
+    const id = setTimeout(() => {
+      searchFromTypingRef.current = true;
+      setFilters(prev => prev.query === searchInput ? prev : { ...prev, query: searchInput });
+    }, 400);
+    return () => clearTimeout(id);
+  }, [searchInput]);
+  // Keep the input in sync when filters.query changes from elsewhere
+  // (view selection, clear-all, URL navigation) — but not when the change
+  // came from typing in this input.
+  useEffect(() => {
+    if (searchFromTypingRef.current) {
+      searchFromTypingRef.current = false;
+      return;
+    }
+    if (filters.query !== searchInput) {
+      setSearchInput(filters.query || "");
+    }
+  }, [filters.query]);
   const leadsQueryKey = useMemo(() => ["leads", appliedFilters], [appliedFilters]);
 
   useEffect(() => {
@@ -1281,8 +1307,8 @@ export default function Leads() {
             <Input
               placeholder="Search leads..."
               className="w-[160px] pl-9 lg:w-[200px]"
-              value={filters.query}
-              onChange={(e) => setFilters(prev => ({ ...prev, query: e.target.value }))}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
               data-testid="input-leads-search"
             />
           </div>
