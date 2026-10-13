@@ -466,7 +466,8 @@ async function handleCallEvent(event: any) {
   if (!callControlId) return;
 
   // Inbound call answered: start the AI assistant with greeting
-  if (direction === "inbound" && eventTypeIs("call.answered", event)) {
+  // (Telnyx sends direction as "incoming" for inbound; accept both forms.)
+  if ((direction === "inbound" || direction === "incoming") && eventTypeIs("call.answered", event)) {
     try {
       const apiKey = process.env.TELNYX_API_KEY;
       // Get assistant ID from env or app setting
