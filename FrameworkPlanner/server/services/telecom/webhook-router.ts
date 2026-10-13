@@ -158,6 +158,24 @@ function decodeSpeakClientState(raw: unknown): { text: string | null } {
   }
 }
 
+// client_state on AI outbound dials carries { kind: "ai_outbound", assistantId, greeting } (base64).
+function decodeAiOutboundClientState(raw: unknown): { assistantId: string | null; greeting: string | null } {
+  try {
+    const b64 = String(raw || "");
+    if (!b64) return { assistantId: null, greeting: null };
+    const json = JSON.parse(Buffer.from(b64, "base64").toString("utf8"));
+    if (json?.kind !== "ai_outbound") return { assistantId: null, greeting: null };
+    const assistantId = String(json.assistantId || "").trim();
+    const greeting = String(json.greeting || "").trim();
+    return {
+      assistantId: assistantId || null,
+      greeting: greeting || null,
+    };
+  } catch {
+    return { assistantId: null, greeting: null };
+  }
+}
+
 /**
  * Drives a real ringless-voicemail drop over Call Control:
  *  - call.machine.greeting.ended / call.machine.ended → play audio into the voicemail box
@@ -505,6 +523,29 @@ async function handleCallEvent(event: any) {
       }
     } catch (err: any) {
       console.error(`[webhook] Error starting AI on inbound:`, err?.message || err);
+    }
+  }
+
+  // Outbound AI call answered: start the AI assistant (webhook-based, works on Vercel).
+  // The /api/telephony/ai-call endpoint tags outbound AI dials with client_state
+  // { kind: "ai_outbound", assistantId, greeting }. This replaces the old
+  // setTimeout background poller which freezes on serverless.
+  if (direction === "outbound" && eventTypeIs("call.answered", event)) {
+    try {
+      const { assistantId, greeting } = decodeAiOutboundClientState(payload.client_state);
+      if (assistantId) {
+        const apiKey = process.env.TELNYX_API_KEY;
+        if (apiKey && callControlId) {
+          console.log(`[webhook] Starting AI assistant ${assistantId} on outbound call ${callControlId}`);
+          const { telnyx } = await import("./telnyx-client.js");
+          await telnyx.startAiAssistant(callControlId, assistantId, greeting || undefined);
+          console.log(`[webhook] AI assistant started on outbound call ${callControlId}`);
+        } else {
+          console.log(`[webhook] Skipping outbound AI start: apiKey=${!!apiKey} cc=${!!callControlId}`);
+        }
+      }
+    } catch (err: any) {
+      console.error(`[webhook] Error starting AI on outbound:`, err?.message || err);
     }
   }
 

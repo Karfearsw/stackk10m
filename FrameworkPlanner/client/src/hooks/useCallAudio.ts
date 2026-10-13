@@ -13,7 +13,7 @@ export function useCallAudio() {
   const ctxRef = useRef<AudioContext | null>(null);
   const ringNodesRef = useRef<{ oscA: OscillatorNode; oscB: OscillatorNode; gain: GainNode } | null>(null);
 
-  const getCtx = useCallback(() => {
+  const getCtx = useCallback(async () => {
     if (typeof window === "undefined") return null;
     if (!ctxRef.current) {
       const AC = window.AudioContext || (window as any).webkitAudioContext;
@@ -21,7 +21,9 @@ export function useCallAudio() {
       ctxRef.current = new AC();
     }
     if (ctxRef.current.state === "suspended") {
-      ctxRef.current.resume().catch(() => {});
+      try {
+        await ctxRef.current.resume();
+      } catch {}
     }
     return ctxRef.current;
   }, []);
@@ -47,8 +49,8 @@ export function useCallAudio() {
     } catch {}
   }, []);
 
-  const startRingback = useCallback(() => {
-    const ctx = getCtx();
+  const startRingback = useCallback(async () => {
+    const ctx = await getCtx();
     if (!ctx) return;
     stopRingback();
 
@@ -71,6 +73,9 @@ export function useCallAudio() {
     oscA.start();
     oscB.start();
 
+    // Assign the ref BEFORE starting the cadence step so the guard passes.
+    ringNodesRef.current = { oscA, oscB, gain };
+
     // US ringback cadence: on for 2s, off for 4s.
     const pattern = [2, 4];
     let i = 0;
@@ -86,12 +91,11 @@ export function useCallAudio() {
     };
     step();
 
-    ringNodesRef.current = { oscA, oscB, gain };
     return ctx;
   }, [getCtx, stopRingback]);
 
-  const playConnectTone = useCallback(() => {
-    const ctx = getCtx();
+  const playConnectTone = useCallback(async () => {
+    const ctx = await getCtx();
     if (!ctx) return;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -128,5 +132,34 @@ export function useCallAudio() {
     };
   }, [stopRingback]);
 
-  return { startRingback, stopRingback, playConnectTone };
+  // Standard DTMF frequency pairs (Hz): [low, high]
+  const DTMF_FREQS: Record<string, [number, number]> = {
+    "1": [697, 1209], "2": [697, 1336], "3": [697, 1477],
+    "4": [770, 1209], "5": [770, 1336], "6": [770, 1477],
+    "7": [852, 1209], "8": [852, 1336], "9": [852, 1477],
+    "*": [941, 1209], "0": [941, 1336], "#": [941, 1477],
+  };
+
+  const playDtmfTone = useCallback(async (key: string) => {
+    const freqs = DTMF_FREQS[key];
+    if (!freqs) return;
+    const ctx = await getCtx();
+    if (!ctx) return;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(0.12, ctx.currentTime + 0.01);
+    gain.gain.setValueAtTime(0.12, ctx.currentTime + 0.12);
+    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.18);
+    gain.connect(ctx.destination);
+    for (const f of freqs) {
+      const osc = ctx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.value = f;
+      osc.connect(gain);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.2);
+    }
+  }, [getCtx]);
+
+  return { startRingback, stopRingback, playConnectTone, playDtmfTone };
 }

@@ -9428,36 +9428,28 @@ reg("patch", "/api/inquiries/:id"); app.patch("/api/inquiries/:id", async (req, 
       }
 
       const { telnyx } = await import("./services/telecom/telnyx-client.js");
+
+      // Tag the dial with client_state so the webhook handler can auto-start AI
+      // on call.answered. This replaces the old setTimeout background poller,
+      // which freezes on Vercel serverless the moment the response is sent.
+      const clientState = Buffer.from(JSON.stringify({
+        kind: "ai_outbound",
+        assistantId: effectiveAssistantId,
+        greeting: greeting || "",
+      })).toString("base64");
+
       const dialResult = await telnyx.dial({
         to,
         from: String(process.env.TELNYX_DEFAULT_FROM_NUMBER || "").trim(),
         connectionId: String(process.env.TELNYX_CONNECTION_ID || ""),
         timeoutSecs: 45,
+        clientState,
       });
       const callControlId = dialResult.callControlId;
 
-      // Background: poll and auto-start AI when the call is answered (up to 60s).
-      // Fire-and-forget; the response returns immediately with the call ID.
-      (async () => {
-        for (let i = 0; i < 12; i++) {
-          await new Promise((r) => setTimeout(r, 5000));
-          try {
-            await telnyx.startAiAssistant(callControlId, effectiveAssistantId, greeting);
-            console.log(`[ai-call] Auto-started AI on ${callControlId.slice(0, 20)}...`);
-            return;
-          } catch (e: any) {
-            const msg = String(e?.message || "");
-            // "Call not answered yet" → keep polling. Anything else → stop.
-            if (!msg.toLowerCase().includes("not answered")) {
-              console.error(`[ai-call] Auto-start failed: ${msg.slice(0, 120)}`);
-              return;
-            }
-          }
-        }
-        console.log(`[ai-call] Auto-start timed out for ${callControlId.slice(0, 20)}...`);
-      })();
+      console.log(`[ai-call] Dialed ${to} via ${callControlId.slice(0, 20)}..., AI will auto-start on answer via webhook`);
 
-      return res.json({ success: true, callControlId, autoStart: true });
+      return res.json({ success: true, callControlId, autoStart: "webhook" });
     } catch (e: any) {
       return res.status(500).json({ success: false, error: String(e?.message || e) });
     }

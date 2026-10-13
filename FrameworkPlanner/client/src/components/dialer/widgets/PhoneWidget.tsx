@@ -9,6 +9,7 @@ import { TelnyxHealthStatus } from "@/components/telephony/TelnyxHealthStatus";
 import { TwoLegCallPanel } from "@/components/telnyx/TwoLegCallPanel";
 import { useDialerWorkspace } from "./DialerWorkspaceContext";
 import { DIALER_KEYS } from "./dialerUtils";
+import { useCallAudio } from "@/hooks/useCallAudio";
 
 /**
  * PhoneWidget — dialpad + the unified <CallBar/> + two-leg panel.
@@ -41,6 +42,8 @@ export function PhoneWidget() {
     handleCall, handleHangup,
     state, callId, logSaved, saveLogPending, buyerMode,
   } = useDialerWorkspace();
+
+  const { playDtmfTone } = useCallAudio();
 
   const showCallControls = Boolean(activeCall || sessionActive);
 
@@ -83,7 +86,7 @@ export function PhoneWidget() {
           <Input id="dialer-number" value={number} onChange={(e) => setNumber(e.target.value)} placeholder="Enter number" />
           <div className="grid grid-cols-3 gap-2" role="group" aria-label="Dialer keypad">
             {DIALER_KEYS.map((k) => (
-              <Button key={k} variant="outline" className="h-10 sm:h-12 text-lg sm:text-xl" onClick={() => { if (sessionActive) { void sendSessionDtmf(k); } else { setNumber((prev) => prev + k); } }} aria-label={sessionActive ? `Send ${k}` : `Key ${k}`}>
+              <Button key={k} variant="outline" className="h-10 sm:h-12 text-lg sm:text-xl" onClick={() => { void playDtmfTone(k); if (sessionActive) { void sendSessionDtmf(k); } else { setNumber((prev) => prev + k); } }} aria-label={sessionActive ? `Send ${k}` : `Key ${k}`}>
                 {k}
               </Button>
             ))}
